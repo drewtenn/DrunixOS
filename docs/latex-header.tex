@@ -1,0 +1,52 @@
+% Prevent LaTeX from stretching paragraph gaps to fill pages (flushbottom
+% causes parskip to expand wildly on short pages in a twoside book).
+\raggedbottom
+% Give body paragraphs a clearly visible separation in the PDF output.
+% The previous value was so subtle that adjacent paragraphs often read like
+% one continuous block of text on the page.
+\AtBeginDocument{\setlength{\parskip}{7pt plus 2pt minus 1pt}}
+
+\usepackage{newunicodechar}
+\newunicodechar{≤}{\ensuremath{\leq}}
+\newunicodechar{≥}{\ensuremath{\geq}}
+\newunicodechar{≈}{\ensuremath{\approx}}
+
+% Keep every code block / diagram on one page — no mid-block page breaks.
+\usepackage{etoolbox}
+\BeforeBeginEnvironment{Shaded}{\begin{minipage}[t]{\linewidth}}
+\AfterEndEnvironment{Shaded}{\end{minipage}\vspace{2pt}}
+\BeforeBeginEnvironment{verbatim}{\begin{minipage}[t]{\linewidth}}
+\AfterEndEnvironment{verbatim}{\end{minipage}\vspace{2pt}}
+
+% ── Running headers and footers ───────────────────────────────────────────────
+% Even (left, verso) pages: chapter title on the left.
+% Odd  (right, recto) pages: section title on the right.
+% Page numbers in the outer footer corner.
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[LE]{\small\nouppercase{\leftmark}}
+\fancyhead[RO]{\small\nouppercase{\rightmark}}
+\fancyfoot[LE,RO]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% Part and chapter opening pages drop the running header but keep the page number.
+\fancypagestyle{plain}{%
+  \fancyhf{}%
+  \fancyfoot[LE,RO]{\thepage}%
+  \renewcommand{\headrulewidth}{0pt}%
+}
+
+% ── Blank pages inserted by openright are truly blank ─────────────────────────
+% Without this, the running header bleeds onto blank verso pages.
+\usepackage{emptypage}
+
+% ── Suppress automatic part / chapter number labels ───────────────────────────
+% The book class would normally prepend "Part I" and "Chapter 1" to each
+% heading.  Our headings already carry that text (e.g. "Chapter 1 — Boot"),
+% so we clear the label and counter to avoid duplication.
+\renewcommand{\partname}{}
+\renewcommand{\thepart}{}
+\renewcommand{\chaptername}{}
+\renewcommand{\thechapter}{}

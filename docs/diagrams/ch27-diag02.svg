@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="1048" viewBox="0 0 860 1048" role="img" aria-labelledby="title desc">
+  <title id="title">Where GDB and interrupts meet</title>
+  <desc id="desc">A breakpoint can stop early, but next succeeds only if the guest already has a valid trap path.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 2 2 L 10 6 L 2 10" fill="none" stroke="#0f172a" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      .bg { fill: #ffffff; }
+      .panel { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+      .blue { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.5; }
+      .green { fill: #ecfdf5; stroke: #059669; stroke-width: 1.5; }
+      .amber { fill: #fef3c7; stroke: #d97706; stroke-width: 1.5; }
+      .gray { fill: #f1f5f9; stroke: #64748b; stroke-width: 1.3; }
+      .chip { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.5; }
+      .vector { fill: #ecfdf5; stroke: #059669; stroke-width: 1.5; }
+      .tag { fill: #dbeafe; stroke: #2563eb; stroke-width: 1.25; }
+      .cell { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.4; }
+      .attr { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.4; }
+      .row { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.2; }
+      .gap { fill: #f1f5f9; stroke: #cbd5e1; stroke-width: 1.2; }
+      .table-shell { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.2; }
+      .table-headband { fill: #f8fafc; }
+      .table-rule { stroke: #cbd5e1; stroke-width: 1; }
+      .edge-label-bg { fill: #ffffff; fill-opacity: 0.94; }
+      .title { fill: #0f172a; font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label { fill: #0f172a; font: 600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-tight { fill: #0f172a; font: 600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-mini { fill: #0f172a; font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-micro { fill: #0f172a; font: 600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .colhead { fill: #334155; font: 700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .small { fill: #334155; font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .muted { fill: #64748b; font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .mono { fill: #0f172a; font: 12px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+      .byte { fill: #0f172a; font: 600 12px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; text-anchor: middle; dominant-baseline: middle; }
+      .arrow { stroke: #0f172a; stroke-width: 2.2; stroke-linecap: round; marker-end: url(#arrow); }
+      .line { stroke: #334155; stroke-width: 1.6; stroke-linecap: round; }
+    </style>
+  </defs>
+  <rect class="bg" x="0" y="0" width="860" height="1048" rx="12"/>
+  <text class="title" x="44" y="42">Where GDB and interrupts meet</text>
+  <text class="muted" x="44" y="68">A breakpoint can stop early, but next succeeds only if the guest already has a valid trap path.</text>
+  <rect class="panel" x="34" y="98" width="792" height="902" rx="10"/>
+  <rect class="blue" x="321.4" y="132.5" width="217.2" height="59.50000000000001" rx="7"/>
+  <text class="label" x="430.0" y="154.2" text-anchor="middle" dominant-baseline="middle">GDB says continue</text>
+  <text class="muted" x="430.0" y="170.2" text-anchor="middle" dominant-baseline="middle">resume the CPU</text>
+  <rect class="amber" x="321.4" y="260.0" width="217.2" height="59.50000000000001" rx="7"/>
+  <text class="label" x="430.0" y="281.8" text-anchor="middle" dominant-baseline="middle">Hardware breakpoint</text>
+  <text class="muted" x="430.0" y="297.8" text-anchor="middle" dominant-baseline="middle">CPU stops here</text>
+  <rect class="blue" x="321.4" y="387.5" width="217.2" height="59.50000000000001" rx="7"/>
+  <text class="label" x="430.0" y="401.2" text-anchor="middle" dominant-baseline="middle">Inspect state</text>
+  <text class="muted" x="430.0" y="417.2" text-anchor="middle" dominant-baseline="middle">source and registers are</text>
+  <text class="muted" x="430.0" y="433.2" text-anchor="middle" dominant-baseline="middle">visible</text>
+  <rect class="blue" x="321.4" y="515.0" width="217.2" height="59.50000000000001" rx="7"/>
+  <text class="label" x="430.0" y="536.8" text-anchor="middle" dominant-baseline="middle">GDB says next</text>
+  <text class="muted" x="430.0" y="552.8" text-anchor="middle" dominant-baseline="middle">resume for the next line</text>
+  <rect class="amber" x="321.4" y="642.5" width="217.2" height="59.50000000000001" rx="7"/>
+  <text class="label" x="430.0" y="656.2" text-anchor="middle" dominant-baseline="middle">CPU must trap again</text>
+  <text class="muted" x="430.0" y="672.2" text-anchor="middle" dominant-baseline="middle">this stop uses the guest</text>
+  <text class="muted" x="430.0" y="688.2" text-anchor="middle" dominant-baseline="middle">trap path</text>
+  <rect class="green" x="89.72" y="770.0" width="202.72000000000003" height="59.50000000000001" rx="7"/>
+  <text class="label" x="191.1" y="791.8" text-anchor="middle" dominant-baseline="middle">IDT loaded</text>
+  <text class="muted" x="191.1" y="807.8" text-anchor="middle" dominant-baseline="middle">trap enters a valid path</text>
+  <rect class="gray" x="567.56" y="770.0" width="202.72000000000003" height="59.50000000000001" rx="7"/>
+  <text class="label" x="668.9" y="791.8" text-anchor="middle" dominant-baseline="middle">No IDT</text>
+  <text class="muted" x="668.9" y="807.8" text-anchor="middle" dominant-baseline="middle">no valid trap path</text>
+  <rect class="green" x="89.72" y="906.0" width="202.72000000000003" height="59.50000000000001" rx="7"/>
+  <text class="label" x="191.1" y="927.8" text-anchor="middle" dominant-baseline="middle">Clean stop</text>
+  <text class="muted" x="191.1" y="943.8" text-anchor="middle" dominant-baseline="middle">control returns to GDB</text>
+  <rect class="gray" x="567.56" y="906.0" width="202.72000000000003" height="59.50000000000001" rx="7"/>
+  <text class="label" x="668.9" y="927.8" text-anchor="middle" dominant-baseline="middle">Bad stop</text>
+  <text class="muted" x="668.9" y="943.8" text-anchor="middle" dominant-baseline="middle">execution goes astray</text>
+  <polyline class="arrow" points="430.0,204.0 430.0,248.0" fill="none"/>
+  <polyline class="arrow" points="430.0,331.5 430.0,375.5" fill="none"/>
+  <polyline class="arrow" points="430.0,459.0 430.0,503.0" fill="none"/>
+  <polyline class="arrow" points="430.0,586.5 430.0,630.5" fill="none"/>
+  <polyline class="arrow" points="309.4,672.2 191.1,672.2 191.1,758.0" fill="none"/>
+  <rect class="edge-label-bg" x="221.8" y="646.2" width="56.8" height="18" rx="6"/>
+  <text class="muted" x="250.24" y="658.25" text-anchor="middle">IDT yes</text>
+  <polyline class="arrow" points="550.6,672.2 668.9,672.2 668.9,758.0" fill="none"/>
+  <rect class="edge-label-bg" x="584.6" y="646.2" width="50.4" height="18" rx="6"/>
+  <text class="muted" x="609.76" y="658.25" text-anchor="middle">IDT no</text>
+  <polyline class="arrow" points="191.1,841.5 191.1,894.0" fill="none"/>
+  <polyline class="arrow" points="668.9,841.5 668.9,894.0" fill="none"/>
+  <text class="muted" x="826.0" y="1030.0" text-anchor="end">Chapter 27, Figure 2</text>
+</svg>

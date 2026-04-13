@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="437.0" height="572" viewBox="0 0 437.0 572" role="img" aria-labelledby="title desc">
+  <title id="title">Signal frame</title>
+  <desc id="desc">The kernel saves user context, then builds a small frame to enter the signal handler.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 2 2 L 10 6 L 2 10" fill="none" stroke="#0f172a" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      .bg { fill: #ffffff; }
+      .panel { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+      .blue { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.5; }
+      .green { fill: #ecfdf5; stroke: #059669; stroke-width: 1.5; }
+      .amber { fill: #fef3c7; stroke: #d97706; stroke-width: 1.5; }
+      .gray { fill: #f1f5f9; stroke: #64748b; stroke-width: 1.3; }
+      .chip { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.5; }
+      .vector { fill: #ecfdf5; stroke: #059669; stroke-width: 1.5; }
+      .tag { fill: #dbeafe; stroke: #2563eb; stroke-width: 1.25; }
+      .cell { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.4; }
+      .attr { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.4; }
+      .row { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.2; }
+      .gap { fill: #f1f5f9; stroke: #cbd5e1; stroke-width: 1.2; }
+      .table-shell { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.2; }
+      .table-headband { fill: #f8fafc; }
+      .table-rule { stroke: #cbd5e1; stroke-width: 1; }
+      .edge-label-bg { fill: #ffffff; fill-opacity: 0.94; }
+      .title { fill: #0f172a; font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label { fill: #0f172a; font: 600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-tight { fill: #0f172a; font: 600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-mini { fill: #0f172a; font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-micro { fill: #0f172a; font: 600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .colhead { fill: #334155; font: 700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .small { fill: #334155; font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .muted { fill: #64748b; font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .mono { fill: #0f172a; font: 12px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+      .byte { fill: #0f172a; font: 600 12px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; text-anchor: middle; dominant-baseline: middle; }
+      .arrow { stroke: #0f172a; stroke-width: 2.2; stroke-linecap: round; marker-end: url(#arrow); }
+      .line { stroke: #334155; stroke-width: 1.6; stroke-linecap: round; }
+    </style>
+  </defs>
+  <rect class="bg" x="0" y="0" width="437.0" height="572" rx="12"/>
+  <text class="title" x="44" y="42">Signal frame</text>
+  <text class="muted" x="44" y="68">The kernel saves user context, then builds a small frame</text>
+  <text class="muted" x="44" y="84">to enter the signal handler.</text>
+  <rect class="panel" x="34" y="114" width="369.0" height="410" rx="10"/>
+  <rect class="amber" x="68.0" y="140" width="301.0" height="68" rx="7"/>
+  <text class="label" x="218.5" y="166.0" text-anchor="middle" dominant-baseline="middle">return helper</text>
+  <text class="muted" x="218.5" y="182.0" text-anchor="middle" dominant-baseline="middle">where the handler returns</text>
+  <rect class="blue" x="68.0" y="226" width="301.0" height="68" rx="7"/>
+  <text class="label" x="218.5" y="252.0" text-anchor="middle" dominant-baseline="middle">signal number</text>
+  <text class="muted" x="218.5" y="268.0" text-anchor="middle" dominant-baseline="middle">argument passed to the handler</text>
+  <rect class="green" x="68.0" y="312" width="301.0" height="84" rx="7"/>
+  <text class="label" x="218.5" y="338.0" text-anchor="middle" dominant-baseline="middle">saved user context</text>
+  <text class="muted" x="218.5" y="354.0" text-anchor="middle" dominant-baseline="middle">state restored after the handler</text>
+  <text class="muted" x="218.5" y="370.0" text-anchor="middle" dominant-baseline="middle">finishes</text>
+  <rect class="gray" x="68.0" y="414" width="301.0" height="84" rx="7"/>
+  <text class="label" x="218.5" y="440.0" text-anchor="middle" dominant-baseline="middle">resume helper</text>
+  <text class="muted" x="218.5" y="456.0" text-anchor="middle" dominant-baseline="middle">tiny code that asks the kernel to</text>
+  <text class="muted" x="218.5" y="472.0" text-anchor="middle" dominant-baseline="middle">continue</text>
+  <text class="muted" x="403.0" y="554.0" text-anchor="end">Chapter 19, Figure 2</text>
+</svg>

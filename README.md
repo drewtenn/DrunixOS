@@ -1,58 +1,128 @@
-# osdev
+# Drunix
 
-A bare-metal x86 operating system built from scratch. Boots in 16-bit real mode, loads a kernel from disk, transitions to 32-bit protected mode, and runs a minimal C kernel with a VGA text-mode driver.
+## Project Summary
 
-## Architecture
-
-```
-boot_sect.asm    →  bootsector: loads kernel from disk, switches to protected mode
-kernel-entry.asm →  32-bit entry point, calls start_kernel()
-kernel.c         →  VGA driver, print_string, cursor management
-```
-
-### Boot sequence
-
-1. BIOS loads the 512-byte bootsector at `0x7C00`
-2. Bootsector prints a real-mode message, loads the kernel (2 sectors) into memory at `0x1000` via BIOS disk routines
-3. Switches to 32-bit protected mode via a GDT
-4. Jumps to `kernel-entry.asm`, which calls `start_kernel()` in C
-
-### Kernel (kernel.c)
-
-- **VGA text driver** — writes directly to video memory at `0xB8000` (80×25 white-on-black)
-- **print_string** — prints a null-terminated string, handles `\n` and auto-scrolls
-- **Cursor control** — reads/writes hardware cursor position via VGA I/O ports (`0x3D4`/`0x3D5`)
-- **Scrolling** — shifts all rows up by one when the screen is full
+Drunix is a 32-bit x86 hobby operating system that boots through GRUB2 with the Multiboot1 protocol and runs a freestanding C kernel. The kernel provides protected-mode interrupt handling, paging, a physical and heap allocator, ATA disk I/O, a DUFS filesystem, a mount-tree VFS with synthetic `/dev` and `/proc` namespaces, preemptive scheduling built around generic wait queues, signals, a TTY subsystem with job control, an ELF user-program loader, and per-process virtual-memory bookkeeping for demand-paged heaps, grow-down stacks, copy-on-write fork, and anonymous `mmap` regions. The disk image includes a small userland with a shell and basic utilities.
 
 ## Dependencies
 
-- `nasm` — assembler
-- `x86_64-elf-gcc` — cross-compiler targeting i386 freestanding
-- `x86_64-elf-ld` — linker
-- `qemu-system-i386` — emulator
-- `i386-elf-gdb` — debugger (optional, for `make debug`)
+Required:
 
-On macOS these can be installed via Homebrew:
+- `make`
+- `python3`
+- `nasm`
+- `qemu-system-i386`
+- `x86_64-elf-gcc`
+- `x86_64-elf-ld`
+- `i686-elf-grub-mkrescue`
+- `xorriso`
+
+Optional:
+
+- `i386-elf-gdb` for `make debug`
+- `cairosvg` (Python package) or `rsvg-convert` for `make epub` and `make docs` — converts SVG diagrams to PNG
+
+## Install Dependencies
+
+### macOS
+
+Install Homebrew first, then:
 
 ```sh
-brew install nasm qemu x86_64-elf-gcc
+brew install make nasm python qemu x86_64-elf-gcc i686-elf-grub xorriso
+brew install i386-elf-gdb
+pip3 install cairosvg
+# or: brew install librsvg
 ```
 
-## Build & Run
+### Windows
+
+The simplest supported setup is WSL2 with Ubuntu. Inside the WSL shell:
 
 ```sh
-make        # build and run in QEMU
-make debug  # launch QEMU with GDB server on :1234, attach GDB with kernel symbols
-make clean  # remove build artifacts
+sudo apt update
+sudo apt install -y build-essential python3 nasm qemu-system-x86 xorriso grub-pc-bin mtools
+pip3 install cairosvg
 ```
 
-## Status
+You still need an `x86_64-elf` cross toolchain and `i386-elf-gdb` on your `PATH`. If your package set does not provide them directly, build and install the usual OSDev cross toolchain, then verify these commands exist:
 
-- [x] 16-bit real mode boot
-- [x] Disk load (BIOS INT 13h)
-- [x] GDT and protected mode switch
-- [x] 32-bit C kernel entry
-- [x] VGA text output with scrolling and cursor control
-- [ ] Keyboard input (ISR / IDT not yet implemented)
-- [ ] Memory management
-- [ ] Filesystem
+```sh
+x86_64-elf-gcc --version
+x86_64-elf-ld --version
+i386-elf-gdb --version
+i686-elf-grub-mkrescue --version
+```
+
+If your distro provides `grub-mkrescue` instead of `i686-elf-grub-mkrescue`, create a compatibility symlink or wrapper so the command name used by the Makefile exists.
+
+### Linux
+
+Package names vary by distro, but you need the same toolchain listed above.
+
+Ubuntu / Debian:
+
+```sh
+sudo apt update
+sudo apt install -y build-essential python3 nasm qemu-system-x86 xorriso grub-pc-bin mtools
+pip3 install cairosvg
+```
+
+Fedora:
+
+```sh
+sudo dnf install -y make python3 nasm qemu-system-i386 xorriso grub2-tools-extra mtools
+pip3 install cairosvg
+```
+
+Arch:
+
+```sh
+sudo pacman -S --needed make python nasm qemu-desktop xorriso grub mtools
+pip3 install cairosvg
+```
+
+As on Windows, make sure the `x86_64-elf` cross compiler/linker and optional `i386-elf-gdb` are installed and visible on `PATH`.
+
+If your distro installs `grub-mkrescue` but not `i686-elf-grub-mkrescue`, add a symlink or wrapper with the `i686-elf-grub-mkrescue` name because that is what this repo's Makefile invokes.
+
+## Build And Run
+
+Build the kernel, ISO, disk image, and launch QEMU:
+
+```sh
+make
+```
+
+Useful targets:
+
+- `make run` rebuilds the kernel and ISO, then launches QEMU without rebuilding `disk.img`
+- `make disk` rebuilds `disk.img`
+- `make kernel` rebuilds `kernel.elf` and `os.iso`
+- `make test` boots with the in-kernel unit tests enabled
+- `make KTEST=1 run` boots with the in-kernel unit tests enabled
+- `make rebuild` wipes outputs, rebuilds everything, and boots from scratch
+- `make docs` builds the PDF book
+- `make epub` builds the EPUB edition
+- `make clean` removes build outputs
+
+## Debugging
+
+Start QEMU paused with a GDB stub and attach GDB:
+
+```sh
+make debug
+```
+
+Other useful debug flows:
+
+- `make run-debugcon-stdio` streams QEMU debug console output to your terminal
+- `make KLOG_TO_DEBUGCON=1 run` mirrors ordinary `klog()` output to QEMU debugcon
+- `make test-double-fault` boots a special image that verifies the dedicated double-fault path
+
+Runtime logs:
+
+- `serial.log` captures COM1 output
+- `debugcon.log` captures QEMU debug console output on port `0xE9`
+
+Fatal kernel faults write diagnostics to serial and debugcon so they remain visible even when VGA output is no longer reliable.

@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1146" height="374" viewBox="0 0 1146 374" role="img" aria-labelledby="title desc">
+  <title id="title">Keyboard ring buffer</title>
+  <desc id="desc">Head and tail move around a fixed array; when either index reaches the end, it wraps to slot 0.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 2 2 L 10 6 L 2 10" fill="none" stroke="#0f172a" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      .bg { fill: #ffffff; }
+      .panel { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+      .blue { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.5; }
+      .green { fill: #ecfdf5; stroke: #059669; stroke-width: 1.5; }
+      .amber { fill: #fef3c7; stroke: #d97706; stroke-width: 1.5; }
+      .gray { fill: #f1f5f9; stroke: #64748b; stroke-width: 1.3; }
+      .chip { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.5; }
+      .vector { fill: #ecfdf5; stroke: #059669; stroke-width: 1.5; }
+      .tag { fill: #dbeafe; stroke: #2563eb; stroke-width: 1.25; }
+      .cell { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.4; }
+      .attr { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.4; }
+      .row { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.2; }
+      .gap { fill: #f1f5f9; stroke: #cbd5e1; stroke-width: 1.2; }
+      .table-shell { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.2; }
+      .table-headband { fill: #f8fafc; }
+      .table-rule { stroke: #cbd5e1; stroke-width: 1; }
+      .edge-label-bg { fill: #ffffff; fill-opacity: 0.94; }
+      .title { fill: #0f172a; font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label { fill: #0f172a; font: 600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-tight { fill: #0f172a; font: 600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-mini { fill: #0f172a; font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-micro { fill: #0f172a; font: 600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .colhead { fill: #334155; font: 700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .small { fill: #334155; font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .muted { fill: #64748b; font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .mono { fill: #0f172a; font: 12px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+      .byte { fill: #0f172a; font: 600 12px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; text-anchor: middle; dominant-baseline: middle; }
+      .arrow { stroke: #0f172a; stroke-width: 2.2; stroke-linecap: round; marker-end: url(#arrow); }
+      .line { stroke: #334155; stroke-width: 1.6; stroke-linecap: round; }
+    </style>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1146" height="374" rx="12"/>
+  <text class="title" x="44" y="42">Keyboard ring buffer</text>
+  <text class="muted" x="44" y="68">Head and tail move around a fixed array; when either index reaches the end, it wraps to slot 0.</text>
+  <rect class="panel" x="34" y="98" width="1078" height="228" rx="10"/>
+  <rect class="amber" x="68" y="156" width="104.15625" height="56" rx="7"/>
+  <text class="label" x="120.1" y="184.0" text-anchor="middle" dominant-baseline="middle">tail</text>
+  <rect class="blue" x="197.40625" y="156" width="104.15625" height="56" rx="7"/>
+  <text class="label" x="249.5" y="184.0" text-anchor="middle" dominant-baseline="middle">1</text>
+  <rect class="blue" x="326.8125" y="156" width="104.15625" height="56" rx="7"/>
+  <text class="label" x="378.9" y="184.0" text-anchor="middle" dominant-baseline="middle">2</text>
+  <rect class="blue" x="456.21875" y="156" width="104.15625" height="56" rx="7"/>
+  <text class="label" x="508.3" y="184.0" text-anchor="middle" dominant-baseline="middle">3</text>
+  <rect class="blue" x="585.625" y="156" width="104.15625" height="56" rx="7"/>
+  <text class="label" x="637.7" y="184.0" text-anchor="middle" dominant-baseline="middle">4</text>
+  <rect class="blue" x="715.03125" y="156" width="104.15625" height="56" rx="7"/>
+  <text class="label" x="767.1" y="184.0" text-anchor="middle" dominant-baseline="middle">5</text>
+  <rect class="blue" x="844.4375" y="156" width="104.15625" height="56" rx="7"/>
+  <text class="label" x="896.5" y="184.0" text-anchor="middle" dominant-baseline="middle">6</text>
+  <rect class="green" x="973.84375" y="156" width="104.15625" height="56" rx="7"/>
+  <text class="label" x="1025.9" y="184.0" text-anchor="middle" dominant-baseline="middle">head</text>
+  <text class="muted" x="573.0" y="128" text-anchor="middle">Queued bytes in the fixed 256-byte array</text>
+  <text class="muted" x="120.078125" y="230" text-anchor="middle">next read</text>
+  <text class="muted" x="1025.921875" y="230" text-anchor="middle">next write</text>
+  <polyline class="arrow" points="1069.7,264.0 1078.0,264.0 1078.0,300.0 68.0,300.0 68.0,264.0 86.7,264.0" fill="none"/>
+  <rect class="edge-label-bg" x="522.2" y="288.0" width="101.6" height="18" rx="6"/>
+  <text class="muted" x="573.0" y="300" text-anchor="middle">wrap to slot 0</text>
+  <text class="muted" x="1112.0" y="356.0" text-anchor="end">Chapter 10, Figure 1</text>
+</svg>

@@ -1,0 +1,57 @@
+\begin{titlepage}
+\centering
+
+% ── Top rule ─────────────────────────────────────────────────────────────────
+\vspace*{3cm}
+{\color{black}\rule{\linewidth}{1pt}}
+\vspace{1cm}
+
+% ── Title ────────────────────────────────────────────────────────────────────
+{\fontsize{72}{80}\selectfont\textbf{DRUNIX}}
+
+\vspace{0.5cm}
+
+% ── Subtitle ─────────────────────────────────────────────────────────────────
+{\LARGE Building an Operating System from Scratch}
+
+\vspace{0.8cm}
+{\color{black}\rule{\linewidth}{0.4pt}}
+
+% ── Description block ────────────────────────────────────────────────────────
+\vspace{0.8cm}
+{\normalsize\textit{Booting, memory, drivers, filesystems, processes, and a Unix shell}}
+
+\vfill
+
+% ── Author and edition ───────────────────────────────────────────────────────
+{\color{black}\rule{\linewidth}{0.4pt}}
+\vspace{0.5cm}
+
+{\Large\textbf{Drew Tennenbaum}}
+
+\vspace{0.3cm}
+
+{\normalsize First Edition \quad\textbullet\quad \the\year{}}
+
+\vspace{1.5cm}
+
+\end{titlepage}
+
+% ── Copyright page (verso of title page) ─────────────────────────────────────
+\newpage
+\thispagestyle{empty}
+\vspace*{\fill}
+{\small
+\noindent Copyright \textcopyright{} \the\year{} Drew Tennenbaum. All rights reserved.
+
+\vspace{1em}
+\noindent This book documents the Drunix operating system: a bare-metal x86 operating
+system built from scratch in C and x86 assembly, running under GRUB2 on 32-bit
+protected-mode hardware. It is written for readers who are technical but have not
+previously built an operating system.
+
+\vspace{1em}
+\noindent Typeset with XeLaTeX and pandoc.
+}
+\vspace*{\fill}
+\newpage

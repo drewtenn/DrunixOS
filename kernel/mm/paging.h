@@ -1,0 +1,114 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+
+#ifndef PAGING_H
+#define PAGING_H
+
+#include <stdint.h>
+
+/* Physical addresses for paging structures */
+#define PAGE_DIR_ADDR  0x00011000u   /* page directory: 4 KB, 1024 PDEs */
+#define PAGE_TAB_BASE  0x00012000u   /* first of 32 page tables          */
+
+/* PDE / PTE flag bits */
+#define PG_PRESENT  0x1
+#define PG_WRITABLE 0x2
+#define PG_USER     0x4
+#define PG_COW      (1u << 9)
+
+#define PG_ENTRY_ADDR_MASK  0xFFFFF000u
+#define PG_ENTRY_FLAGS_MASK 0x00000FFFu
+
+static inline uint32_t paging_entry_addr(uint32_t entry)
+{
+    return entry & PG_ENTRY_ADDR_MASK;
+}
+
+static inline uint32_t paging_entry_flags(uint32_t entry)
+{
+    return entry & PG_ENTRY_FLAGS_MASK;
+}
+
+static inline uint32_t paging_entry_build(uint32_t addr, uint32_t flags)
+{
+    return paging_entry_addr(addr) | paging_entry_flags(flags);
+}
+
+static inline uint32_t paging_entry_replace_addr(uint32_t entry, uint32_t addr)
+{
+    return paging_entry_build(addr, entry);
+}
+
+void paging_init(void);
+
+/* Implemented in paging.asm — CR3/CR0 cannot be written from plain C */
+extern void paging_load_cr3(uint32_t pd_phys);
+extern void paging_enable(void);
+
+/*
+ * paging_create_user_space: allocate a fresh page directory for a new process.
+ *
+ * Copies kernel PDEs 0–31 (the 128 MB identity map) into the new directory
+ * without PG_USER, so ring-3 code cannot reach kernel memory. User pages are
+ * added separately with paging_map_page().
+ *
+ * Returns the physical address of the new page directory, or 0 on failure.
+ */
+uint32_t paging_create_user_space(void);
+
+/*
+ * paging_map_page: install a single page mapping in an arbitrary page directory.
+ *
+ * pd_phys: physical address of the target page directory (identity-accessible).
+ * virt:    virtual address to map (must be 4 KB aligned).
+ * phys:    physical address to map to (must be 4 KB aligned).
+ * flags:   combination of PG_PRESENT, PG_WRITABLE, PG_USER, etc.
+ *
+ * Allocates a new page table via pmm_alloc_page() if the PDE is not yet present.
+ * Returns 0 on success, -1 if a page table could not be allocated.
+ */
+int paging_map_page(uint32_t pd_phys, uint32_t virt,
+                    uint32_t phys, uint32_t flags);
+
+/*
+ * paging_walk: locate the live PTE slot for a virtual address.
+ *
+ * Returns 0 on success and writes the identity-mapped PTE pointer to pte_out.
+ * Returns -1 if the PDE or PTE is not present.
+ */
+int paging_walk(uint32_t pd_phys, uint32_t virt, uint32_t **pte_out);
+
+/*
+ * paging_clone_user_space: copy-on-write clone of a process's user space.
+ *
+ * Kernel-only PDEs are shared by reference.  For every PDE that contains
+ * user PTEs, a private child page table is allocated and all user pages are
+ * shared with CoW semantics: PG_WRITABLE is cleared and PG_COW is set in
+ * both the parent and child PTEs, and the physical frame's refcount is
+ * incremented.
+ *
+ * Allocation and PTE modification are separated into two passes so that an
+ * OOM during page-table allocation can be rolled back without leaving stale
+ * CoW flags in the parent's page tables.
+ *
+ * Returns the physical address of the new page directory, or 0 on failure.
+ */
+uint32_t paging_clone_user_space(uint32_t src_pd_phys);
+
+/*
+ * paging_switch_directory: activate a page directory by loading CR3.
+ */
+void paging_switch_directory(uint32_t pd_phys);
+
+/*
+ * paging_guard_page / paging_unguard_page: manage a non-present guard page
+ * in the shared kernel identity-map page tables.
+ *
+ * paging_guard_page:   clear PG_PRESENT so any access faults immediately.
+ * paging_unguard_page: restore PG_PRESENT | PG_WRITABLE (call before kfree).
+ *
+ * Only valid for virt in 0–128 MB (PDE 0–31), which covers the kernel heap.
+ */
+void paging_guard_page(uint32_t virt);
+void paging_unguard_page(uint32_t virt);
+
+#endif

@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="931.5" height="430" viewBox="0 0 931.5 430" role="img" aria-labelledby="title desc">
+  <title id="title">System call handoff</title>
+  <desc id="desc">User mode loads registers and traps; kernel mode saves a frame, dispatches the handler, then returns through iret.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 2 2 L 10 6 L 2 10" fill="none" stroke="#0f172a" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      .bg { fill: #ffffff; }
+      .panel { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+      .blue { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.5; }
+      .green { fill: #ecfdf5; stroke: #059669; stroke-width: 1.5; }
+      .amber { fill: #fef3c7; stroke: #d97706; stroke-width: 1.5; }
+      .gray { fill: #f1f5f9; stroke: #64748b; stroke-width: 1.3; }
+      .chip { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.5; }
+      .vector { fill: #ecfdf5; stroke: #059669; stroke-width: 1.5; }
+      .tag { fill: #dbeafe; stroke: #2563eb; stroke-width: 1.25; }
+      .cell { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.4; }
+      .attr { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.4; }
+      .row { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.2; }
+      .gap { fill: #f1f5f9; stroke: #cbd5e1; stroke-width: 1.2; }
+      .table-shell { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.2; }
+      .table-headband { fill: #f8fafc; }
+      .table-rule { stroke: #cbd5e1; stroke-width: 1; }
+      .edge-label-bg { fill: #ffffff; fill-opacity: 0.94; }
+      .title { fill: #0f172a; font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label { fill: #0f172a; font: 600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-tight { fill: #0f172a; font: 600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-mini { fill: #0f172a; font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-micro { fill: #0f172a; font: 600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .colhead { fill: #334155; font: 700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .small { fill: #334155; font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .muted { fill: #64748b; font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .mono { fill: #0f172a; font: 12px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+      .byte { fill: #0f172a; font: 600 12px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; text-anchor: middle; dominant-baseline: middle; }
+      .arrow { stroke: #0f172a; stroke-width: 2.2; stroke-linecap: round; marker-end: url(#arrow); }
+      .line { stroke: #334155; stroke-width: 1.6; stroke-linecap: round; }
+    </style>
+  </defs>
+  <rect class="bg" x="0" y="0" width="931.5" height="430" rx="12"/>
+  <text class="title" x="44" y="42">System call handoff</text>
+  <text class="muted" x="44" y="68">User mode loads registers and traps; kernel mode saves a frame, dispatches the handler, then returns through iret.</text>
+  <rect class="panel" x="34" y="98" width="863.5" height="284" rx="10"/>
+  <text class="label" x="68.0" y="170.0" text-anchor="start">User mode</text>
+  <rect class="blue" x="179.5" y="124" width="138" height="84" rx="7"/>
+  <text class="label" x="248.5" y="150.0" text-anchor="middle" dominant-baseline="middle">Load registers</text>
+  <text class="muted" x="248.5" y="166.0" text-anchor="middle" dominant-baseline="middle">EAX number,</text>
+  <text class="muted" x="248.5" y="182.0" text-anchor="middle" dominant-baseline="middle">other args</text>
+  <line class="arrow" x1="325.5" y1="166.0" x2="349.5" y2="166.0"/>
+  <rect class="amber" x="361.5" y="124" width="138" height="84" rx="7"/>
+  <text class="label" x="430.5" y="150.0" text-anchor="middle" dominant-baseline="middle">int 0x80</text>
+  <text class="muted" x="430.5" y="166.0" text-anchor="middle" dominant-baseline="middle">controlled ring</text>
+  <text class="muted" x="430.5" y="182.0" text-anchor="middle" dominant-baseline="middle">transition</text>
+  <line class="arrow" x1="507.5" y1="166.0" x2="531.5" y2="166.0"/>
+  <rect class="green" x="543.5" y="124" width="138" height="84" rx="7"/>
+  <text class="label" x="612.5" y="150.0" text-anchor="middle" dominant-baseline="middle">Resume</text>
+  <text class="muted" x="612.5" y="166.0" text-anchor="middle" dominant-baseline="middle">return value</text>
+  <text class="muted" x="612.5" y="182.0" text-anchor="middle" dominant-baseline="middle">restored in EAX</text>
+  <text class="label" x="68.0" y="294.0" text-anchor="start">Kernel mode</text>
+  <rect class="blue" x="179.5" y="248" width="138" height="84" rx="7"/>
+  <text class="label" x="248.5" y="274.0" text-anchor="middle" dominant-baseline="middle">Trap gate entry</text>
+  <text class="muted" x="248.5" y="290.0" text-anchor="middle" dominant-baseline="middle">switch to the</text>
+  <text class="muted" x="248.5" y="306.0" text-anchor="middle" dominant-baseline="middle">kernel stack</text>
+  <line class="arrow" x1="325.5" y1="290.0" x2="349.5" y2="290.0"/>
+  <rect class="green" x="361.5" y="248" width="138" height="84" rx="7"/>
+  <text class="label-tight" x="430.5" y="274.0" text-anchor="middle" dominant-baseline="middle">Save syscall frame</text>
+  <text class="muted" x="430.5" y="290.0" text-anchor="middle" dominant-baseline="middle">preserve user</text>
+  <text class="muted" x="430.5" y="306.0" text-anchor="middle" dominant-baseline="middle">registers</text>
+  <line class="arrow" x1="507.5" y1="290.0" x2="531.5" y2="290.0"/>
+  <rect class="amber" x="543.5" y="248" width="138" height="84" rx="7"/>
+  <text class="label-tight" x="612.5" y="274.0" text-anchor="middle" dominant-baseline="middle">Dispatch handler</text>
+  <text class="muted" x="612.5" y="290.0" text-anchor="middle" dominant-baseline="middle">choose by syscall</text>
+  <text class="muted" x="612.5" y="306.0" text-anchor="middle" dominant-baseline="middle">number</text>
+  <line class="arrow" x1="689.5" y1="290.0" x2="713.5" y2="290.0"/>
+  <rect class="green" x="725.5" y="248" width="138" height="84" rx="7"/>
+  <text class="label" x="794.5" y="274.0" text-anchor="middle" dominant-baseline="middle">iret</text>
+  <text class="muted" x="794.5" y="290.0" text-anchor="middle" dominant-baseline="middle">restore saved</text>
+  <text class="muted" x="794.5" y="306.0" text-anchor="middle" dominant-baseline="middle">user state</text>
+  <text class="muted" x="897.5" y="412.0" text-anchor="end">Chapter 16, Figure 1</text>
+</svg>

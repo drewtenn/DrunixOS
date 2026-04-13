@@ -1,0 +1,393 @@
+/* epub.css — Drunix OS
+ *
+ * Designed for clean import into Adobe InDesign.
+ *
+ * InDesign maps CSS selectors to paragraph/character styles on import.
+ * Rules here are intentionally simple so InDesign can parse them without
+ * guessing at inherited or computed values.
+ *
+ * Key constraints:
+ *   - pre/code MUST use a monospace font and white-space:pre so code samples
+ *     are preserved exactly.
+ *   - Headings must be semantically nested h1 > h2 > h3 with no gaps.
+ *   - The nav#toc element should look like a TOC, not a bulleted list.
+ */
+
+/* ── Body ──────────────────────────────────────────────────────────────────── */
+body {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1em;
+  line-height: 1.6;
+  margin: 0;
+  padding: 0;
+  color: #000000;
+}
+
+/* ── Headings ──────────────────────────────────────────────────────────────── */
+
+/* H1 = Part headings  (e.g. "Part I — From Firmware to Kernel") */
+h1 {
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 1.9em;
+  font-weight: bold;
+  margin-top: 0;
+  margin-bottom: 0.6em;
+  padding-top: 1.5em;
+  page-break-before: always;
+  border-bottom: 1px solid #000000;
+  padding-bottom: 0.3em;
+}
+
+/* H2 = Chapter headings  (e.g. "Chapter 1 — Booting with GRUB2") */
+h2 {
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 1.55em;
+  font-weight: bold;
+  margin-top: 0;
+  margin-bottom: 0.5em;
+  padding-top: 1.2em;
+  page-break-before: always;
+}
+
+/* H3 = Section headings within a chapter */
+h3 {
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 1.2em;
+  font-weight: bold;
+  margin-top: 1.4em;
+  margin-bottom: 0.35em;
+}
+
+/* H4 = Sub-section headings */
+h4 {
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 1.05em;
+  font-weight: bold;
+  margin-top: 1em;
+  margin-bottom: 0.25em;
+}
+
+/* ── Body paragraphs ───────────────────────────────────────────────────────── */
+p {
+  margin-top: 0;
+  margin-bottom: 1em;
+  text-align: left;
+  orphans: 2;
+  widows: 2;
+}
+
+/* ── Code blocks ───────────────────────────────────────────────────────────── */
+/*
+ * CRITICAL for InDesign: white-space:pre preserves every space and newline.
+ * overflow-x:auto lets the epub reader scroll horizontally on narrow screens
+ * instead of wrapping code mid-line. page-break-inside:avoid keeps a block on
+ * a single page when possible.
+ */
+pre {
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.78em;
+  line-height: 1.4;
+  white-space: pre;
+  overflow-x: auto;
+  margin: 1em 0 1em 0;
+  padding: 0.6em 0.8em;
+  border-left: 3px solid #555555;
+  page-break-inside: avoid;
+  background-color: transparent;
+}
+
+/* Inline code (e.g. `EAX`, `start_kernel`) */
+code {
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.88em;
+}
+
+/* Code inside a pre block — reset font-size so pre's size applies */
+pre code {
+  font-size: 1em;
+  background-color: transparent;
+  border: none;
+  padding: 0;
+}
+
+/* Pandoc's monochrome highlighting theme underlines two things:
+ *   code span.dt { text-decoration: underline }  — DataType tokens (uint16_t etc.)
+ *   span > a:first-child::before                 — line-number anchors
+ * Both are unwanted.  Our external stylesheet loads after the inline <style>
+ * block, so equal-specificity rules here win. */
+code span.dt {
+  text-decoration: none;
+}
+
+pre > code.sourceCode > span > a:first-child::before {
+  text-decoration: none;
+}
+
+code a, pre a {
+  text-decoration: none;
+}
+
+/* ── Tables — booktabs style (matches PDF output) ───────────────────────────── */
+/*
+ * Pandoc's LaTeX output uses the booktabs package: a heavy \toprule above
+ * the header, a lighter \midrule below the header, and a heavy \bottomrule
+ * at the end.  No vertical lines anywhere.  This CSS replicates that look.
+ */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1.4em 0;
+  font-size: 0.92em;
+  page-break-inside: avoid;
+  border-top: 2px solid #000000;    /* \toprule */
+  border-bottom: 2px solid #000000; /* \bottomrule */
+}
+
+thead tr th {
+  font-family: Helvetica, Arial, sans-serif;
+  font-weight: bold;
+  padding: 0.4em 0.8em 0.4em 0;
+  text-align: left;
+  vertical-align: bottom;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+  border-bottom: 1px solid #000000; /* \midrule */
+  background-color: transparent;
+  white-space: nowrap;
+  hyphens: none;
+  -webkit-hyphens: none;
+}
+
+thead tr th:first-child {
+  padding-left: 0;
+}
+
+tbody tr td {
+  padding: 0.35em 0.8em 0.35em 0;
+  text-align: left;
+  vertical-align: top;
+  border: none;
+  white-space: nowrap;
+  hyphens: none;
+  -webkit-hyphens: none;
+}
+
+tbody tr td:first-child {
+  padding-left: 0;
+}
+
+/* Hairline between body rows */
+tbody tr + tr td {
+  border-top: 1px solid #dddddd;
+}
+
+/* ── Lists ─────────────────────────────────────────────────────────────────── */
+ul, ol {
+  margin: 0.5em 0 0.75em 0;
+  padding-left: 1.8em;
+}
+
+li {
+  margin-bottom: 0.3em;
+  line-height: 1.5;
+}
+
+/* ── Inline emphasis ───────────────────────────────────────────────────────── */
+strong {
+  font-weight: bold;
+}
+
+em {
+  font-style: italic;
+}
+
+/* ── Table of contents (epub nav) ──────────────────────────────────────────── */
+/*
+ * Pandoc renders the epub TOC as <nav epub:type="toc" id="toc">.
+ * InDesign reads this as the structural TOC.
+ * Style it to look like a proper TOC page rather than a plain list.
+ */
+nav#toc {
+  margin: 1em 0;
+}
+
+nav#toc h2 {
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 1.4em;
+  font-weight: bold;
+  margin-bottom: 0.75em;
+  page-break-before: avoid;
+  border-bottom: 1px solid #000000;
+  padding-bottom: 0.2em;
+}
+
+nav#toc ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+nav#toc li {
+  margin: 0.25em 0;
+  padding: 0;
+}
+
+/* Top-level TOC entries (parts / chapters) */
+nav#toc > ol > li {
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 1em;
+  font-weight: bold;
+  margin-top: 0.5em;
+}
+
+/* Second-level TOC entries (sections within a chapter) */
+nav#toc > ol > li > ol > li {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 0.92em;
+  font-weight: normal;
+  padding-left: 1.2em;
+  margin-top: 0.15em;
+}
+
+nav#toc a {
+  text-decoration: none;
+  color: #000000;
+}
+
+/* ── SVG diagram images ────────────────────────────────────────────────────── */
+/*
+ * Diagrams are SVG files referenced as standard Markdown images.  They carry a
+ * viewBox so they scale to fit the available column width on any screen size.
+ */
+img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1.2em auto;
+}
+
+/* ── Horizontal rules ──────────────────────────────────────────────────────── */
+hr {
+  border: none;
+  border-top: 1px solid #999999;
+  margin: 1.5em 0;
+}
+
+/* ── Blockquotes ───────────────────────────────────────────────────────────── */
+blockquote {
+  margin: 1em 0 1em 1.5em;
+  padding-left: 0.8em;
+  border-left: 3px solid #aaaaaa;
+  font-style: italic;
+}
+
+/* ── Cover page (docs/epub-cover.md) ───────────────────────────────────────── */
+/*
+ * Pandoc turns the leading markdown H1 into:
+ *   <section class="level1 cover-main-title unnumbered">
+ *     <h1 class="cover-main-title unnumbered">DRUNIX</h1>
+ *     <div class="epub-cover-body"> … </div>
+ *   </section>
+ *
+ * The ::before pseudo-element produces the heavy top rule (matching the PDF),
+ * the H1 is the large title, and .epub-cover-body holds everything below.
+ */
+
+/* Outer section — centred, full-page, heavy rule above the title */
+section.cover-main-title {
+  text-align: center;
+  padding: 3em 2em 2.5em 2em;
+  font-family: Helvetica, Arial, sans-serif;
+  page-break-after: always;
+}
+
+section.cover-main-title::before {
+  content: "";
+  display: block;
+  border-top: 2px solid #000000;
+  margin-bottom: 1.4em;
+}
+
+/* Main title: very large, bold, spaced caps */
+h1.cover-main-title {
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 4em;
+  font-weight: bold;
+  letter-spacing: 0.1em;
+  margin: 0 0 0.1em 0;
+  page-break-before: avoid;
+}
+
+div.epub-cover-body {
+  margin-top: 0;
+}
+
+p.cover-subtitle {
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 1.2em;
+  font-style: italic;
+  font-weight: normal;
+  margin: 0.3em 0 0.15em 0;
+}
+
+p.cover-byline {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 0.92em;
+  color: #444444;
+  margin: 0.15em 0 0 0;
+}
+
+div.cover-rule-mid {
+  border-top: 1px solid #000000;
+  margin: 1.1em 0;
+}
+
+div.cover-rule-bot {
+  border-top: 1px solid #000000;
+  margin: 1.1em 0;
+}
+
+p.cover-quote {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1em;
+  font-style: italic;
+  margin: 0.6em 0 0.2em 0;
+}
+
+p.cover-note {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 0.88em;
+  color: #444444;
+  margin: 0.15em 0;
+}
+
+p.cover-author {
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 1.25em;
+  font-weight: bold;
+  margin: 0.4em 0 0.2em 0;
+}
+
+p.cover-edition {
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 0.85em;
+  color: #444444;
+  margin: 0.15em 0;
+}
+
+/* ── Copyright page (docs/epub-copyright.md) ──────────────────────────────── */
+h1.epub-frontmatter-title {
+  display: none;
+}
+
+div.epub-copyright-page {
+  margin: 5em 2.5em;
+  page-break-after: always;
+}
+
+div.epub-copyright-page p {
+  font-size: 1em;
+  line-height: 1.45;
+  margin: 0 0 2em 0;
+}
