@@ -89,6 +89,15 @@ The two techniques complement each other:
 
 That distinction is why we have both a live GDB workflow and the ELF core-dump writer from Chapter 24. The debugger attached to QEMU is the tool for bringing the machine up. The core file is the tool for understanding why a process came down.
 
+The process-memory forensics path now gives an explicit end-to-end check:
+
+1. Inspect `/proc/<pid>/vmstat` for compact totals and `/proc/<pid>/fault` for the current fault snapshot (`State: none` before a crash).
+2. Trigger a deliberate user crash (for example, `crash badptr`) to generate `core.<pid>`.
+3. Extract the core file and inspect its notes.
+4. Confirm the three `DRUNIX` text notes (`vmstat`, `fault`, and `maps`) match the same model-backed views from live procfs.
+
+In other words, `/proc/<pid>/maps` remains the detailed live layout view, while `vmstat` and `fault` provide condensed status; after a crash, all three survive as text notes in the core file for post-mortem inspection.
+
 ### Where the Machine Is by the End of Chapter 27
 
-Debugging the kernel is no longer just "attach GDB and hope". The boot sequence now exposes an explicit early-debugging boundary: once `idt_init_early()` has loaded the IDT, traps and exceptions have a valid entry path even though hardware interrupts are still disabled. The later `interrupts_enable()` step turns the machine from a mostly linear boot path into a fully asynchronous system. Alongside serial logs, debugcon output, and ELF core dumps, that split gives the kernel both live and post-mortem debugging tools that are predictable enough to rely on.
+Debugging the kernel is no longer just "attach GDB and hope". The boot sequence now exposes an explicit early-debugging boundary: once `idt_init_early()` has loaded the IDT, traps and exceptions have a valid entry path even though hardware interrupts are still disabled. The later `interrupts_enable()` step turns the machine from a mostly linear boot path into a fully asynchronous system. Alongside serial logs, debugcon output, and ELF core dumps with `DRUNIX` memory-forensics notes aligned to `/proc/<pid>/vmstat`, `/proc/<pid>/fault`, and `/proc/<pid>/maps`, that split gives the kernel both live and post-mortem debugging tools that are predictable enough to rely on.

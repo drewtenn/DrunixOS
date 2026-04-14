@@ -6,6 +6,7 @@
 *.dis
 *.log
 *.img
+*.iso
 user/date
 user/cat
 user/basename
@@ -31,6 +32,9 @@ user/writer
 user/wc
 user/which
 user/yes
+user/crash
+user/dmesg
+docs/superpowers/
 
 core.*
 

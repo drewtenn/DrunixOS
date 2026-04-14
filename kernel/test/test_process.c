@@ -4,14 +4,33 @@
  */
 
 #include "ktest.h"
+#include "core.h"
+#include "elf.h"
+#include "fs.h"
 #include "process.h"
 #include "sched.h"
 #include "gdt.h"
 #include "kstring.h"
+#include "mem_forensics.h"
+#include "paging.h"
+#include "pmm.h"
+#include "vfs.h"
 #include "vma.h"
 
 extern void process_initial_launch(void);
 extern void process_exec_launch(void);
+
+#define TEST_CORE_DUMP_PID    77u
+#define TEST_CORE_NOTE_ALIGN  4u
+#define TEST_NT_PRPSINFO      3u
+#define TEST_NT_DRUNIX_VMSTAT 0x4458564du
+#define TEST_NT_DRUNIX_FAULT  0x44584654u
+#define TEST_NT_DRUNIX_MAPS   0x44584d50u
+
+static uint32_t test_align_up(uint32_t val, uint32_t align)
+{
+    return (val + align - 1u) & ~(align - 1u);
+}
 
 static void init_frame_proc(process_t *proc, uint32_t *kstack_words,
                             uint32_t entry, uint32_t user_stack)
@@ -26,9 +45,12 @@ static void init_frame_proc(process_t *proc, uint32_t *kstack_words,
 static void init_vma_proc(process_t *proc)
 {
     k_memset(proc, 0, sizeof(*proc));
+    proc->heap_start = 0x00410000u;
     proc->brk = 0x00418000u;
+    proc->stack_low_limit =
+        USER_STACK_TOP - (uint32_t)USER_STACK_PAGES * 0x1000u;
     vma_init(proc);
-    vma_add(proc, 0x00410000u, proc->brk,
+    vma_add(proc, proc->heap_start, proc->brk,
             VMA_FLAG_READ | VMA_FLAG_WRITE |
             VMA_FLAG_ANON | VMA_FLAG_PRIVATE,
             VMA_KIND_HEAP);
@@ -38,6 +60,62 @@ static void init_vma_proc(process_t *proc)
             VMA_FLAG_READ | VMA_FLAG_WRITE |
             VMA_FLAG_ANON | VMA_FLAG_PRIVATE | VMA_FLAG_GROWSDOWN,
             VMA_KIND_STACK);
+}
+
+static void init_fresh_process_layout_proc(process_t *proc)
+{
+    k_memset(proc, 0, sizeof(*proc));
+    proc->image_start = 0x00400000u;
+    proc->image_end = 0x00410000u;
+    proc->heap_start = proc->image_end;
+    proc->brk = proc->heap_start;
+    proc->stack_low_limit =
+        USER_STACK_TOP - (uint32_t)USER_STACK_PAGES * 0x1000u;
+    vma_init(proc);
+    vma_add(proc, proc->image_start, proc->image_end,
+            VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_EXEC |
+            VMA_FLAG_PRIVATE,
+            VMA_KIND_IMAGE);
+    vma_add(proc, proc->heap_start, proc->brk,
+            VMA_FLAG_READ | VMA_FLAG_WRITE |
+            VMA_FLAG_ANON | VMA_FLAG_PRIVATE,
+            VMA_KIND_HEAP);
+    vma_add(proc,
+            USER_STACK_TOP - (uint32_t)USER_STACK_MAX_PAGES * 0x1000u,
+            USER_STACK_TOP,
+            VMA_FLAG_READ | VMA_FLAG_WRITE |
+            VMA_FLAG_ANON | VMA_FLAG_PRIVATE | VMA_FLAG_GROWSDOWN,
+            VMA_KIND_STACK);
+}
+
+static int map_test_page(process_t *proc, uint32_t vaddr, uint32_t flags)
+{
+    uint32_t phys = pmm_alloc_page();
+
+    if (!phys)
+        return -1;
+    if (paging_map_page(proc->pd_phys, vaddr, phys, flags) != 0)
+        return -1;
+    return 0;
+}
+
+static void init_core_dump_proc(process_t *proc)
+{
+    init_fresh_process_layout_proc(proc);
+    proc->pid = TEST_CORE_DUMP_PID;
+    proc->state = PROC_RUNNING;
+    proc->parent_pid = 1u;
+    proc->pgid = TEST_CORE_DUMP_PID;
+    proc->sid = TEST_CORE_DUMP_PID;
+    proc->pd_phys = paging_create_user_space();
+    k_strncpy(proc->name, "crash", sizeof(proc->name) - 1u);
+    k_strncpy(proc->psargs, "crash badptr", sizeof(proc->psargs) - 1u);
+    proc->crash.valid = 1u;
+    proc->crash.signum = SIGSEGV;
+    proc->crash.cr2 = 0xDEADBEEFu;
+    proc->crash.frame.vector = 14u;
+    proc->crash.frame.error_code = 0x6u;
+    proc->crash.frame.eip = 0x00402A16u;
 }
 
 static void test_process_build_initial_frame_layout(ktest_case_t *tc)
@@ -258,6 +336,377 @@ static void test_vma_protect_range_splits_and_requires_full_coverage(ktest_case_
                     (uint32_t)-1);
 }
 
+static void test_mem_forensics_collects_basic_region_totals(ktest_case_t *tc)
+{
+    static process_t proc;
+    mem_forensics_report_t report;
+    uint32_t stack_reserved =
+        (uint32_t)USER_STACK_MAX_PAGES * 0x1000u;
+
+    init_vma_proc(&proc);
+    proc.image_start = 0x00400000u;
+    proc.image_end = 0x00410000u;
+    k_strncpy(proc.name, "shell", sizeof(proc.name) - 1);
+
+    KTEST_ASSERT_EQ(tc, mem_forensics_collect(&proc, &report), 0u);
+    KTEST_EXPECT_EQ(tc, report.region_count, 3u);
+    KTEST_EXPECT_EQ(tc, report.image_reserved_bytes, 0x00010000u);
+    KTEST_EXPECT_EQ(tc, report.heap_reserved_bytes,  0x00008000u);
+    KTEST_EXPECT_EQ(tc,
+                    report.stack_reserved_bytes,
+                    (uint32_t)USER_STACK_MAX_PAGES * 0x1000u);
+}
+
+static void test_mem_forensics_core_note_sizes_are_nonzero(ktest_case_t *tc)
+{
+    KTEST_EXPECT_TRUE(tc, mem_forensics_vmstat_note_size() > 0u);
+    KTEST_EXPECT_TRUE(tc, mem_forensics_fault_note_size() > 0u);
+}
+
+static void test_core_dump_writes_drunix_notes_in_order(ktest_case_t *tc)
+{
+    static process_t proc;
+    static uint8_t note_buf[2048];
+    static char expected_vmstat[512];
+    static char expected_fault[512];
+    static char expected_maps[1024];
+    Elf32_Ehdr ehdr;
+    Elf32_Phdr phdr;
+    Elf32_Nhdr nhdr;
+    uint32_t expected_vmstat_len = 0;
+    uint32_t expected_fault_len = 0;
+    uint32_t expected_maps_len = 0;
+    uint32_t ino = 0;
+    uint32_t size = 0;
+    uint32_t off = 0;
+    int n;
+
+    vfs_reset();
+    dufs_register();
+    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_mount("/", "dufs"), 0u);
+    (void)fs_unlink("core.77");
+
+    init_core_dump_proc(&proc);
+    KTEST_ASSERT_NE(tc, proc.pd_phys, 0u);
+    KTEST_ASSERT_EQ(tc,
+                    (uint32_t)map_test_page(&proc, proc.image_start,
+                                            PG_PRESENT | PG_USER | PG_WRITABLE),
+                    0u);
+    KTEST_ASSERT_EQ(tc,
+                    (uint32_t)map_test_page(&proc, USER_STACK_TOP - 0x1000u,
+                                            PG_PRESENT | PG_USER | PG_WRITABLE),
+                    0u);
+
+    KTEST_ASSERT_EQ(tc,
+                    (uint32_t)mem_forensics_render_vmstat(&proc,
+                                                         expected_vmstat,
+                                                         sizeof(expected_vmstat),
+                                                         &expected_vmstat_len),
+                    0u);
+    KTEST_ASSERT_EQ(tc,
+                    (uint32_t)mem_forensics_render_fault(&proc,
+                                                        expected_fault,
+                                                        sizeof(expected_fault),
+                                                        &expected_fault_len),
+                    0u);
+    KTEST_ASSERT_EQ(tc,
+                    (uint32_t)mem_forensics_render_maps(&proc,
+                                                       expected_maps,
+                                                       sizeof(expected_maps),
+                                                       &expected_maps_len),
+                    0u);
+
+    KTEST_ASSERT_EQ(tc, (uint32_t)core_dump_process(&proc, SIGSEGV), 0u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_open("core.77", &ino, &size), 0u);
+
+    n = fs_read(ino, 0u, (uint8_t *)&ehdr, (uint32_t)sizeof(ehdr));
+    KTEST_ASSERT_EQ(tc, (uint32_t)n, (uint32_t)sizeof(ehdr));
+    KTEST_EXPECT_EQ(tc, ehdr.e_type, ET_CORE);
+
+    n = fs_read(ino, ehdr.e_phoff, (uint8_t *)&phdr, (uint32_t)sizeof(phdr));
+    KTEST_ASSERT_EQ(tc, (uint32_t)n, (uint32_t)sizeof(phdr));
+    KTEST_EXPECT_EQ(tc, phdr.p_type, PT_NOTE);
+    KTEST_ASSERT_TRUE(tc, phdr.p_filesz < sizeof(note_buf));
+
+    n = fs_read(ino, phdr.p_offset, note_buf, phdr.p_filesz);
+    KTEST_ASSERT_EQ(tc, (uint32_t)n, phdr.p_filesz);
+
+    k_memcpy(&nhdr, note_buf + off, sizeof(nhdr));
+    KTEST_EXPECT_EQ(tc, nhdr.n_type, NT_PRSTATUS);
+    KTEST_EXPECT_EQ(tc, nhdr.n_namesz, 5u);
+    KTEST_EXPECT_TRUE(tc, k_strcmp((const char *)(note_buf + off + sizeof(nhdr)),
+                                   "CORE") == 0);
+    off += (uint32_t)sizeof(nhdr) + test_align_up(nhdr.n_namesz, TEST_CORE_NOTE_ALIGN) +
+           test_align_up(nhdr.n_descsz, TEST_CORE_NOTE_ALIGN);
+
+    k_memcpy(&nhdr, note_buf + off, sizeof(nhdr));
+    KTEST_EXPECT_EQ(tc, nhdr.n_type, TEST_NT_PRPSINFO);
+    KTEST_EXPECT_EQ(tc, nhdr.n_namesz, 5u);
+    KTEST_EXPECT_TRUE(tc, k_strcmp((const char *)(note_buf + off + sizeof(nhdr)),
+                                   "CORE") == 0);
+    off += (uint32_t)sizeof(nhdr) + test_align_up(nhdr.n_namesz, TEST_CORE_NOTE_ALIGN) +
+           test_align_up(nhdr.n_descsz, TEST_CORE_NOTE_ALIGN);
+
+    k_memcpy(&nhdr, note_buf + off, sizeof(nhdr));
+    KTEST_EXPECT_EQ(tc, nhdr.n_type, TEST_NT_DRUNIX_VMSTAT);
+    KTEST_EXPECT_EQ(tc, nhdr.n_descsz, expected_vmstat_len);
+    KTEST_EXPECT_TRUE(tc, k_strcmp((const char *)(note_buf + off + sizeof(nhdr)),
+                                   "DRUNIX") == 0);
+    KTEST_EXPECT_TRUE(tc,
+                      k_memcmp(note_buf + off + (uint32_t)sizeof(nhdr) +
+                                   test_align_up(nhdr.n_namesz, TEST_CORE_NOTE_ALIGN),
+                               expected_vmstat,
+                               expected_vmstat_len) == 0);
+    off += (uint32_t)sizeof(nhdr) + test_align_up(nhdr.n_namesz, TEST_CORE_NOTE_ALIGN) +
+           test_align_up(nhdr.n_descsz, TEST_CORE_NOTE_ALIGN);
+
+    k_memcpy(&nhdr, note_buf + off, sizeof(nhdr));
+    KTEST_EXPECT_EQ(tc, nhdr.n_type, TEST_NT_DRUNIX_FAULT);
+    KTEST_EXPECT_EQ(tc, nhdr.n_descsz, expected_fault_len);
+    KTEST_EXPECT_TRUE(tc, k_strcmp((const char *)(note_buf + off + sizeof(nhdr)),
+                                   "DRUNIX") == 0);
+    KTEST_EXPECT_TRUE(tc,
+                      k_memcmp(note_buf + off + (uint32_t)sizeof(nhdr) +
+                                   test_align_up(nhdr.n_namesz, TEST_CORE_NOTE_ALIGN),
+                               expected_fault,
+                               expected_fault_len) == 0);
+    off += (uint32_t)sizeof(nhdr) + test_align_up(nhdr.n_namesz, TEST_CORE_NOTE_ALIGN) +
+           test_align_up(nhdr.n_descsz, TEST_CORE_NOTE_ALIGN);
+
+    k_memcpy(&nhdr, note_buf + off, sizeof(nhdr));
+    KTEST_EXPECT_EQ(tc, nhdr.n_type, TEST_NT_DRUNIX_MAPS);
+    KTEST_EXPECT_EQ(tc, nhdr.n_descsz, expected_maps_len);
+    KTEST_EXPECT_TRUE(tc, k_strcmp((const char *)(note_buf + off + sizeof(nhdr)),
+                                   "DRUNIX") == 0);
+    KTEST_EXPECT_TRUE(tc,
+                      k_memcmp(note_buf + off + (uint32_t)sizeof(nhdr) +
+                                   test_align_up(nhdr.n_namesz, TEST_CORE_NOTE_ALIGN),
+                               expected_maps,
+                               expected_maps_len) == 0);
+    off += (uint32_t)sizeof(nhdr) + test_align_up(nhdr.n_namesz, TEST_CORE_NOTE_ALIGN) +
+           test_align_up(nhdr.n_descsz, TEST_CORE_NOTE_ALIGN);
+
+    KTEST_EXPECT_EQ(tc, off, phdr.p_filesz);
+
+    KTEST_ASSERT_EQ(tc, (uint32_t)fs_unlink("core.77"), 0u);
+    process_release_user_space(&proc);
+    vfs_reset();
+}
+
+static void test_mem_forensics_collects_fresh_process_layout(ktest_case_t *tc)
+{
+    static process_t proc;
+    mem_forensics_report_t report;
+    uint32_t stack_reserved =
+        (uint32_t)USER_STACK_MAX_PAGES * 0x1000u;
+
+    init_fresh_process_layout_proc(&proc);
+    k_strncpy(proc.name, "shell", sizeof(proc.name) - 1);
+
+    KTEST_ASSERT_EQ(tc, mem_forensics_collect(&proc, &report), 0u);
+    KTEST_EXPECT_EQ(tc, report.region_count, 3u);
+    KTEST_EXPECT_EQ(tc, report.regions[0].kind, MEM_FORENSICS_REGION_IMAGE);
+    KTEST_EXPECT_EQ(tc, report.regions[1].kind, MEM_FORENSICS_REGION_HEAP);
+    KTEST_EXPECT_EQ(tc, report.regions[2].kind, MEM_FORENSICS_REGION_STACK);
+    KTEST_EXPECT_EQ(tc, report.image_reserved_bytes, 0x00010000u);
+    KTEST_EXPECT_EQ(tc, report.heap_reserved_bytes, 0u);
+    KTEST_EXPECT_EQ(tc, report.stack_reserved_bytes, stack_reserved);
+    KTEST_EXPECT_EQ(tc, report.mmap_reserved_bytes, 0u);
+    KTEST_EXPECT_EQ(tc,
+                    report.total_reserved_bytes,
+                    0x00010000u + stack_reserved);
+}
+
+static void test_mem_forensics_collects_full_vma_table_with_fallback_image(ktest_case_t *tc)
+{
+    static process_t proc;
+    mem_forensics_report_t report;
+    uint32_t expected_total = 0x00010000u;
+
+    k_memset(&proc, 0, sizeof(proc));
+    proc.image_start = 0x00400000u;
+    proc.image_end = 0x00410000u;
+    proc.brk = 0x00500000u;
+    vma_init(&proc);
+
+    for (uint32_t i = 0; i < PROCESS_MAX_VMAS; i++) {
+        uint32_t start = 0x01000000u + i * 0x2000u;
+        KTEST_ASSERT_EQ(tc,
+                        vma_add(&proc, start, start + 0x1000u,
+                                VMA_FLAG_READ | VMA_FLAG_WRITE |
+                                VMA_FLAG_ANON | VMA_FLAG_PRIVATE,
+                                VMA_KIND_GENERIC),
+                        0u);
+        expected_total += 0x1000u;
+    }
+
+    KTEST_ASSERT_EQ(tc, mem_forensics_collect(&proc, &report), 0u);
+    KTEST_EXPECT_EQ(tc, report.region_count, PROCESS_MAX_VMAS + 1u);
+    KTEST_EXPECT_EQ(tc, report.regions[0].kind, MEM_FORENSICS_REGION_IMAGE);
+    KTEST_EXPECT_EQ(tc, report.image_reserved_bytes, 0x00010000u);
+    KTEST_EXPECT_EQ(tc, report.mmap_reserved_bytes, (uint32_t)PROCESS_MAX_VMAS * 0x1000u);
+    KTEST_EXPECT_EQ(tc, report.total_reserved_bytes, expected_total);
+}
+
+static void test_mem_forensics_classifies_unmapped_fault(ktest_case_t *tc)
+{
+    static process_t proc;
+    mem_forensics_report_t report;
+
+    init_vma_proc(&proc);
+    proc.crash.valid = 1;
+    proc.crash.signum = SIGSEGV;
+    proc.crash.cr2 = 0xDEADBEEFu;
+    proc.crash.frame.vector = 14u;
+    proc.crash.frame.error_code = 0x6u;
+
+    KTEST_ASSERT_EQ(tc, mem_forensics_collect(&proc, &report), 0u);
+    KTEST_EXPECT_EQ(tc, report.fault.valid, 1u);
+    KTEST_EXPECT_EQ(tc, report.fault.classification,
+                    MEM_FORENSICS_FAULT_UNMAPPED);
+}
+
+static void test_mem_forensics_classifies_lazy_miss_for_shadow_heap_mapping(
+    ktest_case_t *tc)
+{
+    static process_t proc;
+    mem_forensics_report_t report;
+    uint32_t *pte = 0;
+
+    init_vma_proc(&proc);
+    proc.pd_phys = paging_create_user_space();
+    KTEST_ASSERT_NE(tc, proc.pd_phys, 0u);
+    KTEST_ASSERT_EQ(tc, paging_walk(proc.pd_phys, proc.heap_start, &pte), 0u);
+    KTEST_ASSERT_EQ(tc, *pte & (PG_PRESENT | PG_USER), PG_PRESENT);
+
+    proc.crash.valid = 1;
+    proc.crash.signum = SIGSEGV;
+    proc.crash.cr2 = proc.heap_start;
+    proc.crash.frame.vector = 14u;
+    proc.crash.frame.error_code = 0x7u;
+
+    KTEST_ASSERT_EQ(tc, mem_forensics_collect(&proc, &report), 0u);
+    KTEST_EXPECT_EQ(tc, report.fault.classification,
+                    MEM_FORENSICS_FAULT_LAZY_MISS);
+
+    process_release_user_space(&proc);
+}
+
+static void test_mem_forensics_classifies_cow_write_fault(ktest_case_t *tc)
+{
+    static process_t proc;
+    mem_forensics_report_t report;
+    uint32_t phys;
+    uint32_t *pte = 0;
+
+    init_vma_proc(&proc);
+    proc.pd_phys = paging_create_user_space();
+    KTEST_ASSERT_NE(tc, proc.pd_phys, 0u);
+
+    phys = pmm_alloc_page();
+    KTEST_ASSERT_NE(tc, phys, 0u);
+    KTEST_ASSERT_EQ(tc,
+                    paging_map_page(proc.pd_phys, proc.heap_start, phys,
+                                    PG_PRESENT | PG_USER),
+                    0u);
+    KTEST_ASSERT_EQ(tc, paging_walk(proc.pd_phys, proc.heap_start, &pte), 0u);
+    *pte |= PG_COW;
+
+    proc.crash.valid = 1;
+    proc.crash.signum = SIGSEGV;
+    proc.crash.cr2 = proc.heap_start;
+    proc.crash.frame.vector = 14u;
+    proc.crash.frame.error_code = 0x7u;
+
+    KTEST_ASSERT_EQ(tc, mem_forensics_collect(&proc, &report), 0u);
+    KTEST_EXPECT_EQ(tc, report.fault.classification,
+                    MEM_FORENSICS_FAULT_COW_WRITE);
+
+    process_release_user_space(&proc);
+}
+
+static void test_mem_forensics_classifies_protection_fault(ktest_case_t *tc)
+{
+    static process_t proc;
+    mem_forensics_report_t report;
+
+    k_memset(&proc, 0, sizeof(proc));
+    vma_init(&proc);
+    KTEST_ASSERT_EQ(tc,
+                    vma_add(&proc, 0x80000000u, 0x80001000u,
+                            VMA_FLAG_READ | VMA_FLAG_ANON | VMA_FLAG_PRIVATE,
+                            VMA_KIND_GENERIC),
+                    0u);
+
+    proc.crash.valid = 1;
+    proc.crash.signum = SIGSEGV;
+    proc.crash.cr2 = 0x80000000u;
+    proc.crash.frame.vector = 14u;
+    proc.crash.frame.error_code = 0x7u;
+
+    KTEST_ASSERT_EQ(tc, mem_forensics_collect(&proc, &report), 0u);
+    KTEST_EXPECT_EQ(tc, report.fault.classification,
+                    MEM_FORENSICS_FAULT_PROTECTION);
+}
+
+static void test_mem_forensics_classifies_unknown_fault_vector(ktest_case_t *tc)
+{
+    static process_t proc;
+    mem_forensics_report_t report;
+
+    init_vma_proc(&proc);
+    proc.crash.valid = 1;
+    proc.crash.signum = SIGSEGV;
+    proc.crash.cr2 = proc.heap_start;
+    proc.crash.frame.vector = 13u;
+    proc.crash.frame.error_code = 0u;
+
+    KTEST_ASSERT_EQ(tc, mem_forensics_collect(&proc, &report), 0u);
+    KTEST_EXPECT_EQ(tc, report.fault.classification,
+                    MEM_FORENSICS_FAULT_UNKNOWN);
+}
+
+static void test_mem_forensics_classifies_stack_limit_fault(ktest_case_t *tc)
+{
+    static process_t proc;
+    mem_forensics_report_t report;
+
+    init_vma_proc(&proc);
+    proc.crash.valid = 1;
+    proc.crash.signum = SIGSEGV;
+    proc.crash.cr2 = proc.stack_low_limit - PAGE_SIZE;
+    proc.crash.frame.vector = 14u;
+    proc.crash.frame.error_code = 0x6u;
+    proc.crash.frame.user_esp = proc.stack_low_limit;
+
+    KTEST_ASSERT_EQ(tc, mem_forensics_collect(&proc, &report), 0u);
+    KTEST_EXPECT_EQ(tc, report.fault.classification,
+                    MEM_FORENSICS_FAULT_STACK_LIMIT);
+}
+
+static void test_mem_forensics_counts_present_heap_pages(ktest_case_t *tc)
+{
+    static process_t proc;
+    mem_forensics_report_t report;
+    uint32_t phys;
+
+    init_vma_proc(&proc);
+    proc.pd_phys = paging_create_user_space();
+    KTEST_ASSERT_NE(tc, proc.pd_phys, 0u);
+
+    phys = pmm_alloc_page();
+    KTEST_ASSERT_NE(tc, phys, 0u);
+    KTEST_ASSERT_EQ(tc,
+                    paging_map_page(proc.pd_phys, proc.heap_start, phys,
+                                    PG_PRESENT | PG_USER | PG_WRITABLE),
+                    0u);
+
+    KTEST_ASSERT_EQ(tc, mem_forensics_collect(&proc, &report), 0u);
+    KTEST_EXPECT_EQ(tc, report.heap_mapped_bytes, 0x1000u);
+
+    process_release_user_space(&proc);
+}
+
 static ktest_case_t cases[] = {
     KTEST_CASE(test_process_build_initial_frame_layout),
     KTEST_CASE(test_process_build_exec_frame_layout),
@@ -268,6 +717,18 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_vma_unmap_range_splits_generic_mapping),
     KTEST_CASE(test_vma_unmap_range_rejects_heap_or_stack),
     KTEST_CASE(test_vma_protect_range_splits_and_requires_full_coverage),
+    KTEST_CASE(test_mem_forensics_collects_basic_region_totals),
+    KTEST_CASE(test_mem_forensics_core_note_sizes_are_nonzero),
+    KTEST_CASE(test_core_dump_writes_drunix_notes_in_order),
+    KTEST_CASE(test_mem_forensics_collects_fresh_process_layout),
+    KTEST_CASE(test_mem_forensics_collects_full_vma_table_with_fallback_image),
+    KTEST_CASE(test_mem_forensics_classifies_unmapped_fault),
+    KTEST_CASE(test_mem_forensics_classifies_lazy_miss_for_shadow_heap_mapping),
+    KTEST_CASE(test_mem_forensics_classifies_cow_write_fault),
+    KTEST_CASE(test_mem_forensics_classifies_protection_fault),
+    KTEST_CASE(test_mem_forensics_classifies_unknown_fault_vector),
+    KTEST_CASE(test_mem_forensics_classifies_stack_limit_fault),
+    KTEST_CASE(test_mem_forensics_counts_present_heap_pages),
 };
 
 static ktest_suite_t suite = KTEST_SUITE("process", cases);

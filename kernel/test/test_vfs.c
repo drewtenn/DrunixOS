@@ -6,9 +6,14 @@
 #include "ktest.h"
 #include "vfs.h"
 #include "procfs.h"
+#include "process.h"
+#include "paging.h"
+#include "pmm.h"
 #include "sched.h"
 #include "klog.h"
 #include "kstring.h"
+#include "mem_forensics.h"
+#include "vma.h"
 
 #define ROOT_FILE_INO   11u
 #define ROOT_FILE_SIZE  5u
@@ -226,6 +231,106 @@ static int add_procfs_test_process(void)
     return sched_add(&proc);
 }
 
+static void init_procfs_layout_process(process_t *proc, int include_image_vma)
+{
+    k_memset(proc, 0, sizeof(*proc));
+    proc->saved_esp = 1; /* skip initial-frame synthesis in sched_add() */
+    proc->state = PROC_UNUSED;
+    proc->pid = 0;
+    proc->parent_pid = 42;
+    proc->pgid = 7;
+    proc->sid = 7;
+    proc->tty_id = 0;
+    proc->image_start = 0x00400000u;
+    proc->image_end = 0x00410000u;
+    proc->heap_start = 0x00410000u;
+    proc->brk = 0x00418000u;
+    proc->stack_low_limit =
+        USER_STACK_TOP - (uint32_t)USER_STACK_PAGES * 0x1000u;
+    k_strncpy(proc->name, "shell", sizeof(proc->name) - 1);
+    k_strncpy(proc->psargs, "/bin/shell", sizeof(proc->psargs) - 1);
+    proc->open_files[0].type = FD_TYPE_TTY;
+    proc->open_files[0].u.tty.tty_idx = 0;
+    proc->open_files[1].type = FD_TYPE_STDOUT;
+    proc->open_files[1].writable = 1;
+
+    vma_init(proc);
+    if (include_image_vma) {
+        vma_add(proc, proc->image_start, proc->image_end,
+                VMA_FLAG_READ | VMA_FLAG_EXEC | VMA_FLAG_PRIVATE,
+                VMA_KIND_IMAGE);
+    }
+    vma_add(proc, proc->heap_start, proc->brk,
+            VMA_FLAG_READ | VMA_FLAG_WRITE |
+            VMA_FLAG_ANON | VMA_FLAG_PRIVATE,
+            VMA_KIND_HEAP);
+    vma_add(proc,
+            USER_STACK_TOP - (uint32_t)USER_STACK_MAX_PAGES * 0x1000u,
+            USER_STACK_TOP,
+            VMA_FLAG_READ | VMA_FLAG_WRITE |
+            VMA_FLAG_ANON | VMA_FLAG_PRIVATE | VMA_FLAG_GROWSDOWN,
+            VMA_KIND_STACK);
+}
+
+static int map_procfs_test_page(process_t *proc, uint32_t virt, uint32_t flags)
+{
+    uint32_t phys;
+
+    if (!proc || proc->pd_phys == 0)
+        return -1;
+
+    phys = pmm_alloc_page();
+    if (phys == 0)
+        return -1;
+
+    if (paging_map_page(proc->pd_phys, virt, phys, flags) != 0) {
+        pmm_free_page(phys);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int add_procfs_mapped_layout_process(int include_image_vma)
+{
+    static process_t proc;
+
+    sched_init();
+    init_procfs_layout_process(&proc, include_image_vma);
+    proc.pd_phys = paging_create_user_space();
+    if (proc.pd_phys == 0)
+        return -1;
+    if (map_procfs_test_page(&proc, proc.image_start, PG_PRESENT | PG_USER) != 0)
+        return -1;
+    if (map_procfs_test_page(&proc, proc.heap_start,
+                             PG_PRESENT | PG_USER | PG_WRITABLE) != 0)
+        return -1;
+    if (map_procfs_test_page(&proc, USER_STACK_TOP - 0x1000u,
+                             PG_PRESENT | PG_USER | PG_WRITABLE) != 0)
+        return -1;
+
+    return sched_add(&proc);
+}
+
+static void teardown_procfs_test_process(uint32_t pid)
+{
+    process_t *proc = sched_find_pid(pid);
+
+    if (proc)
+        process_release_user_space(proc);
+    sched_init();
+    vfs_reset();
+}
+
+static int read_procfs_text_file(uint32_t kind, uint32_t pid, char *buf, uint32_t cap)
+{
+    int n = procfs_read_file(kind, pid, 0u, 0u, buf, cap - 1u);
+
+    if (n >= 0)
+        buf[n] = '\0';
+    return n;
+}
+
 static void test_open_no_mount(ktest_case_t *tc)
 {
     uint32_t ino = 0, size = 0;
@@ -348,6 +453,103 @@ static void test_proc_pid_directory_lists_status_maps_and_fd(ktest_case_t *tc)
     vfs_reset();
 }
 
+static void test_proc_pid_directory_lists_vmstat_and_fault(ktest_case_t *tc)
+{
+    char buf[128];
+    int n;
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree_with_proc(), 0u);
+    KTEST_EXPECT_EQ(tc, (uint32_t)add_procfs_test_process(), 1u);
+
+    n = vfs_getdents("proc/1", buf, sizeof(buf));
+    KTEST_EXPECT_TRUE(tc, n > 0);
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "vmstat"));
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "fault"));
+    vfs_reset();
+}
+
+static void test_proc_vmstat_reports_image_totals_and_region_count(ktest_case_t *tc)
+{
+    char buf[256];
+    int n;
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree_with_proc(), 0u);
+    KTEST_EXPECT_EQ(tc, (uint32_t)add_procfs_mapped_layout_process(1), 1u);
+
+    n = read_procfs_text_file(PROCFS_FILE_VMSTAT, 1u, buf, sizeof(buf));
+    KTEST_EXPECT_TRUE(tc, n > 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "Image:\t4096/65536") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "Heap:\t4096/32768") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "Stack:\t4096/262144") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "Regions:\t3") != 0);
+    teardown_procfs_test_process(1u);
+}
+
+static void test_proc_maps_preserves_mapped_subranges(ktest_case_t *tc)
+{
+    char buf[512];
+    int n;
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree_with_proc(), 0u);
+    KTEST_EXPECT_EQ(tc, (uint32_t)add_procfs_mapped_layout_process(1), 1u);
+
+    n = read_procfs_text_file(PROCFS_FILE_MAPS, 1u, buf, sizeof(buf));
+    KTEST_EXPECT_TRUE(tc, n > 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "00400000-00401000 r--p shell") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "00410000-00411000 rw-p [heap]") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "bffff000-c0000000 rw-p [stack]") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "00410000-00418000 rw-p [heap]") == 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "4096/32768") == 0);
+    teardown_procfs_test_process(1u);
+}
+
+static void test_proc_maps_matches_mem_forensics_renderer(ktest_case_t *tc)
+{
+    static char procfs_buf[512];
+    static char render_buf[512];
+    uint32_t rendered = 0;
+    int n;
+    process_t *proc;
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree_with_proc(), 0u);
+    KTEST_EXPECT_EQ(tc, (uint32_t)add_procfs_mapped_layout_process(1), 1u);
+
+    proc = sched_find_pid(1u);
+    KTEST_ASSERT_NOT_NULL(tc, proc);
+
+    n = read_procfs_text_file(PROCFS_FILE_MAPS, 1u, procfs_buf, sizeof(procfs_buf));
+    KTEST_ASSERT_TRUE(tc, n > 0);
+
+    KTEST_ASSERT_EQ(tc,
+                    (uint32_t)mem_forensics_render_maps(proc, render_buf,
+                                                       sizeof(render_buf),
+                                                       &rendered),
+                    0u);
+    render_buf[rendered] = '\0';
+    KTEST_EXPECT_TRUE(tc, k_strcmp(procfs_buf, render_buf) == 0);
+    teardown_procfs_test_process(1u);
+}
+
+static void test_proc_fallback_image_surfaces_stay_visible(ktest_case_t *tc)
+{
+    char vmstat[256];
+    char maps[512];
+    int n;
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree_with_proc(), 0u);
+    KTEST_EXPECT_EQ(tc, (uint32_t)add_procfs_mapped_layout_process(0), 1u);
+
+    n = read_procfs_text_file(PROCFS_FILE_VMSTAT, 1u, vmstat, sizeof(vmstat));
+    KTEST_EXPECT_TRUE(tc, n > 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(vmstat, "Image:\t4096/65536") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(vmstat, "Regions:\t3") != 0);
+
+    n = read_procfs_text_file(PROCFS_FILE_MAPS, 1u, maps, sizeof(maps));
+    KTEST_EXPECT_TRUE(tc, n > 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(maps, "00400000-00401000 r--p shell") != 0);
+    teardown_procfs_test_process(1u);
+}
+
 static void test_proc_fd_directory_lists_open_fds(ktest_case_t *tc)
 {
     char buf[128];
@@ -404,6 +606,47 @@ static void test_proc_kmsg_renders_retained_kernel_log(ktest_case_t *tc)
     vfs_reset();
 }
 
+static void test_proc_fault_reports_empty_state_without_crash(ktest_case_t *tc)
+{
+    char buf[256];
+    int n;
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree_with_proc(), 0u);
+    KTEST_EXPECT_EQ(tc, (uint32_t)add_procfs_test_process(), 1u);
+
+    n = procfs_read_file(PROCFS_FILE_FAULT, 1u, 0u, 0u, buf, sizeof(buf) - 1u);
+    KTEST_EXPECT_TRUE(tc, n > 0);
+    buf[n] = '\0';
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "State:\tnone") != 0);
+    vfs_reset();
+}
+
+static void test_proc_fault_reports_crash_context(ktest_case_t *tc)
+{
+    char buf[256];
+    int n;
+    process_t *proc;
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree_with_proc(), 0u);
+    KTEST_EXPECT_EQ(tc, (uint32_t)add_procfs_test_process(), 1u);
+
+    proc = sched_find_pid(1u);
+    KTEST_ASSERT_NOT_NULL(tc, proc);
+    proc->crash.valid = 1;
+    proc->crash.signum = SIGSEGV;
+    proc->crash.cr2 = 0xDEADBEEFu;
+    proc->crash.frame.eip = 0x00401234u;
+    proc->crash.frame.vector = 14u;
+    proc->crash.frame.error_code = 0x6u;
+
+    n = procfs_read_file(PROCFS_FILE_FAULT, 1u, 0u, 0u, buf, sizeof(buf) - 1u);
+    KTEST_EXPECT_TRUE(tc, n > 0);
+    buf[n] = '\0';
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "Signal:\t11") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "CR2:\t0xdeadbeef") != 0);
+    vfs_reset();
+}
+
 /* ── Suite ──────────────────────────────────────────────────────────────── */
 
 static ktest_case_t cases[] = {
@@ -417,8 +660,15 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_dev_namespace_lists_and_resolves_devices),
     KTEST_CASE(test_proc_namespace_lists_modules_and_pid_dirs),
     KTEST_CASE(test_proc_pid_directory_lists_status_maps_and_fd),
+    KTEST_CASE(test_proc_pid_directory_lists_vmstat_and_fault),
+    KTEST_CASE(test_proc_vmstat_reports_image_totals_and_region_count),
+    KTEST_CASE(test_proc_maps_preserves_mapped_subranges),
+    KTEST_CASE(test_proc_maps_matches_mem_forensics_renderer),
+    KTEST_CASE(test_proc_fallback_image_surfaces_stay_visible),
     KTEST_CASE(test_proc_fd_directory_lists_open_fds),
     KTEST_CASE(test_proc_kmsg_renders_retained_kernel_log),
+    KTEST_CASE(test_proc_fault_reports_empty_state_without_crash),
+    KTEST_CASE(test_proc_fault_reports_crash_context),
 };
 
 static ktest_suite_t suite = KTEST_SUITE("vfs", cases);

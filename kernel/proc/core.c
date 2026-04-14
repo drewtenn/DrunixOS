@@ -9,6 +9,7 @@
 #include "kheap.h"
 #include "kprintf.h"
 #include "kstring.h"
+#include "mem_forensics.h"
 #include "paging.h"
 #include "vfs.h"
 #include <stdint.h>
@@ -20,6 +21,11 @@
 /* ELF note types for Linux-format core files. */
 #define NT_PRSTATUS   1   /* prstatus_t — register state + signal info */
 #define NT_PRPSINFO   3   /* prpsinfo_t — process name and argv        */
+#define NT_DRUNIX_VMSTAT  0x4458564du
+#define NT_DRUNIX_FAULT   0x44584654u
+#define NT_DRUNIX_MAPS    0x44584d50u
+
+static const char drunix_note_name[] = "DRUNIX";
 
 typedef uint32_t elf_greg_t;
 typedef elf_greg_t elf_gregset_t[ELF_NGREG];
@@ -354,6 +360,51 @@ static int write_prpsinfo_note(uint32_t inode_num, uint32_t offset,
     return 0;
 }
 
+static uint32_t text_note_size(const char *name, uint32_t text_len)
+{
+    uint32_t name_len = (uint32_t)k_strlen(name) + 1u;
+
+    return (uint32_t)sizeof(Elf32_Nhdr) +
+           align_up(name_len, CORE_NOTE_NAME_ALIGN) +
+           align_up(text_len, CORE_NOTE_NAME_ALIGN);
+}
+
+static int write_text_note(uint32_t inode_num, uint32_t offset, uint32_t type,
+                           const char *name, const char *text, uint32_t text_len)
+{
+    Elf32_Nhdr nhdr;
+    static const uint8_t zero_pad[4] = { 0, 0, 0, 0 };
+    uint32_t name_pad;
+    uint32_t desc_pad;
+
+    nhdr.n_namesz = (uint32_t)k_strlen(name) + 1u;
+    nhdr.n_descsz = text_len;
+    nhdr.n_type = type;
+    name_pad = align_up(nhdr.n_namesz, CORE_NOTE_NAME_ALIGN) - nhdr.n_namesz;
+    desc_pad = align_up(nhdr.n_descsz, CORE_NOTE_NAME_ALIGN) - nhdr.n_descsz;
+
+    if (write_exact(inode_num, offset, &nhdr, sizeof(nhdr)) != 0)
+        return -1;
+    offset += (uint32_t)sizeof(nhdr);
+
+    if (write_exact(inode_num, offset, name, nhdr.n_namesz) != 0)
+        return -1;
+    offset += nhdr.n_namesz;
+
+    if (name_pad && write_exact(inode_num, offset, zero_pad, name_pad) != 0)
+        return -1;
+    offset += name_pad;
+
+    if (write_exact(inode_num, offset, text, text_len) != 0)
+        return -1;
+    offset += text_len;
+
+    if (desc_pad && write_exact(inode_num, offset, zero_pad, desc_pad) != 0)
+        return -1;
+
+    return 0;
+}
+
 static int write_segment_bytes(uint32_t inode_num, uint32_t file_offset,
                                process_t *proc, uint32_t seg_vaddr,
                                uint32_t seg_size)
@@ -374,6 +425,7 @@ int core_dump_process(process_t *proc, int signum)
 {
     char *path;
     int ino;
+    int rc = -1;
     uint32_t seg_count;
     uint32_t phnum;
     uint32_t note_off;
@@ -382,6 +434,16 @@ int core_dump_process(process_t *proc, int signum)
     uint32_t seg_vaddr, seg_size, seg_flags;
     uint32_t search;
     uint32_t phoff;
+    uint32_t notes_off;
+    uint32_t vmstat_cap;
+    uint32_t fault_cap;
+    uint32_t maps_cap;
+    char *vmstat_note = 0;
+    char *fault_note = 0;
+    char *maps_note = 0;
+    uint32_t vmstat_size = 0;
+    uint32_t fault_size = 0;
+    uint32_t maps_size = 0;
     Elf32_Ehdr ehdr;
     Elf32_Phdr phdr;
 
@@ -398,9 +460,38 @@ int core_dump_process(process_t *proc, int signum)
     if (ino < 0)
         return -1;
 
+    vmstat_cap = mem_forensics_vmstat_note_size();
+    fault_cap = mem_forensics_fault_note_size();
+    if (vmstat_cap == 0u || fault_cap == 0u)
+        return -1;
+
+    if (mem_forensics_render_maps(proc, 0, 0, &maps_size) != 0)
+        return -1;
+    maps_cap = maps_size + 1u;
+    if (maps_cap == 0u)
+        return -1;
+
+    vmstat_note = (char *)kmalloc(vmstat_cap);
+    fault_note = (char *)kmalloc(fault_cap);
+    maps_note = (char *)kmalloc(maps_cap);
+    if (!vmstat_note || !fault_note || !maps_note)
+        goto cleanup;
+
     seg_count = count_user_segments(proc);
     phnum = seg_count + 1u;  /* one PT_NOTE plus N PT_LOADs */
-    note_size = prstatus_note_size() + prpsinfo_note_size();
+    if (mem_forensics_render_vmstat(proc, vmstat_note, vmstat_cap,
+                                    &vmstat_size) != 0)
+        goto cleanup;
+    if (mem_forensics_render_fault(proc, fault_note, fault_cap,
+                                   &fault_size) != 0)
+        goto cleanup;
+    if (mem_forensics_render_maps(proc, maps_note, maps_cap,
+                                  &maps_size) != 0)
+        goto cleanup;
+    note_size = prstatus_note_size() + prpsinfo_note_size() +
+                text_note_size(drunix_note_name, vmstat_size) +
+                text_note_size(drunix_note_name, fault_size) +
+                text_note_size(drunix_note_name, maps_size);
     note_off = (uint32_t)sizeof(Elf32_Ehdr) + phnum * (uint32_t)sizeof(Elf32_Phdr);
     load_off = align_up(note_off + note_size, CORE_SEG_ALIGN);
 
@@ -421,7 +512,7 @@ int core_dump_process(process_t *proc, int signum)
     ehdr.e_phnum     = (uint16_t)phnum;
 
     if (write_exact((uint32_t)ino, 0, &ehdr, sizeof(ehdr)) != 0)
-        return -1;
+        goto cleanup;
 
     phoff = ehdr.e_phoff;
     k_memset(&phdr, 0, sizeof(phdr));
@@ -430,7 +521,7 @@ int core_dump_process(process_t *proc, int signum)
     phdr.p_filesz = note_size;
     phdr.p_align  = 4;
     if (write_exact((uint32_t)ino, phoff, &phdr, sizeof(phdr)) != 0)
-        return -1;
+        goto cleanup;
     phoff += (uint32_t)sizeof(phdr);
 
     search = 0;
@@ -446,17 +537,32 @@ int core_dump_process(process_t *proc, int signum)
         phdr.p_flags  = seg_flags;
         phdr.p_align  = CORE_SEG_ALIGN;
         if (write_exact((uint32_t)ino, phoff, &phdr, sizeof(phdr)) != 0)
-            return -1;
+            goto cleanup;
         phoff += (uint32_t)sizeof(phdr);
         cur_load_off += seg_size;
     }
 
     if (write_prstatus_note((uint32_t)ino, note_off, proc, signum) != 0)
-        return -1;
+        goto cleanup;
 
     if (write_prpsinfo_note((uint32_t)ino,
                             note_off + prstatus_note_size(), proc) != 0)
-        return -1;
+        goto cleanup;
+
+    notes_off = note_off + prstatus_note_size() + prpsinfo_note_size();
+    if (write_text_note((uint32_t)ino, notes_off, NT_DRUNIX_VMSTAT,
+                        drunix_note_name, vmstat_note, vmstat_size) != 0)
+        goto cleanup;
+    notes_off += text_note_size(drunix_note_name, vmstat_size);
+
+    if (write_text_note((uint32_t)ino, notes_off, NT_DRUNIX_FAULT,
+                        drunix_note_name, fault_note, fault_size) != 0)
+        goto cleanup;
+    notes_off += text_note_size(drunix_note_name, fault_size);
+
+    if (write_text_note((uint32_t)ino, notes_off, NT_DRUNIX_MAPS,
+                        drunix_note_name, maps_note, maps_size) != 0)
+        goto cleanup;
 
     search = 0;
     cur_load_off = load_off;
@@ -465,12 +571,21 @@ int core_dump_process(process_t *proc, int signum)
         (void)seg_flags;
         if (write_segment_bytes((uint32_t)ino, cur_load_off, proc,
                                 seg_vaddr, seg_size) != 0)
-            return -1;
+            goto cleanup;
         cur_load_off += seg_size;
     }
 
     if (fs_flush_inode((uint32_t)ino) != 0)
-        return -1;
+        goto cleanup;
 
-    return 0;
+    rc = 0;
+
+cleanup:
+    if (maps_note)
+        kfree(maps_note);
+    if (fault_note)
+        kfree(fault_note);
+    if (vmstat_note)
+        kfree(vmstat_note);
+    return rc;
 }

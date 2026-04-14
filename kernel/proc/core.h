@@ -8,8 +8,9 @@
 /*
  * core_dump_process: write a minimal ELF32 core file for `proc`.
  *
- * The dump contains one NT_PRSTATUS note plus PT_LOAD segments for all
- * present user pages in the process's address space.
+ * The dump contains Linux-compatible CORE notes, Drunix memory-forensics
+ * notes, plus PT_LOAD segments for all present user pages in the process's
+ * address space.
  *
  * Returns 0 on success, -1 on failure.
  */

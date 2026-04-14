@@ -6,7 +6,7 @@
 #include "procfs.h"
 #include "sched.h"
 #include "module.h"
-#include "paging.h"
+#include "mem_forensics.h"
 #include "kheap.h"
 #include "kprintf.h"
 #include "kstring.h"
@@ -173,6 +173,22 @@ static int procfs_parse_path(const char *relpath, uint32_t *node_type_out,
         return 0;
     }
 
+    if (k_strcmp(slash, "vmstat") == 0) {
+        if (node_type_out) *node_type_out = VFS_NODE_PROCFILE;
+        if (kind_out) *kind_out = PROCFS_FILE_VMSTAT;
+        if (pid_out) *pid_out = pid;
+        if (index_out) *index_out = 0;
+        return 0;
+    }
+
+    if (k_strcmp(slash, "fault") == 0) {
+        if (node_type_out) *node_type_out = VFS_NODE_PROCFILE;
+        if (kind_out) *kind_out = PROCFS_FILE_FAULT;
+        if (pid_out) *pid_out = pid;
+        if (index_out) *index_out = 0;
+        return 0;
+    }
+
     if (k_strcmp(slash, "fd") == 0) {
         if (node_type_out) *node_type_out = VFS_NODE_DIR;
         if (kind_out) *kind_out = PROCFS_FILE_NONE;
@@ -235,30 +251,6 @@ static uint32_t procfs_open_fd_count(const process_t *proc)
     return count;
 }
 
-static const char *procfs_label_for_range(const process_t *proc,
-                                          uint32_t start, uint32_t end)
-{
-    if (!proc)
-        return "";
-
-    if (proc->image_start < proc->image_end &&
-        start < proc->image_end &&
-        end > proc->image_start)
-        return proc->name[0] ? proc->name : "[image]";
-
-    if (proc->heap_start < proc->brk &&
-        start < proc->brk &&
-        end > proc->heap_start)
-        return "[heap]";
-
-    if (proc->stack_low_limit < USER_STACK_TOP &&
-        start < USER_STACK_TOP &&
-        end > proc->stack_low_limit)
-        return "[stack]";
-
-    return "";
-}
-
 static void procfs_render_status(render_buf_t *rb, const process_t *proc)
 {
     procfs_emitf(rb, "Name:\t%s\n", proc->name[0] ? proc->name : "(unnamed)");
@@ -279,91 +271,13 @@ static void procfs_render_status(render_buf_t *rb, const process_t *proc)
     procfs_emitf(rb, "Cmd:\t%s\n", proc->psargs[0] ? proc->psargs : proc->name);
 }
 
-static void procfs_emit_map_region(render_buf_t *rb, const process_t *proc,
-                                   uint32_t start, uint32_t end, uint32_t flags)
-{
-    const char *label = procfs_label_for_range(proc, start, end);
-    const char *perm = (flags & PG_WRITABLE) ? "rw-p" : "r--p";
-
-    if (label[0] != '\0')
-        procfs_emitf(rb, "%08x-%08x %s %s\n", start, end, perm, label);
-    else
-        procfs_emitf(rb, "%08x-%08x %s\n", start, end, perm);
-}
-
-static void procfs_render_maps(render_buf_t *rb, const process_t *proc)
-{
-    uint32_t *pd;
-    uint32_t region_start = 0;
-    uint32_t region_end = 0;
-    uint32_t region_flags = 0;
-    int have_region = 0;
-
-    if (!proc || proc->pd_phys == 0)
-        return;
-
-    pd = (uint32_t *)proc->pd_phys;
-
-    for (uint32_t pdi = 0; pdi < 1024; pdi++) {
-        if ((pd[pdi] & (PG_PRESENT | PG_USER)) != (PG_PRESENT | PG_USER)) {
-            if (have_region) {
-                procfs_emit_map_region(rb, proc, region_start, region_end, region_flags);
-                have_region = 0;
-            }
-            continue;
-        }
-
-        uint32_t *pt = (uint32_t *)(pd[pdi] & ~0xFFFu);
-        for (uint32_t pti = 0; pti < 1024; pti++) {
-            uint32_t vaddr = (pdi << 22) | (pti << 12);
-            uint32_t pte = pt[pti];
-            uint32_t flags = pte & (PG_WRITABLE | PG_COW);
-
-            if (vaddr >= USER_STACK_TOP) {
-                if (have_region) {
-                    procfs_emit_map_region(rb, proc, region_start, region_end, region_flags);
-                    have_region = 0;
-                }
-                return;
-            }
-
-            if ((pte & (PG_PRESENT | PG_USER)) != (PG_PRESENT | PG_USER)) {
-                if (have_region) {
-                    procfs_emit_map_region(rb, proc, region_start, region_end, region_flags);
-                    have_region = 0;
-                }
-                continue;
-            }
-
-            if (!have_region) {
-                region_start = vaddr;
-                region_end = vaddr + 0x1000u;
-                region_flags = flags;
-                have_region = 1;
-                continue;
-            }
-
-            if (vaddr == region_end && flags == region_flags) {
-                region_end += 0x1000u;
-                continue;
-            }
-
-            procfs_emit_map_region(rb, proc, region_start, region_end, region_flags);
-            region_start = vaddr;
-            region_end = vaddr + 0x1000u;
-            region_flags = flags;
-        }
-    }
-
-    if (have_region)
-        procfs_emit_map_region(rb, proc, region_start, region_end, region_flags);
-}
-
 static const char *procfs_fd_kind_name(uint32_t kind)
 {
     switch (kind) {
     case PROCFS_FILE_STATUS:  return "status";
     case PROCFS_FILE_MAPS:    return "maps";
+    case PROCFS_FILE_VMSTAT:  return "vmstat";
+    case PROCFS_FILE_FAULT:   return "fault";
     case PROCFS_FILE_FD:      return "fd";
     case PROCFS_FILE_MODULES: return "modules";
     case PROCFS_FILE_KMSG:    return "kmsg";
@@ -445,8 +359,11 @@ static int procfs_render_file(uint32_t kind, uint32_t pid, uint32_t index,
         procfs_render_status(&rb, proc);
         break;
     case PROCFS_FILE_MAPS:
-        procfs_render_maps(&rb, proc);
-        break;
+        return mem_forensics_render_maps(proc, buf, cap, size_out);
+    case PROCFS_FILE_VMSTAT:
+        return mem_forensics_render_vmstat(proc, buf, cap, size_out);
+    case PROCFS_FILE_FAULT:
+        return mem_forensics_render_fault(proc, buf, cap, size_out);
     case PROCFS_FILE_FD:
         if (index >= MAX_FDS || proc->open_files[index].type == FD_TYPE_NONE)
             return -1;
@@ -588,6 +505,10 @@ int procfs_getdents(const char *relpath, char *buf, uint32_t bufsz)
     if (procfs_append_dirent(buf, bufsz, &written, "status", 0) != 0)
         return (int)written;
     if (procfs_append_dirent(buf, bufsz, &written, "maps", 0) != 0)
+        return (int)written;
+    if (procfs_append_dirent(buf, bufsz, &written, "vmstat", 0) != 0)
+        return (int)written;
+    if (procfs_append_dirent(buf, bufsz, &written, "fault", 0) != 0)
         return (int)written;
     if (procfs_append_dirent(buf, bufsz, &written, "fd", 1) != 0)
         return (int)written;

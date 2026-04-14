@@ -43,7 +43,7 @@ typedef struct {
 } Elf32_Nhdr;
 ```
 
-The header is followed by the name string (zero-padded to a 4-byte boundary), then the descriptor data (also zero-padded to a 4-byte boundary). We write two notes, both under the name `"CORE"`.
+The header is followed by the name string (zero-padded to a 4-byte boundary), then the descriptor data (also zero-padded to a 4-byte boundary). We write two notes under the name `"CORE"` and three additional notes under the name `"DRUNIX"`.
 
 **NT_PRSTATUS (type 1)** is the register state note. Its descriptor is a 144-byte structure that matches Linux's `elf_prstatus` exactly:
 
@@ -113,6 +113,16 @@ typedef struct __attribute__((packed)) {
 
 When GDB opens a core file, it reads `pr_fname` to identify the binary and `pr_psargs` to show the command that was running. Without this note the debugger can still read registers and memory, but it cannot automatically find the matching executable or show you what arguments the program was called with.
 
+### DRUNIX Text Notes for Memory Forensics
+
+The core writer also emits three text-backed `DRUNIX` notes that mirror the live `/proc/<pid>/` memory-forensics views:
+
+- `DRUNIX` note type `0x4458564d` (`"DXVM"`) carries the same compact per-process totals shown by `/proc/<pid>/vmstat`.
+- `DRUNIX` note type `0x44584654` (`"DXFT"`) carries the same fault snapshot shown by `/proc/<pid>/fault`.
+- `DRUNIX` note type `0x44584d50` (`"DXMP"`) carries the same detailed virtual-memory map text shown by `/proc/<pid>/maps`.
+
+These notes are generated from the same internal process-memory model used by `procfs`, then copied directly into the ELF `PT_NOTE` payload during core creation. That alignment gives us a stable live/post-mortem bridge: while a process is running, `/proc/<pid>/vmstat`, `/proc/<pid>/fault`, and `/proc/<pid>/maps` show current state; after a crash, the core file preserves the same views as frozen text notes.
+
 ### Capturing the Command Line at Launch Time
 
 The process name and command-line string cannot be recovered from memory after a crash reliably — the process may have corrupted its own stack, or `argv` may have been overwritten by the program's own data. We therefore copy them into the process descriptor at creation time, before the process ever gets to run.
@@ -137,13 +147,13 @@ The write proceeds in four passes:
 
 1. Write the ELF header.
 2. Write all program headers — first the `PT_NOTE` header, then one `PT_LOAD` header for each user-space segment identified during the walk. All program headers are written before any data, because the program header table must immediately follow the ELF header and its total size is known once the segment count is known.
-3. Write the notes block — first the `NT_PRSTATUS` note, then the `NT_PRPSINFO` note. Both notes are written at the fixed `note_off` offset (immediately after the program header table) in the sequence the program header declared.
+3. Write the notes block at the fixed `note_off` offset (immediately after the program header table). The block begins with the two Linux-compatible `CORE` notes — `NT_PRSTATUS`, then `NT_PRPSINFO` — and then appends the three `DRUNIX` text notes for `vmstat`, `fault`, and `maps` in that order.
 4. Walk user-space memory a second time and write each segment's page data at the file offset recorded in its `PT_LOAD` header.
 
 After all data is written, the filesystem's flush step ensures the data reaches the on-disk image before the kernel returns.
 
 ### Where the Machine Is by the End of Chapter 24
 
-When a process dies from an unhandled fatal signal and a crash frame was recorded, we now write a fully-formed ELF core file to disk before discarding the process. The file contains two ELF notes: `NT_PRSTATUS` with the register state and signal context, and `NT_PRPSINFO` with the process name, command line, and process group identifiers. These are followed by the raw bytes of every user-space page that was mapped at the moment of the fault.
+When a process dies from an unhandled fatal signal and a crash frame was recorded, we now write a fully-formed ELF core file to disk before discarding the process. The file contains two Linux-compatible `CORE` notes — `NT_PRSTATUS` with register and signal context, and `NT_PRPSINFO` with process identity — plus three `DRUNIX` text notes mirroring `/proc/<pid>/vmstat`, `/proc/<pid>/fault`, and `/proc/<pid>/maps`. These are followed by the raw bytes of every user-space page that was mapped at the moment of the fault.
 
 The `process_t` descriptor carries two new fields — `name` and `psargs` — populated at process-creation time so the information is available regardless of what the process did to its own stack before crashing. The file format is layout-compatible with Linux's 32-bit core format, so standard tools such as GDB can load the file and restore the full crash context without any modification.
