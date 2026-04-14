@@ -20,7 +20,9 @@ Required:
 Optional:
 
 - `i386-elf-gdb` for `make debug`
-- `cairosvg` (Python package) or `rsvg-convert` for `make epub` and `make docs` — converts SVG diagrams to PNG
+- `pandoc` for `make epub`, `make pdf`, and `make docs`
+- `cairosvg` (Python package) or `rsvg-convert` for `make epub`, `make pdf`, and `make docs` — converts SVG diagrams to PNG
+- `calibre` (provides `ebook-convert`) for `make pdf` and `make docs` — renders the PDF from the built EPUB
 
 ## Install Dependencies
 
@@ -30,7 +32,8 @@ Install Homebrew first, then:
 
 ```sh
 brew install make nasm python qemu x86_64-elf-gcc i686-elf-grub xorriso
-brew install i386-elf-gdb
+brew install i386-elf-gdb pandoc
+brew install --cask calibre
 pip3 install cairosvg
 # or: brew install librsvg
 ```
@@ -41,7 +44,7 @@ The simplest supported setup is WSL2 with Ubuntu. Inside the WSL shell:
 
 ```sh
 sudo apt update
-sudo apt install -y build-essential python3 nasm qemu-system-x86 xorriso grub-pc-bin mtools
+sudo apt install -y build-essential python3 nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc calibre
 pip3 install cairosvg
 ```
 
@@ -64,21 +67,21 @@ Ubuntu / Debian:
 
 ```sh
 sudo apt update
-sudo apt install -y build-essential python3 nasm qemu-system-x86 xorriso grub-pc-bin mtools
+sudo apt install -y build-essential python3 nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc calibre
 pip3 install cairosvg
 ```
 
 Fedora:
 
 ```sh
-sudo dnf install -y make python3 nasm qemu-system-i386 xorriso grub2-tools-extra mtools
+sudo dnf install -y make python3 nasm qemu-system-i386 xorriso grub2-tools-extra mtools pandoc calibre
 pip3 install cairosvg
 ```
 
 Arch:
 
 ```sh
-sudo pacman -S --needed make python nasm qemu-desktop xorriso grub mtools
+sudo pacman -S --needed make python nasm qemu-desktop xorriso grub mtools pandoc calibre
 pip3 install cairosvg
 ```
 
@@ -102,8 +105,9 @@ Useful targets:
 - `make test` boots with the in-kernel unit tests enabled
 - `make KTEST=1 run` boots with the in-kernel unit tests enabled
 - `make rebuild` wipes outputs, rebuilds everything, and boots from scratch
-- `make docs` builds the PDF book
 - `make epub` builds the EPUB edition
+- `make pdf` builds the PDF book by converting the EPUB with `ebook-convert`
+- `make docs` builds both the EPUB and the PDF
 - `make clean` removes build outputs
 
 ## Debugging

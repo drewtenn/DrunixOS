@@ -157,7 +157,8 @@ EPUB := docs/Drunix OS.epub
 #
 # epub build: SVGs are converted to PNG (2× scale) so Apple Books can
 #             tap-to-zoom. The Lua filter rewrites .svg paths to .png.
-# PDF build:  pandoc passes SVGs to XeLaTeX which converts them via rsvg-convert.
+# PDF build:  Calibre's ebook-convert turns the built EPUB into the PDF so
+#             both editions share the same content, styling, and diagrams.
 
 DIAGRAMS_SVG := $(wildcard docs/diagrams/*.svg)
 DIAGRAMS_PNG := $(DIAGRAMS_SVG:.svg=.png)
@@ -175,21 +176,8 @@ docs/diagrams/%.png: docs/diagrams/%.svg
 		exit 1; \
 	fi
 
-docs/Drunix\ OS.pdf: $(DOCS_SRC) $(DIAGRAMS_SVG) docs/title.tex docs/latex-header.tex
-	PATH="$$PATH:/Library/TeX/texbin:/opt/homebrew/bin" pandoc $(DOCS_SRC) \
-	    --pdf-engine=xelatex \
-	    --toc \
-	    --toc-depth=2 \
-	    -V documentclass=book \
-	    -V classoption=openright \
-	    -V geometry="twoside,inner=1.25in,outer=0.85in,top=1in,bottom=1.2in" \
-	    -V fontsize=11pt \
-	    -V monofont="Menlo" \
-	    -V secnumdepth=-2 \
-	    -H docs/latex-header.tex \
-	    -B docs/title.tex \
-	    --resource-path=docs \
-	    -o "$(PDF)"
+docs/Drunix\ OS.pdf: docs/Drunix\ OS.epub
+	ebook-convert "$(EPUB)" "$(PDF)"
 
 # ─── epub ─────────────────────────────────────────────────────────────────────
 # Use the generated PNG as the actual EPUB cover image.
