@@ -1,6 +1,7 @@
 #include "ktest.h"
 #include "display.h"
 #include "desktop.h"
+#include "mouse.h"
 
 static gui_cell_t desktop_cells[80 * 25];
 
@@ -143,6 +144,87 @@ static void test_desktop_plain_text_forwards_to_shell_when_focused(ktest_case_t 
     KTEST_EXPECT_EQ(tc, desktop.focus, DESKTOP_FOCUS_SHELL);
 }
 
+static void test_mouse_packet_decode_preserves_motion_and_buttons(ktest_case_t *tc)
+{
+    desktop_pointer_event_t ev;
+    mouse_packet_t packet = { .buttons = 0x09, .dx = -120, .dy = 60 };
+
+    KTEST_EXPECT_EQ(tc, mouse_decode_packet(&packet, &ev), 0);
+    KTEST_EXPECT_TRUE(tc, ev.left_down);
+    KTEST_EXPECT_EQ(tc, ev.dx, -120);
+    KTEST_EXPECT_EQ(tc, ev.dy, 60);
+}
+
+static void test_mouse_stream_resyncs_after_noise_and_ack(ktest_case_t *tc)
+{
+    mouse_packet_stream_t stream;
+    mouse_packet_t packet;
+
+    mouse_stream_reset(&stream);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0xFA, &packet), 0);
+    KTEST_EXPECT_EQ(tc, stream.index, 0);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0x00, &packet), 0);
+    KTEST_EXPECT_EQ(tc, stream.index, 0);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0xC8, &packet), 0);
+    KTEST_EXPECT_EQ(tc, stream.index, 0);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0x0B, &packet), 0);
+    KTEST_EXPECT_EQ(tc, stream.index, 1);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0x01, &packet), 0);
+    KTEST_EXPECT_EQ(tc, stream.index, 2);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0xFF, &packet), 1);
+    KTEST_EXPECT_EQ(tc, packet.buttons, 0x0B);
+    KTEST_EXPECT_EQ(tc, packet.dx, 0x01);
+    KTEST_EXPECT_EQ(tc, packet.dy, -1);
+}
+
+static void test_mouse_stream_keeps_response_like_bytes_inside_packet(ktest_case_t *tc)
+{
+    mouse_packet_stream_t stream;
+    mouse_packet_t packet;
+
+    mouse_stream_reset(&stream);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0x0B, &packet), 0);
+    KTEST_EXPECT_EQ(tc, stream.index, 1);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0xFA, &packet), 0);
+    KTEST_EXPECT_EQ(tc, stream.index, 2);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0xAA, &packet), 1);
+    KTEST_EXPECT_EQ(tc, packet.buttons, 0x0B);
+    KTEST_EXPECT_EQ(tc, packet.dx, -6);
+    KTEST_EXPECT_EQ(tc, packet.dy, -86);
+}
+
+static void test_desktop_pointer_click_focuses_shell_window(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    desktop_pointer_event_t ev = { .x = 10, .y = 5, .left_down = 1 };
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+    desktop.focus = DESKTOP_FOCUS_TASKBAR;
+
+    desktop_handle_pointer(&desktop, &ev);
+
+    KTEST_EXPECT_EQ(tc, desktop.focus, DESKTOP_FOCUS_SHELL);
+}
+
+static void test_desktop_pointer_click_ignores_hidden_shell_window(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    desktop_pointer_event_t ev = { .x = 10, .y = 5, .left_down = 1 };
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop.focus = DESKTOP_FOCUS_TASKBAR;
+
+    desktop_handle_pointer(&desktop, &ev);
+
+    KTEST_EXPECT_FALSE(tc, desktop.shell_window_open);
+    KTEST_EXPECT_EQ(tc, desktop.focus, DESKTOP_FOCUS_TASKBAR);
+}
+
 static void test_desktop_write_process_output_targets_shell_surface(ktest_case_t *tc)
 {
     gui_display_t display;
@@ -186,6 +268,11 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_init_binds_global_keyboard_target),
     KTEST_CASE(test_desktop_escape_opens_launcher_and_consumes_input),
     KTEST_CASE(test_desktop_plain_text_forwards_to_shell_when_focused),
+    KTEST_CASE(test_mouse_packet_decode_preserves_motion_and_buttons),
+    KTEST_CASE(test_mouse_stream_resyncs_after_noise_and_ack),
+    KTEST_CASE(test_mouse_stream_keeps_response_like_bytes_inside_packet),
+    KTEST_CASE(test_desktop_pointer_click_focuses_shell_window),
+    KTEST_CASE(test_desktop_pointer_click_ignores_hidden_shell_window),
     KTEST_CASE(test_desktop_write_process_output_targets_shell_surface),
     KTEST_CASE(test_desktop_non_shell_output_is_rejected_for_legacy_fallback),
 };

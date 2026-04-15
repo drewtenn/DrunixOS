@@ -67,6 +67,7 @@ static int console_putc_at(int offset, char c);
 
 extern void pit_init(void);
 extern void keyboard_init(void);
+extern int mouse_init(void);
 #ifdef DOUBLE_FAULT_TEST
 extern void trigger_double_fault(void);
 #endif
@@ -124,6 +125,11 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
     klog("TTY", "tty0 initialized");
     keyboard_init();
     klog("IRQ", "keyboard handler registered");
+    int mouse_rc = mouse_init();
+    if (mouse_rc == 0)
+        klog("IRQ", "mouse handler registered");
+    else
+        klog_uint("IRQ", "mouse init failed rc", (uint32_t)(-mouse_rc));
     klog("BOOT", "console and input devices ready");
 
 #ifdef KTEST_ENABLED

@@ -283,6 +283,33 @@ void desktop_open_shell_window(desktop_state_t *desktop)
     desktop->focus = DESKTOP_FOCUS_SHELL;
 }
 
+void desktop_handle_pointer(desktop_state_t *desktop,
+                            const desktop_pointer_event_t *ev)
+{
+    if (!desktop || !ev)
+        return;
+
+    if (desktop->shell_window_open &&
+        ev->left_down &&
+        ev->x >= desktop->shell_rect.x &&
+        ev->x < desktop->shell_rect.x + desktop->shell_rect.w &&
+        ev->y >= desktop->shell_rect.y &&
+        ev->y < desktop->shell_rect.y + desktop->shell_rect.h) {
+        desktop->focus = DESKTOP_FOCUS_SHELL;
+    }
+
+    if (ev->left_down &&
+        ev->x >= 1 && ev->x < 6 &&
+        ev->y == desktop->taskbar.y) {
+        desktop->launcher_open = !desktop->launcher_open;
+        desktop->focus = desktop->launcher_open
+            ? DESKTOP_FOCUS_LAUNCHER
+            : DESKTOP_FOCUS_SHELL;
+    }
+
+    desktop_render(desktop);
+}
+
 void desktop_render(desktop_state_t *desktop)
 {
     if (!desktop || !desktop->display)
