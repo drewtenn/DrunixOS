@@ -143,6 +143,41 @@ static void test_desktop_plain_text_forwards_to_shell_when_focused(ktest_case_t 
     KTEST_EXPECT_EQ(tc, desktop.focus, DESKTOP_FOCUS_SHELL);
 }
 
+static void test_desktop_write_process_output_targets_shell_surface(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+    desktop_attach_shell_pid(&desktop, 7);
+
+    KTEST_EXPECT_EQ(tc,
+                    desktop_write_process_output(&desktop, 7, "help", 4),
+                    4);
+    KTEST_EXPECT_EQ(tc,
+                    gui_display_cell_at(&display,
+                                        desktop.shell_content.x,
+                                        desktop.shell_content.y).ch,
+                    'h');
+}
+
+static void test_desktop_non_shell_output_is_rejected_for_legacy_fallback(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+    desktop_attach_shell_pid(&desktop, 7);
+
+    KTEST_EXPECT_EQ(tc,
+                    desktop_write_process_output(&desktop, 8, "x", 1),
+                    0);
+}
+
 static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_gui_display_fill_rect_clips_to_bounds),
     KTEST_CASE(test_gui_display_draw_text_stops_at_region_edge),
@@ -151,6 +186,8 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_init_binds_global_keyboard_target),
     KTEST_CASE(test_desktop_escape_opens_launcher_and_consumes_input),
     KTEST_CASE(test_desktop_plain_text_forwards_to_shell_when_focused),
+    KTEST_CASE(test_desktop_write_process_output_targets_shell_surface),
+    KTEST_CASE(test_desktop_non_shell_output_is_rejected_for_legacy_fallback),
 };
 
 ktest_suite_t *ktest_suite_desktop(void)

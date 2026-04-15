@@ -21,6 +21,7 @@
 #include "fs.h"
 #include "clock.h"
 #include "uaccess.h"
+#include "desktop.h"
 #include <stdint.h>
 
 /* VGA functions from kernel.c */
@@ -358,6 +359,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
         file_handle_t *fh = &cur->open_files[ebx];
 
         if (fh->type == FD_TYPE_STDOUT) {
+            desktop_state_t *desktop = desktop_is_active() ? desktop_global() : 0;
             uint8_t kbuf[USER_IO_CHUNK];
             uint32_t written = 0;
 
@@ -370,6 +372,12 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
                     chunk = USER_IO_CHUNK;
                 if (uaccess_copy_from_user(cur, kbuf, ecx + written, chunk) != 0)
                     return written ? written : (uint32_t)-1;
+                if (desktop &&
+                    desktop_write_process_output(desktop, cur->pid,
+                                                 (const char *)kbuf, chunk) == (int)chunk) {
+                    written += chunk;
+                    continue;
+                }
                 print_bytes((const char *)kbuf, (int)chunk);
                 written += chunk;
             }

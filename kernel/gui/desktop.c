@@ -1,4 +1,5 @@
 #include "desktop.h"
+#include "kheap.h"
 #include "kstring.h"
 
 static desktop_state_t *g_desktop = 0;
@@ -26,6 +27,116 @@ static void desktop_layout(desktop_state_t *desktop)
     desktop->shell_content.h = desktop->shell_rect.h - 2;
 }
 
+static void desktop_shell_clear_line(desktop_state_t *desktop, int row)
+{
+    int w = desktop->shell_cells_w;
+    int base = row * w;
+
+    if (!desktop->shell_cells || row < 0 || row >= desktop->shell_cells_h)
+        return;
+
+    for (int col = 0; col < w; col++) {
+        gui_cell_t *cell = &desktop->shell_cells[base + col];
+        cell->ch = ' ';
+        cell->attr = desktop->display->default_attr;
+    }
+}
+
+static void desktop_shell_scroll_up(desktop_state_t *desktop)
+{
+    int w = desktop->shell_cells_w;
+    int h = desktop->shell_cells_h;
+
+    if (!desktop->shell_cells || w <= 0 || h <= 0)
+        return;
+
+    for (int row = 1; row < h; row++) {
+        k_memmove(&desktop->shell_cells[(row - 1) * w],
+                  &desktop->shell_cells[row * w],
+                  (uint32_t)(w * sizeof(gui_cell_t)));
+    }
+    desktop_shell_clear_line(desktop, h - 1);
+    if (desktop->shell_cursor_y > 0)
+        desktop->shell_cursor_y--;
+    if (desktop->shell_cursor_y >= h)
+        desktop->shell_cursor_y = h - 1;
+}
+
+static void desktop_shell_ensure_visible_cursor(desktop_state_t *desktop)
+{
+    if (desktop->shell_cursor_x < 0)
+        desktop->shell_cursor_x = 0;
+    if (desktop->shell_cursor_y < 0)
+        desktop->shell_cursor_y = 0;
+    if (desktop->shell_cursor_x >= desktop->shell_cells_w)
+        desktop->shell_cursor_x = desktop->shell_cells_w - 1;
+    if (desktop->shell_cursor_y >= desktop->shell_cells_h)
+        desktop->shell_cursor_y = desktop->shell_cells_h - 1;
+}
+
+static void desktop_shell_newline(desktop_state_t *desktop)
+{
+    desktop->shell_cursor_x = 0;
+    desktop->shell_cursor_y++;
+    if (desktop->shell_cursor_y >= desktop->shell_cells_h) {
+        desktop_shell_scroll_up(desktop);
+        desktop->shell_cursor_y = desktop->shell_cells_h - 1;
+    }
+}
+
+static void desktop_shell_write_cell(desktop_state_t *desktop, char c)
+{
+    int x = desktop->shell_cursor_x;
+    int y = desktop->shell_cursor_y;
+    int w = desktop->shell_cells_w;
+    int h = desktop->shell_cells_h;
+    gui_cell_t *cell;
+
+    if (!desktop->shell_cells || w <= 0 || h <= 0)
+        return;
+
+    desktop_shell_ensure_visible_cursor(desktop);
+    if (desktop->shell_cursor_x >= w)
+        desktop_shell_newline(desktop);
+
+    x = desktop->shell_cursor_x;
+    y = desktop->shell_cursor_y;
+    cell = &desktop->shell_cells[y * w + x];
+    cell->ch = c;
+    cell->attr = desktop->display->default_attr;
+
+    if (desktop->display &&
+        desktop->shell_content.x + x < desktop->display->cols &&
+        desktop->shell_content.y + y < desktop->display->rows) {
+        gui_cell_t *screen = &desktop->display->cells[
+            (desktop->shell_content.y + y) * desktop->display->cols +
+            (desktop->shell_content.x + x)];
+        *screen = *cell;
+    }
+
+    desktop->shell_cursor_x++;
+    if (desktop->shell_cursor_x >= w)
+        desktop_shell_newline(desktop);
+}
+
+static void desktop_shell_redraw(desktop_state_t *desktop)
+{
+    if (!desktop->shell_cells || !desktop->display)
+        return;
+
+    for (int row = 0; row < desktop->shell_cells_h; row++) {
+        for (int col = 0; col < desktop->shell_cells_w; col++) {
+            gui_cell_t cell = desktop->shell_cells[row * desktop->shell_cells_w + col];
+            int dx = desktop->shell_content.x + col;
+            int dy = desktop->shell_content.y + row;
+
+            if (dx < 0 || dy < 0 || dx >= desktop->display->cols || dy >= desktop->display->rows)
+                continue;
+            desktop->display->cells[dy * desktop->display->cols + dx] = cell;
+        }
+    }
+}
+
 desktop_state_t *desktop_global(void)
 {
     return g_desktop;
@@ -45,6 +156,93 @@ void desktop_init(desktop_state_t *desktop, gui_display_t *display)
     desktop->desktop_enabled = 1;
     desktop->focus = DESKTOP_FOCUS_TASKBAR;
     desktop_layout(desktop);
+    desktop->shell_cells_w = desktop->shell_content.w;
+    desktop->shell_cells_h = desktop->shell_content.h;
+    if (desktop->shell_cells_w > 0 && desktop->shell_cells_h > 0) {
+        uint32_t bytes = (uint32_t)(desktop->shell_cells_w *
+                                    desktop->shell_cells_h *
+                                    (int)sizeof(gui_cell_t));
+        desktop->shell_cells = (gui_cell_t *)kmalloc(bytes);
+        if (!desktop->shell_cells) {
+            desktop->active = 0;
+            desktop->desktop_enabled = 0;
+            return;
+        }
+        desktop->shell_cursor_x = 0;
+        desktop->shell_cursor_y = 0;
+        for (int row = 0; row < desktop->shell_cells_h; row++)
+            desktop_shell_clear_line(desktop, row);
+    } else {
+        desktop->active = 0;
+        desktop->desktop_enabled = 0;
+    }
+}
+
+void desktop_attach_shell_pid(desktop_state_t *desktop, uint32_t pid)
+{
+    if (!desktop)
+        return;
+
+    desktop->shell_pid = pid;
+}
+
+int desktop_console_mirror_enabled(void)
+{
+    return !desktop_is_active();
+}
+
+static void desktop_shell_apply_char(desktop_state_t *desktop, char c)
+{
+    if (c == '\r') {
+        desktop->shell_cursor_x = 0;
+        return;
+    }
+
+    if (c == '\n') {
+        desktop_shell_newline(desktop);
+        return;
+    }
+
+    if (c == '\b') {
+        if (desktop->shell_cursor_x > 0)
+            desktop->shell_cursor_x--;
+        return;
+    }
+
+    if (c == '\t') {
+        int spaces = 4 - (desktop->shell_cursor_x % 4);
+
+        if (spaces == 0)
+            spaces = 4;
+        while (spaces-- > 0)
+            desktop_shell_apply_char(desktop, ' ');
+        return;
+    }
+
+    desktop_shell_write_cell(desktop, c);
+}
+
+int desktop_write_process_output(desktop_state_t *desktop,
+                                 uint32_t pid,
+                                 const char *buf,
+                                 uint32_t len)
+{
+    uint32_t i;
+
+    if (!desktop || !desktop->active || !desktop->desktop_enabled)
+        return 0;
+    if (!desktop->shell_window_open || desktop->shell_pid != pid)
+        return 0;
+    if (!buf || len == 0)
+        return 0;
+    if (!desktop->shell_cells)
+        return 0;
+
+    for (i = 0; i < len; i++)
+        desktop_shell_apply_char(desktop, buf[i]);
+
+    desktop_render(desktop);
+    return (int)len;
 }
 
 desktop_key_result_t desktop_handle_key(desktop_state_t *desktop, char c)
@@ -87,6 +285,9 @@ void desktop_open_shell_window(desktop_state_t *desktop)
 
 void desktop_render(desktop_state_t *desktop)
 {
+    if (!desktop || !desktop->display)
+        return;
+
     gui_display_fill_rect(desktop->display, 0, 0,
                           desktop->display->cols, desktop->display->rows,
                           ' ', 0x1f);
@@ -114,14 +315,17 @@ void desktop_render(desktop_state_t *desktop)
                                desktop->launcher_rect.x,
                                desktop->launcher_rect.y,
                                desktop->launcher_rect.w,
-                               desktop->launcher_rect.h,
-                               0x70);
+                              desktop->launcher_rect.h,
+                              0x70);
         gui_display_draw_text(desktop->display,
                               desktop->launcher_rect.x + 2,
                               desktop->launcher_rect.y + 1,
                               desktop->launcher_rect.w - 4,
                               "Shell", 0x70);
     }
+
+    if (desktop->shell_window_open)
+        desktop_shell_redraw(desktop);
 
     if (desktop->video_address)
         gui_display_present_to_vga(desktop->display, desktop->video_address);
