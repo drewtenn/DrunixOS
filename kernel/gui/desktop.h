@@ -45,6 +45,8 @@ typedef enum {
 
 void desktop_init(desktop_state_t *desktop, gui_display_t *display);
 void desktop_render(desktop_state_t *desktop);
+void desktop_set_presentation_target(desktop_state_t *desktop,
+                                      uintptr_t video_address);
 void desktop_open_shell_window(desktop_state_t *desktop);
 void desktop_attach_shell_pid(desktop_state_t *desktop, uint32_t pid);
 int desktop_write_process_output(desktop_state_t *desktop,

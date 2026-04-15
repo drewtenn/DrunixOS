@@ -192,7 +192,7 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
                      WHITE_ON_BLACK);
     desktop_init(&boot_desktop, &boot_display);
     if (desktop_is_active()) {
-        boot_desktop.video_address = VIDEO_ADDRESS;
+        desktop_set_presentation_target(&boot_desktop, VIDEO_ADDRESS);
         desktop_open_shell_window(&boot_desktop);
         desktop_render(&boot_desktop);
         klog("BOOT", "desktop enabled");

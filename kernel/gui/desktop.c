@@ -203,6 +203,15 @@ void desktop_init(desktop_state_t *desktop, gui_display_t *display)
         desktop_shell_clear_line(desktop, row);
 }
 
+void desktop_set_presentation_target(desktop_state_t *desktop,
+                                     uintptr_t video_address)
+{
+    if (!desktop)
+        return;
+
+    desktop->video_address = video_address;
+}
+
 void desktop_attach_shell_pid(desktop_state_t *desktop, uint32_t pid)
 {
     if (!desktop)
