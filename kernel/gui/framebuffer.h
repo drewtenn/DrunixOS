@@ -1,6 +1,7 @@
 #ifndef GUI_FRAMEBUFFER_H
 #define GUI_FRAMEBUFFER_H
 
+#include "pixel.h"
 #include "pmm.h"
 #include <stdint.h>
 
@@ -36,5 +37,21 @@ void framebuffer_draw_glyph(const framebuffer_info_t *fb,
 void framebuffer_draw_cursor(const framebuffer_info_t *fb,
                              int x, int y,
                              uint32_t fg, uint32_t shadow);
+void framebuffer_draw_rect_outline(const framebuffer_info_t *fb,
+                                   int x, int y, int w, int h,
+                                   uint32_t color);
+void framebuffer_draw_text_clipped(const framebuffer_info_t *fb,
+                                   const gui_pixel_rect_t *clip,
+                                   int x, int y,
+                                   const char *text,
+                                   uint32_t fg,
+                                   uint32_t bg);
+void framebuffer_draw_scrollbar(const framebuffer_info_t *fb,
+                                int x, int y, int w, int h,
+                                int total_rows,
+                                int visible_rows,
+                                int view_top,
+                                uint32_t track,
+                                uint32_t thumb);
 
 #endif

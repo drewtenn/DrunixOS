@@ -175,6 +175,145 @@ void framebuffer_fill_rect(const framebuffer_info_t *fb,
     }
 }
 
+static gui_pixel_rect_t framebuffer_clip_pixel_rect(const framebuffer_info_t *fb,
+                                                    int x, int y, int w, int h)
+{
+    gui_pixel_rect_t out = { 0, 0, 0, 0 };
+    int right;
+    int bottom;
+
+    if (!fb || w <= 0 || h <= 0)
+        return out;
+    if (x >= (int)fb->width || y >= (int)fb->height)
+        return out;
+    right = x + w;
+    bottom = y + h;
+    if (right <= 0 || bottom <= 0)
+        return out;
+    if (x < 0)
+        x = 0;
+    if (y < 0)
+        y = 0;
+    if (right > (int)fb->width)
+        right = (int)fb->width;
+    if (bottom > (int)fb->height)
+        bottom = (int)fb->height;
+    if (x >= right || y >= bottom)
+        return out;
+    out.x = x;
+    out.y = y;
+    out.w = right - x;
+    out.h = bottom - y;
+    return out;
+}
+
+void framebuffer_draw_rect_outline(const framebuffer_info_t *fb,
+                                   int x, int y, int w, int h,
+                                   uint32_t color)
+{
+    if (!fb || w <= 0 || h <= 0)
+        return;
+    framebuffer_fill_rect(fb, x, y, w, 1, color);
+    framebuffer_fill_rect(fb, x, y + h - 1, w, 1, color);
+    framebuffer_fill_rect(fb, x, y, 1, h, color);
+    framebuffer_fill_rect(fb, x + w - 1, y, 1, h, color);
+}
+
+static void framebuffer_draw_glyph_clipped(const framebuffer_info_t *fb,
+                                           const gui_pixel_rect_t *clip,
+                                           int x, int y,
+                                           unsigned char ch,
+                                           uint32_t fg,
+                                           uint32_t bg)
+{
+    const uint8_t *glyph;
+
+    if (!fb || !clip || fb->address == 0)
+        return;
+    if (x > INT_MAX - 7 || y > INT_MAX - 15)
+        return;
+
+    glyph = font8x16_glyph(ch);
+    for (int row = 0; row < 16; row++) {
+        uint8_t bits = glyph[row];
+        int py = y + row;
+
+        if (py < clip->y || py >= clip->y + clip->h)
+            continue;
+        for (int col = 0; col < 8; col++) {
+            int px = x + col;
+            uint32_t color;
+
+            if (px < clip->x || px >= clip->x + clip->w)
+                continue;
+            color = (bits & (1u << col)) ? fg : bg;
+            framebuffer_fill_rect(fb, px, py, 1, 1, color);
+        }
+    }
+}
+
+void framebuffer_draw_text_clipped(const framebuffer_info_t *fb,
+                                   const gui_pixel_rect_t *clip,
+                                   int x, int y,
+                                   const char *text,
+                                   uint32_t fg,
+                                   uint32_t bg)
+{
+    gui_pixel_rect_t bounded;
+    int col = 0;
+
+    if (!fb || !clip || !text)
+        return;
+    bounded = framebuffer_clip_pixel_rect(fb, clip->x, clip->y, clip->w,
+                                           clip->h);
+    if (bounded.w <= 0 || bounded.h <= 0)
+        return;
+    while (text[col]) {
+        framebuffer_draw_glyph_clipped(fb, &bounded,
+                                       x + col * (int)GUI_FONT_W,
+                                       y,
+                                       (unsigned char)text[col],
+                                       fg,
+                                       bg);
+        col++;
+    }
+}
+
+void framebuffer_draw_scrollbar(const framebuffer_info_t *fb,
+                                int x, int y, int w, int h,
+                                int total_rows,
+                                int visible_rows,
+                                int view_top,
+                                uint32_t track,
+                                uint32_t thumb)
+{
+    int thumb_h;
+    int thumb_y;
+    int max_top;
+    int travel;
+
+    if (!fb || w <= 0 || h <= 0)
+        return;
+    framebuffer_fill_rect(fb, x, y, w, h, track);
+    if (total_rows <= 0 || visible_rows <= 0 || total_rows <= visible_rows)
+        return;
+    if (view_top < 0)
+        view_top = 0;
+    max_top = total_rows - visible_rows;
+    if (view_top > max_top)
+        view_top = max_top;
+    thumb_h = (h * visible_rows) / total_rows;
+    if (thumb_h < 8)
+        thumb_h = h < 8 ? h : 8;
+    if (thumb_h > h)
+        thumb_h = h;
+    travel = h - thumb_h;
+    thumb_y = y;
+    if (max_top > 0)
+        thumb_y += (travel * view_top) / max_top;
+    framebuffer_fill_rect(fb, x, thumb_y, w, thumb_h, thumb);
+}
+
 void framebuffer_draw_glyph(const framebuffer_info_t *fb,
                             int x, int y, unsigned char ch,
                             uint32_t fg, uint32_t bg)

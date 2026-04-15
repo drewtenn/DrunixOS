@@ -891,6 +891,67 @@ static void test_framebuffer_fill_rect_handles_large_dimensions(ktest_case_t *tc
     KTEST_EXPECT_EQ(tc, pixels[1 * 4 + 3], 0x11223344u);
 }
 
+static void test_framebuffer_draw_rect_outline_clips_to_bounds(ktest_case_t *tc)
+{
+    uint32_t pixels[6 * 6];
+    framebuffer_info_t fb;
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 6u * sizeof(uint32_t);
+    fb.width = 6;
+    fb.height = 6;
+
+    framebuffer_draw_rect_outline(&fb, -1, 1, 4, 4, 0x00ABCDEFu);
+
+    KTEST_EXPECT_EQ(tc, pixels[1 * 6 + 0], 0x00ABCDEFu);
+    KTEST_EXPECT_EQ(tc, pixels[1 * 6 + 2], 0x00ABCDEFu);
+    KTEST_EXPECT_EQ(tc, pixels[3 * 6 + 0], 0x00ABCDEFu);
+    KTEST_EXPECT_EQ(tc, pixels[4 * 6 + 0], 0u);
+}
+
+static void test_framebuffer_draw_text_clipped_honors_pixel_clip(ktest_case_t *tc)
+{
+    static uint32_t pixels[32 * 20];
+    framebuffer_info_t fb;
+    gui_pixel_rect_t clip = { 8, 0, 8, 16 };
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 32u * sizeof(uint32_t);
+    fb.width = 32;
+    fb.height = 20;
+
+    framebuffer_draw_text_clipped(&fb, &clip, 0, 0, "AB",
+                                  0x00FFFFFFu, 0x00112233u);
+
+    KTEST_EXPECT_EQ(tc, pixels[0 * 32 + 0], 0u);
+    KTEST_EXPECT_NE(tc, pixels[0 * 32 + 8], 0u);
+    KTEST_EXPECT_EQ(tc, pixels[0 * 32 + 16], 0u);
+}
+
+static void test_framebuffer_draw_scrollbar_places_thumb(ktest_case_t *tc)
+{
+    uint32_t pixels[8 * 40];
+    framebuffer_info_t fb;
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 8u * sizeof(uint32_t);
+    fb.width = 8;
+    fb.height = 40;
+
+    framebuffer_draw_scrollbar(&fb, 2, 4, 4, 32, 100, 25, 50,
+                               0x00010101u, 0x00EEEEEEu);
+
+    KTEST_EXPECT_EQ(tc, pixels[4 * 8 + 2], 0x00010101u);
+    KTEST_EXPECT_EQ(tc, pixels[20 * 8 + 2], 0x00EEEEEEu);
+    KTEST_EXPECT_EQ(tc, pixels[35 * 8 + 5], 0x00010101u);
+}
+
 static void test_framebuffer_draws_pixel_arrow_cursor(ktest_case_t *tc)
 {
     static uint32_t pixels[16 * 16];
@@ -1018,6 +1079,9 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_framebuffer_pack_rgb_uses_mask_positions),
     KTEST_CASE(test_framebuffer_fill_rect_clips_to_bounds),
     KTEST_CASE(test_framebuffer_fill_rect_handles_large_dimensions),
+    KTEST_CASE(test_framebuffer_draw_rect_outline_clips_to_bounds),
+    KTEST_CASE(test_framebuffer_draw_text_clipped_honors_pixel_clip),
+    KTEST_CASE(test_framebuffer_draw_scrollbar_places_thumb),
     KTEST_CASE(test_framebuffer_draws_pixel_arrow_cursor),
     KTEST_CASE(test_font8x16_glyph_returns_stable_storage),
     KTEST_CASE(test_framebuffer_draw_glyph_writes_foreground_pixels),
