@@ -75,6 +75,68 @@ static int fd_alloc(process_t *proc)
     return -1;
 }
 
+static tty_t *syscall_tty_from_fd(process_t *cur, uint32_t fd,
+                                  uint32_t *tty_idx_out)
+{
+    file_handle_t *fh;
+    tty_t *tty;
+
+    if (!cur || fd >= MAX_FDS)
+        return 0;
+
+    fh = &cur->open_files[fd];
+    if (fh->type != FD_TYPE_TTY)
+        return 0;
+
+    tty = tty_get((int)fh->u.tty.tty_idx);
+    if (!tty)
+        return 0;
+
+    if (tty_idx_out)
+        *tty_idx_out = fh->u.tty.tty_idx;
+    return tty;
+}
+
+static int syscall_desktop_should_route_console_output(desktop_state_t *desktop,
+                                                       process_t *cur)
+{
+    uint32_t shell_pid;
+    tty_t *tty;
+
+    if (!desktop || !cur)
+        return 0;
+    if (desktop_process_owns_shell(desktop, cur->pid, cur->pgid))
+        return 1;
+
+    shell_pid = desktop_shell_pid(desktop);
+    if (shell_pid == 0)
+        return 0;
+    if (cur->parent_pid == shell_pid)
+        return 1;
+
+    tty = tty_get((int)cur->tty_id);
+    if (tty && tty->fg_pgid != 0 && tty->fg_pgid == cur->pgid)
+        return 1;
+
+    return 0;
+}
+
+static int syscall_write_console_bytes(process_t *cur,
+                                       const char *buf,
+                                       uint32_t len)
+{
+    desktop_state_t *desktop = desktop_is_active() ? desktop_global() : 0;
+
+    if (desktop &&
+        syscall_desktop_should_route_console_output(desktop, cur) &&
+        desktop_write_console_output(desktop, buf, len) == (int)len) {
+        return (int)len;
+    }
+
+    print_bytes(buf, (int)len);
+    return (int)len;
+}
+
 static void syscall_invlpg(uint32_t virt)
 {
     __asm__ volatile("invlpg (%0)" :: "r"(virt) : "memory");
@@ -344,7 +406,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
          * edx = number of bytes to write
          *
          * Dispatches on fd type:
-         *   FD_TYPE_STDOUT  → print_bytes() to VGA
+         *   FD_TYPE_STDOUT  → active desktop shell or legacy VGA console
          *   FD_TYPE_FILE    → fs_write() into the DUFS inode
          *
          * Returns the number of bytes written, or -1 on error.
@@ -359,7 +421,6 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
         file_handle_t *fh = &cur->open_files[ebx];
 
         if (fh->type == FD_TYPE_STDOUT) {
-            desktop_state_t *desktop = desktop_is_active() ? desktop_global() : 0;
             uint8_t kbuf[USER_IO_CHUNK];
             uint32_t written = 0;
 
@@ -372,13 +433,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
                     chunk = USER_IO_CHUNK;
                 if (uaccess_copy_from_user(cur, kbuf, ecx + written, chunk) != 0)
                     return written ? written : (uint32_t)-1;
-                if (desktop &&
-                    desktop_write_process_output(desktop, cur->pid,
-                                                 (const char *)kbuf, chunk) == (int)chunk) {
-                    written += chunk;
-                    continue;
-                }
-                print_bytes((const char *)kbuf, (int)chunk);
+                syscall_write_console_bytes(cur, (const char *)kbuf, chunk);
                 written += chunk;
             }
             return written;
@@ -472,7 +527,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
          * ecx = number of bytes to write
          *
          * The buffer is NOT required to be null-terminated — SYS_WRITE emits
-         * exactly `count` bytes to the VGA console.  This lets user code pipe
+         * exactly `count` bytes to the console.  This lets user code pipe
          * binary data (for example, the bytes of an ELF image) through the
          * write path without an embedded 0x00 truncating the output.
          *
@@ -494,7 +549,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
                     chunk = USER_IO_CHUNK;
                 if (uaccess_copy_from_user(cur, kbuf, ebx + written, chunk) != 0)
                     return written ? written : (uint32_t)-1;
-                print_bytes((const char *)kbuf, (int)chunk);
+                syscall_write_console_bytes(cur, (const char *)kbuf, chunk);
                 written += chunk;
             }
             return written;
@@ -1051,14 +1106,20 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
     }
 
     case SYS_CLEAR:
+        if (desktop_is_active() && desktop_clear_console(desktop_global()))
+            return 0;
         clear_screen();
         return 0;
 
     case SYS_SCROLL_UP:
+        if (desktop_is_active())
+            return 0;
         scroll_up((int)ebx);
         return 0;
 
     case SYS_SCROLL_DOWN:
+        if (desktop_is_active())
+            return 0;
         scroll_down((int)ebx);
         return 0;
 
@@ -1754,10 +1815,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
     case SYS_TCGETATTR: {
         /* ebx = fd, ecx = termios_t* (user pointer) */
         process_t *cur = sched_current();
-        if (!cur || ebx >= MAX_FDS) return (uint32_t)-1;
-        file_handle_t *fh = &cur->open_files[ebx];
-        if (fh->type != FD_TYPE_TTY) return (uint32_t)-1;
-        tty_t *tty = tty_get((int)fh->u.tty.tty_idx);
+        tty_t *tty = syscall_tty_from_fd(cur, ebx, 0);
         if (!tty) return (uint32_t)-1;
         if (uaccess_copy_to_user(cur, ecx, &tty->termios, sizeof(tty->termios)) != 0)
             return (uint32_t)-1;
@@ -1767,10 +1825,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
     case SYS_TCSETATTR: {
         /* ebx = fd, ecx = action (TCSANOW=0 / TCSAFLUSH=2), edx = termios_t* */
         process_t *cur = sched_current();
-        if (!cur || ebx >= MAX_FDS) return (uint32_t)-1;
-        file_handle_t *fh = &cur->open_files[ebx];
-        if (fh->type != FD_TYPE_TTY) return (uint32_t)-1;
-        tty_t *tty = tty_get((int)fh->u.tty.tty_idx);
+        tty_t *tty = syscall_tty_from_fd(cur, ebx, 0);
         termios_t new_termios;
         if (!tty) return (uint32_t)-1;
         if (uaccess_copy_from_user(cur, &new_termios, edx, sizeof(new_termios)) != 0)
@@ -1894,13 +1949,11 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
     case SYS_TCSETPGRP: {
         /* ebx = fd, ecx = pgid → 0 or -1 */
         process_t *cur = sched_current();
-        if (!cur || ebx >= MAX_FDS) return (uint32_t)-1;
-        file_handle_t *fh = &cur->open_files[ebx];
-        if (fh->type != FD_TYPE_TTY) return (uint32_t)-1;
-        tty_t *tty = tty_get((int)fh->u.tty.tty_idx);
+        uint32_t tty_idx;
+        tty_t *tty = syscall_tty_from_fd(cur, ebx, &tty_idx);
         if (!tty) return (uint32_t)-1;
         if (ecx == 0) return (uint32_t)-1;
-        if (cur->tty_id != fh->u.tty.tty_idx) return (uint32_t)-1;
+        if (cur->tty_id != tty_idx) return (uint32_t)-1;
         if (tty->ctrl_sid == 0)
             tty->ctrl_sid = cur->sid;
         if (tty->ctrl_sid != cur->sid) return (uint32_t)-1;
@@ -1912,10 +1965,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
     case SYS_TCGETPGRP: {
         /* ebx = fd → fg_pgid or -1 */
         process_t *cur = sched_current();
-        if (!cur || ebx >= MAX_FDS) return (uint32_t)-1;
-        file_handle_t *fh = &cur->open_files[ebx];
-        if (fh->type != FD_TYPE_TTY) return (uint32_t)-1;
-        tty_t *tty = tty_get((int)fh->u.tty.tty_idx);
+        tty_t *tty = syscall_tty_from_fd(cur, ebx, 0);
         if (!tty) return (uint32_t)-1;
         return tty->fg_pgid;
     }
@@ -1927,13 +1977,9 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
 }
 
 #ifdef KTEST_ENABLED
-int syscall_stdout_would_fallback(void *desktop_ptr,
-                                  uint32_t pid,
-                                  const char *buf,
-                                  uint32_t len)
+int syscall_console_write_for_test(process_t *proc, const char *buf,
+                                   uint32_t len)
 {
-    desktop_state_t *desktop = (desktop_state_t *)desktop_ptr;
-
-    return desktop_write_process_output(desktop, pid, buf, len) == 0;
+    return syscall_write_console_bytes(proc, buf, len);
 }
 #endif

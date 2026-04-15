@@ -45,6 +45,7 @@ static int sb_head = 0;                      /* next write slot in the ring */
 static int sb_count = 0;                     /* rows stored (0..SCROLLBACK_ROWS) */
 static int sb_view = 0;                      /* 0 = live; N = scrolled N rows back */
 static int shadow_cursor = 0;                /* "true" cursor byte-offset */
+
 static gui_cell_t boot_desktop_cells[MAX_ROWS * MAX_COLS];
 static gui_display_t boot_display;
 static desktop_state_t boot_desktop;
@@ -191,7 +192,7 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
                      WHITE_ON_BLACK);
     desktop_init(&boot_desktop, &boot_display);
     if (desktop_is_active()) {
-        boot_desktop.video_address = VIDEO_ADDRESS;
+        desktop_set_presentation_target(&boot_desktop, VIDEO_ADDRESS);
         desktop_open_shell_window(&boot_desktop);
         desktop_render(&boot_desktop);
         klog("BOOT", "desktop enabled");
@@ -234,7 +235,7 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
     }
     klog_uint("PROC", "boot shell pid", proc.pid);
     if (desktop_is_active()) {
-        desktop_attach_shell_pid(&boot_desktop, proc.pid);
+        desktop_attach_shell_process(&boot_desktop, proc.pid, proc.pgid);
         desktop_render(&boot_desktop);
     }
 

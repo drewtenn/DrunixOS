@@ -1,5 +1,3 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
-
 #ifndef MOUSE_H
 #define MOUSE_H
 
@@ -23,4 +21,4 @@ int mouse_stream_consume(mouse_packet_stream_t *stream, uint8_t data,
                          mouse_packet_t *packet_out);
 int mouse_init(void);
 
-#endif /* MOUSE_H */
+#endif

@@ -31,11 +31,16 @@ typedef struct {
     gui_display_t *display;
     uintptr_t video_address;
     uint32_t shell_pid;
+    uint32_t shell_pgid;
     gui_cell_t *shell_cells;
     int shell_cells_w;
     int shell_cells_h;
     int shell_cursor_x;
     int shell_cursor_y;
+    int shell_wrap_pending;
+    int shell_ansi_state;
+    int shell_ansi_val;
+    uint8_t shell_attr;
 } desktop_state_t;
 
 typedef enum {
@@ -45,15 +50,28 @@ typedef enum {
 
 void desktop_init(desktop_state_t *desktop, gui_display_t *display);
 void desktop_render(desktop_state_t *desktop);
+void desktop_set_presentation_target(desktop_state_t *desktop,
+                                      uintptr_t video_address);
 void desktop_open_shell_window(desktop_state_t *desktop);
-void desktop_handle_pointer(desktop_state_t *desktop,
-                            const desktop_pointer_event_t *ev);
 void desktop_attach_shell_pid(desktop_state_t *desktop, uint32_t pid);
+void desktop_attach_shell_process(desktop_state_t *desktop, uint32_t pid,
+                                  uint32_t pgid);
+uint32_t desktop_shell_pid(const desktop_state_t *desktop);
+int desktop_process_owns_shell(desktop_state_t *desktop,
+                               uint32_t pid,
+                               uint32_t pgid);
+int desktop_write_console_output(desktop_state_t *desktop,
+                                 const char *buf,
+                                 uint32_t len);
+int desktop_clear_console(desktop_state_t *desktop);
 int desktop_write_process_output(desktop_state_t *desktop,
                                  uint32_t pid,
+                                 uint32_t pgid,
                                  const char *buf,
                                  uint32_t len);
 int desktop_console_mirror_enabled(void);
+void desktop_handle_pointer(desktop_state_t *desktop,
+                            const desktop_pointer_event_t *ev);
 desktop_key_result_t desktop_handle_key(desktop_state_t *desktop, char c);
 int desktop_is_active(void);
 desktop_state_t *desktop_global(void);

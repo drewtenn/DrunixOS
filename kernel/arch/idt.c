@@ -5,6 +5,7 @@
 
 #include <stdint.h>
 #include "idt.h"
+#include "irq.h"
 #include "sched.h"
 #include "gdt.h"
 #include "fault.h"
@@ -86,9 +87,8 @@ static void pic_remap() {
     /* ICW4: 8086 mode */
     port_byte_out(0x21, 0x01);
     port_byte_out(0xA1, 0x01);
-    /* Unmask IRQ0 (timer) and IRQ1 (keyboard); mask everything else */
-    port_byte_out(0x21, 0xFC);   /* 0xFC = 1111 1100 → IRQ0 and IRQ1 unmasked */
-    port_byte_out(0xA1, 0xFF);
+    /* Apply the current PIC mask state after remapping the IRQ vectors. */
+    irq_apply_pic_masks();
 }
 
 /*

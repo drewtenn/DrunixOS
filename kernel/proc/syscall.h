@@ -14,7 +14,7 @@
  *      1  SYS_EXIT      ebx=code
  *      2  SYS_FWRITE    ebx=fd, ecx=buf, edx=count → bytes written
  *      3  SYS_READ      ebx=fd, ecx=buf, edx=count → bytes read
- *      4  SYS_WRITE     ebx=buf, ecx=count → bytes written (VGA)
+ *      4  SYS_WRITE     ebx=buf, ecx=count → bytes written (console)
  *      5  SYS_OPEN      ebx=filename → fd, -1
  *      6  SYS_CLOSE     ebx=fd → 0, -1
  *      7  SYS_WAIT      ebx=pid → exit_status, -1

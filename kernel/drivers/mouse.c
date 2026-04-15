@@ -1,8 +1,3 @@
-/*
- * SPDX-License-Identifier: GPL-3.0-or-later
- * mouse.c — PS/2 mouse packet decoding and IRQ12 input dispatch.
- */
-
 #include "mouse.h"
 #include "irq.h"
 
@@ -13,9 +8,9 @@
 #define PS2_STATUS_OUT_FULL 0x01
 #define PS2_STATUS_IN_FULL   0x02
 
-#define PS2_RESP_ACK     0xFA
-#define PS2_RESP_BAT     0xAA
-#define PS2_RESP_RESEND   0xFE
+#define PS2_RESP_ACK   0xFA
+#define PS2_RESP_BAT   0xAA
+#define PS2_RESP_RESEND 0xFE
 
 extern void port_byte_out(unsigned short port, unsigned char data);
 extern unsigned char port_byte_in(unsigned short port);
@@ -101,14 +96,6 @@ static int ps2_mouse_write(uint8_t value)
     if (ps2_read_data(&ack) != 0)
         return -1;
     return ack == PS2_RESP_ACK ? 0 : -1;
-}
-
-static void pic_unmask_irq(uint8_t irq_num)
-{
-    uint16_t port = (irq_num < 8) ? 0x21 : 0xA1;
-    uint8_t mask = port_byte_in(port);
-    mask &= (uint8_t)~(1u << (irq_num & 7u));
-    port_byte_out(port, mask);
 }
 
 int mouse_decode_packet(const mouse_packet_t *packet, desktop_pointer_event_t *ev)
@@ -219,18 +206,17 @@ static void mouse_handler(void)
 int mouse_init(void)
 {
     uint8_t config;
-    int rc;
 
     mouse_stream_reset(&g_stream);
     irq_register(12, mouse_handler);
-    pic_unmask_irq(2);
-    pic_unmask_irq(12);
+    irq_unmask(2);
+    irq_unmask(12);
 
     if (ps2_write_command(0xA7) != 0)
         return -1;
     ps2_flush_output();
 
-    rc = ps2_read_controller_config(&config);
+    int rc = ps2_read_controller_config(&config);
     if (rc != 0)
         return rc;
     config |= 0x02u;
