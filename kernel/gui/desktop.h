@@ -31,6 +31,11 @@ typedef struct {
     gui_display_t *display;
     uintptr_t video_address;
     uint32_t shell_pid;
+    gui_cell_t *shell_cells;
+    int shell_cells_w;
+    int shell_cells_h;
+    int shell_cursor_x;
+    int shell_cursor_y;
 } desktop_state_t;
 
 typedef enum {
@@ -41,6 +46,12 @@ typedef enum {
 void desktop_init(desktop_state_t *desktop, gui_display_t *display);
 void desktop_render(desktop_state_t *desktop);
 void desktop_open_shell_window(desktop_state_t *desktop);
+void desktop_attach_shell_pid(desktop_state_t *desktop, uint32_t pid);
+int desktop_write_process_output(desktop_state_t *desktop,
+                                 uint32_t pid,
+                                 const char *buf,
+                                 uint32_t len);
+int desktop_console_mirror_enabled(void);
 void desktop_handle_pointer(desktop_state_t *desktop,
                             const desktop_pointer_event_t *ev);
 desktop_key_result_t desktop_handle_key(desktop_state_t *desktop, char c);

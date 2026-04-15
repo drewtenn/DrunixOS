@@ -12,6 +12,7 @@
 /* print_string lives in kernel.c; every other subsystem externs it the same way */
 extern void print_string(char *s);
 extern void port_byte_out(unsigned short port, unsigned char data);
+extern int desktop_console_mirror_enabled(void);
 
 #define QEMU_DEBUG_PORT 0xE9
 #define KLOG_RING_CAP   96u
@@ -53,7 +54,8 @@ static void klog_debugcon_puts(const char *s)
 
 static void klog_puts(const char *s)
 {
-    print_string((char *)s);
+    if (desktop_console_mirror_enabled())
+        print_string((char *)s);
     klog_debugcon_puts(s);
 }
 

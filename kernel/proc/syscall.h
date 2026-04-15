@@ -113,6 +113,11 @@
 #define SYS_TCGETPGRP 190
 #define SYS_CLOCK_GETTIME 265
 
+#ifdef KTEST_ENABLED
+int syscall_stdout_would_fallback(void *desktop, uint32_t pid, const char *buf,
+                                  uint32_t len);
+#endif
+
 #define PROT_NONE      0x0u
 #define PROT_READ      0x1u
 #define PROT_WRITE     0x2u
