@@ -13,12 +13,19 @@ static void terminal_apply_char(gui_terminal_t *term, char c);
 static int terminal_intersect_pixel_rect(gui_pixel_rect_t a,
                                          gui_pixel_rect_t b,
                                          gui_pixel_rect_t *out);
+static void terminal_vga_color(uint8_t color, uint8_t *r, uint8_t *g,
+                               uint8_t *b);
+static uint32_t terminal_cell_fg_color(const gui_terminal_t *term,
+                                       const gui_pixel_theme_t *theme,
+                                       const gui_cell_t *cell,
+                                       const framebuffer_info_t *fb);
 static void terminal_render_cell(const framebuffer_info_t *fb,
+                                 const gui_terminal_t *term,
+                                 const gui_pixel_theme_t *theme,
                                  const gui_pixel_rect_t *clip,
                                  int64_t cell_x,
                                  int64_t cell_y,
-                                 const gui_cell_t *cell,
-                                 uint32_t fg);
+                                 const gui_cell_t *cell);
 
 static int terminal_validate_dimensions(int cols,
                                         int rows,
@@ -600,18 +607,57 @@ static int terminal_intersect_pixel_rect(gui_pixel_rect_t a,
     return 1;
 }
 
+static void terminal_vga_color(uint8_t color, uint8_t *r, uint8_t *g,
+                               uint8_t *b)
+{
+    static const uint8_t palette[16][3] = {
+        {0x06, 0x08, 0x12}, {0x16, 0x2a, 0x4f}, {0x1f, 0x6f, 0x54},
+        {0x27, 0x8d, 0x95}, {0x84, 0x2f, 0x3a}, {0x7c, 0x3f, 0x8f},
+        {0xb8, 0x74, 0x2a}, {0xc8, 0xd1, 0xd9}, {0x4d, 0x5b, 0x6a},
+        {0x4a, 0x78, 0xc2}, {0x67, 0xc5, 0x8f}, {0x6f, 0xd6, 0xd2},
+        {0xe0, 0x6c, 0x75}, {0xc6, 0x78, 0xdd}, {0xf2, 0xc9, 0x4c},
+        {0xf6, 0xf1, 0xde},
+    };
+
+    *r = palette[color & 0x0f][0];
+    *g = palette[color & 0x0f][1];
+    *b = palette[color & 0x0f][2];
+}
+
+static uint32_t terminal_cell_fg_color(const gui_terminal_t *term,
+                                       const gui_pixel_theme_t *theme,
+                                       const gui_cell_t *cell,
+                                       const framebuffer_info_t *fb)
+{
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+
+    if (!theme)
+        return 0;
+    if (!cell || !term || !fb)
+        return theme->terminal_fg;
+    if (cell->attr == term->default_attr)
+        return theme->terminal_fg;
+
+    terminal_vga_color(cell->attr & 0x0f, &r, &g, &b);
+    return framebuffer_pack_rgb(fb, r, g, b);
+}
+
 static void terminal_render_cell(const framebuffer_info_t *fb,
+                                 const gui_terminal_t *term,
+                                 const gui_pixel_theme_t *theme,
                                  const gui_pixel_rect_t *clip,
                                  int64_t cell_x,
                                  int64_t cell_y,
-                                 const gui_cell_t *cell,
-                                 uint32_t fg)
+                                 const gui_cell_t *cell)
 {
     const uint8_t *glyph;
+    uint32_t fg;
     int64_t clip_right;
     int64_t clip_bottom;
 
-    if (!fb || !clip || !cell)
+    if (!fb || !clip || !cell || !term || !theme)
         return;
     if (cell_x >= (int64_t)clip->x + (int64_t)clip->w ||
         cell_y >= (int64_t)clip->y + (int64_t)clip->h ||
@@ -619,6 +665,7 @@ static void terminal_render_cell(const framebuffer_info_t *fb,
         cell_y + (int64_t)GUI_FONT_H <= clip->y)
         return;
 
+    fg = terminal_cell_fg_color(term, theme, cell, fb);
     glyph = font8x16_glyph((unsigned char)cell->ch);
     clip_right = (int64_t)clip->x + (int64_t)clip->w;
     clip_bottom = (int64_t)clip->y + (int64_t)clip->h;
@@ -692,23 +739,39 @@ void gui_terminal_render(const gui_terminal_t *term,
         for (int col = 0; col < term->cols; col++) {
             int64_t cell_x = content_x + (int64_t)col * (int64_t)GUI_FONT_W;
 
-            terminal_render_cell(surface->fb, &clip, cell_x, cell_y,
-                                 &cells[col], theme->terminal_fg);
+            terminal_render_cell(surface->fb, term, theme, &clip, cell_x,
+                                 cell_y, &cells[col]);
         }
     }
 
-    if (draw_cursor && term->live_view) {
+    if (draw_cursor && term->cursor_x >= 0 && term->cursor_x < term->cols &&
+        term->cursor_y >= 0) {
+        int64_t visible_cursor_row = (int64_t)term->cursor_y +
+                                     (int64_t)term->view_top;
         int64_t cursor_x = content_x +
                            (int64_t)term->cursor_x * (int64_t)GUI_FONT_W;
         int64_t cursor_y = content_y +
-                           (int64_t)term->cursor_y * (int64_t)GUI_FONT_H +
+                           visible_cursor_row * (int64_t)GUI_FONT_H +
                            ((int64_t)GUI_FONT_H - 2);
+        gui_pixel_rect_t cursor_rect;
+        gui_pixel_rect_t cursor_clip;
 
-        if (cursor_x >= INT_MIN && cursor_x <= INT_MAX &&
-            cursor_y >= INT_MIN && cursor_y <= INT_MAX) {
-            framebuffer_fill_rect(surface->fb, (int)cursor_x, (int)cursor_y,
-                                  (int)GUI_FONT_W, 2,
-                                  theme->terminal_cursor);
+        if (visible_cursor_row >= 0 &&
+            visible_cursor_row < (int64_t)term->rows &&
+            cursor_x >= INT_MIN &&
+            cursor_x <= (int64_t)INT_MAX - (int64_t)GUI_FONT_W + 1 &&
+            cursor_y >= INT_MIN &&
+            cursor_y <= (int64_t)INT_MAX - 2) {
+            cursor_rect.x = (int)cursor_x;
+            cursor_rect.y = (int)cursor_y;
+            cursor_rect.w = (int)GUI_FONT_W;
+            cursor_rect.h = 2;
+            if (terminal_intersect_pixel_rect(cursor_rect, clip,
+                                              &cursor_clip)) {
+                framebuffer_fill_rect(surface->fb, cursor_clip.x,
+                                      cursor_clip.y, cursor_clip.w,
+                                      cursor_clip.h, theme->terminal_cursor);
+            }
         }
     }
 }

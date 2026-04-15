@@ -101,7 +101,7 @@ static void test_terminal_render_uses_pixel_padding(ktest_case_t *tc)
     KTEST_EXPECT_NE(tc, terminal_pixels[17 * 128 + 16], 0u);
 }
 
-static void test_terminal_render_draws_underline_cursor(ktest_case_t *tc)
+static void test_terminal_render_draws_underline_cursor_in_scrollback_view(ktest_case_t *tc)
 {
     gui_terminal_t term;
     framebuffer_info_t fb;
@@ -129,12 +129,55 @@ static void test_terminal_render_draws_underline_cursor(ktest_case_t *tc)
     gui_terminal_set_pixel_rect(&term,
                                 (gui_pixel_rect_t){ 0, 0, 80, 60 },
                                 4, 4);
+    KTEST_ASSERT_EQ(tc, gui_terminal_write(&term, "A\n", 2), 2);
+    term.view_top = 1;
+    term.live_view = 0;
+    term.history_count = 1;
+    term.cursor_x = 0;
+    term.cursor_y = 0;
+
+    gui_terminal_render(&term, &surface, &theme, 1);
+
+    cursor_y = 4 + (int)GUI_FONT_H + (int)GUI_FONT_H - 2;
+    KTEST_EXPECT_EQ(tc, terminal_pixels[cursor_y * 128 + 4],
+                    0x00FFCC44u);
+}
+
+static void test_terminal_render_clips_cursor_to_surface_clip(ktest_case_t *tc)
+{
+    gui_terminal_t term;
+    framebuffer_info_t fb;
+    gui_pixel_surface_t surface;
+    gui_pixel_theme_t theme;
+    int cursor_y;
+
+    terminal_test_fb(&fb);
+    k_memset(&theme, 0, sizeof(theme));
+    theme.terminal_bg = 0x00000000u;
+    theme.terminal_fg = 0x00FFFFFFu;
+    theme.terminal_cursor = 0x00FFCC44u;
+    surface.fb = &fb;
+    surface.clip.x = 0;
+    surface.clip.y = 0;
+    surface.clip.w = 6;
+    surface.clip.h = 32;
+
+    KTEST_ASSERT_EQ(tc,
+                    gui_terminal_init_static(&term,
+                                             terminal_cells,
+                                             terminal_history,
+                                             8, 3, 4, 0x0f),
+                    1);
+    gui_terminal_set_pixel_rect(&term,
+                                (gui_pixel_rect_t){ 0, 0, 80, 60 },
+                                4, 4);
 
     gui_terminal_render(&term, &surface, &theme, 1);
 
     cursor_y = 4 + (int)GUI_FONT_H - 2;
     KTEST_EXPECT_EQ(tc, terminal_pixels[cursor_y * 128 + 4],
                     0x00FFCC44u);
+    KTEST_EXPECT_EQ(tc, terminal_pixels[cursor_y * 128 + 6], 0u);
 }
 
 static void test_terminal_render_composes_scrollback_before_live_rows(ktest_case_t *tc)
@@ -174,6 +217,44 @@ static void test_terminal_render_composes_scrollback_before_live_rows(ktest_case
     gui_terminal_render(&term, &surface, &theme, 0);
 
     KTEST_EXPECT_EQ(tc, terminal_pixels[0 * 128 + 3], fg);
+}
+
+static void test_terminal_render_uses_ansi_foreground_color(ktest_case_t *tc)
+{
+    gui_terminal_t term;
+    framebuffer_info_t fb;
+    gui_pixel_surface_t surface;
+    gui_pixel_theme_t theme;
+    uint32_t green;
+    static const char text[] = "\x1b[32mA";
+
+    terminal_test_fb(&fb);
+    k_memset(&theme, 0, sizeof(theme));
+    theme.terminal_bg = 0x00000000u;
+    theme.terminal_fg = 0x00FFFFFFu;
+    theme.terminal_cursor = 0x00FFCC44u;
+    surface.fb = &fb;
+    surface.clip.x = 0;
+    surface.clip.y = 0;
+    surface.clip.w = 128;
+    surface.clip.h = 96;
+    green = framebuffer_pack_rgb(&fb, 0x67, 0xc5, 0x8f);
+
+    KTEST_ASSERT_EQ(tc,
+                    gui_terminal_init_static(&term,
+                                             terminal_cells,
+                                             terminal_history,
+                                             8, 3, 4, 0x0f),
+                    1);
+    gui_terminal_set_pixel_rect(&term,
+                                (gui_pixel_rect_t){ 0, 0, 80, 60 },
+                                0, 0);
+    KTEST_ASSERT_EQ(tc, gui_terminal_write(&term, text, sizeof(text) - 1),
+                    (int)(sizeof(text) - 1));
+
+    gui_terminal_render(&term, &surface, &theme, 0);
+
+    KTEST_EXPECT_EQ(tc, terminal_pixels[0 * 128 + 3], green);
 }
 
 static void test_terminal_ansi_color_does_not_emit_escape_bytes(ktest_case_t *tc)
@@ -1431,8 +1512,10 @@ static void test_framebuffer_pack_rgb_scales_to_mask_size(ktest_case_t *tc)
 static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_terminal_write_wraps_and_retains_history),
     KTEST_CASE(test_terminal_render_uses_pixel_padding),
-    KTEST_CASE(test_terminal_render_draws_underline_cursor),
+    KTEST_CASE(test_terminal_render_draws_underline_cursor_in_scrollback_view),
+    KTEST_CASE(test_terminal_render_clips_cursor_to_surface_clip),
     KTEST_CASE(test_terminal_render_composes_scrollback_before_live_rows),
+    KTEST_CASE(test_terminal_render_uses_ansi_foreground_color),
     KTEST_CASE(test_terminal_ansi_color_does_not_emit_escape_bytes),
     KTEST_CASE(test_terminal_clear_discards_history_and_resets_cursor),
     KTEST_CASE(test_terminal_writes_to_later_rows_after_hardening),
