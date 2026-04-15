@@ -1248,6 +1248,94 @@ static void test_framebuffer_newline_repaints_only_dirty_terminal_cells(
     desktop_test_destroy(&desktop);
 }
 
+static void test_framebuffer_shell_backspace_prompt_redraw_keeps_unrelated_pixels(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+    const char redraw[] =
+        "\r\x1b[36mdrunix:\x1b[32m/\x1b[36m> \x1b[0ma ";
+    uint32_t sentinel = 0x0BADCAFEu;
+    int shell_sentinel_index;
+
+    k_memset(pointer_motion_pixels, 0, sizeof(pointer_motion_pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pointer_motion_pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    desktop_open_shell_window(&desktop);
+    desktop_render(&desktop);
+    KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, "drunix:/> ab", 11), 11);
+
+    shell_sentinel_index = (desktop.shell_content.y + 5) * 16 * 480 +
+                           (desktop.shell_content.x + 20) * 8;
+    pointer_motion_pixels[shell_sentinel_index] = sentinel;
+
+    KTEST_EXPECT_EQ(tc, desktop_write_console_output(&desktop, redraw,
+                                                     sizeof(redraw) - 1),
+                    sizeof(redraw) - 1);
+    KTEST_EXPECT_EQ(tc, pointer_motion_pixels[shell_sentinel_index],
+                    sentinel);
+    desktop_test_destroy(&desktop);
+}
+
+static void test_framebuffer_shell_return_prompt_keeps_unrelated_pixels(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+    const char prompt[] =
+        "\n\x1b[36mdrunix:\x1b[32m/\x1b[36m> \x1b[0m";
+    uint32_t sentinel = 0x0BADCAFEu;
+    int shell_sentinel_index;
+
+    k_memset(pointer_motion_pixels, 0, sizeof(pointer_motion_pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pointer_motion_pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    desktop_open_shell_window(&desktop);
+    desktop_render(&desktop);
+    KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, "ls", 2), 2);
+
+    shell_sentinel_index = (desktop.shell_content.y + 5) * 16 * 480 +
+                           (desktop.shell_content.x + 20) * 8;
+    pointer_motion_pixels[shell_sentinel_index] = sentinel;
+
+    KTEST_EXPECT_EQ(tc, desktop_write_console_output(&desktop, prompt,
+                                                     sizeof(prompt) - 1),
+                    sizeof(prompt) - 1);
+    KTEST_EXPECT_EQ(tc, pointer_motion_pixels[shell_sentinel_index],
+                    sentinel);
+    desktop_test_destroy(&desktop);
+}
+
 static void test_framebuffer_desktop_renders_shell_terminal_background(
     ktest_case_t *tc)
 {
@@ -1873,6 +1961,8 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_framebuffer_shell_write_repaints_only_dirty_terminal_cells),
     KTEST_CASE(test_framebuffer_backspace_repaints_only_dirty_terminal_cells),
     KTEST_CASE(test_framebuffer_newline_repaints_only_dirty_terminal_cells),
+    KTEST_CASE(test_framebuffer_shell_backspace_prompt_redraw_keeps_unrelated_pixels),
+    KTEST_CASE(test_framebuffer_shell_return_prompt_keeps_unrelated_pixels),
     KTEST_CASE(test_framebuffer_desktop_renders_shell_terminal_background),
     KTEST_CASE(test_framebuffer_desktop_console_output_renders_terminal_glyph),
     KTEST_CASE(test_framebuffer_desktop_terminal_edges_render_inside_window),

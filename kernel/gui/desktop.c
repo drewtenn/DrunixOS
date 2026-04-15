@@ -693,14 +693,18 @@ static int desktop_render_framebuffer_write_dirty(desktop_state_t *desktop,
     gui_rect_t dirty = { 0, 0, 0, 0 };
     gui_pixel_rect_t clip;
     unsigned char ch;
-    int written_x;
-    int written_y;
     int after_cursor_x;
     int after_cursor_y;
+    int x;
+    int y;
+    int wrap;
+    int ansi_state;
+    int ansi_val;
+    uint32_t i;
 
     if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
         return 0;
-    if (!buf || len != 1)
+    if (!buf || len == 0)
         return 0;
     if (before_view_top != 0 ||
         gui_terminal_visible_view_top(&desktop->shell_terminal) != 0)
@@ -711,33 +715,112 @@ static int desktop_render_framebuffer_write_dirty(desktop_state_t *desktop,
     if (before_ansi_state != 0)
         return 0;
 
-    ch = (unsigned char)buf[0];
-    if (ch == 0x7fu)
-        return 0;
-
     after_cursor_x = gui_terminal_cursor_x(&desktop->shell_terminal);
     after_cursor_y = gui_terminal_cursor_y(&desktop->shell_terminal);
+    x = before_cursor_x;
+    y = before_cursor_y;
+    wrap = before_wrap_pending;
+    ansi_state = 0;
+    ansi_val = 0;
 
-    if (ch >= ' ') {
-        if (before_wrap_pending) {
-            written_x = 0;
-            written_y = before_cursor_y + 1;
-        } else {
-            written_x = before_cursor_x;
-            written_y = before_cursor_y;
+    desktop_terminal_dirty_include_cell(desktop, &dirty, x, y);
+    for (i = 0; i < len; i++) {
+        ch = (unsigned char)buf[i];
+
+        if (ansi_state == 1) {
+            if (ch != '[')
+                return 0;
+            ansi_state = 2;
+            continue;
         }
-        if (written_x < 0 || written_y < 0 ||
-            written_x >= desktop->shell_terminal.cols ||
-            written_y >= desktop->shell_terminal.rows)
+
+        if (ansi_state == 2) {
+            if (ch >= '0' && ch <= '9') {
+                if (ansi_val >= 100) {
+                    ansi_val = 999;
+                } else {
+                    ansi_val = (ansi_val * 10) + (ch - '0');
+                    if (ansi_val > 999)
+                        ansi_val = 999;
+                }
+                continue;
+            }
+            if (ch != 'm')
+                return 0;
+            ansi_state = 0;
+            ansi_val = 0;
+            continue;
+        }
+
+        if (ch == '\x1b') {
+            ansi_state = 1;
+            ansi_val = 0;
+            continue;
+        }
+
+        if (ch == 0x7fu)
             return 0;
-        desktop_terminal_dirty_include_cell(desktop, &dirty,
-                                            written_x, written_y);
-    } else if (ch != '\b' && ch != '\r' && ch != '\n') {
-        return 0;
+
+        if (ch == '\r') {
+            desktop_terminal_dirty_include_cell(desktop, &dirty, x, y);
+            x = 0;
+            wrap = 0;
+            desktop_terminal_dirty_include_cell(desktop, &dirty, x, y);
+            continue;
+        }
+
+        if (ch == '\n') {
+            desktop_terminal_dirty_include_cell(desktop, &dirty, x, y);
+            x = 0;
+            y++;
+            wrap = 0;
+            if (y >= desktop->shell_terminal.rows)
+                return 0;
+            desktop_terminal_dirty_include_cell(desktop, &dirty, x, y);
+            continue;
+        }
+
+        if (ch == '\b') {
+            desktop_terminal_dirty_include_cell(desktop, &dirty, x, y);
+            if (wrap) {
+                wrap = 0;
+            } else if (x > 0) {
+                x--;
+            }
+            desktop_terminal_dirty_include_cell(desktop, &dirty, x, y);
+            continue;
+        }
+
+        if (ch < ' ' || ch == '\t')
+            return 0;
+
+        if (wrap) {
+            x = 0;
+            y++;
+            wrap = 0;
+            if (y >= desktop->shell_terminal.rows)
+                return 0;
+        }
+
+        if (x < 0 || y < 0 ||
+            x >= desktop->shell_terminal.cols ||
+            y >= desktop->shell_terminal.rows)
+            return 0;
+        desktop_terminal_dirty_include_cell(desktop, &dirty, x, y);
+        if (x == desktop->shell_terminal.cols - 1) {
+            wrap = 1;
+        } else {
+            x++;
+            wrap = 0;
+        }
     }
 
-    desktop_terminal_dirty_include_cell(desktop, &dirty,
-                                        before_cursor_x, before_cursor_y);
+    if (ansi_state != 0 || desktop->shell_terminal.ansi_state != 0)
+        return 0;
+    if (x != after_cursor_x || y != after_cursor_y ||
+        wrap != desktop->shell_terminal.wrap_pending)
+        return 0;
+
     desktop_terminal_dirty_include_cell(desktop, &dirty,
                                         after_cursor_x, after_cursor_y);
     if (dirty.w <= 0 || dirty.h <= 0)
