@@ -1127,6 +1127,48 @@ static void test_framebuffer_pointer_motion_does_not_repaint_unrelated_pixels(
     desktop_test_destroy(&desktop);
 }
 
+static void test_framebuffer_fast_pointer_motion_keeps_cursor_visible_at_edge(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+    desktop_pointer_event_t ev;
+    uint32_t white;
+
+    k_memset(pointer_motion_pixels, 0, sizeof(pointer_motion_pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pointer_motion_pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    desktop_render(&desktop);
+
+    white = framebuffer_pack_rgb(&fb, 255, 255, 255);
+    k_memset(&ev, 0, sizeof(ev));
+    ev.x = 59;
+    ev.y = 24;
+    ev.pixel_x = 479;
+    ev.pixel_y = 399;
+    desktop_handle_pointer(&desktop, &ev);
+
+    KTEST_EXPECT_EQ(tc, desktop.pointer_pixel_x, 472);
+    KTEST_EXPECT_EQ(tc, desktop.pointer_pixel_y, 388);
+    KTEST_EXPECT_EQ(tc, pointer_motion_pixels[388 * 480 + 472], white);
+    desktop_test_destroy(&desktop);
+}
+
 static void test_framebuffer_shell_write_repaints_only_dirty_terminal_cells(
     ktest_case_t *tc)
 {
@@ -1997,6 +2039,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_render_draws_visible_mouse_pointer),
     KTEST_CASE(test_desktop_pointer_event_moves_visible_mouse_pointer),
     KTEST_CASE(test_framebuffer_pointer_motion_does_not_repaint_unrelated_pixels),
+    KTEST_CASE(test_framebuffer_fast_pointer_motion_keeps_cursor_visible_at_edge),
     KTEST_CASE(test_framebuffer_shell_write_repaints_only_dirty_terminal_cells),
     KTEST_CASE(test_framebuffer_backspace_repaints_only_dirty_terminal_cells),
     KTEST_CASE(test_framebuffer_newline_repaints_only_dirty_terminal_cells),

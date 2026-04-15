@@ -489,23 +489,33 @@ static void desktop_set_pointer(desktop_state_t *desktop, int x, int y)
 
 static int desktop_clamp_pixel_x(desktop_state_t *desktop, int x)
 {
+    int max_x;
+
     if (!desktop || !desktop->framebuffer || desktop->framebuffer->width == 0)
         return 0;
+    max_x = 0;
+    if (desktop->framebuffer->width > DESKTOP_CURSOR_W)
+        max_x = (int)desktop->framebuffer->width - DESKTOP_CURSOR_W;
     if (x < 0)
         return 0;
-    if (x >= (int)desktop->framebuffer->width)
-        return (int)desktop->framebuffer->width - 1;
+    if (x > max_x)
+        return max_x;
     return x;
 }
 
 static int desktop_clamp_pixel_y(desktop_state_t *desktop, int y)
 {
+    int max_y;
+
     if (!desktop || !desktop->framebuffer || desktop->framebuffer->height == 0)
         return 0;
+    max_y = 0;
+    if (desktop->framebuffer->height > DESKTOP_CURSOR_H)
+        max_y = (int)desktop->framebuffer->height - DESKTOP_CURSOR_H;
     if (y < 0)
         return 0;
-    if (y >= (int)desktop->framebuffer->height)
-        return (int)desktop->framebuffer->height - 1;
+    if (y > max_y)
+        return max_y;
     return y;
 }
 
