@@ -7,24 +7,6 @@
 #define GUI_FONT_W 8u
 #define GUI_FONT_H 16u
 
-typedef struct {
-    int x;
-    int y;
-    int w;
-    int h;
-} gui_pixel_rect_t;
-
-typedef struct {
-    void *pixels;
-    int width;
-    int height;
-} gui_pixel_surface_t;
-
-typedef struct {
-    uint32_t foreground;
-    uint32_t background;
-} gui_pixel_theme_t;
-
 typedef struct framebuffer_info {
     uintptr_t address;
     uint32_t pitch;
@@ -54,17 +36,5 @@ void framebuffer_draw_glyph(const framebuffer_info_t *fb,
 void framebuffer_draw_cursor(const framebuffer_info_t *fb,
                              int x, int y,
                              uint32_t fg, uint32_t shadow);
-void framebuffer_draw_rect_outline(const framebuffer_info_t *fb,
-                                   int x, int y, int w, int h,
-                                   uint32_t color);
-void framebuffer_draw_text_clipped(const framebuffer_info_t *fb,
-                                   const gui_pixel_rect_t *clip,
-                                   int x, int y, const char *text,
-                                   uint32_t fg, uint32_t bg);
-void framebuffer_draw_scrollbar(const framebuffer_info_t *fb,
-                                int x, int y, int w, int h,
-                                int total_rows, int visible_rows,
-                                int view_top, uint32_t track_color,
-                                uint32_t thumb_color);
 
 #endif

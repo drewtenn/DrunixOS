@@ -23,7 +23,6 @@
 #include "uaccess.h"
 #include "desktop.h"
 #include <stdint.h>
-#include <limits.h>
 
 /* VGA functions from kernel.c */
 extern void print_string(char *s);
@@ -120,13 +119,6 @@ static int syscall_desktop_should_route_console_output(desktop_state_t *desktop,
         return 1;
 
     return 0;
-}
-
-static int syscall_scroll_count(uint32_t count)
-{
-    if (count > (uint32_t)INT_MAX)
-        return INT_MAX;
-    return (int)count;
 }
 
 static int syscall_write_console_bytes(process_t *cur,
@@ -1120,19 +1112,15 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
         return 0;
 
     case SYS_SCROLL_UP:
-        if (desktop_is_active() &&
-            desktop_scroll_console(desktop_global(),
-                                   syscall_scroll_count(ebx)) != 0)
+        if (desktop_is_active())
             return 0;
-        scroll_up(syscall_scroll_count(ebx));
+        scroll_up((int)ebx);
         return 0;
 
     case SYS_SCROLL_DOWN:
-        if (desktop_is_active() &&
-            desktop_scroll_console(desktop_global(),
-                                   -syscall_scroll_count(ebx)) != 0)
+        if (desktop_is_active())
             return 0;
-        scroll_down(syscall_scroll_count(ebx));
+        scroll_down((int)ebx);
         return 0;
 
     case SYS_YIELD:

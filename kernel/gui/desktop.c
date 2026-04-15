@@ -1,8 +1,6 @@
 #include "desktop.h"
 #include "kheap.h"
 #include "kstring.h"
-#include "terminal.h"
-#include <limits.h>
 
 #define DESKTOP_ATTR_BACKGROUND 0x1f
 #define DESKTOP_ATTR_TASKBAR    0x70
@@ -258,7 +256,7 @@ static void desktop_shell_apply_char(desktop_state_t *desktop, char c,
     desktop_shell_write_cell(desktop, c, dirty);
 }
 
-static void desktop_shell_redraw_live(desktop_state_t *desktop)
+static void desktop_shell_redraw(desktop_state_t *desktop)
 {
     if (!desktop->shell_cells || !desktop->display)
         return;
@@ -273,27 +271,6 @@ static void desktop_shell_redraw_live(desktop_state_t *desktop)
                 continue;
             desktop->display->cells[dy * desktop->display->cols + dx] =
                 desktop->shell_cells[row * desktop->shell_cells_w + col];
-        }
-    }
-}
-
-static void desktop_shell_redraw_view(desktop_state_t *desktop)
-{
-    if (!desktop || !desktop->display || !desktop->shell_window_open)
-        return;
-
-    for (int row = 0; row < desktop->shell_cells_h; row++) {
-        for (int col = 0; col < desktop->shell_cells_w; col++) {
-            int dx = desktop->shell_content.x + col;
-            int dy = desktop->shell_content.y + row;
-            gui_cell_t cell;
-
-            if (dx < 0 || dy < 0 || dx >= desktop->display->cols ||
-                dy >= desktop->display->rows)
-                continue;
-
-            cell = gui_terminal_cell_at(&desktop->shell_terminal, col, row);
-            desktop->display->cells[dy * desktop->display->cols + dx] = cell;
         }
     }
 }
@@ -414,20 +391,6 @@ static void desktop_present_framebuffer_pointer_motion(desktop_state_t *desktop,
     desktop_draw_framebuffer_pointer(desktop);
 }
 
-static void desktop_present_shell_region_to_framebuffer(desktop_state_t *desktop)
-{
-    if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
-        return;
-
-    gui_display_present_rect_to_framebuffer(desktop->display,
-                                            desktop->framebuffer,
-                                            desktop->shell_content.x,
-                                            desktop->shell_content.y,
-                                            desktop->shell_content.w,
-                                            desktop->shell_content.h);
-    desktop_draw_framebuffer_pointer(desktop);
-}
-
 static void desktop_present_framebuffer_shell_dirty(desktop_state_t *desktop,
                                                    const gui_rect_t *dirty)
 {
@@ -480,18 +443,6 @@ void desktop_init(desktop_state_t *desktop, gui_display_t *display)
                    desktop->shell_cells_h *
                    (int)sizeof(gui_cell_t)));
     if (!desktop->shell_cells) {
-        desktop->active = 0;
-        desktop->desktop_enabled = 0;
-        return;
-    }
-
-    if (!gui_terminal_init_alloc(&desktop->shell_terminal,
-                                 desktop->shell_cells_w,
-                                 desktop->shell_cells_h,
-                                 desktop->shell_cells_h * 2,
-                                 display->default_attr)) {
-        kfree(desktop->shell_cells);
-        desktop->shell_cells = 0;
         desktop->active = 0;
         desktop->desktop_enabled = 0;
         return;
@@ -572,10 +523,6 @@ int desktop_write_console_output(desktop_state_t *desktop,
 {
     uint32_t i;
     gui_rect_t dirty = { 0, 0, 0, 0 };
-    int was_scrolled;
-    const char *chunk_buf;
-    uint32_t chunk_len;
-    uint32_t remaining;
 
     if (!desktop || !desktop->active || !desktop->desktop_enabled)
         return 0;
@@ -584,31 +531,8 @@ int desktop_write_console_output(desktop_state_t *desktop,
     if (!buf || len == 0 || !desktop->shell_cells)
         return 0;
 
-    was_scrolled = desktop->shell_terminal.view_top > 0;
     for (i = 0; i < len; i++)
         desktop_shell_apply_char(desktop, buf[i], &dirty);
-
-    chunk_buf = buf;
-    remaining = len;
-    while (remaining > 0) {
-        chunk_len = remaining > (uint32_t)INT_MAX ? (uint32_t)INT_MAX : remaining;
-        gui_terminal_write(&desktop->shell_terminal, chunk_buf, chunk_len);
-        chunk_buf += chunk_len;
-        remaining -= chunk_len;
-    }
-
-    if (was_scrolled) {
-        desktop_shell_redraw_live(desktop);
-        if (desktop->framebuffer_enabled && desktop->framebuffer)
-            desktop_present_shell_region_to_framebuffer(desktop);
-        else if (desktop->video_address) {
-            desktop_draw_pointer(desktop);
-            gui_display_present_to_vga(desktop->display, desktop->video_address);
-        } else {
-            desktop_draw_pointer(desktop);
-        }
-        return (int)len;
-    }
 
     if (desktop->framebuffer_enabled && desktop->framebuffer)
         desktop_present_framebuffer_shell_dirty(desktop, &dirty);
@@ -626,7 +550,6 @@ int desktop_clear_console(desktop_state_t *desktop)
 
     for (int row = 0; row < desktop->shell_cells_h; row++)
         desktop_shell_clear_line(desktop, row, 0);
-    gui_terminal_clear(&desktop->shell_terminal);
 
     desktop->shell_cursor_x = 0;
     desktop->shell_cursor_y = 0;
@@ -635,23 +558,6 @@ int desktop_clear_console(desktop_state_t *desktop)
     desktop->shell_ansi_val = 0;
     desktop->shell_attr = desktop->display->default_attr;
     desktop_render(desktop);
-    return 1;
-}
-
-int desktop_scroll_console(desktop_state_t *desktop, int rows)
-{
-    if (!desktop || !desktop->active || !desktop->desktop_enabled)
-        return 0;
-    if (!desktop->shell_window_open || !desktop->shell_cells)
-        return 0;
-
-    gui_terminal_scroll_view(&desktop->shell_terminal, rows);
-    if (desktop->framebuffer_enabled && desktop->framebuffer) {
-        desktop_shell_redraw_view(desktop);
-        desktop_present_shell_region_to_framebuffer(desktop);
-    } else {
-        desktop_render(desktop);
-    }
     return 1;
 }
 
@@ -702,7 +608,6 @@ void desktop_open_shell_window(desktop_state_t *desktop)
 {
     desktop->shell_window_open = 1;
     desktop->focus = DESKTOP_FOCUS_SHELL;
-    gui_terminal_snap_live(&desktop->shell_terminal);
 }
 
 void desktop_handle_pointer(desktop_state_t *desktop,
@@ -795,7 +700,7 @@ void desktop_render(desktop_state_t *desktop)
     }
 
     if (desktop->shell_window_open)
-        desktop_shell_redraw_view(desktop);
+        desktop_shell_redraw(desktop);
 
     if (desktop->framebuffer_enabled && desktop->framebuffer) {
         gui_display_present_to_framebuffer(desktop->display,
