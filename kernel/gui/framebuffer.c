@@ -10,6 +10,18 @@ static int rgb_mask_overlaps(uint32_t a_pos, uint32_t a_size,
     return a_pos < b_end && b_pos < a_end;
 }
 
+static uint32_t scale_color(uint8_t value, uint8_t mask_size)
+{
+    uint32_t max;
+
+    if (mask_size >= 8)
+        return value;
+    if (mask_size == 0)
+        return 0;
+    max = (1u << mask_size) - 1u;
+    return ((uint32_t)value * max + 127u) / 255u;
+}
+
 int framebuffer_info_from_multiboot(const multiboot_info_t *mbi,
                                     framebuffer_info_t *out)
 {
@@ -81,4 +93,45 @@ int framebuffer_info_from_multiboot(const multiboot_info_t *mbi,
     out->cell_cols = mbi->framebuffer_width / GUI_FONT_W;
     out->cell_rows = mbi->framebuffer_height / GUI_FONT_H;
     return 0;
+}
+
+uint32_t framebuffer_pack_rgb(const framebuffer_info_t *fb,
+                              uint8_t r, uint8_t g, uint8_t b)
+{
+    if (!fb)
+        return 0;
+    return (scale_color(r, fb->red_size) << fb->red_pos) |
+           (scale_color(g, fb->green_size) << fb->green_pos) |
+           (scale_color(b, fb->blue_size) << fb->blue_pos);
+}
+
+void framebuffer_fill_rect(const framebuffer_info_t *fb,
+                           int x, int y, int w, int h,
+                           uint32_t color)
+{
+    if (!fb || fb->address == 0 || w <= 0 || h <= 0)
+        return;
+    if (x >= (int)fb->width || y >= (int)fb->height)
+        return;
+    if (x + w <= 0 || y + h <= 0)
+        return;
+    if (x < 0) {
+        w += x;
+        x = 0;
+    }
+    if (y < 0) {
+        h += y;
+        y = 0;
+    }
+    if (x + w > (int)fb->width)
+        w = (int)fb->width - x;
+    if (y + h > (int)fb->height)
+        h = (int)fb->height - y;
+
+    for (int row = 0; row < h; row++) {
+        uint32_t *line = (uint32_t *)(fb->address +
+                                      (uintptr_t)(y + row) * fb->pitch);
+        for (int col = 0; col < w; col++)
+            line[x + col] = color;
+    }
 }

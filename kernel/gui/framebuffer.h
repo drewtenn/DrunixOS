@@ -25,5 +25,10 @@ typedef struct framebuffer_info {
 
 int framebuffer_info_from_multiboot(const multiboot_info_t *mbi,
                                     framebuffer_info_t *out);
+uint32_t framebuffer_pack_rgb(const framebuffer_info_t *fb,
+                              uint8_t r, uint8_t g, uint8_t b);
+void framebuffer_fill_rect(const framebuffer_info_t *fb,
+                           int x, int y, int w, int h,
+                           uint32_t color);
 
 #endif
