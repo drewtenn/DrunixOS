@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="489.0" height="626" viewBox="0 0 489.0 626" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="489.0" height="686" viewBox="0 0 489.0 686" role="img" aria-labelledby="title desc">
   <title id="title">Kernel image layout</title>
-  <desc id="desc">The linker keeps boot-critical sections at the front.</desc>
+  <desc id="desc">Sections grow upward from the load address, so the boot header sits at the lowest address.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M 2 2 L 10 6 L 2 10" fill="none" stroke="#0f172a" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
@@ -37,25 +37,28 @@
       .line { stroke: #334155; stroke-width: 1.6; stroke-linecap: round; }
     </style>
   </defs>
-  <rect class="bg" x="0" y="0" width="489.0" height="626" rx="12"/>
+  <rect class="bg" x="0" y="0" width="489.0" height="686" rx="12"/>
   <text class="title" x="44" y="42">Kernel image layout</text>
-  <text class="muted" x="44" y="68">The linker keeps boot-critical sections at the front.</text>
-  <rect class="panel" x="34" y="98" width="421.0" height="480" rx="10"/>
-  <rect class="gray" x="68.0" y="124" width="353.0" height="84" rx="7"/>
-  <text class="label" x="244.5" y="150.0" text-anchor="middle" dominant-baseline="middle">zeroed data</text>
-  <text class="muted" x="244.5" y="166.0" text-anchor="middle" dominant-baseline="middle">uninitialized globals, memory bitmap, kernel</text>
-  <text class="muted" x="244.5" y="182.0" text-anchor="middle" dominant-baseline="middle">stack</text>
-  <rect class="blue" x="68.0" y="226" width="353.0" height="68" rx="7"/>
-  <text class="label" x="244.5" y="252.0" text-anchor="middle" dominant-baseline="middle">writable data</text>
-  <text class="muted" x="244.5" y="268.0" text-anchor="middle" dominant-baseline="middle">mutable global values</text>
-  <rect class="green" x="68.0" y="312" width="353.0" height="68" rx="7"/>
-  <text class="label" x="244.5" y="338.0" text-anchor="middle" dominant-baseline="middle">read-only data</text>
-  <text class="muted" x="244.5" y="354.0" text-anchor="middle" dominant-baseline="middle">constant values</text>
-  <rect class="amber" x="68.0" y="398" width="353.0" height="68" rx="7"/>
-  <text class="label" x="244.5" y="424.0" text-anchor="middle" dominant-baseline="middle">kernel code</text>
-  <text class="muted" x="244.5" y="440.0" text-anchor="middle" dominant-baseline="middle">executable instructions</text>
-  <rect class="blue" x="68.0" y="484" width="353.0" height="68" rx="7"/>
-  <text class="label" x="244.5" y="510.0" text-anchor="middle" dominant-baseline="middle">boot header</text>
-  <text class="muted" x="244.5" y="526.0" text-anchor="middle" dominant-baseline="middle">GRUB header, first 8 KB</text>
-  <text class="muted" x="455.0" y="608.0" text-anchor="end">Chapter 1, Figure 3</text>
+  <text class="muted" x="44" y="68">Sections grow upward from the load address, so the boot header</text>
+  <text class="muted" x="44" y="84">sits at the lowest address.</text>
+  <rect class="panel" x="34" y="114" width="421.0" height="524" rx="10"/>
+  <text class="muted" x="244.5" y="154" text-anchor="middle">higher addresses</text>
+  <rect class="gray" x="68.0" y="162" width="353.0" height="84" rx="7"/>
+  <text class="label" x="244.5" y="188.0" text-anchor="middle" dominant-baseline="middle">zeroed data</text>
+  <text class="muted" x="244.5" y="204.0" text-anchor="middle" dominant-baseline="middle">uninitialized globals, memory bitmap, kernel</text>
+  <text class="muted" x="244.5" y="220.0" text-anchor="middle" dominant-baseline="middle">stack</text>
+  <rect class="blue" x="68.0" y="264" width="353.0" height="68" rx="7"/>
+  <text class="label" x="244.5" y="290.0" text-anchor="middle" dominant-baseline="middle">writable data</text>
+  <text class="muted" x="244.5" y="306.0" text-anchor="middle" dominant-baseline="middle">mutable global values</text>
+  <rect class="green" x="68.0" y="350" width="353.0" height="68" rx="7"/>
+  <text class="label" x="244.5" y="376.0" text-anchor="middle" dominant-baseline="middle">read-only data</text>
+  <text class="muted" x="244.5" y="392.0" text-anchor="middle" dominant-baseline="middle">constant values</text>
+  <rect class="amber" x="68.0" y="436" width="353.0" height="68" rx="7"/>
+  <text class="label" x="244.5" y="462.0" text-anchor="middle" dominant-baseline="middle">kernel code</text>
+  <text class="muted" x="244.5" y="478.0" text-anchor="middle" dominant-baseline="middle">executable instructions</text>
+  <rect class="blue" x="68.0" y="522" width="353.0" height="68" rx="7"/>
+  <text class="label" x="244.5" y="548.0" text-anchor="middle" dominant-baseline="middle">boot header</text>
+  <text class="muted" x="244.5" y="564.0" text-anchor="middle" dominant-baseline="middle">GRUB header, first 8 KB</text>
+  <text class="muted" x="244.5" y="606" text-anchor="middle">lower addresses (kernel loaded at 0x100000)</text>
+  <text class="muted" x="455.0" y="668.0" text-anchor="end">Chapter 1, Figure 3</text>
 </svg>

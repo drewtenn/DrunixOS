@@ -31,6 +31,7 @@ STACK_BOX_WIDTH_RATIO = 0.72
 STACK_EDGE_PAD_X = 34
 STACK_EDGE_PAD_Y = 26
 STACK_ROW_GAP = 18
+STACK_NOTE_H = 22
 SEQUENCE_PANEL_PAD_X = 34
 SEQUENCE_PANEL_PAD_Y = 26
 TREE_PANEL_PAD_X = 34
@@ -1114,12 +1115,14 @@ def flow(path,title,subtitle,steps,w=760,h=None):
             cur_y += bh + gap_between
     write_svg(path, finish(a))
 
-def stack(path,title,subtitle,items,w=760,h=None):
+def stack(path,title,subtitle,items,w=760,h=None,top_note=None,bottom_note=None):
     bw = min(max((landscape_box_dims(lab, sub, min_w=170)[0] for lab, sub, _ in items), default=220), PANEL_W - STACK_EDGE_PAD_X * 2)
     row_heights = [max(56, box_height(lab, sub, bw)) for lab, sub, _ in items]
     fixed_row_h = sum(row_heights)
     gap_count = max(0, len(items) - 1)
-    content_h = fixed_row_h + gap_count * STACK_ROW_GAP
+    note_top_h = STACK_NOTE_H if top_note else 0
+    note_bottom_h = STACK_NOTE_H if bottom_note else 0
+    content_h = fixed_row_h + gap_count * STACK_ROW_GAP + note_top_h + note_bottom_h
     panel_w = bw + STACK_EDGE_PAD_X * 2
     panel_h = content_h + STACK_EDGE_PAD_Y * 2
     h = max(min_svg_height_for_panel_content(200, subtitle=subtitle, subtitle_width=panel_w - 12, panel_w=panel_w), panel_top_y(subtitle, panel_w - 12) + panel_h + PANEL_BOTTOM_MARGIN)
@@ -1130,9 +1133,16 @@ def stack(path,title,subtitle,items,w=760,h=None):
     panel(a, panel_rect.x, panel_rect.y, panel_rect.w, panel_rect.h)
     x = panel_rect.x + (panel_rect.w - bw) / 2
     cur_y = panel_rect.y + STACK_EDGE_PAD_Y
+    if top_note:
+        text(a, x + bw/2, cur_y + 14, top_note, 'muted', 'middle')
+        cur_y += note_top_h
     for i,(lab,sub,cls) in enumerate(items):
         box(a, x, cur_y, bw, row_heights[i], lab, cls, sub, mono=False)
         cur_y += row_heights[i] + STACK_ROW_GAP
+    if items:
+        cur_y -= STACK_ROW_GAP
+    if bottom_note:
+        text(a, x + bw/2, cur_y + 16, bottom_note, 'muted', 'middle')
     write_svg(path, finish(a))
 
 def table(path,title,subtitle,headers,rows,w=760,h=None):
@@ -1579,8 +1589,8 @@ flow(Path('ch01-diag01.svg'),'GRUB handoff state','Registers and boot metadata w
  ('EAX','multiboot magic','green'),('EBX','boot info pointer','blue'),('EIP','kernel entry point','amber'),('ESP','temporary stack','gray')])
 stack(Path('ch01-diag02.svg'),'Entry stack after _start pushes Multiboot values','Stack grows downward; EAX lands at the lowest address and becomes the first argument.',[
  ('Initial ESP','Stack pointer undefined on entry','blue'),('EBX','Multiboot info pointer, 2nd argument','blue'),('EAX','Multiboot magic number, 1st argument','blue')],h=290)
-stack(Path('ch01-diag03.svg'),'Kernel image layout','The linker keeps boot-critical sections at the front.',[
- ('zeroed data','uninitialized globals, memory bitmap, kernel stack','gray'),('writable data','mutable global values','blue'),('read-only data','constant values','green'),('kernel code','executable instructions','amber'),('boot header','GRUB header, first 8 KB','blue')],h=310)
+stack(Path('ch01-diag03.svg'),'Kernel image layout','Sections grow upward from the load address, so the boot header sits at the lowest address.',[
+ ('zeroed data','uninitialized globals, memory bitmap, kernel stack','gray'),('writable data','mutable global values','blue'),('read-only data','constant values','green'),('kernel code','executable instructions','amber'),('boot header','GRUB header, first 8 KB','blue')],h=310,top_note='higher addresses',bottom_note='lower addresses (kernel loaded at 0x100000)')
 # Chapter 2
 # Chapter 3
 grid_snapshot(
