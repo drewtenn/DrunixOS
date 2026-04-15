@@ -3,7 +3,14 @@
 static gui_rect_t gui_clip_rect(const gui_display_t *display,
                                 int x, int y, int w, int h)
 {
-    gui_rect_t out;
+    gui_rect_t out = { 0, 0, 0, 0 };
+
+    if (w <= 0 || h <= 0)
+        return out;
+    if (x >= display->cols || y >= display->rows)
+        return out;
+    if (x + w <= 0 || y + h <= 0)
+        return out;
 
     if (x < 0) {
         w += x;
@@ -18,9 +25,9 @@ static gui_rect_t gui_clip_rect(const gui_display_t *display,
     if (y + h > display->rows)
         h = display->rows - y;
     if (w < 0)
-        w = 0;
+        return out;
     if (h < 0)
-        h = 0;
+        return out;
 
     out.x = x;
     out.y = y;
