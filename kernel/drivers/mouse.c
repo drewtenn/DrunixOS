@@ -132,7 +132,7 @@ int mouse_stream_consume(mouse_packet_stream_t *stream, uint8_t data,
     if (!stream || !packet_out)
         return -1;
 
-    if (mouse_stream_is_response(data)) {
+    if (stream->index == 0 && mouse_stream_is_response(data)) {
         mouse_stream_reset(stream);
         return 0;
     }

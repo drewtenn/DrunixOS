@@ -177,6 +177,22 @@ static void test_mouse_stream_resyncs_after_noise_and_ack(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, packet.dy, -1);
 }
 
+static void test_mouse_stream_keeps_response_like_bytes_inside_packet(ktest_case_t *tc)
+{
+    mouse_packet_stream_t stream;
+    mouse_packet_t packet;
+
+    mouse_stream_reset(&stream);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0x0B, &packet), 0);
+    KTEST_EXPECT_EQ(tc, stream.index, 1);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0xFA, &packet), 0);
+    KTEST_EXPECT_EQ(tc, stream.index, 2);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0xAA, &packet), 1);
+    KTEST_EXPECT_EQ(tc, packet.buttons, 0x0B);
+    KTEST_EXPECT_EQ(tc, packet.dx, -6);
+    KTEST_EXPECT_EQ(tc, packet.dy, -86);
+}
+
 static void test_desktop_pointer_click_focuses_shell_window(ktest_case_t *tc)
 {
     gui_display_t display;
@@ -219,6 +235,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_plain_text_forwards_to_shell_when_focused),
     KTEST_CASE(test_mouse_packet_decode_preserves_motion_and_buttons),
     KTEST_CASE(test_mouse_stream_resyncs_after_noise_and_ack),
+    KTEST_CASE(test_mouse_stream_keeps_response_like_bytes_inside_packet),
     KTEST_CASE(test_desktop_pointer_click_focuses_shell_window),
     KTEST_CASE(test_desktop_pointer_click_ignores_hidden_shell_window),
 };
