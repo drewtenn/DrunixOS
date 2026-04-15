@@ -14,7 +14,7 @@
  *      1  SYS_EXIT      ebx=code
  *      2  SYS_FWRITE    ebx=fd, ecx=buf, edx=count → bytes written
  *      3  SYS_READ      ebx=fd, ecx=buf, edx=count → bytes read
- *      4  SYS_WRITE     ebx=buf, ecx=count → bytes written (VGA)
+ *      4  SYS_WRITE     ebx=buf, ecx=count → bytes written (console)
  *      5  SYS_OPEN      ebx=filename → fd, -1
  *      6  SYS_CLOSE     ebx=fd → 0, -1
  *      7  SYS_WAIT      ebx=pid → exit_status, -1
@@ -112,11 +112,6 @@
 #define SYS_TCSETPGRP 189
 #define SYS_TCGETPGRP 190
 #define SYS_CLOCK_GETTIME 265
-
-#ifdef KTEST_ENABLED
-int syscall_stdout_would_fallback(void *desktop, uint32_t pid, const char *buf,
-                                  uint32_t len);
-#endif
 
 #define PROT_NONE      0x0u
 #define PROT_READ      0x1u

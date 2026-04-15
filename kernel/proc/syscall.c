@@ -75,6 +75,46 @@ static int fd_alloc(process_t *proc)
     return -1;
 }
 
+static int syscall_desktop_should_route_console_output(desktop_state_t *desktop,
+                                                       process_t *cur)
+{
+    uint32_t shell_pid;
+    tty_t *tty;
+
+    if (!desktop || !cur)
+        return 0;
+    if (desktop_process_owns_shell(desktop, cur->pid, cur->pgid))
+        return 1;
+
+    shell_pid = desktop_shell_pid(desktop);
+    if (shell_pid == 0)
+        return 0;
+    if (shell_pid != 0 && cur->parent_pid == shell_pid)
+        return 1;
+
+    tty = tty_get((int)cur->tty_id);
+    if (tty && tty->fg_pgid != 0 && tty->fg_pgid == cur->pgid)
+        return 1;
+
+    return 0;
+}
+
+static int syscall_write_console_bytes(process_t *cur,
+                                       const char *buf,
+                                       uint32_t len)
+{
+    desktop_state_t *desktop = desktop_is_active() ? desktop_global() : 0;
+
+    if (desktop &&
+        syscall_desktop_should_route_console_output(desktop, cur) &&
+        desktop_write_console_output(desktop, buf, len) == (int)len) {
+        return (int)len;
+    }
+
+    print_bytes(buf, (int)len);
+    return (int)len;
+}
+
 static void syscall_invlpg(uint32_t virt)
 {
     __asm__ volatile("invlpg (%0)" :: "r"(virt) : "memory");
@@ -344,7 +384,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
          * edx = number of bytes to write
          *
          * Dispatches on fd type:
-         *   FD_TYPE_STDOUT  → print_bytes() to VGA
+         *   FD_TYPE_STDOUT  → active desktop shell or legacy VGA console
          *   FD_TYPE_FILE    → fs_write() into the DUFS inode
          *
          * Returns the number of bytes written, or -1 on error.
@@ -359,7 +399,6 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
         file_handle_t *fh = &cur->open_files[ebx];
 
         if (fh->type == FD_TYPE_STDOUT) {
-            desktop_state_t *desktop = desktop_is_active() ? desktop_global() : 0;
             uint8_t kbuf[USER_IO_CHUNK];
             uint32_t written = 0;
 
@@ -372,13 +411,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
                     chunk = USER_IO_CHUNK;
                 if (uaccess_copy_from_user(cur, kbuf, ecx + written, chunk) != 0)
                     return written ? written : (uint32_t)-1;
-                if (desktop &&
-                    desktop_write_process_output(desktop, cur->pid,
-                                                 (const char *)kbuf, chunk) == (int)chunk) {
-                    written += chunk;
-                    continue;
-                }
-                print_bytes((const char *)kbuf, (int)chunk);
+                syscall_write_console_bytes(cur, (const char *)kbuf, chunk);
                 written += chunk;
             }
             return written;
@@ -472,7 +505,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
          * ecx = number of bytes to write
          *
          * The buffer is NOT required to be null-terminated — SYS_WRITE emits
-         * exactly `count` bytes to the VGA console.  This lets user code pipe
+         * exactly `count` bytes to the console.  This lets user code pipe
          * binary data (for example, the bytes of an ELF image) through the
          * write path without an embedded 0x00 truncating the output.
          *
@@ -494,7 +527,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
                     chunk = USER_IO_CHUNK;
                 if (uaccess_copy_from_user(cur, kbuf, ebx + written, chunk) != 0)
                     return written ? written : (uint32_t)-1;
-                print_bytes((const char *)kbuf, (int)chunk);
+                syscall_write_console_bytes(cur, (const char *)kbuf, chunk);
                 written += chunk;
             }
             return written;
@@ -1927,10 +1960,9 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
 }
 
 #ifdef KTEST_ENABLED
-int syscall_stdout_would_fallback(void *desktop_ptr, uint32_t pid,
-                                  const char *buf, uint32_t len)
+int syscall_console_write_for_test(process_t *proc, const char *buf,
+                                   uint32_t len)
 {
-    return desktop_write_process_output((desktop_state_t *)desktop_ptr,
-                                        pid, buf, len) == 0;
+    return syscall_write_console_bytes(proc, buf, len);
 }
 #endif

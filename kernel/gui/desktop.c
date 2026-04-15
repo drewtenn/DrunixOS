@@ -78,6 +78,7 @@ static void desktop_shell_ensure_cursor(desktop_state_t *desktop)
 static void desktop_shell_newline(desktop_state_t *desktop)
 {
     desktop->shell_cursor_x = 0;
+    desktop->shell_wrap_pending = 0;
     desktop->shell_cursor_y++;
     if (desktop->shell_cursor_y >= desktop->shell_cells_h) {
         desktop_shell_scroll_up(desktop);
@@ -95,24 +96,69 @@ static void desktop_shell_write_cell(desktop_state_t *desktop, char c)
         desktop->shell_cells_h <= 0)
         return;
 
-    desktop_shell_ensure_cursor(desktop);
-    if (desktop->shell_cursor_x >= desktop->shell_cells_w)
+    if (desktop->shell_wrap_pending)
         desktop_shell_newline(desktop);
+
+    desktop_shell_ensure_cursor(desktop);
 
     x = desktop->shell_cursor_x;
     y = desktop->shell_cursor_y;
     cell = &desktop->shell_cells[y * desktop->shell_cells_w + x];
     cell->ch = c;
-    cell->attr = desktop->display->default_attr;
-    desktop->shell_cursor_x++;
-    if (desktop->shell_cursor_x >= desktop->shell_cells_w)
-        desktop_shell_newline(desktop);
+    cell->attr = desktop->shell_attr;
+    if (desktop->shell_cursor_x == desktop->shell_cells_w - 1) {
+        desktop->shell_wrap_pending = 1;
+    } else {
+        desktop->shell_cursor_x++;
+        desktop->shell_wrap_pending = 0;
+    }
+}
+
+static void desktop_shell_apply_ansi(desktop_state_t *desktop, int code)
+{
+    if (code == 0)
+        desktop->shell_attr = desktop->display->default_attr;
+    if (code == 31)
+        desktop->shell_attr = 0x0c;
+    if (code == 32)
+        desktop->shell_attr = 0x0a;
+    if (code == 33)
+        desktop->shell_attr = 0x0e;
+    if (code == 36)
+        desktop->shell_attr = 0x0b;
 }
 
 static void desktop_shell_apply_char(desktop_state_t *desktop, char c)
 {
+    if (c == '\x1b') {
+        desktop->shell_ansi_state = 1;
+        desktop->shell_ansi_val = 0;
+        return;
+    }
+
+    if (desktop->shell_ansi_state == 1) {
+        desktop->shell_ansi_state = (c == '[') ? 2 : 0;
+        return;
+    }
+
+    if (desktop->shell_ansi_state == 2) {
+        if (c >= '0' && c <= '9') {
+            desktop->shell_ansi_val =
+                (desktop->shell_ansi_val * 10) + (c - '0');
+            return;
+        }
+        if (c == 'm') {
+            desktop_shell_apply_ansi(desktop, desktop->shell_ansi_val);
+            desktop->shell_ansi_state = 0;
+            return;
+        }
+        desktop->shell_ansi_state = 0;
+        return;
+    }
+
     if (c == '\r') {
         desktop->shell_cursor_x = 0;
+        desktop->shell_wrap_pending = 0;
         return;
     }
 
@@ -122,6 +168,10 @@ static void desktop_shell_apply_char(desktop_state_t *desktop, char c)
     }
 
     if (c == '\b') {
+        if (desktop->shell_wrap_pending) {
+            desktop->shell_wrap_pending = 0;
+            return;
+        }
         if (desktop->shell_cursor_x > 0)
             desktop->shell_cursor_x--;
         return;
@@ -199,6 +249,10 @@ void desktop_init(desktop_state_t *desktop, gui_display_t *display)
 
     desktop->shell_cursor_x = 0;
     desktop->shell_cursor_y = 0;
+    desktop->shell_wrap_pending = 0;
+    desktop->shell_ansi_state = 0;
+    desktop->shell_ansi_val = 0;
+    desktop->shell_attr = display->default_attr;
     for (int row = 0; row < desktop->shell_cells_h; row++)
         desktop_shell_clear_line(desktop, row);
 }
@@ -214,10 +268,35 @@ void desktop_set_presentation_target(desktop_state_t *desktop,
 
 void desktop_attach_shell_pid(desktop_state_t *desktop, uint32_t pid)
 {
+    desktop_attach_shell_process(desktop, pid, pid);
+}
+
+void desktop_attach_shell_process(desktop_state_t *desktop, uint32_t pid,
+                                  uint32_t pgid)
+{
     if (!desktop)
         return;
 
     desktop->shell_pid = pid;
+    desktop->shell_pgid = pgid ? pgid : pid;
+}
+
+uint32_t desktop_shell_pid(const desktop_state_t *desktop)
+{
+    return desktop ? desktop->shell_pid : 0;
+}
+
+int desktop_process_owns_shell(desktop_state_t *desktop,
+                               uint32_t pid,
+                               uint32_t pgid)
+{
+    if (!desktop || desktop->shell_pid == 0)
+        return 0;
+    if (pid == desktop->shell_pid)
+        return 1;
+    if (desktop->shell_pgid != 0 && pgid == desktop->shell_pgid)
+        return 1;
+    return 0;
 }
 
 int desktop_console_mirror_enabled(void)
@@ -225,8 +304,7 @@ int desktop_console_mirror_enabled(void)
     return !desktop_is_active();
 }
 
-int desktop_write_process_output(desktop_state_t *desktop,
-                                 uint32_t pid,
+int desktop_write_console_output(desktop_state_t *desktop,
                                  const char *buf,
                                  uint32_t len)
 {
@@ -234,7 +312,7 @@ int desktop_write_process_output(desktop_state_t *desktop,
 
     if (!desktop || !desktop->active || !desktop->desktop_enabled)
         return 0;
-    if (!desktop->shell_window_open || desktop->shell_pid != pid)
+    if (!desktop->shell_window_open)
         return 0;
     if (!buf || len == 0 || !desktop->shell_cells)
         return 0;
@@ -244,6 +322,17 @@ int desktop_write_process_output(desktop_state_t *desktop,
 
     desktop_render(desktop);
     return (int)len;
+}
+
+int desktop_write_process_output(desktop_state_t *desktop,
+                                 uint32_t pid,
+                                 uint32_t pgid,
+                                 const char *buf,
+                                 uint32_t len)
+{
+    if (!desktop_process_owns_shell(desktop, pid, pgid))
+        return 0;
+    return desktop_write_console_output(desktop, buf, len);
 }
 
 desktop_key_result_t desktop_handle_key(desktop_state_t *desktop, char c)

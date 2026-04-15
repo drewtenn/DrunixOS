@@ -235,7 +235,7 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
     }
     klog_uint("PROC", "boot shell pid", proc.pid);
     if (desktop_is_active()) {
-        desktop_attach_shell_pid(&boot_desktop, proc.pid);
+        desktop_attach_shell_process(&boot_desktop, proc.pid, proc.pgid);
         desktop_render(&boot_desktop);
     }
 

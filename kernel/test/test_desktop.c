@@ -1,10 +1,15 @@
 #include "ktest.h"
 #include "display.h"
 #include "desktop.h"
+#include "kstring.h"
 #include "mouse.h"
+#include "process.h"
 #include "syscall.h"
 
 static gui_cell_t desktop_cells[80 * 25];
+
+extern int syscall_console_write_for_test(process_t *proc, const char *buf,
+                                          uint32_t len);
 
 static void test_gui_display_fill_rect_clips_to_bounds(ktest_case_t *tc)
 {
@@ -156,7 +161,7 @@ static void test_desktop_write_process_output_targets_shell_surface(ktest_case_t
     desktop_attach_shell_pid(&desktop, 7);
 
     KTEST_EXPECT_EQ(tc,
-                    desktop_write_process_output(&desktop, 7, "help", 4),
+                    desktop_write_process_output(&desktop, 7, 7, "help", 4),
                     4);
     KTEST_EXPECT_EQ(tc,
                     gui_display_cell_at(&display,
@@ -165,7 +170,7 @@ static void test_desktop_write_process_output_targets_shell_surface(ktest_case_t
                     'h');
 }
 
-static void test_desktop_non_shell_output_is_rejected_for_legacy_fallback(ktest_case_t *tc)
+static void test_desktop_child_process_group_output_targets_shell_surface(ktest_case_t *tc)
 {
     gui_display_t display;
     desktop_state_t desktop;
@@ -173,27 +178,126 @@ static void test_desktop_non_shell_output_is_rejected_for_legacy_fallback(ktest_
     gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
     desktop_init(&desktop, &display);
     desktop_open_shell_window(&desktop);
-    desktop_attach_shell_pid(&desktop, 7);
+    desktop_attach_shell_process(&desktop, 7, 7);
 
     KTEST_EXPECT_EQ(tc,
-                    desktop_write_process_output(&desktop, 8, "x", 1),
+                    desktop_write_process_output(&desktop, 8, 7, "child", 5),
+                    5);
+    KTEST_EXPECT_EQ(tc,
+                    gui_display_cell_at(&display,
+                                        desktop.shell_content.x,
+                                        desktop.shell_content.y).ch,
+                    'c');
+}
+
+static void test_desktop_unrelated_process_group_output_is_rejected(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+    desktop_attach_shell_process(&desktop, 7, 7);
+
+    KTEST_EXPECT_EQ(tc,
+                    desktop_write_process_output(&desktop, 8, 42, "x", 1),
                     0);
 }
 
-static void test_syscall_stdout_would_fallback_when_desktop_declines(ktest_case_t *tc)
+static void test_syscall_console_write_routes_session_output_to_desktop(ktest_case_t *tc)
 {
     gui_display_t display;
     desktop_state_t desktop;
+    static process_t proc;
 
     gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
     desktop_init(&desktop, &display);
     desktop_open_shell_window(&desktop);
-    desktop_attach_shell_pid(&desktop, 7);
+    desktop_attach_shell_process(&desktop, 7, 7);
+    k_memset(&proc, 0, sizeof(proc));
+    proc.pid = 8;
+    proc.parent_pid = 7;
+    proc.pgid = 8;
 
-    KTEST_EXPECT_TRUE(tc,
-                      syscall_stdout_would_fallback(&desktop, 8, "x", 1));
-    KTEST_EXPECT_FALSE(tc,
-                       syscall_stdout_would_fallback(&desktop, 7, "x", 1));
+    KTEST_EXPECT_EQ(tc,
+                    syscall_console_write_for_test(&proc, "sys", 3),
+                    3);
+    KTEST_EXPECT_EQ(tc,
+                    gui_display_cell_at(&display,
+                                        desktop.shell_content.x,
+                                        desktop.shell_content.y).ch,
+                    's');
+}
+
+static void test_desktop_ansi_color_escape_updates_attr_without_printing(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    static const char ansi_text[] = "\x1b[31mR\x1b[0mW";
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+    desktop_attach_shell_process(&desktop, 7, 7);
+
+    KTEST_EXPECT_EQ(tc,
+                    desktop_write_process_output(&desktop, 7, 7, ansi_text,
+                                                 sizeof(ansi_text) - 1),
+                    sizeof(ansi_text) - 1);
+    KTEST_EXPECT_EQ(tc,
+                    gui_display_cell_at(&display,
+                                        desktop.shell_content.x,
+                                        desktop.shell_content.y).ch,
+                    'R');
+    KTEST_EXPECT_EQ(tc,
+                    gui_display_cell_at(&display,
+                                        desktop.shell_content.x,
+                                        desktop.shell_content.y).attr,
+                    0x0c);
+    KTEST_EXPECT_EQ(tc,
+                    gui_display_cell_at(&display,
+                                        desktop.shell_content.x + 1,
+                                        desktop.shell_content.y).ch,
+                    'W');
+    KTEST_EXPECT_EQ(tc,
+                    gui_display_cell_at(&display,
+                                        desktop.shell_content.x + 1,
+                                        desktop.shell_content.y).attr,
+                    display.default_attr);
+}
+
+static void test_desktop_full_screen_write_does_not_scroll_until_next_char(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    char row_char;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+    desktop_attach_shell_process(&desktop, 7, 7);
+
+    for (int row = 0; row < desktop.shell_cells_h; row++) {
+        row_char = (char)('A' + row);
+        for (int col = 0; col < desktop.shell_cells_w; col++)
+            KTEST_ASSERT_EQ(tc,
+                            desktop_write_process_output(&desktop, 7, 7,
+                                                         &row_char, 1),
+                            1);
+    }
+
+    KTEST_EXPECT_EQ(tc,
+                    gui_display_cell_at(&display,
+                                        desktop.shell_content.x,
+                                        desktop.shell_content.y).ch,
+                    'A');
+    KTEST_EXPECT_EQ(tc,
+                    gui_display_cell_at(&display,
+                                        desktop.shell_content.x,
+                                        desktop.shell_content.y +
+                                            desktop.shell_cells_h - 1).ch,
+                    (char)('A' + desktop.shell_cells_h - 1));
 }
 
 static void test_mouse_packet_decode_preserves_motion_and_buttons(ktest_case_t *tc)
@@ -286,8 +390,11 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_escape_opens_launcher_and_consumes_input),
     KTEST_CASE(test_desktop_plain_text_forwards_to_shell_when_focused),
     KTEST_CASE(test_desktop_write_process_output_targets_shell_surface),
-    KTEST_CASE(test_desktop_non_shell_output_is_rejected_for_legacy_fallback),
-    KTEST_CASE(test_syscall_stdout_would_fallback_when_desktop_declines),
+    KTEST_CASE(test_desktop_child_process_group_output_targets_shell_surface),
+    KTEST_CASE(test_desktop_unrelated_process_group_output_is_rejected),
+    KTEST_CASE(test_syscall_console_write_routes_session_output_to_desktop),
+    KTEST_CASE(test_desktop_ansi_color_escape_updates_attr_without_printing),
+    KTEST_CASE(test_desktop_full_screen_write_does_not_scroll_until_next_char),
     KTEST_CASE(test_mouse_packet_decode_preserves_motion_and_buttons),
     KTEST_CASE(test_mouse_stream_resyncs_after_noise_and_ack),
     KTEST_CASE(test_mouse_stream_keeps_response_like_bytes_inside_packet),
