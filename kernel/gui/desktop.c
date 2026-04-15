@@ -7,6 +7,8 @@
 #define DESKTOP_ATTR_WINDOW     0x1e
 #define DESKTOP_ATTR_TITLE      0x70
 #define DESKTOP_ATTR_LAUNCHER   0x70
+#define DESKTOP_CURSOR_W        8
+#define DESKTOP_CURSOR_H        12
 
 static desktop_state_t *g_desktop = 0;
 
@@ -262,6 +264,64 @@ static void desktop_draw_pointer(desktop_state_t *desktop)
                           0x0f);
 }
 
+static void desktop_present_cursor_region(desktop_state_t *desktop,
+                                          int pixel_x,
+                                          int pixel_y)
+{
+    int cell_x;
+    int cell_y;
+    int cell_right;
+    int cell_bottom;
+
+    if (!desktop || !desktop->display || !desktop->framebuffer)
+        return;
+
+    cell_x = pixel_x / (int)GUI_FONT_W;
+    cell_y = pixel_y / (int)GUI_FONT_H;
+    cell_right = (pixel_x + DESKTOP_CURSOR_W - 1) / (int)GUI_FONT_W;
+    cell_bottom = (pixel_y + DESKTOP_CURSOR_H - 1) / (int)GUI_FONT_H;
+
+    gui_display_present_rect_to_framebuffer(desktop->display,
+                                            desktop->framebuffer,
+                                            cell_x,
+                                            cell_y,
+                                            cell_right - cell_x + 1,
+                                            cell_bottom - cell_y + 1);
+}
+
+static void desktop_draw_framebuffer_pointer(desktop_state_t *desktop)
+{
+    uint32_t fg;
+    uint32_t shadow;
+
+    if (!desktop || !desktop->framebuffer || !desktop->pointer_visible)
+        return;
+
+    fg = framebuffer_pack_rgb(desktop->framebuffer, 255, 255, 255);
+    shadow = framebuffer_pack_rgb(desktop->framebuffer, 0, 0, 0);
+    framebuffer_draw_cursor(desktop->framebuffer,
+                            desktop->pointer_pixel_x,
+                            desktop->pointer_pixel_y,
+                            fg,
+                            shadow);
+}
+
+static void desktop_present_framebuffer_pointer_motion(desktop_state_t *desktop,
+                                                       int old_pixel_x,
+                                                       int old_pixel_y)
+{
+    if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
+        return;
+
+    desktop_present_cursor_region(desktop, old_pixel_x, old_pixel_y);
+    if (old_pixel_x != desktop->pointer_pixel_x ||
+        old_pixel_y != desktop->pointer_pixel_y)
+        desktop_present_cursor_region(desktop,
+                                      desktop->pointer_pixel_x,
+                                      desktop->pointer_pixel_y);
+    desktop_draw_framebuffer_pointer(desktop);
+}
+
 desktop_state_t *desktop_global(void)
 {
     return g_desktop;
@@ -462,8 +522,16 @@ void desktop_open_shell_window(desktop_state_t *desktop)
 void desktop_handle_pointer(desktop_state_t *desktop,
                             const desktop_pointer_event_t *ev)
 {
+    int old_pixel_x;
+    int old_pixel_y;
+    int launcher_open;
+
     if (!desktop || !ev)
         return;
+
+    old_pixel_x = desktop->pointer_pixel_x;
+    old_pixel_y = desktop->pointer_pixel_y;
+    launcher_open = desktop->launcher_open;
 
     desktop_set_pointer(desktop, ev->x, ev->y);
     if (desktop->framebuffer_enabled && desktop->framebuffer) {
@@ -489,7 +557,14 @@ void desktop_handle_pointer(desktop_state_t *desktop,
             : DESKTOP_FOCUS_SHELL;
     }
 
-    desktop_render(desktop);
+    if (desktop->framebuffer_enabled && desktop->framebuffer &&
+        launcher_open == desktop->launcher_open) {
+        desktop_present_framebuffer_pointer_motion(desktop,
+                                                   old_pixel_x,
+                                                   old_pixel_y);
+    } else {
+        desktop_render(desktop);
+    }
 }
 
 void desktop_render(desktop_state_t *desktop)
@@ -537,18 +612,9 @@ void desktop_render(desktop_state_t *desktop)
         desktop_shell_redraw(desktop);
 
     if (desktop->framebuffer_enabled && desktop->framebuffer) {
-        uint32_t fg = framebuffer_pack_rgb(desktop->framebuffer,
-                                           255, 255, 255);
-        uint32_t shadow = framebuffer_pack_rgb(desktop->framebuffer,
-                                               0, 0, 0);
-
         gui_display_present_to_framebuffer(desktop->display,
                                            desktop->framebuffer);
-        framebuffer_draw_cursor(desktop->framebuffer,
-                                desktop->pointer_pixel_x,
-                                desktop->pointer_pixel_y,
-                                fg,
-                                shadow);
+        desktop_draw_framebuffer_pointer(desktop);
     } else if (desktop->video_address) {
         desktop_draw_pointer(desktop);
         gui_display_present_to_vga(desktop->display, desktop->video_address);

@@ -147,10 +147,16 @@ void gui_display_present_to_vga(const gui_display_t *display, uintptr_t video_ad
 void gui_display_present_to_framebuffer(const gui_display_t *display,
                                         const framebuffer_info_t *fb)
 {
-    int cols;
-    int rows;
-    int fb_cols;
-    int fb_rows;
+    gui_display_present_rect_to_framebuffer(display, fb, 0, 0,
+                                            display ? display->cols : 0,
+                                            display ? display->rows : 0);
+}
+
+void gui_display_present_rect_to_framebuffer(const gui_display_t *display,
+                                             const framebuffer_info_t *fb,
+                                             int x, int y, int w, int h)
+{
+    gui_rect_t dirty;
     uint8_t r;
     uint8_t g;
     uint8_t b;
@@ -160,19 +166,21 @@ void gui_display_present_to_framebuffer(const gui_display_t *display,
     if (!display->cells || display->cols <= 0 || display->rows <= 0)
         return;
 
-    cols = display->cols;
-    rows = display->rows;
-    fb_cols = (int)(fb->width / GUI_FONT_W);
-    fb_rows = (int)(fb->height / GUI_FONT_H);
-    if (fb_cols < cols)
-        cols = fb_cols;
-    if (fb_rows < rows)
-        rows = fb_rows;
-    if (cols <= 0 || rows <= 0)
+    dirty = gui_clip_rect(display, x, y, w, h);
+    if (dirty.w <= 0 || dirty.h <= 0)
+        return;
+    if (dirty.x >= (int)(fb->width / GUI_FONT_W) ||
+        dirty.y >= (int)(fb->height / GUI_FONT_H))
+        return;
+    if (dirty.x + dirty.w > (int)(fb->width / GUI_FONT_W))
+        dirty.w = (int)(fb->width / GUI_FONT_W) - dirty.x;
+    if (dirty.y + dirty.h > (int)(fb->height / GUI_FONT_H))
+        dirty.h = (int)(fb->height / GUI_FONT_H) - dirty.y;
+    if (dirty.w <= 0 || dirty.h <= 0)
         return;
 
-    for (int row = 0; row < rows; row++) {
-        for (int col = 0; col < cols; col++) {
+    for (int row = dirty.y; row < dirty.y + dirty.h; row++) {
+        for (int col = dirty.x; col < dirty.x + dirty.w; col++) {
             const gui_cell_t *cell = &display->cells[row * display->cols + col];
             uint32_t fg;
             uint32_t bg;

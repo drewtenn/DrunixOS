@@ -21,4 +21,10 @@ int mouse_stream_consume(mouse_packet_stream_t *stream, uint8_t data,
                          mouse_packet_t *packet_out);
 int mouse_init(void);
 
+#ifdef KTEST_ENABLED
+void mouse_pointer_reset_for_test(int pixel_x, int pixel_y);
+void mouse_update_pointer_for_test(desktop_state_t *desktop,
+                                   desktop_pointer_event_t *ev);
+#endif
+
 #endif

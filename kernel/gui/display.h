@@ -43,5 +43,8 @@ void gui_display_set_cursor(gui_display_t *display, int x, int y, int visible);
 void gui_display_present_to_vga(const gui_display_t *display, uintptr_t video_address);
 void gui_display_present_to_framebuffer(const gui_display_t *display,
                                         const struct framebuffer_info *fb);
+void gui_display_present_rect_to_framebuffer(const gui_display_t *display,
+                                             const struct framebuffer_info *fb,
+                                             int x, int y, int w, int h);
 
 #endif /* GUI_DISPLAY_H */

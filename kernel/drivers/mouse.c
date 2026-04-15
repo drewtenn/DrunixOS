@@ -11,6 +11,7 @@
 #define PS2_RESP_ACK   0xFA
 #define PS2_RESP_BAT   0xAA
 #define PS2_RESP_RESEND 0xFE
+#define MOUSE_FRAMEBUFFER_PIXEL_SCALE 4
 
 extern void port_byte_out(unsigned short port, unsigned char data);
 extern unsigned char port_byte_in(unsigned short port);
@@ -157,10 +158,18 @@ int mouse_stream_consume(mouse_packet_stream_t *stream, uint8_t data,
     return 1;
 }
 
+static int mouse_motion_scale(const desktop_state_t *desktop)
+{
+    if (desktop && desktop->framebuffer_enabled && desktop->framebuffer)
+        return MOUSE_FRAMEBUFFER_PIXEL_SCALE;
+    return 1;
+}
+
 static void mouse_update_pointer(desktop_state_t *desktop, desktop_pointer_event_t *ev)
 {
     int max_x = 80 * (int)GUI_FONT_W - 1;
     int max_y = 25 * (int)GUI_FONT_H - 1;
+    int scale = mouse_motion_scale(desktop);
 
     if (desktop && desktop->framebuffer_enabled && desktop->framebuffer) {
         if (desktop->framebuffer->width > 0)
@@ -174,8 +183,8 @@ static void mouse_update_pointer(desktop_state_t *desktop, desktop_pointer_event
             max_y = desktop->display->rows * (int)GUI_FONT_H - 1;
     }
 
-    g_pointer_pixel_x += ev->dx;
-    g_pointer_pixel_y -= ev->dy;
+    g_pointer_pixel_x += ev->dx * scale;
+    g_pointer_pixel_y -= ev->dy * scale;
 
     if (g_pointer_pixel_x < 0)
         g_pointer_pixel_x = 0;
@@ -191,6 +200,20 @@ static void mouse_update_pointer(desktop_state_t *desktop, desktop_pointer_event
     ev->x = g_pointer_pixel_x / (int)GUI_FONT_W;
     ev->y = g_pointer_pixel_y / (int)GUI_FONT_H;
 }
+
+#ifdef KTEST_ENABLED
+void mouse_pointer_reset_for_test(int pixel_x, int pixel_y)
+{
+    g_pointer_pixel_x = pixel_x;
+    g_pointer_pixel_y = pixel_y;
+}
+
+void mouse_update_pointer_for_test(desktop_state_t *desktop,
+                                   desktop_pointer_event_t *ev)
+{
+    mouse_update_pointer(desktop, ev);
+}
+#endif
 
 static void mouse_handler(void)
 {

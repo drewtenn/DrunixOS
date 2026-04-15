@@ -12,6 +12,8 @@
 
 static gui_cell_t desktop_cells[80 * 25];
 static gui_cell_t large_desktop_cells[128 * 48];
+static gui_cell_t pointer_motion_cells[60 * 25];
+static uint32_t pointer_motion_pixels[480 * 400];
 
 extern int syscall_console_write_for_test(process_t *proc, const char *buf,
                                           uint32_t len);
@@ -480,6 +482,33 @@ static void test_mouse_stream_keeps_response_like_bytes_inside_packet(ktest_case
     KTEST_EXPECT_EQ(tc, packet.dy, -86);
 }
 
+static void test_mouse_framebuffer_motion_scales_raw_deltas(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+    desktop_pointer_event_t ev;
+
+    k_memset(&fb, 0, sizeof(fb));
+    fb.width = 480u;
+    fb.height = 400u;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+
+    mouse_pointer_reset_for_test(240, 192);
+    k_memset(&ev, 0, sizeof(ev));
+    ev.dx = 2;
+
+    mouse_update_pointer_for_test(&desktop, &ev);
+
+    KTEST_EXPECT_EQ(tc, ev.pixel_x, 248);
+    KTEST_EXPECT_EQ(tc, ev.pixel_y, 192);
+    KTEST_EXPECT_EQ(tc, ev.x, 31);
+    KTEST_EXPECT_EQ(tc, ev.y, 12);
+}
+
 static void test_desktop_pointer_click_focuses_shell_window(ktest_case_t *tc)
 {
     gui_display_t display;
@@ -542,6 +571,51 @@ static void test_desktop_pointer_event_moves_visible_mouse_pointer(ktest_case_t 
     desktop_handle_pointer(&desktop, &ev);
 
     KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display, 12, 8).ch, '^');
+}
+
+static void test_framebuffer_pointer_motion_does_not_repaint_unrelated_pixels(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+    desktop_pointer_event_t ev;
+    uint32_t sentinel = 0x0BADCAFEu;
+    uint32_t white;
+    int sentinel_index = 300 * 480 + 400;
+
+    k_memset(pointer_motion_pixels, 0, sizeof(pointer_motion_pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pointer_motion_pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    desktop_render(&desktop);
+
+    pointer_motion_pixels[sentinel_index] = sentinel;
+    white = framebuffer_pack_rgb(&fb, 255, 255, 255);
+
+    k_memset(&ev, 0, sizeof(ev));
+    ev.x = 31;
+    ev.y = 12;
+    ev.pixel_x = 248;
+    ev.pixel_y = 192;
+    desktop_handle_pointer(&desktop, &ev);
+
+    KTEST_EXPECT_EQ(tc, pointer_motion_pixels[sentinel_index], sentinel);
+    KTEST_EXPECT_EQ(tc, pointer_motion_pixels[192 * 480 + 248], white);
+    KTEST_EXPECT_NE(tc, pointer_motion_pixels[192 * 480 + 240], white);
 }
 
 static void test_desktop_can_use_framebuffer_presentation_target(ktest_case_t *tc)
@@ -884,10 +958,12 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_mouse_packet_decode_preserves_motion_and_buttons),
     KTEST_CASE(test_mouse_stream_resyncs_after_noise_and_ack),
     KTEST_CASE(test_mouse_stream_keeps_response_like_bytes_inside_packet),
+    KTEST_CASE(test_mouse_framebuffer_motion_scales_raw_deltas),
     KTEST_CASE(test_desktop_pointer_click_focuses_shell_window),
     KTEST_CASE(test_desktop_pointer_click_ignores_hidden_shell_window),
     KTEST_CASE(test_desktop_render_draws_visible_mouse_pointer),
     KTEST_CASE(test_desktop_pointer_event_moves_visible_mouse_pointer),
+    KTEST_CASE(test_framebuffer_pointer_motion_does_not_repaint_unrelated_pixels),
     KTEST_CASE(test_desktop_can_use_framebuffer_presentation_target),
     KTEST_CASE(test_framebuffer_info_accepts_1024_768_32_rgb),
     KTEST_CASE(test_multiboot_framebuffer_color_info_uses_grub_layout),
