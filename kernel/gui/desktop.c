@@ -849,22 +849,23 @@ static void desktop_present_framebuffer_pointer_motion(desktop_state_t *desktop,
                                                        int old_pixel_x,
                                                        int old_pixel_y)
 {
-    gui_rect_t dirty = { 0, 0, 0, 0 };
-    gui_pixel_rect_t clip;
+    gui_pixel_rect_t old_clip;
+    gui_pixel_rect_t new_clip;
 
     if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
         return;
 
-    desktop_dirty_include(&dirty, old_pixel_x, old_pixel_y,
-                          DESKTOP_CURSOR_W, DESKTOP_CURSOR_H);
-    desktop_dirty_include(&dirty, desktop->pointer_pixel_x,
-                          desktop->pointer_pixel_y,
-                          DESKTOP_CURSOR_W, DESKTOP_CURSOR_H);
-    clip.x = dirty.x;
-    clip.y = dirty.y;
-    clip.w = dirty.w;
-    clip.h = dirty.h;
-    desktop_render_framebuffer_region(desktop, &clip);
+    old_clip.x = old_pixel_x;
+    old_clip.y = old_pixel_y;
+    old_clip.w = DESKTOP_CURSOR_W;
+    old_clip.h = DESKTOP_CURSOR_H;
+    new_clip.x = desktop->pointer_pixel_x;
+    new_clip.y = desktop->pointer_pixel_y;
+    new_clip.w = DESKTOP_CURSOR_W;
+    new_clip.h = DESKTOP_CURSOR_H;
+
+    desktop_render_framebuffer_region(desktop, &old_clip);
+    desktop_render_framebuffer_region(desktop, &new_clip);
     desktop_draw_framebuffer_pointer(desktop);
 }
 
