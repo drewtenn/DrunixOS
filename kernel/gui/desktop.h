@@ -3,6 +3,7 @@
 
 #include "display.h"
 #include "framebuffer.h"
+#include "terminal.h"
 #include <stdint.h>
 
 typedef enum {
@@ -31,12 +32,17 @@ typedef struct {
     gui_rect_t launcher_rect;
     gui_rect_t shell_rect;
     gui_rect_t shell_content;
+    gui_pixel_rect_t taskbar_pixel_rect;
+    gui_pixel_rect_t launcher_pixel_rect;
+    gui_pixel_rect_t window_pixel_rect;
+    gui_pixel_rect_t shell_pixel_rect;
     gui_display_t *display;
     uintptr_t video_address;
     const framebuffer_info_t *framebuffer;
     int framebuffer_enabled;
     uint32_t shell_pid;
     uint32_t shell_pgid;
+    gui_terminal_t shell_terminal;
     gui_cell_t *shell_cells;
     int shell_cells_w;
     int shell_cells_h;

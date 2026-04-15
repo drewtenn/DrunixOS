@@ -9,8 +9,96 @@
 #define DESKTOP_ATTR_LAUNCHER   0x70
 #define DESKTOP_CURSOR_W        8
 #define DESKTOP_CURSOR_H        12
+#define DESKTOP_TERMINAL_HISTORY_ROWS 500
 
 static desktop_state_t *g_desktop = 0;
+
+static int desktop_pixel_rect_intersect(gui_pixel_rect_t a,
+                                        gui_pixel_rect_t b,
+                                        gui_pixel_rect_t *out)
+{
+    int left;
+    int top;
+    int right;
+    int bottom;
+    int a_right;
+    int a_bottom;
+    int b_right;
+    int b_bottom;
+
+    if (!out)
+        return 0;
+
+    a_right = a.x + a.w;
+    a_bottom = a.y + a.h;
+    b_right = b.x + b.w;
+    b_bottom = b.y + b.h;
+    left = a.x > b.x ? a.x : b.x;
+    top = a.y > b.y ? a.y : b.y;
+    right = a_right < b_right ? a_right : b_right;
+    bottom = a_bottom < b_bottom ? a_bottom : b_bottom;
+    if (right <= left || bottom <= top)
+        return 0;
+    out->x = left;
+    out->y = top;
+    out->w = right - left;
+    out->h = bottom - top;
+    return 1;
+}
+
+static void desktop_pixel_fill_rect(const framebuffer_info_t *fb,
+                                    const gui_pixel_rect_t *clip,
+                                    int x, int y, int w, int h,
+                                    uint32_t color)
+{
+    gui_pixel_rect_t rect;
+    gui_pixel_rect_t clipped;
+
+    if (!fb || !clip || w <= 0 || h <= 0)
+        return;
+    rect.x = x;
+    rect.y = y;
+    rect.w = w;
+    rect.h = h;
+    if (!desktop_pixel_rect_intersect(rect, *clip, &clipped))
+        return;
+    framebuffer_fill_rect(fb, clipped.x, clipped.y, clipped.w, clipped.h,
+                          color);
+}
+
+static void desktop_pixel_draw_outline(const framebuffer_info_t *fb,
+                                       const gui_pixel_rect_t *clip,
+                                       int x, int y, int w, int h,
+                                       uint32_t color)
+{
+    if (!fb || !clip || w <= 0 || h <= 0)
+        return;
+    desktop_pixel_fill_rect(fb, clip, x, y, w, 1, color);
+    desktop_pixel_fill_rect(fb, clip, x, y + h - 1, w, 1, color);
+    desktop_pixel_fill_rect(fb, clip, x, y, 1, h, color);
+    desktop_pixel_fill_rect(fb, clip, x + w - 1, y, 1, h, color);
+}
+
+static gui_pixel_theme_t desktop_pixel_theme(const framebuffer_info_t *fb)
+{
+    gui_pixel_theme_t theme;
+
+    k_memset(&theme, 0, sizeof(theme));
+    theme.desktop_bg = framebuffer_pack_rgb(fb, 0x24, 0x3a, 0x3f);
+    theme.taskbar_bg = framebuffer_pack_rgb(fb, 0xd9, 0xde, 0xd5);
+    theme.taskbar_fg = framebuffer_pack_rgb(fb, 0x11, 0x18, 0x1c);
+    theme.window_bg = framebuffer_pack_rgb(fb, 0x2f, 0x49, 0x50);
+    theme.window_border = framebuffer_pack_rgb(fb, 0xf2, 0xc9, 0x4c);
+    theme.title_bg = framebuffer_pack_rgb(fb, 0x9a, 0x35, 0x4f);
+    theme.title_fg = framebuffer_pack_rgb(fb, 0xff, 0xf7, 0xe8);
+    theme.terminal_bg = framebuffer_pack_rgb(fb, 0x08, 0x10, 0x18);
+    theme.terminal_fg = framebuffer_pack_rgb(fb, 0xf6, 0xf1, 0xde);
+    theme.terminal_dim = framebuffer_pack_rgb(fb, 0x84, 0x93, 0x9a);
+    theme.terminal_cursor = framebuffer_pack_rgb(fb, 0x67, 0xc5, 0x8f);
+    theme.scrollbar_track = framebuffer_pack_rgb(fb, 0x18, 0x26, 0x2c);
+    theme.scrollbar_thumb = framebuffer_pack_rgb(fb, 0x6f, 0xd6, 0xd2);
+    return theme;
+}
 
 static void desktop_layout(desktop_state_t *desktop)
 {
@@ -46,6 +134,34 @@ static void desktop_layout(desktop_state_t *desktop)
     desktop->shell_content.y = desktop->shell_rect.y + 1;
     desktop->shell_content.w = desktop->shell_rect.w - 2;
     desktop->shell_content.h = desktop->shell_rect.h - 2;
+
+    desktop->taskbar_pixel_rect.x = 0;
+    desktop->taskbar_pixel_rect.y = desktop->taskbar.y * (int)GUI_FONT_H;
+    desktop->taskbar_pixel_rect.w = desktop->display->cols * (int)GUI_FONT_W;
+    desktop->taskbar_pixel_rect.h = (int)GUI_FONT_H;
+
+    desktop->launcher_pixel_rect.x =
+        desktop->launcher_rect.x * (int)GUI_FONT_W;
+    desktop->launcher_pixel_rect.y =
+        desktop->launcher_rect.y * (int)GUI_FONT_H;
+    desktop->launcher_pixel_rect.w =
+        desktop->launcher_rect.w * (int)GUI_FONT_W;
+    desktop->launcher_pixel_rect.h =
+        desktop->launcher_rect.h * (int)GUI_FONT_H;
+
+    desktop->window_pixel_rect.x = desktop->shell_rect.x * (int)GUI_FONT_W;
+    desktop->window_pixel_rect.y = desktop->shell_rect.y * (int)GUI_FONT_H;
+    desktop->window_pixel_rect.w = desktop->shell_rect.w * (int)GUI_FONT_W;
+    desktop->window_pixel_rect.h = desktop->shell_rect.h * (int)GUI_FONT_H;
+
+    desktop->shell_pixel_rect.x = desktop->window_pixel_rect.x + 8;
+    desktop->shell_pixel_rect.y = desktop->window_pixel_rect.y + 24;
+    desktop->shell_pixel_rect.w = desktop->window_pixel_rect.w - 16;
+    desktop->shell_pixel_rect.h = desktop->window_pixel_rect.h - 32;
+    if (desktop->shell_pixel_rect.w < 0)
+        desktop->shell_pixel_rect.w = 0;
+    if (desktop->shell_pixel_rect.h < 0)
+        desktop->shell_pixel_rect.h = 0;
 }
 
 static void desktop_dirty_include(gui_rect_t *dirty, int x, int y, int w, int h)
@@ -299,6 +415,36 @@ static void desktop_shell_redraw_rect(desktop_state_t *desktop,
     }
 }
 
+static void desktop_sync_legacy_shell_from_terminal(desktop_state_t *desktop)
+{
+    if (!desktop)
+        return;
+
+    desktop->shell_cursor_x = gui_terminal_cursor_x(&desktop->shell_terminal);
+    desktop->shell_cursor_y = gui_terminal_cursor_y(&desktop->shell_terminal);
+    desktop->shell_wrap_pending = desktop->shell_terminal.wrap_pending;
+    desktop->shell_ansi_state = desktop->shell_terminal.ansi_state;
+    desktop->shell_ansi_val = desktop->shell_terminal.ansi_val;
+    desktop->shell_attr = desktop->shell_terminal.attr;
+
+    if (!desktop->shell_cells)
+        return;
+    for (int row = 0; row < desktop->shell_cells_h; row++) {
+        for (int col = 0; col < desktop->shell_cells_w; col++) {
+            desktop->shell_cells[row * desktop->shell_cells_w + col] =
+                gui_terminal_cell_at(&desktop->shell_terminal, col, row);
+        }
+    }
+}
+
+static void desktop_terminal_redraw_to_cells(desktop_state_t *desktop)
+{
+    if (!desktop || !desktop->display)
+        return;
+    desktop_sync_legacy_shell_from_terminal(desktop);
+    desktop_shell_redraw(desktop);
+}
+
 static void desktop_set_pointer(desktop_state_t *desktop, int x, int y)
 {
     if (!desktop || !desktop->display)
@@ -375,37 +521,101 @@ static void desktop_draw_framebuffer_pointer(desktop_state_t *desktop)
                             shadow);
 }
 
+static void desktop_render_framebuffer_region(desktop_state_t *desktop,
+                                              const gui_pixel_rect_t *clip)
+{
+    const framebuffer_info_t *fb;
+    gui_pixel_theme_t theme;
+    gui_pixel_surface_t surface;
+    gui_pixel_rect_t window;
+
+    if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer ||
+        !clip)
+        return;
+
+    fb = desktop->framebuffer;
+    theme = desktop_pixel_theme(fb);
+    desktop_pixel_fill_rect(fb, clip, 0, 0, (int)fb->width, (int)fb->height,
+                            theme.desktop_bg);
+    desktop_pixel_fill_rect(fb, clip,
+                            desktop->taskbar_pixel_rect.x,
+                            desktop->taskbar_pixel_rect.y,
+                            desktop->taskbar_pixel_rect.w,
+                            desktop->taskbar_pixel_rect.h,
+                            theme.taskbar_bg);
+    framebuffer_draw_text_clipped(fb, clip,
+                                  desktop->taskbar_pixel_rect.x + 16,
+                                  desktop->taskbar_pixel_rect.y,
+                                  "Menu",
+                                  theme.taskbar_fg,
+                                  theme.taskbar_bg);
+
+    if (desktop->shell_window_open) {
+        window = desktop->window_pixel_rect;
+        desktop_pixel_fill_rect(fb, clip, window.x, window.y, window.w,
+                                window.h, theme.window_bg);
+        desktop_pixel_fill_rect(fb, clip, window.x, window.y, window.w, 20,
+                                theme.title_bg);
+        desktop_pixel_draw_outline(fb, clip, window.x, window.y, window.w,
+                                   window.h, theme.window_border);
+        framebuffer_draw_text_clipped(fb, clip, window.x + 16, window.y + 2,
+                                      "Shell", theme.title_fg,
+                                      theme.title_bg);
+
+        surface.fb = fb;
+        surface.clip = *clip;
+        gui_terminal_render(&desktop->shell_terminal, &surface, &theme, 1);
+    }
+
+    if (desktop->launcher_open) {
+        gui_pixel_rect_t launcher = desktop->launcher_pixel_rect;
+
+        desktop_pixel_fill_rect(fb, clip, launcher.x, launcher.y,
+                                launcher.w, launcher.h, theme.taskbar_bg);
+        desktop_pixel_draw_outline(fb, clip, launcher.x, launcher.y,
+                                   launcher.w, launcher.h,
+                                   theme.window_border);
+        framebuffer_draw_text_clipped(fb, clip, launcher.x + 16,
+                                      launcher.y + 16, "Shell",
+                                      theme.taskbar_fg, theme.taskbar_bg);
+    }
+}
+
+static void desktop_render_framebuffer(desktop_state_t *desktop)
+{
+    gui_pixel_rect_t clip;
+
+    if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
+        return;
+
+    clip.x = 0;
+    clip.y = 0;
+    clip.w = (int)desktop->framebuffer->width;
+    clip.h = (int)desktop->framebuffer->height;
+    desktop_render_framebuffer_region(desktop, &clip);
+    desktop_draw_framebuffer_pointer(desktop);
+}
+
 static void desktop_present_framebuffer_pointer_motion(desktop_state_t *desktop,
                                                        int old_pixel_x,
                                                        int old_pixel_y)
 {
+    gui_rect_t dirty = { 0, 0, 0, 0 };
+    gui_pixel_rect_t clip;
+
     if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
         return;
 
-    desktop_present_cursor_region(desktop, old_pixel_x, old_pixel_y);
-    if (old_pixel_x != desktop->pointer_pixel_x ||
-        old_pixel_y != desktop->pointer_pixel_y)
-        desktop_present_cursor_region(desktop,
-                                      desktop->pointer_pixel_x,
-                                      desktop->pointer_pixel_y);
-    desktop_draw_framebuffer_pointer(desktop);
-}
-
-static void desktop_present_framebuffer_shell_dirty(desktop_state_t *desktop,
-                                                   const gui_rect_t *dirty)
-{
-    if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
-        return;
-    if (!dirty || dirty->w <= 0 || dirty->h <= 0)
-        return;
-
-    desktop_shell_redraw_rect(desktop, dirty);
-    gui_display_present_rect_to_framebuffer(desktop->display,
-                                            desktop->framebuffer,
-                                            desktop->shell_content.x + dirty->x,
-                                            desktop->shell_content.y + dirty->y,
-                                            dirty->w,
-                                            dirty->h);
+    desktop_dirty_include(&dirty, old_pixel_x, old_pixel_y,
+                          DESKTOP_CURSOR_W, DESKTOP_CURSOR_H);
+    desktop_dirty_include(&dirty, desktop->pointer_pixel_x,
+                          desktop->pointer_pixel_y,
+                          DESKTOP_CURSOR_W, DESKTOP_CURSOR_H);
+    clip.x = dirty.x;
+    clip.y = dirty.y;
+    clip.w = dirty.w;
+    clip.h = dirty.h;
+    desktop_render_framebuffer_region(desktop, &clip);
     desktop_draw_framebuffer_pointer(desktop);
 }
 
@@ -447,6 +657,21 @@ void desktop_init(desktop_state_t *desktop, gui_display_t *display)
         desktop->desktop_enabled = 0;
         return;
     }
+
+    if (!gui_terminal_init_alloc(&desktop->shell_terminal,
+                                 desktop->shell_content.w,
+                                 desktop->shell_content.h,
+                                 DESKTOP_TERMINAL_HISTORY_ROWS,
+                                 display->default_attr)) {
+        kfree(desktop->shell_cells);
+        desktop->shell_cells = 0;
+        desktop->active = 0;
+        desktop->desktop_enabled = 0;
+        return;
+    }
+    gui_terminal_set_pixel_rect(&desktop->shell_terminal,
+                                desktop->shell_pixel_rect,
+                                8, 6);
 
     desktop->shell_cursor_x = 0;
     desktop->shell_cursor_y = 0;
@@ -521,42 +746,38 @@ int desktop_write_console_output(desktop_state_t *desktop,
                                  const char *buf,
                                  uint32_t len)
 {
-    uint32_t i;
-    gui_rect_t dirty = { 0, 0, 0, 0 };
+    int written;
 
     if (!desktop || !desktop->active || !desktop->desktop_enabled)
         return 0;
     if (!desktop->shell_window_open)
         return 0;
-    if (!buf || len == 0 || !desktop->shell_cells)
+    if (!buf || len == 0 || !desktop->shell_terminal.live)
         return 0;
 
-    for (i = 0; i < len; i++)
-        desktop_shell_apply_char(desktop, buf[i], &dirty);
+    written = gui_terminal_write(&desktop->shell_terminal, buf, len);
+    desktop_sync_legacy_shell_from_terminal(desktop);
+    if (written == 0)
+        return 0;
 
     if (desktop->framebuffer_enabled && desktop->framebuffer)
-        desktop_present_framebuffer_shell_dirty(desktop, &dirty);
-    else
+        desktop_render_framebuffer(desktop);
+    else {
+        desktop_terminal_redraw_to_cells(desktop);
         desktop_render(desktop);
-    return (int)len;
+    }
+    return written;
 }
 
 int desktop_clear_console(desktop_state_t *desktop)
 {
     if (!desktop || !desktop->active || !desktop->desktop_enabled)
         return 0;
-    if (!desktop->shell_window_open || !desktop->shell_cells)
+    if (!desktop->shell_window_open || !desktop->shell_terminal.live)
         return 0;
 
-    for (int row = 0; row < desktop->shell_cells_h; row++)
-        desktop_shell_clear_line(desktop, row, 0);
-
-    desktop->shell_cursor_x = 0;
-    desktop->shell_cursor_y = 0;
-    desktop->shell_wrap_pending = 0;
-    desktop->shell_ansi_state = 0;
-    desktop->shell_ansi_val = 0;
-    desktop->shell_attr = desktop->display->default_attr;
+    gui_terminal_clear(&desktop->shell_terminal);
+    desktop_sync_legacy_shell_from_terminal(desktop);
     desktop_render(desktop);
     return 1;
 }
@@ -663,6 +884,11 @@ void desktop_render(desktop_state_t *desktop)
     if (!desktop || !desktop->display)
         return;
 
+    if (desktop->framebuffer_enabled && desktop->framebuffer) {
+        desktop_render_framebuffer(desktop);
+        return;
+    }
+
     gui_display_fill_rect(desktop->display, 0, 0,
                           desktop->display->cols, desktop->display->rows,
                           ' ', DESKTOP_ATTR_BACKGROUND);
@@ -702,11 +928,7 @@ void desktop_render(desktop_state_t *desktop)
     if (desktop->shell_window_open)
         desktop_shell_redraw(desktop);
 
-    if (desktop->framebuffer_enabled && desktop->framebuffer) {
-        gui_display_present_to_framebuffer(desktop->display,
-                                           desktop->framebuffer);
-        desktop_draw_framebuffer_pointer(desktop);
-    } else if (desktop->video_address) {
+    if (desktop->video_address) {
         desktop_draw_pointer(desktop);
         gui_display_present_to_vga(desktop->display, desktop->video_address);
     } else {
