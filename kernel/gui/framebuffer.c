@@ -1,6 +1,15 @@
 #include "framebuffer.h"
 #include "kstring.h"
 
+static int rgb_mask_overlaps(uint32_t a_pos, uint32_t a_size,
+                             uint32_t b_pos, uint32_t b_size)
+{
+    uint32_t a_end = a_pos + a_size;
+    uint32_t b_end = b_pos + b_size;
+
+    return a_pos < b_end && b_pos < a_end;
+}
+
 int framebuffer_info_from_multiboot(const multiboot_info_t *mbi,
                                     framebuffer_info_t *out)
 {
@@ -10,12 +19,16 @@ int framebuffer_info_from_multiboot(const multiboot_info_t *mbi,
         return -2;
     if (mbi->framebuffer_addr == 0)
         return -3;
+    if (mbi->framebuffer_addr > UINTPTR_MAX)
+        return -3;
     if (mbi->framebuffer_type != MULTIBOOT_FRAMEBUFFER_TYPE_RGB)
         return -4;
     if (mbi->framebuffer_bpp != 32)
         return -5;
     if (mbi->framebuffer_width == 0 || mbi->framebuffer_height == 0)
         return -6;
+    if (mbi->framebuffer_width > UINT32_MAX / 4u)
+        return -7;
     if (mbi->framebuffer_pitch < mbi->framebuffer_width * 4u)
         return -7;
     if (mbi->framebuffer_width < GUI_FONT_W ||
@@ -24,6 +37,33 @@ int framebuffer_info_from_multiboot(const multiboot_info_t *mbi,
     if (mbi->framebuffer_red_mask_size == 0 ||
         mbi->framebuffer_green_mask_size == 0 ||
         mbi->framebuffer_blue_mask_size == 0)
+        return -9;
+    if ((uint32_t)mbi->framebuffer_red_field_position +
+            mbi->framebuffer_red_mask_size >
+        32u)
+        return -9;
+    if ((uint32_t)mbi->framebuffer_green_field_position +
+            mbi->framebuffer_green_mask_size >
+        32u)
+        return -9;
+    if ((uint32_t)mbi->framebuffer_blue_field_position +
+            mbi->framebuffer_blue_mask_size >
+        32u)
+        return -9;
+    if (rgb_mask_overlaps(mbi->framebuffer_red_field_position,
+                          mbi->framebuffer_red_mask_size,
+                          mbi->framebuffer_green_field_position,
+                          mbi->framebuffer_green_mask_size))
+        return -9;
+    if (rgb_mask_overlaps(mbi->framebuffer_red_field_position,
+                          mbi->framebuffer_red_mask_size,
+                          mbi->framebuffer_blue_field_position,
+                          mbi->framebuffer_blue_mask_size))
+        return -9;
+    if (rgb_mask_overlaps(mbi->framebuffer_green_field_position,
+                          mbi->framebuffer_green_mask_size,
+                          mbi->framebuffer_blue_field_position,
+                          mbi->framebuffer_blue_mask_size))
         return -9;
 
     k_memset(out, 0, sizeof(*out));

@@ -473,26 +473,31 @@ static void test_desktop_pointer_event_moves_visible_mouse_pointer(ktest_case_t 
     KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display, 12, 8).ch, '^');
 }
 
+static void framebuffer_test_init_valid_record(multiboot_info_t *mbi)
+{
+    k_memset(mbi, 0, sizeof(*mbi));
+    mbi->flags = MULTIBOOT_FLAG_FRAMEBUFFER;
+    mbi->framebuffer_addr = 0xE0000000ull;
+    mbi->framebuffer_pitch = 1024u * 4u;
+    mbi->framebuffer_width = 1024u;
+    mbi->framebuffer_height = 768u;
+    mbi->framebuffer_bpp = 32u;
+    mbi->framebuffer_type = MULTIBOOT_FRAMEBUFFER_TYPE_RGB;
+    mbi->framebuffer_red_field_position = 16u;
+    mbi->framebuffer_red_mask_size = 8u;
+    mbi->framebuffer_green_field_position = 8u;
+    mbi->framebuffer_green_mask_size = 8u;
+    mbi->framebuffer_blue_field_position = 0u;
+    mbi->framebuffer_blue_mask_size = 8u;
+}
+
 static void test_framebuffer_info_accepts_1024_768_32_rgb(ktest_case_t *tc)
 {
     multiboot_info_t mbi;
     framebuffer_info_t info;
 
-    k_memset(&mbi, 0, sizeof(mbi));
+    framebuffer_test_init_valid_record(&mbi);
     k_memset(&info, 0, sizeof(info));
-    mbi.flags = MULTIBOOT_FLAG_FRAMEBUFFER;
-    mbi.framebuffer_addr = 0xE0000000ull;
-    mbi.framebuffer_pitch = 1024u * 4u;
-    mbi.framebuffer_width = 1024u;
-    mbi.framebuffer_height = 768u;
-    mbi.framebuffer_bpp = 32u;
-    mbi.framebuffer_type = MULTIBOOT_FRAMEBUFFER_TYPE_RGB;
-    mbi.framebuffer_red_field_position = 16u;
-    mbi.framebuffer_red_mask_size = 8u;
-    mbi.framebuffer_green_field_position = 8u;
-    mbi.framebuffer_green_mask_size = 8u;
-    mbi.framebuffer_blue_field_position = 0u;
-    mbi.framebuffer_blue_mask_size = 8u;
 
     KTEST_EXPECT_EQ(tc, framebuffer_info_from_multiboot(&mbi, &info), 0);
     KTEST_EXPECT_EQ(tc, info.width, 1024u);
@@ -500,6 +505,53 @@ static void test_framebuffer_info_accepts_1024_768_32_rgb(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, info.bpp, 32u);
     KTEST_EXPECT_EQ(tc, info.cell_cols, 128u);
     KTEST_EXPECT_EQ(tc, info.cell_rows, 48u);
+}
+
+static void test_framebuffer_info_rejects_address_above_uintptr(ktest_case_t *tc)
+{
+    multiboot_info_t mbi;
+    framebuffer_info_t info;
+
+    framebuffer_test_init_valid_record(&mbi);
+    mbi.framebuffer_addr = (uint64_t)UINTPTR_MAX + 1u;
+
+    KTEST_EXPECT_NE(tc, framebuffer_info_from_multiboot(&mbi, &info), 0);
+}
+
+static void test_framebuffer_info_rejects_pitch_overflow_width(ktest_case_t *tc)
+{
+    multiboot_info_t mbi;
+    framebuffer_info_t info;
+
+    framebuffer_test_init_valid_record(&mbi);
+    mbi.framebuffer_width = (UINT32_MAX / 4u) + 1u;
+    mbi.framebuffer_pitch = UINT32_MAX;
+
+    KTEST_EXPECT_NE(tc, framebuffer_info_from_multiboot(&mbi, &info), 0);
+}
+
+static void test_framebuffer_info_rejects_rgb_mask_past_32_bits(ktest_case_t *tc)
+{
+    multiboot_info_t mbi;
+    framebuffer_info_t info;
+
+    framebuffer_test_init_valid_record(&mbi);
+    mbi.framebuffer_red_field_position = 28u;
+    mbi.framebuffer_red_mask_size = 8u;
+
+    KTEST_EXPECT_NE(tc, framebuffer_info_from_multiboot(&mbi, &info), 0);
+}
+
+static void test_framebuffer_info_rejects_overlapping_rgb_masks(ktest_case_t *tc)
+{
+    multiboot_info_t mbi;
+    framebuffer_info_t info;
+
+    framebuffer_test_init_valid_record(&mbi);
+    mbi.framebuffer_green_field_position = 12u;
+    mbi.framebuffer_green_mask_size = 8u;
+
+    KTEST_EXPECT_NE(tc, framebuffer_info_from_multiboot(&mbi, &info), 0);
 }
 
 static ktest_case_t desktop_cases[] = {
@@ -526,6 +578,10 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_render_draws_visible_mouse_pointer),
     KTEST_CASE(test_desktop_pointer_event_moves_visible_mouse_pointer),
     KTEST_CASE(test_framebuffer_info_accepts_1024_768_32_rgb),
+    KTEST_CASE(test_framebuffer_info_rejects_address_above_uintptr),
+    KTEST_CASE(test_framebuffer_info_rejects_pitch_overflow_width),
+    KTEST_CASE(test_framebuffer_info_rejects_rgb_mask_past_32_bits),
+    KTEST_CASE(test_framebuffer_info_rejects_overlapping_rgb_masks),
 };
 
 ktest_suite_t *ktest_suite_desktop(void)

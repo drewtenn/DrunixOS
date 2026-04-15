@@ -9,11 +9,13 @@ align 4
     dd MULTIBOOT_MAGIC
     dd MULTIBOOT_FLAGS
     dd MULTIBOOT_CHECKSUM
+    ; Reserve Multiboot1 offsets 12-28 so graphics fields begin at offset 32.
     dd 0
     dd 0
     dd 0
     dd 0
     dd 0
+    ; mode_type = 0 asks the bootloader for a linear graphics framebuffer.
     dd 0
     dd 1024
     dd 768
