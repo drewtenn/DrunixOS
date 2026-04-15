@@ -625,6 +625,23 @@ static void test_framebuffer_fill_rect_handles_large_dimensions(ktest_case_t *tc
     KTEST_EXPECT_EQ(tc, pixels[1 * 4 + 3], 0x11223344u);
 }
 
+static void test_framebuffer_draw_glyph_writes_foreground_pixels(ktest_case_t *tc)
+{
+    static uint32_t pixels[16 * 16];
+    framebuffer_info_t info;
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&info, 0, sizeof(info));
+    info.address = (uintptr_t)pixels;
+    info.pitch = 16u * sizeof(uint32_t);
+    info.width = 16;
+    info.height = 16;
+
+    framebuffer_draw_glyph(&info, 0, 0, 'A', 0x00FFFFFFu, 0x00000000u);
+
+    KTEST_EXPECT_EQ(tc, pixels[2 * 16 + 3], 0x00FFFFFFu);
+}
+
 static void test_framebuffer_pack_rgb_scales_to_mask_size(ktest_case_t *tc)
 {
     framebuffer_info_t info;
@@ -673,6 +690,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_framebuffer_pack_rgb_uses_mask_positions),
     KTEST_CASE(test_framebuffer_fill_rect_clips_to_bounds),
     KTEST_CASE(test_framebuffer_fill_rect_handles_large_dimensions),
+    KTEST_CASE(test_framebuffer_draw_glyph_writes_foreground_pixels),
     KTEST_CASE(test_framebuffer_pack_rgb_scales_to_mask_size),
 };
 

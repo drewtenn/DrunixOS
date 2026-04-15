@@ -30,5 +30,8 @@ uint32_t framebuffer_pack_rgb(const framebuffer_info_t *fb,
 void framebuffer_fill_rect(const framebuffer_info_t *fb,
                            int x, int y, int w, int h,
                            uint32_t color);
+void framebuffer_draw_glyph(const framebuffer_info_t *fb,
+                            int x, int y, unsigned char ch,
+                            uint32_t fg, uint32_t bg);
 
 #endif
