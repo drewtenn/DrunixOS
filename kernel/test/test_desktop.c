@@ -69,11 +69,14 @@ static void test_gui_display_presents_cells_to_framebuffer(ktest_case_t *tc)
     fb.blue_size = 8;
 
     gui_display_init(&display, cells, 2, 1, 0x0f);
-    gui_display_draw_text(&display, 0, 0, 1, "A", 0x0f);
+    gui_display_draw_text(&display, 0, 0, 1, "A", 0x1e);
 
     gui_display_present_to_framebuffer(&display, &fb);
 
-    KTEST_EXPECT_NE(tc, pixels[2], 0u);
+    KTEST_EXPECT_EQ(tc, framebuffer_pack_rgb(&fb, 0xff, 0xff, 0x55),
+                    pixels[0 * 16 + 2]);
+    KTEST_EXPECT_EQ(tc, framebuffer_pack_rgb(&fb, 0x00, 0x00, 0xaa),
+                    pixels[0 * 16 + 0]);
 }
 
 static void test_desktop_boot_layout_opens_shell_window(ktest_case_t *tc)
