@@ -440,6 +440,38 @@ static void test_desktop_pointer_click_ignores_hidden_shell_window(ktest_case_t 
     KTEST_EXPECT_EQ(tc, desktop.focus, DESKTOP_FOCUS_TASKBAR);
 }
 
+static void test_desktop_render_draws_visible_mouse_pointer(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+    desktop_render(&desktop);
+
+    KTEST_EXPECT_EQ(tc,
+                    gui_display_cell_at(&display,
+                                        display.cols / 2,
+                                        display.rows / 2).ch,
+                    '^');
+}
+
+static void test_desktop_pointer_event_moves_visible_mouse_pointer(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    desktop_pointer_event_t ev = { .x = 12, .y = 8 };
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+
+    desktop_handle_pointer(&desktop, &ev);
+
+    KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display, 12, 8).ch, '^');
+}
+
 static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_gui_display_fill_rect_clips_to_bounds),
     KTEST_CASE(test_gui_display_draw_text_stops_at_region_edge),
@@ -461,6 +493,8 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_mouse_stream_keeps_response_like_bytes_inside_packet),
     KTEST_CASE(test_desktop_pointer_click_focuses_shell_window),
     KTEST_CASE(test_desktop_pointer_click_ignores_hidden_shell_window),
+    KTEST_CASE(test_desktop_render_draws_visible_mouse_pointer),
+    KTEST_CASE(test_desktop_pointer_event_moves_visible_mouse_pointer),
 };
 
 ktest_suite_t *ktest_suite_desktop(void)

@@ -209,6 +209,38 @@ static void desktop_shell_redraw(desktop_state_t *desktop)
     }
 }
 
+static void desktop_set_pointer(desktop_state_t *desktop, int x, int y)
+{
+    if (!desktop || !desktop->display)
+        return;
+
+    if (x < 0)
+        x = 0;
+    if (y < 0)
+        y = 0;
+    if (x >= desktop->display->cols)
+        x = desktop->display->cols - 1;
+    if (y >= desktop->display->rows)
+        y = desktop->display->rows - 1;
+
+    desktop->pointer_x = x;
+    desktop->pointer_y = y;
+    desktop->pointer_visible = 1;
+}
+
+static void desktop_draw_pointer(desktop_state_t *desktop)
+{
+    if (!desktop || !desktop->display || !desktop->pointer_visible)
+        return;
+
+    gui_display_draw_text(desktop->display,
+                          desktop->pointer_x,
+                          desktop->pointer_y,
+                          1,
+                          "^",
+                          0x0f);
+}
+
 desktop_state_t *desktop_global(void)
 {
     return g_desktop;
@@ -228,6 +260,7 @@ void desktop_init(desktop_state_t *desktop, gui_display_t *display)
     desktop->desktop_enabled = 1;
     desktop->focus = DESKTOP_FOCUS_TASKBAR;
     desktop_layout(desktop);
+    desktop_set_pointer(desktop, display->cols / 2, display->rows / 2);
     desktop->shell_cells_w = desktop->shell_content.w;
     desktop->shell_cells_h = desktop->shell_content.h;
 
@@ -399,6 +432,8 @@ void desktop_handle_pointer(desktop_state_t *desktop,
     if (!desktop || !ev)
         return;
 
+    desktop_set_pointer(desktop, ev->x, ev->y);
+
     if (desktop->shell_window_open &&
         ev->left_down &&
         ev->x >= desktop->shell_rect.x &&
@@ -463,6 +498,8 @@ void desktop_render(desktop_state_t *desktop)
 
     if (desktop->shell_window_open)
         desktop_shell_redraw(desktop);
+
+    desktop_draw_pointer(desktop);
 
     if (desktop->video_address)
         gui_display_present_to_vga(desktop->display, desktop->video_address);

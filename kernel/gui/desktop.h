@@ -41,6 +41,9 @@ typedef struct {
     int shell_ansi_state;
     int shell_ansi_val;
     uint8_t shell_attr;
+    int pointer_x;
+    int pointer_y;
+    int pointer_visible;
 } desktop_state_t;
 
 typedef enum {
