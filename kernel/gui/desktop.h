@@ -29,6 +29,7 @@ typedef struct {
     gui_rect_t shell_rect;
     gui_rect_t shell_content;
     gui_display_t *display;
+    uintptr_t video_address;
     uint32_t shell_pid;
 } desktop_state_t;
 
