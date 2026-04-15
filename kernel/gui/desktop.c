@@ -28,7 +28,6 @@ void desktop_init(desktop_state_t *desktop, gui_display_t *display)
 {
     k_memset(desktop, 0, sizeof(*desktop));
     desktop->display = display;
-    desktop->video_address = 0xB8000u;
     desktop->active = 1;
     desktop->desktop_enabled = 1;
     desktop->focus = DESKTOP_FOCUS_TASKBAR;
@@ -79,5 +78,6 @@ void desktop_render(desktop_state_t *desktop)
                               "Shell", 0x70);
     }
 
-    gui_display_present_to_vga(desktop->display, desktop->video_address);
+    if (desktop->video_address)
+        gui_display_present_to_vga(desktop->display, desktop->video_address);
 }
