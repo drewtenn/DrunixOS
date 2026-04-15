@@ -14,6 +14,8 @@ typedef enum {
 typedef struct {
     int x;
     int y;
+    int pixel_x;
+    int pixel_y;
     int dx;
     int dy;
     int left_down;
@@ -46,6 +48,8 @@ typedef struct {
     uint8_t shell_attr;
     int pointer_x;
     int pointer_y;
+    int pointer_pixel_x;
+    int pointer_pixel_y;
     int pointer_visible;
 } desktop_state_t;
 

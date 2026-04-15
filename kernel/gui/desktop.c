@@ -238,6 +238,8 @@ static void desktop_set_pointer(desktop_state_t *desktop, int x, int y)
 
     desktop->pointer_x = x;
     desktop->pointer_y = y;
+    desktop->pointer_pixel_x = x * (int)GUI_FONT_W;
+    desktop->pointer_pixel_y = y * (int)GUI_FONT_H;
     desktop->pointer_visible = 1;
 }
 
@@ -458,6 +460,10 @@ void desktop_handle_pointer(desktop_state_t *desktop,
         return;
 
     desktop_set_pointer(desktop, ev->x, ev->y);
+    if (desktop->framebuffer_enabled && desktop->framebuffer) {
+        desktop->pointer_pixel_x = ev->pixel_x;
+        desktop->pointer_pixel_y = ev->pixel_y;
+    }
 
     if (desktop->shell_window_open &&
         ev->left_down &&
@@ -524,12 +530,23 @@ void desktop_render(desktop_state_t *desktop)
     if (desktop->shell_window_open)
         desktop_shell_redraw(desktop);
 
-    desktop_draw_pointer(desktop);
-
     if (desktop->framebuffer_enabled && desktop->framebuffer) {
+        uint32_t fg = framebuffer_pack_rgb(desktop->framebuffer,
+                                           255, 255, 255);
+        uint32_t shadow = framebuffer_pack_rgb(desktop->framebuffer,
+                                               0, 0, 0);
+
         gui_display_present_to_framebuffer(desktop->display,
                                            desktop->framebuffer);
+        framebuffer_draw_cursor(desktop->framebuffer,
+                                desktop->pointer_pixel_x,
+                                desktop->pointer_pixel_y,
+                                fg,
+                                shadow);
     } else if (desktop->video_address) {
+        desktop_draw_pointer(desktop);
         gui_display_present_to_vga(desktop->display, desktop->video_address);
+    } else {
+        desktop_draw_pointer(desktop);
     }
 }

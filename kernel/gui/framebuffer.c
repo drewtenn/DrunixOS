@@ -195,3 +195,25 @@ void framebuffer_draw_glyph(const framebuffer_info_t *fb,
         }
     }
 }
+
+void framebuffer_draw_cursor(const framebuffer_info_t *fb,
+                             int x, int y,
+                             uint32_t fg, uint32_t shadow)
+{
+    static const uint16_t rows[12] = {
+        0x8000, 0xC000, 0xE000, 0xF000,
+        0xF800, 0xFC00, 0xFE00, 0xFF00,
+        0xF000, 0xD800, 0x8800, 0x0400,
+    };
+
+    if (x > INT_MAX - 7 || y > INT_MAX - 11)
+        return;
+
+    for (int row = 0; row < 12; row++) {
+        for (int col = 0; col < 8; col++) {
+            if (rows[row] & (0x8000u >> col))
+                framebuffer_fill_rect(fb, x + col, y + row, 1, 1, fg);
+        }
+    }
+    framebuffer_fill_rect(fb, x + 2, y + 2, 1, 1, shadow);
+}

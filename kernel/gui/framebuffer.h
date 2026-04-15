@@ -33,5 +33,8 @@ void framebuffer_fill_rect(const framebuffer_info_t *fb,
 void framebuffer_draw_glyph(const framebuffer_info_t *fb,
                             int x, int y, unsigned char ch,
                             uint32_t fg, uint32_t bg);
+void framebuffer_draw_cursor(const framebuffer_info_t *fb,
+                             int x, int y,
+                             uint32_t fg, uint32_t shadow);
 
 #endif

@@ -16,8 +16,8 @@ extern void port_byte_out(unsigned short port, unsigned char data);
 extern unsigned char port_byte_in(unsigned short port);
 
 static mouse_packet_stream_t g_stream;
-static int g_pointer_x = 40;
-static int g_pointer_y = 12;
+static int g_pointer_pixel_x = 40 * (int)GUI_FONT_W;
+static int g_pointer_pixel_y = 12 * (int)GUI_FONT_H;
 
 static int ps2_wait_input_ready(void)
 {
@@ -159,28 +159,37 @@ int mouse_stream_consume(mouse_packet_stream_t *stream, uint8_t data,
 
 static void mouse_update_pointer(desktop_state_t *desktop, desktop_pointer_event_t *ev)
 {
-    int max_x = 79;
-    int max_y = 24;
+    int max_x = 80 * (int)GUI_FONT_W - 1;
+    int max_y = 25 * (int)GUI_FONT_H - 1;
 
-    if (desktop && desktop->display) {
-        max_x = desktop->display->cols - 1;
-        max_y = desktop->display->rows - 1;
+    if (desktop && desktop->framebuffer_enabled && desktop->framebuffer) {
+        if (desktop->framebuffer->width > 0)
+            max_x = (int)desktop->framebuffer->width - 1;
+        if (desktop->framebuffer->height > 0)
+            max_y = (int)desktop->framebuffer->height - 1;
+    } else if (desktop && desktop->display) {
+        if (desktop->display->cols > 0)
+            max_x = desktop->display->cols * (int)GUI_FONT_W - 1;
+        if (desktop->display->rows > 0)
+            max_y = desktop->display->rows * (int)GUI_FONT_H - 1;
     }
 
-    g_pointer_x += ev->dx;
-    g_pointer_y -= ev->dy;
+    g_pointer_pixel_x += ev->dx;
+    g_pointer_pixel_y -= ev->dy;
 
-    if (g_pointer_x < 0)
-        g_pointer_x = 0;
-    if (g_pointer_y < 0)
-        g_pointer_y = 0;
-    if (g_pointer_x > max_x)
-        g_pointer_x = max_x;
-    if (g_pointer_y > max_y)
-        g_pointer_y = max_y;
+    if (g_pointer_pixel_x < 0)
+        g_pointer_pixel_x = 0;
+    if (g_pointer_pixel_y < 0)
+        g_pointer_pixel_y = 0;
+    if (g_pointer_pixel_x > max_x)
+        g_pointer_pixel_x = max_x;
+    if (g_pointer_pixel_y > max_y)
+        g_pointer_pixel_y = max_y;
 
-    ev->x = g_pointer_x;
-    ev->y = g_pointer_y;
+    ev->pixel_x = g_pointer_pixel_x;
+    ev->pixel_y = g_pointer_pixel_y;
+    ev->x = g_pointer_pixel_x / (int)GUI_FONT_W;
+    ev->y = g_pointer_pixel_y / (int)GUI_FONT_H;
 }
 
 static void mouse_handler(void)

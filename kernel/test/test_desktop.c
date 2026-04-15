@@ -722,6 +722,25 @@ static void test_framebuffer_fill_rect_handles_large_dimensions(ktest_case_t *tc
     KTEST_EXPECT_EQ(tc, pixels[1 * 4 + 3], 0x11223344u);
 }
 
+static void test_framebuffer_draws_pixel_arrow_cursor(ktest_case_t *tc)
+{
+    static uint32_t pixels[16 * 16];
+    framebuffer_info_t fb;
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 16u * sizeof(uint32_t);
+    fb.width = 16;
+    fb.height = 16;
+
+    framebuffer_draw_cursor(&fb, 2, 2, 0x00FFFFFFu, 0x00000000u);
+
+    KTEST_EXPECT_EQ(tc, pixels[2 * 16 + 2], 0x00FFFFFFu);
+    KTEST_EXPECT_EQ(tc, pixels[3 * 16 + 2], 0x00FFFFFFu);
+    KTEST_EXPECT_EQ(tc, pixels[3 * 16 + 3], 0x00FFFFFFu);
+}
+
 static void test_font8x16_glyph_returns_stable_storage(ktest_case_t *tc)
 {
     const uint8_t *glyph_a = font8x16_glyph('A');
@@ -824,6 +843,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_framebuffer_pack_rgb_uses_mask_positions),
     KTEST_CASE(test_framebuffer_fill_rect_clips_to_bounds),
     KTEST_CASE(test_framebuffer_fill_rect_handles_large_dimensions),
+    KTEST_CASE(test_framebuffer_draws_pixel_arrow_cursor),
     KTEST_CASE(test_font8x16_glyph_returns_stable_storage),
     KTEST_CASE(test_framebuffer_draw_glyph_writes_foreground_pixels),
     KTEST_CASE(test_framebuffer_draw_glyph_rejects_overflowing_position),
