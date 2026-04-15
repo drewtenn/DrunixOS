@@ -1377,6 +1377,45 @@ static void test_framebuffer_desktop_renders_shell_terminal_background(
     desktop_test_destroy(&desktop);
 }
 
+static void test_framebuffer_shell_window_keeps_right_border_visible(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+    uint32_t border;
+    int right_x;
+    int border_y;
+
+    k_memset(pointer_motion_pixels, 0, sizeof(pointer_motion_pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pointer_motion_pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    desktop_open_shell_window(&desktop);
+    desktop_render(&desktop);
+
+    border = framebuffer_pack_rgb(&fb, 0xf2, 0xc9, 0x4c);
+    right_x = desktop.window_pixel_rect.x + desktop.window_pixel_rect.w - 1;
+    border_y = desktop.shell_pixel_rect.y + 4;
+
+    KTEST_EXPECT_EQ(tc, pointer_motion_pixels[border_y * 480 + right_x],
+                    border);
+    desktop_test_destroy(&desktop);
+}
+
 static void test_framebuffer_desktop_console_output_renders_terminal_glyph(
     ktest_case_t *tc)
 {
@@ -1964,6 +2003,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_framebuffer_shell_backspace_prompt_redraw_keeps_unrelated_pixels),
     KTEST_CASE(test_framebuffer_shell_return_prompt_keeps_unrelated_pixels),
     KTEST_CASE(test_framebuffer_desktop_renders_shell_terminal_background),
+    KTEST_CASE(test_framebuffer_shell_window_keeps_right_border_visible),
     KTEST_CASE(test_framebuffer_desktop_console_output_renders_terminal_glyph),
     KTEST_CASE(test_framebuffer_desktop_terminal_edges_render_inside_window),
     KTEST_CASE(test_desktop_can_use_framebuffer_presentation_target),

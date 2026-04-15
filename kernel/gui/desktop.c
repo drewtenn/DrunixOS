@@ -599,8 +599,6 @@ static void desktop_render_framebuffer_region(desktop_state_t *desktop,
                                 window.h, theme.window_bg);
         desktop_pixel_fill_rect(fb, clip, window.x, window.y, window.w, 20,
                                 theme.title_bg);
-        desktop_pixel_draw_outline(fb, clip, window.x, window.y, window.w,
-                                   window.h, theme.window_border);
         framebuffer_draw_text_clipped(fb, clip, window.x + 16, window.y + 2,
                                       "Shell", theme.title_fg,
                                       theme.title_bg);
@@ -608,6 +606,8 @@ static void desktop_render_framebuffer_region(desktop_state_t *desktop,
         surface.fb = fb;
         surface.clip = *clip;
         gui_terminal_render(&desktop->shell_terminal, &surface, &theme, 1);
+        desktop_pixel_draw_outline(fb, clip, window.x, window.y, window.w,
+                                   window.h, theme.window_border);
     }
 
     if (desktop->launcher_open) {
