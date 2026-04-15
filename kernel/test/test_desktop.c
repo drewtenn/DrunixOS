@@ -1,13 +1,14 @@
 #include "ktest.h"
 #include "display.h"
 
+static gui_cell_t desktop_cells[80 * 25];
+
 static void test_gui_display_fill_rect_clips_to_bounds(ktest_case_t *tc)
 {
-    gui_cell_t cells[80 * 25];
     gui_display_t display;
     gui_rect_t dirty;
 
-    gui_display_init(&display, cells, 80, 25, 0x0f);
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
     dirty = gui_display_fill_rect(&display, -2, 0, 4, 1, ' ', 0x1f);
 
     KTEST_EXPECT_EQ(tc, dirty.x, 0);
@@ -16,14 +17,19 @@ static void test_gui_display_fill_rect_clips_to_bounds(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, dirty.h, 1);
     KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display, 0, 0).attr, 0x1f);
     KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display, 2, 0).attr, 0x0f);
+
+    dirty = gui_display_fill_rect(&display, 200, 10, 4, 3, 'x', 0x1c);
+    KTEST_EXPECT_EQ(tc, dirty.x, 0);
+    KTEST_EXPECT_EQ(tc, dirty.y, 0);
+    KTEST_EXPECT_EQ(tc, dirty.w, 0);
+    KTEST_EXPECT_EQ(tc, dirty.h, 0);
 }
 
 static void test_gui_display_draw_text_stops_at_region_edge(ktest_case_t *tc)
 {
-    gui_cell_t cells[80 * 25];
     gui_display_t display;
 
-    gui_display_init(&display, cells, 80, 25, 0x0f);
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
     gui_display_draw_text(&display, 3, 2, 4, "desktop", 0x0e);
 
     KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display, 3, 2).ch, 'd');
