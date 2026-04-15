@@ -80,6 +80,33 @@ extern int mouse_init(void);
 extern void trigger_double_fault(void);
 #endif
 
+static int boot_framebuffer_grid(const framebuffer_info_t *fb,
+                                 int *cols,
+                                 int *rows)
+{
+    if (!fb || !cols || !rows)
+        return 0;
+    if (fb->cell_cols == 0 || fb->cell_rows == 0)
+        return 0;
+
+    *cols = fb->cell_cols > FB_CELL_COLS
+        ? FB_CELL_COLS
+        : (int)fb->cell_cols;
+    *rows = fb->cell_rows > FB_CELL_ROWS
+        ? FB_CELL_ROWS
+        : (int)fb->cell_rows;
+    return 1;
+}
+
+#ifdef KTEST_ENABLED
+int boot_framebuffer_grid_for_test(const framebuffer_info_t *fb,
+                                   int *cols,
+                                   int *rows)
+{
+    return boot_framebuffer_grid(fb, cols, rows);
+}
+#endif
+
 void start_kernel(uint32_t magic, multiboot_info_t *mbi)
 {
     (void)magic; /* could validate == 0x2BADB002 for extra safety */
@@ -197,9 +224,16 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
     klog("BOOT", "scheduler ready");
 
     klog("BOOT", "initializing desktop");
-    gui_cell_t *cells = have_boot_framebuffer ? boot_fb_cells : boot_vga_cells;
-    int cols = have_boot_framebuffer ? (int)boot_framebuffer.cell_cols : MAX_COLS;
-    int rows = have_boot_framebuffer ? (int)boot_framebuffer.cell_rows : MAX_ROWS;
+    gui_cell_t *cells = boot_vga_cells;
+    int cols = MAX_COLS;
+    int rows = MAX_ROWS;
+
+    if (have_boot_framebuffer &&
+        boot_framebuffer_grid(&boot_framebuffer, &cols, &rows)) {
+        cells = boot_fb_cells;
+    } else {
+        have_boot_framebuffer = 0;
+    }
 
     gui_display_init(&boot_display, cells, cols, rows, WHITE_ON_BLACK);
     desktop_init(&boot_desktop, &boot_display);
@@ -208,9 +242,9 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
             desktop_set_presentation_target(&boot_desktop, VIDEO_ADDRESS);
         } else {
             klog_uint("BOOT", "framebuffer desktop cols",
-                      boot_framebuffer.cell_cols);
+                      (uint32_t)cols);
             klog_uint("BOOT", "framebuffer desktop rows",
-                      boot_framebuffer.cell_rows);
+                      (uint32_t)rows);
         }
         desktop_open_shell_window(&boot_desktop);
         desktop_render(&boot_desktop);

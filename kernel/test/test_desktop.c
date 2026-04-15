@@ -14,6 +14,9 @@ static gui_cell_t large_desktop_cells[128 * 48];
 
 extern int syscall_console_write_for_test(process_t *proc, const char *buf,
                                           uint32_t len);
+extern int boot_framebuffer_grid_for_test(const framebuffer_info_t *fb,
+                                          int *cols,
+                                          int *rows);
 
 static void test_gui_display_fill_rect_clips_to_bounds(ktest_case_t *tc)
 {
@@ -556,6 +559,22 @@ static void test_framebuffer_info_accepts_1024_768_32_rgb(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, info.cell_rows, 48u);
 }
 
+static void
+test_boot_framebuffer_grid_clamps_to_static_cell_buffer(ktest_case_t *tc)
+{
+    framebuffer_info_t info;
+    int cols = 0;
+    int rows = 0;
+
+    k_memset(&info, 0, sizeof(info));
+    info.cell_cols = 256u;
+    info.cell_rows = 96u;
+
+    KTEST_EXPECT_EQ(tc, boot_framebuffer_grid_for_test(&info, &cols, &rows), 1);
+    KTEST_EXPECT_EQ(tc, cols, 128);
+    KTEST_EXPECT_EQ(tc, rows, 48);
+}
+
 static void test_framebuffer_info_rejects_address_above_uintptr(ktest_case_t *tc)
 {
     multiboot_info_t mbi;
@@ -766,6 +785,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_render_draws_visible_mouse_pointer),
     KTEST_CASE(test_desktop_pointer_event_moves_visible_mouse_pointer),
     KTEST_CASE(test_framebuffer_info_accepts_1024_768_32_rgb),
+    KTEST_CASE(test_boot_framebuffer_grid_clamps_to_static_cell_buffer),
     KTEST_CASE(test_framebuffer_info_rejects_address_above_uintptr),
     KTEST_CASE(test_framebuffer_info_rejects_extent_above_uintptr),
     KTEST_CASE(test_framebuffer_info_rejects_pitch_overflow_width),
