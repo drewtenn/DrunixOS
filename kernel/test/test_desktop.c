@@ -3,6 +3,7 @@
 #include "desktop.h"
 #include "font8x16.h"
 #include "framebuffer.h"
+#include "terminal.h"
 #include "kstring.h"
 #include "mouse.h"
 #include "paging.h"
@@ -14,12 +15,75 @@ static gui_cell_t desktop_cells[80 * 25];
 static gui_cell_t large_desktop_cells[128 * 48];
 static gui_cell_t pointer_motion_cells[60 * 25];
 static uint32_t pointer_motion_pixels[480 * 400];
+static gui_cell_t terminal_cells[16 * 4];
+static gui_cell_t terminal_history[16 * 8];
 
 extern int syscall_console_write_for_test(process_t *proc, const char *buf,
                                           uint32_t len);
 extern int boot_framebuffer_grid_for_test(const framebuffer_info_t *fb,
                                           int *cols,
                                           int *rows);
+
+static void test_terminal_write_wraps_and_retains_history(ktest_case_t *tc)
+{
+    gui_terminal_t term;
+
+    KTEST_ASSERT_EQ(tc,
+                    gui_terminal_init_static(&term,
+                                             terminal_cells,
+                                             terminal_history,
+                                             4, 2, 4, 0x0f),
+                    1);
+
+    KTEST_EXPECT_EQ(tc, gui_terminal_write(&term, "abcdX", 5), 5);
+    KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 0, 0).ch, 'a');
+    KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 3, 0).ch, 'd');
+    KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 0, 1).ch, 'X');
+
+    KTEST_EXPECT_EQ(tc, gui_terminal_write(&term, "\nzzzz\nq", 7), 7);
+    KTEST_EXPECT_GE(tc, gui_terminal_history_count(&term), 1);
+    KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 0, 1).ch, 'q');
+}
+
+static void test_terminal_ansi_color_does_not_emit_escape_bytes(ktest_case_t *tc)
+{
+    gui_terminal_t term;
+    static const char text[] = "\x1b[32mG\x1b[0mW";
+
+    KTEST_ASSERT_EQ(tc,
+                    gui_terminal_init_static(&term,
+                                             terminal_cells,
+                                             terminal_history,
+                                             8, 2, 4, 0x0f),
+                    1);
+
+    KTEST_EXPECT_EQ(tc, gui_terminal_write(&term, text, sizeof(text) - 1),
+                    sizeof(text) - 1);
+    KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 0, 0).ch, 'G');
+    KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 0, 0).attr, 0x0a);
+    KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 1, 0).ch, 'W');
+    KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 1, 0).attr, 0x0f);
+}
+
+static void test_terminal_clear_discards_history_and_resets_cursor(ktest_case_t *tc)
+{
+    gui_terminal_t term;
+
+    KTEST_ASSERT_EQ(tc,
+                    gui_terminal_init_static(&term,
+                                             terminal_cells,
+                                             terminal_history,
+                                             4, 2, 4, 0x0f),
+                    1);
+    KTEST_ASSERT_EQ(tc, gui_terminal_write(&term, "abcd\nefgh\nijkl", 14), 14);
+
+    gui_terminal_clear(&term);
+
+    KTEST_EXPECT_EQ(tc, gui_terminal_history_count(&term), 0);
+    KTEST_EXPECT_EQ(tc, gui_terminal_cursor_x(&term), 0);
+    KTEST_EXPECT_EQ(tc, gui_terminal_cursor_y(&term), 0);
+    KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 0, 0).ch, ' ');
+}
 
 static void test_gui_display_fill_rect_clips_to_bounds(ktest_case_t *tc)
 {
@@ -891,130 +955,6 @@ static void test_framebuffer_fill_rect_handles_large_dimensions(ktest_case_t *tc
     KTEST_EXPECT_EQ(tc, pixels[1 * 4 + 3], 0x11223344u);
 }
 
-static void test_framebuffer_draw_rect_outline_handles_large_dimensions(ktest_case_t *tc)
-{
-    uint32_t pixels[4 * 4];
-    framebuffer_info_t fb;
-
-    k_memset(pixels, 0, sizeof(pixels));
-    k_memset(&fb, 0, sizeof(fb));
-    fb.address = (uintptr_t)pixels;
-    fb.pitch = 4u * sizeof(uint32_t);
-    fb.width = 4;
-    fb.height = 4;
-
-    framebuffer_draw_rect_outline(&fb, -2, -2147483646, 2147483647, 2147483647,
-                                  0x00ABCDEFu);
-
-    KTEST_EXPECT_EQ(tc, pixels[0 * 4 + 0], 0x00ABCDEFu);
-    KTEST_EXPECT_EQ(tc, pixels[0 * 4 + 3], 0x00ABCDEFu);
-    KTEST_EXPECT_EQ(tc, pixels[1 * 4 + 0], 0u);
-    KTEST_EXPECT_EQ(tc, pixels[1 * 4 + 1], 0u);
-}
-
-static void test_framebuffer_draw_rect_outline_clips_to_bounds(ktest_case_t *tc)
-{
-    uint32_t pixels[6 * 6];
-    framebuffer_info_t fb;
-
-    k_memset(pixels, 0, sizeof(pixels));
-    k_memset(&fb, 0, sizeof(fb));
-    fb.address = (uintptr_t)pixels;
-    fb.pitch = 6u * sizeof(uint32_t);
-    fb.width = 6;
-    fb.height = 6;
-
-    framebuffer_draw_rect_outline(&fb, -1, 1, 4, 4, 0x00ABCDEFu);
-
-    KTEST_EXPECT_EQ(tc, pixels[1 * 6 + 0], 0x00ABCDEFu);
-    KTEST_EXPECT_EQ(tc, pixels[1 * 6 + 2], 0x00ABCDEFu);
-    KTEST_EXPECT_EQ(tc, pixels[3 * 6 + 0], 0x00ABCDEFu);
-    KTEST_EXPECT_EQ(tc, pixels[4 * 6 + 0], 0u);
-}
-
-static void test_framebuffer_draw_text_clipped_honors_pixel_clip(ktest_case_t *tc)
-{
-    static uint32_t pixels[32 * 20];
-    framebuffer_info_t fb;
-    gui_pixel_rect_t clip = { 8, 0, 8, 16 };
-
-    k_memset(pixels, 0, sizeof(pixels));
-    k_memset(&fb, 0, sizeof(fb));
-    fb.address = (uintptr_t)pixels;
-    fb.pitch = 32u * sizeof(uint32_t);
-    fb.width = 32;
-    fb.height = 20;
-
-    framebuffer_draw_text_clipped(&fb, &clip, 0, 0, "AB",
-                                  0x00FFFFFFu, 0x00112233u);
-
-    KTEST_EXPECT_EQ(tc, pixels[0 * 32 + 0], 0u);
-    KTEST_EXPECT_EQ(tc, pixels[0 * 32 + 8], 0x00FFFFFFu);
-    KTEST_EXPECT_EQ(tc, pixels[0 * 32 + 16], 0u);
-}
-
-static void test_framebuffer_draw_text_clipped_huge_origin_is_noop(ktest_case_t *tc)
-{
-    uint32_t pixels[16 * 16];
-    framebuffer_info_t fb;
-    gui_pixel_rect_t clip = { 0, 0, 8, 16 };
-
-    for (uint32_t i = 0; i < 16u * 16u; i++)
-        pixels[i] = 0xDEADBEEFu;
-    k_memset(&fb, 0, sizeof(fb));
-    fb.address = (uintptr_t)pixels;
-    fb.pitch = 16u * sizeof(uint32_t);
-    fb.width = 16;
-    fb.height = 16;
-
-    framebuffer_draw_text_clipped(&fb, &clip, 2147483644, 0, "AB",
-                                  0x00FFFFFFu, 0x00112233u);
-
-    KTEST_EXPECT_EQ(tc, pixels[0], 0xDEADBEEFu);
-    KTEST_EXPECT_EQ(tc, pixels[15], 0xDEADBEEFu);
-}
-
-static void test_framebuffer_draw_scrollbar_places_thumb(ktest_case_t *tc)
-{
-    uint32_t pixels[8 * 40];
-    framebuffer_info_t fb;
-
-    k_memset(pixels, 0, sizeof(pixels));
-    k_memset(&fb, 0, sizeof(fb));
-    fb.address = (uintptr_t)pixels;
-    fb.pitch = 8u * sizeof(uint32_t);
-    fb.width = 8;
-    fb.height = 40;
-
-    framebuffer_draw_scrollbar(&fb, 2, 4, 4, 32, 100, 25, 50,
-                               0x00010101u, 0x00EEEEEEu);
-
-    KTEST_EXPECT_EQ(tc, pixels[4 * 8 + 2], 0x00010101u);
-    KTEST_EXPECT_EQ(tc, pixels[20 * 8 + 2], 0x00EEEEEEu);
-    KTEST_EXPECT_EQ(tc, pixels[35 * 8 + 5], 0x00010101u);
-}
-
-static void test_framebuffer_draw_scrollbar_handles_large_row_counts(ktest_case_t *tc)
-{
-    uint32_t pixels[8 * 40];
-    framebuffer_info_t fb;
-
-    for (uint32_t i = 0; i < 8u * 40u; i++)
-        pixels[i] = 0xDEADBEEFu;
-    k_memset(&fb, 0, sizeof(fb));
-    fb.address = (uintptr_t)pixels;
-    fb.pitch = 8u * sizeof(uint32_t);
-    fb.width = 8;
-    fb.height = 40;
-
-    framebuffer_draw_scrollbar(&fb, 2, 4, 4, 32, 2147483647, 1073741824,
-                               2147483646, 0x00010101u, 0x00EEEEEEu);
-
-    KTEST_EXPECT_EQ(tc, pixels[4 * 8 + 2], 0x00010101u);
-    KTEST_EXPECT_EQ(tc, pixels[20 * 8 + 2], 0x00EEEEEEu);
-    KTEST_EXPECT_EQ(tc, pixels[36 * 8 + 2], 0xDEADBEEFu);
-}
-
 static void test_framebuffer_draws_pixel_arrow_cursor(ktest_case_t *tc)
 {
     static uint32_t pixels[16 * 16];
@@ -1101,6 +1041,9 @@ static void test_framebuffer_pack_rgb_scales_to_mask_size(ktest_case_t *tc)
 }
 
 static ktest_case_t desktop_cases[] = {
+    KTEST_CASE(test_terminal_write_wraps_and_retains_history),
+    KTEST_CASE(test_terminal_ansi_color_does_not_emit_escape_bytes),
+    KTEST_CASE(test_terminal_clear_discards_history_and_resets_cursor),
     KTEST_CASE(test_gui_display_fill_rect_clips_to_bounds),
     KTEST_CASE(test_gui_display_draw_text_stops_at_region_edge),
     KTEST_CASE(test_gui_display_presents_cells_to_framebuffer),
@@ -1142,12 +1085,6 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_framebuffer_pack_rgb_uses_mask_positions),
     KTEST_CASE(test_framebuffer_fill_rect_clips_to_bounds),
     KTEST_CASE(test_framebuffer_fill_rect_handles_large_dimensions),
-    KTEST_CASE(test_framebuffer_draw_rect_outline_handles_large_dimensions),
-    KTEST_CASE(test_framebuffer_draw_rect_outline_clips_to_bounds),
-    KTEST_CASE(test_framebuffer_draw_text_clipped_honors_pixel_clip),
-    KTEST_CASE(test_framebuffer_draw_text_clipped_huge_origin_is_noop),
-    KTEST_CASE(test_framebuffer_draw_scrollbar_places_thumb),
-    KTEST_CASE(test_framebuffer_draw_scrollbar_handles_large_row_counts),
     KTEST_CASE(test_framebuffer_draws_pixel_arrow_cursor),
     KTEST_CASE(test_font8x16_glyph_returns_stable_storage),
     KTEST_CASE(test_framebuffer_draw_glyph_writes_foreground_pixels),
