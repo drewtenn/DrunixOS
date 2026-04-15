@@ -43,6 +43,10 @@ static uint32_t scale_color(uint8_t value, uint8_t mask_size)
 int framebuffer_info_from_multiboot(const multiboot_info_t *mbi,
                                     framebuffer_info_t *out)
 {
+    uint64_t visible_row_bytes;
+    uint64_t last_row_offset;
+    uint64_t framebuffer_bytes;
+
     if (!mbi || !out)
         return -1;
     if ((mbi->flags & MULTIBOOT_FLAG_FRAMEBUFFER) == 0)
@@ -61,6 +65,14 @@ int framebuffer_info_from_multiboot(const multiboot_info_t *mbi,
         return -7;
     if (mbi->framebuffer_pitch < mbi->framebuffer_width * 4u)
         return -7;
+    visible_row_bytes = (uint64_t)mbi->framebuffer_width * 4u;
+    last_row_offset = (uint64_t)(mbi->framebuffer_height - 1u) *
+                      mbi->framebuffer_pitch;
+    framebuffer_bytes = last_row_offset + visible_row_bytes;
+    if (framebuffer_bytes == 0 ||
+        framebuffer_bytes - 1u >
+            (uint64_t)UINTPTR_MAX - mbi->framebuffer_addr)
+        return -3;
     if (mbi->framebuffer_width < GUI_FONT_W ||
         mbi->framebuffer_height < GUI_FONT_H)
         return -8;

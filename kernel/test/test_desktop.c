@@ -518,6 +518,17 @@ static void test_framebuffer_info_rejects_address_above_uintptr(ktest_case_t *tc
     KTEST_EXPECT_NE(tc, framebuffer_info_from_multiboot(&mbi, &info), 0);
 }
 
+static void test_framebuffer_info_rejects_extent_above_uintptr(ktest_case_t *tc)
+{
+    multiboot_info_t mbi;
+    framebuffer_info_t info;
+
+    framebuffer_test_init_valid_record(&mbi);
+    mbi.framebuffer_addr = (uint64_t)UINTPTR_MAX - 4095u;
+
+    KTEST_EXPECT_NE(tc, framebuffer_info_from_multiboot(&mbi, &info), 0);
+}
+
 static void test_framebuffer_info_rejects_pitch_overflow_width(ktest_case_t *tc)
 {
     multiboot_info_t mbi;
@@ -655,6 +666,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_pointer_event_moves_visible_mouse_pointer),
     KTEST_CASE(test_framebuffer_info_accepts_1024_768_32_rgb),
     KTEST_CASE(test_framebuffer_info_rejects_address_above_uintptr),
+    KTEST_CASE(test_framebuffer_info_rejects_extent_above_uintptr),
     KTEST_CASE(test_framebuffer_info_rejects_pitch_overflow_width),
     KTEST_CASE(test_framebuffer_info_rejects_rgb_mask_past_32_bits),
     KTEST_CASE(test_framebuffer_info_rejects_overlapping_rgb_masks),
