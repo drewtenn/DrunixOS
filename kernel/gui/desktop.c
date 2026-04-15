@@ -639,6 +639,113 @@ static void desktop_render_framebuffer(desktop_state_t *desktop)
     desktop_draw_framebuffer_pointer(desktop);
 }
 
+static void desktop_render_framebuffer_terminal(desktop_state_t *desktop)
+{
+    if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
+        return;
+    if (desktop->shell_pixel_rect.w <= 0 || desktop->shell_pixel_rect.h <= 0)
+        return;
+
+    desktop_render_framebuffer_region(desktop, &desktop->shell_pixel_rect);
+    desktop_draw_framebuffer_pointer(desktop);
+}
+
+static void desktop_terminal_dirty_include_cell(desktop_state_t *desktop,
+                                                gui_rect_t *dirty,
+                                                int col,
+                                                int row)
+{
+    int64_t x;
+    int64_t y;
+
+    if (!desktop || !dirty)
+        return;
+    if (col < 0 || row < 0 ||
+        col >= desktop->shell_terminal.cols ||
+        row >= desktop->shell_terminal.rows)
+        return;
+
+    x = (int64_t)desktop->shell_pixel_rect.x +
+        (int64_t)desktop->shell_terminal.padding_x +
+        (int64_t)col * (int64_t)GUI_FONT_W;
+    y = (int64_t)desktop->shell_pixel_rect.y +
+        (int64_t)desktop->shell_terminal.padding_y +
+        (int64_t)row * (int64_t)GUI_FONT_H;
+    if (x < INT_MIN || y < INT_MIN ||
+        x > (int64_t)INT_MAX - (int64_t)GUI_FONT_W ||
+        y > (int64_t)INT_MAX - (int64_t)GUI_FONT_H)
+        return;
+
+    desktop_dirty_include(dirty, (int)x, (int)y,
+                          (int)GUI_FONT_W, (int)GUI_FONT_H);
+}
+
+static int desktop_render_framebuffer_write_dirty(desktop_state_t *desktop,
+                                                  const char *buf,
+                                                  uint32_t len,
+                                                  int before_cursor_x,
+                                                  int before_cursor_y,
+                                                  int before_wrap_pending,
+                                                  int before_ansi_state,
+                                                  int before_history_count,
+                                                  int before_view_top)
+{
+    gui_rect_t dirty = { 0, 0, 0, 0 };
+    gui_pixel_rect_t clip;
+    unsigned char ch;
+    int written_x;
+    int written_y;
+
+    if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
+        return 0;
+    if (!buf || len != 1)
+        return 0;
+    if (before_view_top != 0 ||
+        gui_terminal_visible_view_top(&desktop->shell_terminal) != 0)
+        return 0;
+    if (before_history_count !=
+        gui_terminal_history_count(&desktop->shell_terminal))
+        return 0;
+    if (before_ansi_state != 0)
+        return 0;
+
+    ch = (unsigned char)buf[0];
+    if (ch < ' ' || ch == 0x7fu)
+        return 0;
+
+    if (before_wrap_pending) {
+        written_x = 0;
+        written_y = before_cursor_y + 1;
+    } else {
+        written_x = before_cursor_x;
+        written_y = before_cursor_y;
+    }
+    if (written_x < 0 || written_y < 0 ||
+        written_x >= desktop->shell_terminal.cols ||
+        written_y >= desktop->shell_terminal.rows)
+        return 0;
+
+    desktop_terminal_dirty_include_cell(desktop, &dirty,
+                                        before_cursor_x, before_cursor_y);
+    desktop_terminal_dirty_include_cell(desktop, &dirty,
+                                        written_x, written_y);
+    desktop_terminal_dirty_include_cell(desktop, &dirty,
+                                        gui_terminal_cursor_x(
+                                            &desktop->shell_terminal),
+                                        gui_terminal_cursor_y(
+                                            &desktop->shell_terminal));
+    if (dirty.w <= 0 || dirty.h <= 0)
+        return 0;
+
+    clip.x = dirty.x;
+    clip.y = dirty.y;
+    clip.w = dirty.w;
+    clip.h = dirty.h;
+    desktop_render_framebuffer_region(desktop, &clip);
+    desktop_draw_framebuffer_pointer(desktop);
+    return 1;
+}
+
 static void desktop_present_framebuffer_pointer_motion(desktop_state_t *desktop,
                                                        int old_pixel_x,
                                                        int old_pixel_y)
@@ -791,6 +898,12 @@ int desktop_write_console_output(desktop_state_t *desktop,
                                  uint32_t len)
 {
     int written;
+    int before_cursor_x;
+    int before_cursor_y;
+    int before_wrap_pending;
+    int before_ansi_state;
+    int before_history_count;
+    int before_view_top;
 
     if (!desktop || !desktop->active || !desktop->desktop_enabled)
         return 0;
@@ -799,14 +912,30 @@ int desktop_write_console_output(desktop_state_t *desktop,
     if (!buf || len == 0 || !desktop->shell_terminal.live)
         return 0;
 
+    before_cursor_x = gui_terminal_cursor_x(&desktop->shell_terminal);
+    before_cursor_y = gui_terminal_cursor_y(&desktop->shell_terminal);
+    before_wrap_pending = desktop->shell_terminal.wrap_pending;
+    before_ansi_state = desktop->shell_terminal.ansi_state;
+    before_history_count = gui_terminal_history_count(
+        &desktop->shell_terminal);
+    before_view_top = gui_terminal_visible_view_top(
+        &desktop->shell_terminal);
+
     written = gui_terminal_write(&desktop->shell_terminal, buf, len);
     desktop_sync_legacy_shell_from_terminal(desktop);
     if (written == 0)
         return 0;
 
-    if (desktop->framebuffer_enabled && desktop->framebuffer)
-        desktop_render_framebuffer(desktop);
-    else {
+    if (desktop->framebuffer_enabled && desktop->framebuffer) {
+        if (!desktop_render_framebuffer_write_dirty(desktop, buf, len,
+                                                    before_cursor_x,
+                                                    before_cursor_y,
+                                                    before_wrap_pending,
+                                                    before_ansi_state,
+                                                    before_history_count,
+                                                    before_view_top))
+            desktop_render_framebuffer_terminal(desktop);
+    } else {
         desktop_terminal_redraw_to_cells(desktop);
         desktop_render(desktop);
     }
@@ -822,7 +951,10 @@ int desktop_clear_console(desktop_state_t *desktop)
 
     gui_terminal_clear(&desktop->shell_terminal);
     desktop_sync_legacy_shell_from_terminal(desktop);
-    desktop_render(desktop);
+    if (desktop->framebuffer_enabled && desktop->framebuffer)
+        desktop_render_framebuffer_terminal(desktop);
+    else
+        desktop_render(desktop);
     return 1;
 }
 
@@ -835,7 +967,10 @@ int desktop_scroll_console(desktop_state_t *desktop, int rows)
 
     gui_terminal_scroll_view(&desktop->shell_terminal, rows);
     desktop_sync_legacy_shell_from_terminal(desktop);
-    desktop_render(desktop);
+    if (desktop->framebuffer_enabled && desktop->framebuffer)
+        desktop_render_framebuffer_terminal(desktop);
+    else
+        desktop_render(desktop);
     return 1;
 }
 

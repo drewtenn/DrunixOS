@@ -1127,15 +1127,13 @@ static void test_framebuffer_pointer_motion_does_not_repaint_unrelated_pixels(
     desktop_test_destroy(&desktop);
 }
 
-static void test_framebuffer_shell_write_rerenders_pixel_desktop(
+static void test_framebuffer_shell_write_repaints_only_dirty_terminal_cells(
     ktest_case_t *tc)
 {
     gui_display_t display;
     desktop_state_t desktop;
     framebuffer_info_t fb;
     uint32_t sentinel = 0x0BADCAFEu;
-    uint32_t desktop_bg;
-    uint32_t terminal_bg;
     int sentinel_index = 300 * 480 + 400;
     int shell_sentinel_index;
 
@@ -1165,13 +1163,9 @@ static void test_framebuffer_shell_write_rerenders_pixel_desktop(
     pointer_motion_pixels[shell_sentinel_index] = sentinel;
 
     KTEST_EXPECT_EQ(tc, desktop_write_console_output(&desktop, "x", 1), 1);
-    desktop_bg = framebuffer_pack_rgb(&fb, 0x24, 0x3a, 0x3f);
-    terminal_bg = framebuffer_pack_rgb(&fb, 0x08, 0x10, 0x18);
-    KTEST_EXPECT_NE(tc, pointer_motion_pixels[sentinel_index], sentinel);
-    KTEST_EXPECT_EQ(tc, pointer_motion_pixels[sentinel_index], desktop_bg);
-    KTEST_EXPECT_NE(tc, pointer_motion_pixels[shell_sentinel_index], sentinel);
+    KTEST_EXPECT_EQ(tc, pointer_motion_pixels[sentinel_index], sentinel);
     KTEST_EXPECT_EQ(tc, pointer_motion_pixels[shell_sentinel_index],
-                    terminal_bg);
+                    sentinel);
     desktop_test_destroy(&desktop);
 }
 
@@ -1797,7 +1791,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_render_draws_visible_mouse_pointer),
     KTEST_CASE(test_desktop_pointer_event_moves_visible_mouse_pointer),
     KTEST_CASE(test_framebuffer_pointer_motion_does_not_repaint_unrelated_pixels),
-    KTEST_CASE(test_framebuffer_shell_write_rerenders_pixel_desktop),
+    KTEST_CASE(test_framebuffer_shell_write_repaints_only_dirty_terminal_cells),
     KTEST_CASE(test_framebuffer_desktop_renders_shell_terminal_background),
     KTEST_CASE(test_framebuffer_desktop_console_output_renders_terminal_glyph),
     KTEST_CASE(test_framebuffer_desktop_terminal_edges_render_inside_window),
