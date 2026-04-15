@@ -77,9 +77,9 @@ static void test_gui_display_presents_cells_to_framebuffer(ktest_case_t *tc)
 
     gui_display_present_to_framebuffer(&display, &fb);
 
-    KTEST_EXPECT_EQ(tc, framebuffer_pack_rgb(&fb, 0xff, 0xff, 0x55),
+    KTEST_EXPECT_EQ(tc, framebuffer_pack_rgb(&fb, 0xf2, 0xc9, 0x4c),
                     pixels[0 * 16 + 2]);
-    KTEST_EXPECT_EQ(tc, framebuffer_pack_rgb(&fb, 0x00, 0x00, 0xaa),
+    KTEST_EXPECT_EQ(tc, framebuffer_pack_rgb(&fb, 0x16, 0x2a, 0x4f),
                     pixels[0 * 16 + 0]);
 }
 
