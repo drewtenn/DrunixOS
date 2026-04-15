@@ -1,6 +1,7 @@
 #include "desktop.h"
 #include "kheap.h"
 #include "kstring.h"
+#include <limits.h>
 
 #define DESKTOP_ATTR_BACKGROUND 0x1f
 #define DESKTOP_ATTR_TASKBAR    0x70
@@ -10,6 +11,8 @@
 #define DESKTOP_CURSOR_W        8
 #define DESKTOP_CURSOR_H        12
 #define DESKTOP_TERMINAL_HISTORY_ROWS 500
+#define DESKTOP_TERMINAL_PADDING_X 8
+#define DESKTOP_TERMINAL_PADDING_Y 6
 
 static desktop_state_t *g_desktop = 0;
 
@@ -17,32 +20,35 @@ static int desktop_pixel_rect_intersect(gui_pixel_rect_t a,
                                         gui_pixel_rect_t b,
                                         gui_pixel_rect_t *out)
 {
-    int left;
-    int top;
-    int right;
-    int bottom;
-    int a_right;
-    int a_bottom;
-    int b_right;
-    int b_bottom;
+    int64_t left;
+    int64_t top;
+    int64_t right;
+    int64_t bottom;
+    int64_t a_right;
+    int64_t a_bottom;
+    int64_t b_right;
+    int64_t b_bottom;
 
     if (!out)
         return 0;
 
-    a_right = a.x + a.w;
-    a_bottom = a.y + a.h;
-    b_right = b.x + b.w;
-    b_bottom = b.y + b.h;
+    a_right = (int64_t)a.x + (int64_t)a.w;
+    a_bottom = (int64_t)a.y + (int64_t)a.h;
+    b_right = (int64_t)b.x + (int64_t)b.w;
+    b_bottom = (int64_t)b.y + (int64_t)b.h;
     left = a.x > b.x ? a.x : b.x;
     top = a.y > b.y ? a.y : b.y;
     right = a_right < b_right ? a_right : b_right;
     bottom = a_bottom < b_bottom ? a_bottom : b_bottom;
     if (right <= left || bottom <= top)
         return 0;
-    out->x = left;
-    out->y = top;
-    out->w = right - left;
-    out->h = bottom - top;
+    if (left < INT_MIN || top < INT_MIN || right > INT_MAX ||
+        bottom > INT_MAX)
+        return 0;
+    out->x = (int)left;
+    out->y = (int)top;
+    out->w = (int)(right - left);
+    out->h = (int)(bottom - top);
     return 1;
 }
 
@@ -156,8 +162,23 @@ static void desktop_layout(desktop_state_t *desktop)
 
     desktop->shell_pixel_rect.x = desktop->window_pixel_rect.x + 8;
     desktop->shell_pixel_rect.y = desktop->window_pixel_rect.y + 24;
-    desktop->shell_pixel_rect.w = desktop->window_pixel_rect.w - 16;
-    desktop->shell_pixel_rect.h = desktop->window_pixel_rect.h - 32;
+    desktop->shell_pixel_rect.w = DESKTOP_TERMINAL_PADDING_X +
+                                  desktop->shell_content.w *
+                                      (int)GUI_FONT_W;
+    desktop->shell_pixel_rect.h = DESKTOP_TERMINAL_PADDING_Y +
+                                  desktop->shell_content.h *
+                                      (int)GUI_FONT_H;
+    if (desktop->shell_pixel_rect.w < 0)
+        desktop->shell_pixel_rect.w = 0;
+    if (desktop->shell_pixel_rect.h < 0)
+        desktop->shell_pixel_rect.h = 0;
+    if (desktop->shell_pixel_rect.w >
+        desktop->window_pixel_rect.w - DESKTOP_TERMINAL_PADDING_X)
+        desktop->shell_pixel_rect.w =
+            desktop->window_pixel_rect.w - DESKTOP_TERMINAL_PADDING_X;
+    if (desktop->shell_pixel_rect.h >
+        desktop->window_pixel_rect.h - 24)
+        desktop->shell_pixel_rect.h = desktop->window_pixel_rect.h - 24;
     if (desktop->shell_pixel_rect.w < 0)
         desktop->shell_pixel_rect.w = 0;
     if (desktop->shell_pixel_rect.h < 0)
@@ -466,6 +487,28 @@ static void desktop_set_pointer(desktop_state_t *desktop, int x, int y)
     desktop->pointer_visible = 1;
 }
 
+static int desktop_clamp_pixel_x(desktop_state_t *desktop, int x)
+{
+    if (!desktop || !desktop->framebuffer || desktop->framebuffer->width == 0)
+        return 0;
+    if (x < 0)
+        return 0;
+    if (x >= (int)desktop->framebuffer->width)
+        return (int)desktop->framebuffer->width - 1;
+    return x;
+}
+
+static int desktop_clamp_pixel_y(desktop_state_t *desktop, int y)
+{
+    if (!desktop || !desktop->framebuffer || desktop->framebuffer->height == 0)
+        return 0;
+    if (y < 0)
+        return 0;
+    if (y >= (int)desktop->framebuffer->height)
+        return (int)desktop->framebuffer->height - 1;
+    return y;
+}
+
 static void desktop_draw_pointer(desktop_state_t *desktop)
 {
     if (!desktop || !desktop->display || !desktop->pointer_visible)
@@ -671,7 +714,8 @@ void desktop_init(desktop_state_t *desktop, gui_display_t *display)
     }
     gui_terminal_set_pixel_rect(&desktop->shell_terminal,
                                 desktop->shell_pixel_rect,
-                                8, 6);
+                                DESKTOP_TERMINAL_PADDING_X,
+                                DESKTOP_TERMINAL_PADDING_Y);
 
     desktop->shell_cursor_x = 0;
     desktop->shell_cursor_y = 0;
@@ -847,8 +891,8 @@ void desktop_handle_pointer(desktop_state_t *desktop,
 
     desktop_set_pointer(desktop, ev->x, ev->y);
     if (desktop->framebuffer_enabled && desktop->framebuffer) {
-        desktop->pointer_pixel_x = ev->pixel_x;
-        desktop->pointer_pixel_y = ev->pixel_y;
+        desktop->pointer_pixel_x = desktop_clamp_pixel_x(desktop, ev->pixel_x);
+        desktop->pointer_pixel_y = desktop_clamp_pixel_y(desktop, ev->pixel_y);
     }
 
     if (desktop->shell_window_open &&

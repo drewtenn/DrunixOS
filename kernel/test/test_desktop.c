@@ -1189,6 +1189,60 @@ static void test_framebuffer_desktop_console_output_renders_terminal_glyph(
     desktop_test_destroy(&desktop);
 }
 
+static void test_framebuffer_desktop_terminal_edges_render_inside_window(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+    uint32_t cursor;
+    int cursor_x;
+    int cursor_y;
+
+    k_memset(pointer_motion_pixels, 0, sizeof(pointer_motion_pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pointer_motion_pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    desktop_open_shell_window(&desktop);
+
+    for (int row = 0; row < desktop.shell_terminal.rows - 1; row++)
+        KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, "\n", 1),
+                        1);
+    for (int col = 0; col < desktop.shell_terminal.cols - 1; col++)
+        KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, " ", 1),
+                        1);
+
+    cursor = framebuffer_pack_rgb(&fb, 0x67, 0xc5, 0x8f);
+    cursor_x = desktop.shell_pixel_rect.x + desktop.shell_terminal.padding_x +
+               (desktop.shell_terminal.cols - 1) * (int)GUI_FONT_W;
+    cursor_y = desktop.shell_pixel_rect.y + desktop.shell_terminal.padding_y +
+               (desktop.shell_terminal.rows - 1) * (int)GUI_FONT_H +
+               ((int)GUI_FONT_H - 2);
+
+    KTEST_EXPECT_EQ(tc, pointer_motion_pixels[cursor_y * 480 + cursor_x],
+                    cursor);
+    KTEST_EXPECT_TRUE(tc,
+                      cursor_x < desktop.window_pixel_rect.x +
+                          desktop.window_pixel_rect.w);
+    KTEST_EXPECT_TRUE(tc,
+                      cursor_y < desktop.window_pixel_rect.y +
+                          desktop.window_pixel_rect.h);
+    desktop_test_destroy(&desktop);
+}
+
 static void test_desktop_can_use_framebuffer_presentation_target(ktest_case_t *tc)
 {
     static uint32_t pixels[16 * 16];
@@ -1677,6 +1731,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_framebuffer_shell_write_rerenders_pixel_desktop),
     KTEST_CASE(test_framebuffer_desktop_renders_shell_terminal_background),
     KTEST_CASE(test_framebuffer_desktop_console_output_renders_terminal_glyph),
+    KTEST_CASE(test_framebuffer_desktop_terminal_edges_render_inside_window),
     KTEST_CASE(test_desktop_can_use_framebuffer_presentation_target),
     KTEST_CASE(test_framebuffer_info_accepts_1024_768_32_rgb),
     KTEST_CASE(test_multiboot_framebuffer_color_info_uses_grub_layout),
