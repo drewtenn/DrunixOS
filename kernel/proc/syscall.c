@@ -75,6 +75,28 @@ static int fd_alloc(process_t *proc)
     return -1;
 }
 
+static tty_t *syscall_tty_from_fd(process_t *cur, uint32_t fd,
+                                  uint32_t *tty_idx_out)
+{
+    file_handle_t *fh;
+    tty_t *tty;
+
+    if (!cur || fd >= MAX_FDS)
+        return 0;
+
+    fh = &cur->open_files[fd];
+    if (fh->type != FD_TYPE_TTY)
+        return 0;
+
+    tty = tty_get((int)fh->u.tty.tty_idx);
+    if (!tty)
+        return 0;
+
+    if (tty_idx_out)
+        *tty_idx_out = fh->u.tty.tty_idx;
+    return tty;
+}
+
 static int syscall_desktop_should_route_console_output(desktop_state_t *desktop,
                                                        process_t *cur)
 {
@@ -89,7 +111,7 @@ static int syscall_desktop_should_route_console_output(desktop_state_t *desktop,
     shell_pid = desktop_shell_pid(desktop);
     if (shell_pid == 0)
         return 0;
-    if (shell_pid != 0 && cur->parent_pid == shell_pid)
+    if (cur->parent_pid == shell_pid)
         return 1;
 
     tty = tty_get((int)cur->tty_id);
@@ -1793,10 +1815,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
     case SYS_TCGETATTR: {
         /* ebx = fd, ecx = termios_t* (user pointer) */
         process_t *cur = sched_current();
-        if (!cur || ebx >= MAX_FDS) return (uint32_t)-1;
-        file_handle_t *fh = &cur->open_files[ebx];
-        if (fh->type != FD_TYPE_TTY) return (uint32_t)-1;
-        tty_t *tty = tty_get((int)fh->u.tty.tty_idx);
+        tty_t *tty = syscall_tty_from_fd(cur, ebx, 0);
         if (!tty) return (uint32_t)-1;
         if (uaccess_copy_to_user(cur, ecx, &tty->termios, sizeof(tty->termios)) != 0)
             return (uint32_t)-1;
@@ -1806,10 +1825,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
     case SYS_TCSETATTR: {
         /* ebx = fd, ecx = action (TCSANOW=0 / TCSAFLUSH=2), edx = termios_t* */
         process_t *cur = sched_current();
-        if (!cur || ebx >= MAX_FDS) return (uint32_t)-1;
-        file_handle_t *fh = &cur->open_files[ebx];
-        if (fh->type != FD_TYPE_TTY) return (uint32_t)-1;
-        tty_t *tty = tty_get((int)fh->u.tty.tty_idx);
+        tty_t *tty = syscall_tty_from_fd(cur, ebx, 0);
         termios_t new_termios;
         if (!tty) return (uint32_t)-1;
         if (uaccess_copy_from_user(cur, &new_termios, edx, sizeof(new_termios)) != 0)
@@ -1933,13 +1949,11 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
     case SYS_TCSETPGRP: {
         /* ebx = fd, ecx = pgid → 0 or -1 */
         process_t *cur = sched_current();
-        if (!cur || ebx >= MAX_FDS) return (uint32_t)-1;
-        file_handle_t *fh = &cur->open_files[ebx];
-        if (fh->type != FD_TYPE_TTY) return (uint32_t)-1;
-        tty_t *tty = tty_get((int)fh->u.tty.tty_idx);
+        uint32_t tty_idx;
+        tty_t *tty = syscall_tty_from_fd(cur, ebx, &tty_idx);
         if (!tty) return (uint32_t)-1;
         if (ecx == 0) return (uint32_t)-1;
-        if (cur->tty_id != fh->u.tty.tty_idx) return (uint32_t)-1;
+        if (cur->tty_id != tty_idx) return (uint32_t)-1;
         if (tty->ctrl_sid == 0)
             tty->ctrl_sid = cur->sid;
         if (tty->ctrl_sid != cur->sid) return (uint32_t)-1;
@@ -1951,10 +1965,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
     case SYS_TCGETPGRP: {
         /* ebx = fd → fg_pgid or -1 */
         process_t *cur = sched_current();
-        if (!cur || ebx >= MAX_FDS) return (uint32_t)-1;
-        file_handle_t *fh = &cur->open_files[ebx];
-        if (fh->type != FD_TYPE_TTY) return (uint32_t)-1;
-        tty_t *tty = tty_get((int)fh->u.tty.tty_idx);
+        tty_t *tty = syscall_tty_from_fd(cur, ebx, 0);
         if (!tty) return (uint32_t)-1;
         return tty->fg_pgid;
     }
