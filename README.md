@@ -6,6 +6,8 @@ Drunix is a 32-bit x86 hobby operating system that boots through GRUB2 with the 
 
 The normal boot path asks GRUB for a 1024x768x32 linear framebuffer and starts a simple GUI desktop. The boot shell is opened as the main desktop app inside that GUI shell, with keyboard input, PS/2 mouse pointer support, taskbar/menu launching, framebuffer text rendering, and a VGA text-mode fallback when a suitable framebuffer is unavailable. The disk image includes a small userland with the shell and basic utilities.
 
+![Drunix desktop running in QEMU](docs/drunix-desktop.png)
+
 ## Dependencies
 
 Required:
@@ -25,6 +27,7 @@ Optional:
 - `pandoc` for `make epub`, `make pdf`, and `make docs`
 - `cairosvg` (Python package) or `rsvg-convert` for `make epub`, `make pdf`, and `make docs` — converts SVG diagrams to PNG
 - `calibre` (provides `ebook-convert`) for `make pdf` and `make docs` — renders the PDF from the built EPUB
+- `zip`, `unzip`, and `perl` for EPUB packaging
 
 ## Install Dependencies
 
@@ -46,7 +49,7 @@ The simplest supported setup is WSL2 with Ubuntu. Inside the WSL shell:
 
 ```sh
 sudo apt update
-sudo apt install -y build-essential python3 nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc calibre
+sudo apt install -y build-essential python3 nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc calibre zip unzip perl
 pip3 install cairosvg
 ```
 
@@ -69,21 +72,21 @@ Ubuntu / Debian:
 
 ```sh
 sudo apt update
-sudo apt install -y build-essential python3 nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc calibre
+sudo apt install -y build-essential python3 nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc calibre zip unzip perl
 pip3 install cairosvg
 ```
 
 Fedora:
 
 ```sh
-sudo dnf install -y make python3 nasm qemu-system-i386 xorriso grub2-tools-extra mtools pandoc calibre
+sudo dnf install -y make python3 nasm qemu-system-i386 xorriso grub2-tools-extra mtools pandoc calibre zip unzip perl
 pip3 install cairosvg
 ```
 
 Arch:
 
 ```sh
-sudo pacman -S --needed make python nasm qemu-desktop xorriso grub mtools pandoc calibre
+sudo pacman -S --needed make python nasm qemu-desktop xorriso grub mtools pandoc calibre zip unzip perl
 pip3 install cairosvg
 ```
 
@@ -93,22 +96,25 @@ If your distro installs `grub-mkrescue` but not `i686-elf-grub-mkrescue`, add a 
 
 ## Build And Run
 
-Build the kernel, ISO, disk image, and launch QEMU:
+For a clean first boot, build the kernel, ISO, disk image, and launch QEMU:
 
 ```sh
-make
+make run-fresh
 ```
 
 On a normal QEMU boot, Drunix opens the shell inside the framebuffer desktop. If the bootloader does not provide a usable 32-bit RGB framebuffer, the kernel falls back to the legacy VGA text presentation path.
 
 Useful targets:
 
-- `make run` rebuilds the kernel and ISO, then launches QEMU without rebuilding `disk.img`
+- `make all` rebuilds the kernel and ISO as needed, then launches QEMU with the existing `disk.img`
+- `make run` rebuilds the kernel and ISO as needed, then launches QEMU without rebuilding `disk.img`
+- `make run-fresh` rebuilds `disk.img`, then launches QEMU
 - `make disk` rebuilds `disk.img`
 - `make kernel` rebuilds `kernel.elf` and `os.iso`
 - `make test` boots with the in-kernel unit tests enabled
 - `make KTEST=1 run` boots with the in-kernel unit tests enabled
-- `make rebuild` wipes outputs, rebuilds everything, and boots from scratch
+- `make test-all` runs the in-kernel unit tests and halt-inducing tests
+- `make rebuild` wipes build outputs, rebuilds the kernel and disk image, and boots from scratch
 - `make epub` builds the EPUB edition
 - `make pdf` builds the PDF book by converting the EPUB with `ebook-convert`
 - `make docs` builds both the EPUB and the PDF
@@ -124,9 +130,9 @@ make debug
 
 Other useful debug flows:
 
-- `make run-debugcon-stdio` streams QEMU debug console output to your terminal
+- `make run-stdio` streams QEMU debug console output to your terminal
 - `make KLOG_TO_DEBUGCON=1 run` mirrors ordinary `klog()` output to QEMU debugcon
-- `make test-double-fault` boots a special image that verifies the dedicated double-fault path
+- `make test-halt` boots a special image that verifies the dedicated double-fault path
 
 Runtime logs:
 
