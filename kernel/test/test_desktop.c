@@ -20,6 +20,7 @@ static gui_cell_t terminal_cells[16 * 4];
 static gui_cell_t terminal_history[16 * 8];
 static gui_cell_t terminal_tiny_live[2];
 static gui_cell_t terminal_tiny_history[2];
+static uint32_t terminal_pixels[128 * 96];
 
 extern int syscall_console_write_for_test(process_t *proc, const char *buf,
                                           uint32_t len);
@@ -46,6 +47,133 @@ static void test_terminal_write_wraps_and_retains_history(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, gui_terminal_write(&term, "\nzzzz\nq", 7), 7);
     KTEST_EXPECT_GE(tc, gui_terminal_history_count(&term), 1);
     KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 0, 1).ch, 'q');
+}
+
+static void terminal_test_fb(framebuffer_info_t *fb)
+{
+    k_memset(terminal_pixels, 0, sizeof(terminal_pixels));
+    k_memset(fb, 0, sizeof(*fb));
+    fb->address = (uintptr_t)terminal_pixels;
+    fb->pitch = 128u * sizeof(uint32_t);
+    fb->width = 128u;
+    fb->height = 96u;
+    fb->bpp = 32u;
+    fb->red_pos = 16u;
+    fb->red_size = 8u;
+    fb->green_pos = 8u;
+    fb->green_size = 8u;
+    fb->blue_pos = 0u;
+    fb->blue_size = 8u;
+}
+
+static void test_terminal_render_uses_pixel_padding(ktest_case_t *tc)
+{
+    gui_terminal_t term;
+    framebuffer_info_t fb;
+    gui_pixel_surface_t surface;
+    gui_pixel_theme_t theme;
+
+    terminal_test_fb(&fb);
+    k_memset(&theme, 0, sizeof(theme));
+    theme.terminal_bg = 0x00101010u;
+    theme.terminal_fg = 0x00FFFFFFu;
+    theme.terminal_cursor = 0x00FFCC44u;
+    surface.fb = &fb;
+    surface.clip.x = 0;
+    surface.clip.y = 0;
+    surface.clip.w = 128;
+    surface.clip.h = 96;
+
+    KTEST_ASSERT_EQ(tc,
+                    gui_terminal_init_static(&term,
+                                             terminal_cells,
+                                             terminal_history,
+                                             8, 3, 4, 0x0f),
+                    1);
+    gui_terminal_set_pixel_rect(&term,
+                                (gui_pixel_rect_t){ 10, 12, 80, 60 },
+                                6, 5);
+    KTEST_ASSERT_EQ(tc, gui_terminal_write(&term, "A", 1), 1);
+
+    gui_terminal_render(&term, &surface, &theme, 1);
+
+    KTEST_EXPECT_EQ(tc, terminal_pixels[12 * 128 + 10], 0x00101010u);
+    KTEST_EXPECT_NE(tc, terminal_pixels[17 * 128 + 16], 0u);
+}
+
+static void test_terminal_render_draws_underline_cursor(ktest_case_t *tc)
+{
+    gui_terminal_t term;
+    framebuffer_info_t fb;
+    gui_pixel_surface_t surface;
+    gui_pixel_theme_t theme;
+    int cursor_y;
+
+    terminal_test_fb(&fb);
+    k_memset(&theme, 0, sizeof(theme));
+    theme.terminal_bg = 0x00000000u;
+    theme.terminal_fg = 0x00FFFFFFu;
+    theme.terminal_cursor = 0x00FFCC44u;
+    surface.fb = &fb;
+    surface.clip.x = 0;
+    surface.clip.y = 0;
+    surface.clip.w = 128;
+    surface.clip.h = 96;
+
+    KTEST_ASSERT_EQ(tc,
+                    gui_terminal_init_static(&term,
+                                             terminal_cells,
+                                             terminal_history,
+                                             8, 3, 4, 0x0f),
+                    1);
+    gui_terminal_set_pixel_rect(&term,
+                                (gui_pixel_rect_t){ 0, 0, 80, 60 },
+                                4, 4);
+
+    gui_terminal_render(&term, &surface, &theme, 1);
+
+    cursor_y = 4 + (int)GUI_FONT_H - 2;
+    KTEST_EXPECT_EQ(tc, terminal_pixels[cursor_y * 128 + 4],
+                    0x00FFCC44u);
+}
+
+static void test_terminal_render_composes_scrollback_before_live_rows(ktest_case_t *tc)
+{
+    gui_terminal_t term;
+    framebuffer_info_t fb;
+    gui_pixel_surface_t surface;
+    gui_pixel_theme_t theme;
+    uint32_t fg;
+
+    terminal_test_fb(&fb);
+    k_memset(&theme, 0, sizeof(theme));
+    theme.terminal_bg = 0x00000000u;
+    theme.terminal_fg = 0x00112233u;
+    theme.terminal_cursor = 0x00FFCC44u;
+    surface.fb = &fb;
+    surface.clip.x = 0;
+    surface.clip.y = 0;
+    surface.clip.w = 128;
+    surface.clip.h = 96;
+    fg = framebuffer_pack_rgb(&fb, 0x11, 0x22, 0x33);
+
+    KTEST_ASSERT_EQ(tc,
+                    gui_terminal_init_static(&term,
+                                             terminal_cells,
+                                             terminal_history,
+                                             4, 2, 4, 0x0f),
+                    1);
+    gui_terminal_set_pixel_rect(&term,
+                                (gui_pixel_rect_t){ 0, 0, 64, 32 },
+                                0, 0);
+    KTEST_ASSERT_EQ(tc,
+                    gui_terminal_write(&term, "Aaaa\nBbbb\nCccc", 14),
+                    14);
+
+    gui_terminal_scroll_view(&term, 1);
+    gui_terminal_render(&term, &surface, &theme, 0);
+
+    KTEST_EXPECT_EQ(tc, terminal_pixels[0 * 128 + 3], fg);
 }
 
 static void test_terminal_ansi_color_does_not_emit_escape_bytes(ktest_case_t *tc)
@@ -1302,6 +1430,9 @@ static void test_framebuffer_pack_rgb_scales_to_mask_size(ktest_case_t *tc)
 
 static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_terminal_write_wraps_and_retains_history),
+    KTEST_CASE(test_terminal_render_uses_pixel_padding),
+    KTEST_CASE(test_terminal_render_draws_underline_cursor),
+    KTEST_CASE(test_terminal_render_composes_scrollback_before_live_rows),
     KTEST_CASE(test_terminal_ansi_color_does_not_emit_escape_bytes),
     KTEST_CASE(test_terminal_clear_discards_history_and_resets_cursor),
     KTEST_CASE(test_terminal_writes_to_later_rows_after_hardening),

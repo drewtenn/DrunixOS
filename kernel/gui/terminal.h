@@ -51,6 +51,7 @@ int gui_terminal_cursor_x(const gui_terminal_t *term);
 int gui_terminal_cursor_y(const gui_terminal_t *term);
 int gui_terminal_visible_view_top(const gui_terminal_t *term);
 int gui_terminal_total_rows(const gui_terminal_t *term);
+/* Sets the framebuffer rectangle and inner padding used by render(). */
 void gui_terminal_set_pixel_rect(gui_terminal_t *term,
                                  gui_pixel_rect_t rect,
                                  int padding_x,

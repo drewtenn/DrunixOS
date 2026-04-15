@@ -1,4 +1,6 @@
 #include "terminal.h"
+#include "framebuffer.h"
+#include "font8x16.h"
 #include "kheap.h"
 #include "kstring.h"
 #include <limits.h>
@@ -8,6 +10,15 @@ static void terminal_push_history(gui_terminal_t *term, const gui_cell_t *row);
 static void terminal_scroll_up(gui_terminal_t *term);
 static void terminal_apply_ansi(gui_terminal_t *term, int code);
 static void terminal_apply_char(gui_terminal_t *term, char c);
+static int terminal_intersect_pixel_rect(gui_pixel_rect_t a,
+                                         gui_pixel_rect_t b,
+                                         gui_pixel_rect_t *out);
+static void terminal_render_cell(const framebuffer_info_t *fb,
+                                 const gui_pixel_rect_t *clip,
+                                 int64_t cell_x,
+                                 int64_t cell_y,
+                                 const gui_cell_t *cell,
+                                 uint32_t fg);
 
 static int terminal_validate_dimensions(int cols,
                                         int rows,
@@ -552,13 +563,152 @@ void gui_terminal_set_pixel_rect(gui_terminal_t *term,
     term->padding_y = padding_y < 0 ? 0 : padding_y;
 }
 
+static int terminal_intersect_pixel_rect(gui_pixel_rect_t a,
+                                         gui_pixel_rect_t b,
+                                         gui_pixel_rect_t *out)
+{
+    int64_t left;
+    int64_t top;
+    int64_t right;
+    int64_t bottom;
+    int64_t a_right;
+    int64_t a_bottom;
+    int64_t b_right;
+    int64_t b_bottom;
+
+    if (!out)
+        return 0;
+
+    a_right = (int64_t)a.x + (int64_t)a.w;
+    a_bottom = (int64_t)a.y + (int64_t)a.h;
+    b_right = (int64_t)b.x + (int64_t)b.w;
+    b_bottom = (int64_t)b.y + (int64_t)b.h;
+    left = a.x > b.x ? a.x : b.x;
+    top = a.y > b.y ? a.y : b.y;
+    right = a_right < b_right ? a_right : b_right;
+    bottom = a_bottom < b_bottom ? a_bottom : b_bottom;
+    if (right <= left || bottom <= top)
+        return 0;
+    if (left < INT_MIN || top < INT_MIN || right > INT_MAX ||
+        bottom > INT_MAX)
+        return 0;
+
+    out->x = (int)left;
+    out->y = (int)top;
+    out->w = (int)(right - left);
+    out->h = (int)(bottom - top);
+    return 1;
+}
+
+static void terminal_render_cell(const framebuffer_info_t *fb,
+                                 const gui_pixel_rect_t *clip,
+                                 int64_t cell_x,
+                                 int64_t cell_y,
+                                 const gui_cell_t *cell,
+                                 uint32_t fg)
+{
+    const uint8_t *glyph;
+    int64_t clip_right;
+    int64_t clip_bottom;
+
+    if (!fb || !clip || !cell)
+        return;
+    if (cell_x >= (int64_t)clip->x + (int64_t)clip->w ||
+        cell_y >= (int64_t)clip->y + (int64_t)clip->h ||
+        cell_x + (int64_t)GUI_FONT_W <= clip->x ||
+        cell_y + (int64_t)GUI_FONT_H <= clip->y)
+        return;
+
+    glyph = font8x16_glyph((unsigned char)cell->ch);
+    clip_right = (int64_t)clip->x + (int64_t)clip->w;
+    clip_bottom = (int64_t)clip->y + (int64_t)clip->h;
+    for (int row = 0; row < 16; row++) {
+        int64_t py = cell_y + row;
+        uint8_t bits;
+
+        if (py < clip->y || py >= clip_bottom)
+            continue;
+        bits = glyph[row];
+        for (int col = 0; col < 8; col++) {
+            int64_t px = cell_x + col;
+
+            if ((bits & (1u << col)) == 0)
+                continue;
+            if (px < clip->x || px >= clip_right)
+                continue;
+            framebuffer_fill_rect(fb, (int)px, (int)py, 1, 1, fg);
+        }
+    }
+}
+
 void gui_terminal_render(const gui_terminal_t *term,
                          const gui_pixel_surface_t *surface,
                          const gui_pixel_theme_t *theme,
                          int draw_cursor)
 {
-    (void)term;
-    (void)surface;
-    (void)theme;
-    (void)draw_cursor;
+    gui_pixel_rect_t clip;
+    int64_t content_x;
+    int64_t content_y;
+    int start_row;
+
+    if (!term || !surface || !surface->fb || !theme)
+        return;
+    if (!terminal_intersect_pixel_rect(term->pixel_rect, surface->clip,
+                                       &clip))
+        return;
+
+    framebuffer_fill_rect(surface->fb, clip.x, clip.y, clip.w, clip.h,
+                          theme->terminal_bg);
+
+    if (term->cols <= 0 || term->rows <= 0)
+        return;
+
+    content_x = (int64_t)term->pixel_rect.x + (int64_t)term->padding_x;
+    content_y = (int64_t)term->pixel_rect.y + (int64_t)term->padding_y;
+    start_row = term->history_count - term->view_top;
+    if (start_row < 0)
+        start_row = 0;
+
+    for (int row = 0; row < term->rows; row++) {
+        int global_row = start_row + row;
+        const gui_cell_t *cells;
+        int64_t cell_y = content_y + (int64_t)row * (int64_t)GUI_FONT_H;
+
+        if (global_row < term->history_count) {
+            cells = terminal_history_row_const(term, global_row);
+        } else {
+            int live_row = global_row - term->history_count;
+
+            if (live_row < 0 || live_row >= term->rows)
+                break;
+            cells = &term->live[(uint32_t)live_row * (uint32_t)term->cols];
+        }
+
+        if (!cells)
+            continue;
+        if (cell_y >= (int64_t)clip.y + (int64_t)clip.h)
+            break;
+
+        for (int col = 0; col < term->cols; col++) {
+            int64_t cell_x = content_x + (int64_t)col * (int64_t)GUI_FONT_W;
+
+            terminal_render_cell(surface->fb, &clip, cell_x, cell_y,
+                                 &cells[col], theme->terminal_fg);
+        }
+    }
+
+    if (draw_cursor && term->live_view) {
+        int64_t cursor_x = content_x +
+                           (int64_t)term->cursor_x * (int64_t)GUI_FONT_W;
+        int64_t cursor_y = content_y +
+                           (int64_t)term->cursor_y * (int64_t)GUI_FONT_H +
+                           ((int64_t)GUI_FONT_H - 2);
+
+        if (cursor_x >= INT_MIN && cursor_x <= INT_MAX &&
+            cursor_y >= INT_MIN && cursor_y <= INT_MAX) {
+            framebuffer_fill_rect(surface->fb, (int)cursor_x, (int)cursor_y,
+                                  (int)GUI_FONT_W, 2,
+                                  theme->terminal_cursor);
+        }
+    }
 }
