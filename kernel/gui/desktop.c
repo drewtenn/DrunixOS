@@ -48,12 +48,51 @@ static void desktop_layout(desktop_state_t *desktop)
     desktop->shell_content.h = desktop->shell_rect.h - 2;
 }
 
-static void desktop_shell_clear_line(desktop_state_t *desktop, int row)
+static void desktop_dirty_include(gui_rect_t *dirty, int x, int y, int w, int h)
+{
+    int right;
+    int bottom;
+    int dirty_right;
+    int dirty_bottom;
+
+    if (!dirty || w <= 0 || h <= 0)
+        return;
+
+    if (dirty->w <= 0 || dirty->h <= 0) {
+        dirty->x = x;
+        dirty->y = y;
+        dirty->w = w;
+        dirty->h = h;
+        return;
+    }
+
+    right = x + w;
+    bottom = y + h;
+    dirty_right = dirty->x + dirty->w;
+    dirty_bottom = dirty->y + dirty->h;
+
+    if (x < dirty->x)
+        dirty->x = x;
+    if (y < dirty->y)
+        dirty->y = y;
+    if (right > dirty_right)
+        dirty_right = right;
+    if (bottom > dirty_bottom)
+        dirty_bottom = bottom;
+
+    dirty->w = dirty_right - dirty->x;
+    dirty->h = dirty_bottom - dirty->y;
+}
+
+static void desktop_shell_clear_line(desktop_state_t *desktop, int row,
+                                     gui_rect_t *dirty)
 {
     int base;
 
     if (!desktop->shell_cells || row < 0 || row >= desktop->shell_cells_h)
         return;
+
+    desktop_dirty_include(dirty, 0, row, desktop->shell_cells_w, 1);
 
     base = row * desktop->shell_cells_w;
     for (int col = 0; col < desktop->shell_cells_w; col++) {
@@ -63,7 +102,7 @@ static void desktop_shell_clear_line(desktop_state_t *desktop, int row)
     }
 }
 
-static void desktop_shell_scroll_up(desktop_state_t *desktop)
+static void desktop_shell_scroll_up(desktop_state_t *desktop, gui_rect_t *dirty)
 {
     int bytes;
 
@@ -71,13 +110,16 @@ static void desktop_shell_scroll_up(desktop_state_t *desktop)
         desktop->shell_cells_h <= 0)
         return;
 
+    desktop_dirty_include(dirty, 0, 0,
+                          desktop->shell_cells_w,
+                          desktop->shell_cells_h);
     bytes = desktop->shell_cells_w * (int)sizeof(gui_cell_t);
     for (int row = 1; row < desktop->shell_cells_h; row++) {
         k_memmove(&desktop->shell_cells[(row - 1) * desktop->shell_cells_w],
                   &desktop->shell_cells[row * desktop->shell_cells_w],
                   (uint32_t)bytes);
     }
-    desktop_shell_clear_line(desktop, desktop->shell_cells_h - 1);
+    desktop_shell_clear_line(desktop, desktop->shell_cells_h - 1, dirty);
     if (desktop->shell_cursor_y > 0)
         desktop->shell_cursor_y--;
     if (desktop->shell_cursor_y >= desktop->shell_cells_h)
@@ -96,18 +138,19 @@ static void desktop_shell_ensure_cursor(desktop_state_t *desktop)
         desktop->shell_cursor_y = desktop->shell_cells_h - 1;
 }
 
-static void desktop_shell_newline(desktop_state_t *desktop)
+static void desktop_shell_newline(desktop_state_t *desktop, gui_rect_t *dirty)
 {
     desktop->shell_cursor_x = 0;
     desktop->shell_wrap_pending = 0;
     desktop->shell_cursor_y++;
     if (desktop->shell_cursor_y >= desktop->shell_cells_h) {
-        desktop_shell_scroll_up(desktop);
+        desktop_shell_scroll_up(desktop, dirty);
         desktop->shell_cursor_y = desktop->shell_cells_h - 1;
     }
 }
 
-static void desktop_shell_write_cell(desktop_state_t *desktop, char c)
+static void desktop_shell_write_cell(desktop_state_t *desktop, char c,
+                                     gui_rect_t *dirty)
 {
     int x;
     int y;
@@ -118,12 +161,13 @@ static void desktop_shell_write_cell(desktop_state_t *desktop, char c)
         return;
 
     if (desktop->shell_wrap_pending)
-        desktop_shell_newline(desktop);
+        desktop_shell_newline(desktop, dirty);
 
     desktop_shell_ensure_cursor(desktop);
 
     x = desktop->shell_cursor_x;
     y = desktop->shell_cursor_y;
+    desktop_dirty_include(dirty, x, y, 1, 1);
     cell = &desktop->shell_cells[y * desktop->shell_cells_w + x];
     cell->ch = c;
     cell->attr = desktop->shell_attr;
@@ -149,7 +193,8 @@ static void desktop_shell_apply_ansi(desktop_state_t *desktop, int code)
         desktop->shell_attr = 0x0b;
 }
 
-static void desktop_shell_apply_char(desktop_state_t *desktop, char c)
+static void desktop_shell_apply_char(desktop_state_t *desktop, char c,
+                                     gui_rect_t *dirty)
 {
     if (c == '\x1b') {
         desktop->shell_ansi_state = 1;
@@ -184,7 +229,7 @@ static void desktop_shell_apply_char(desktop_state_t *desktop, char c)
     }
 
     if (c == '\n') {
-        desktop_shell_newline(desktop);
+        desktop_shell_newline(desktop, dirty);
         return;
     }
 
@@ -204,11 +249,11 @@ static void desktop_shell_apply_char(desktop_state_t *desktop, char c)
         if (spaces == 0)
             spaces = 4;
         while (spaces-- > 0)
-            desktop_shell_apply_char(desktop, ' ');
+            desktop_shell_apply_char(desktop, ' ', dirty);
         return;
     }
 
-    desktop_shell_write_cell(desktop, c);
+    desktop_shell_write_cell(desktop, c, dirty);
 }
 
 static void desktop_shell_redraw(desktop_state_t *desktop)
@@ -221,6 +266,30 @@ static void desktop_shell_redraw(desktop_state_t *desktop)
             int dx = desktop->shell_content.x + col;
             int dy = desktop->shell_content.y + row;
 
+            if (dx < 0 || dy < 0 || dx >= desktop->display->cols ||
+                dy >= desktop->display->rows)
+                continue;
+            desktop->display->cells[dy * desktop->display->cols + dx] =
+                desktop->shell_cells[row * desktop->shell_cells_w + col];
+        }
+    }
+}
+
+static void desktop_shell_redraw_rect(desktop_state_t *desktop,
+                                      const gui_rect_t *dirty)
+{
+    if (!desktop->shell_cells || !desktop->display || !dirty)
+        return;
+
+    for (int row = dirty->y; row < dirty->y + dirty->h; row++) {
+        for (int col = dirty->x; col < dirty->x + dirty->w; col++) {
+            int dx = desktop->shell_content.x + col;
+            int dy = desktop->shell_content.y + row;
+
+            if (col < 0 || row < 0 ||
+                col >= desktop->shell_cells_w ||
+                row >= desktop->shell_cells_h)
+                continue;
             if (dx < 0 || dy < 0 || dx >= desktop->display->cols ||
                 dy >= desktop->display->rows)
                 continue;
@@ -322,6 +391,24 @@ static void desktop_present_framebuffer_pointer_motion(desktop_state_t *desktop,
     desktop_draw_framebuffer_pointer(desktop);
 }
 
+static void desktop_present_framebuffer_shell_dirty(desktop_state_t *desktop,
+                                                   const gui_rect_t *dirty)
+{
+    if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
+        return;
+    if (!dirty || dirty->w <= 0 || dirty->h <= 0)
+        return;
+
+    desktop_shell_redraw_rect(desktop, dirty);
+    gui_display_present_rect_to_framebuffer(desktop->display,
+                                            desktop->framebuffer,
+                                            desktop->shell_content.x + dirty->x,
+                                            desktop->shell_content.y + dirty->y,
+                                            dirty->w,
+                                            dirty->h);
+    desktop_draw_framebuffer_pointer(desktop);
+}
+
 desktop_state_t *desktop_global(void)
 {
     return g_desktop;
@@ -368,7 +455,7 @@ void desktop_init(desktop_state_t *desktop, gui_display_t *display)
     desktop->shell_ansi_val = 0;
     desktop->shell_attr = display->default_attr;
     for (int row = 0; row < desktop->shell_cells_h; row++)
-        desktop_shell_clear_line(desktop, row);
+        desktop_shell_clear_line(desktop, row, 0);
 }
 
 void desktop_set_presentation_target(desktop_state_t *desktop,
@@ -435,6 +522,7 @@ int desktop_write_console_output(desktop_state_t *desktop,
                                  uint32_t len)
 {
     uint32_t i;
+    gui_rect_t dirty = { 0, 0, 0, 0 };
 
     if (!desktop || !desktop->active || !desktop->desktop_enabled)
         return 0;
@@ -444,9 +532,12 @@ int desktop_write_console_output(desktop_state_t *desktop,
         return 0;
 
     for (i = 0; i < len; i++)
-        desktop_shell_apply_char(desktop, buf[i]);
+        desktop_shell_apply_char(desktop, buf[i], &dirty);
 
-    desktop_render(desktop);
+    if (desktop->framebuffer_enabled && desktop->framebuffer)
+        desktop_present_framebuffer_shell_dirty(desktop, &dirty);
+    else
+        desktop_render(desktop);
     return (int)len;
 }
 
@@ -458,7 +549,7 @@ int desktop_clear_console(desktop_state_t *desktop)
         return 0;
 
     for (int row = 0; row < desktop->shell_cells_h; row++)
-        desktop_shell_clear_line(desktop, row);
+        desktop_shell_clear_line(desktop, row, 0);
 
     desktop->shell_cursor_x = 0;
     desktop->shell_cursor_y = 0;

@@ -618,6 +618,46 @@ static void test_framebuffer_pointer_motion_does_not_repaint_unrelated_pixels(
     KTEST_EXPECT_NE(tc, pointer_motion_pixels[192 * 480 + 240], white);
 }
 
+static void test_framebuffer_shell_write_does_not_repaint_unrelated_pixels(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+    uint32_t sentinel = 0x0BADCAFEu;
+    int sentinel_index = 300 * 480 + 400;
+    int shell_sentinel_index;
+
+    k_memset(pointer_motion_pixels, 0, sizeof(pointer_motion_pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pointer_motion_pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    desktop_open_shell_window(&desktop);
+    desktop_render(&desktop);
+
+    pointer_motion_pixels[sentinel_index] = sentinel;
+    shell_sentinel_index = (desktop.shell_content.y + 5) * 16 * 480 +
+                           (desktop.shell_content.x + 20) * 8;
+    pointer_motion_pixels[shell_sentinel_index] = sentinel;
+
+    KTEST_EXPECT_EQ(tc, desktop_write_console_output(&desktop, "x", 1), 1);
+    KTEST_EXPECT_EQ(tc, pointer_motion_pixels[sentinel_index], sentinel);
+    KTEST_EXPECT_EQ(tc, pointer_motion_pixels[shell_sentinel_index], sentinel);
+}
+
 static void test_desktop_can_use_framebuffer_presentation_target(ktest_case_t *tc)
 {
     static uint32_t pixels[16 * 16];
@@ -964,6 +1004,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_render_draws_visible_mouse_pointer),
     KTEST_CASE(test_desktop_pointer_event_moves_visible_mouse_pointer),
     KTEST_CASE(test_framebuffer_pointer_motion_does_not_repaint_unrelated_pixels),
+    KTEST_CASE(test_framebuffer_shell_write_does_not_repaint_unrelated_pixels),
     KTEST_CASE(test_desktop_can_use_framebuffer_presentation_target),
     KTEST_CASE(test_framebuffer_info_accepts_1024_768_32_rgb),
     KTEST_CASE(test_multiboot_framebuffer_color_info_uses_grub_layout),
