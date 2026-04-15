@@ -88,6 +88,23 @@ static void test_terminal_clear_discards_history_and_resets_cursor(ktest_case_t 
     KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 0, 0).ch, ' ');
 }
 
+static void test_terminal_writes_to_later_rows_after_hardening(ktest_case_t *tc)
+{
+    gui_terminal_t term;
+
+    KTEST_ASSERT_EQ(tc,
+                    gui_terminal_init_static(&term,
+                                             terminal_cells,
+                                             terminal_history,
+                                             4, 4, 4, 0x0f),
+                    1);
+
+    KTEST_ASSERT_EQ(tc,
+                    gui_terminal_write(&term, "abcd\nefgh\nijkl\nmnop", 19),
+                    19);
+    KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 0, 3).ch, 'm');
+}
+
 static void test_terminal_init_rejects_overflow_dimensions_without_touching_buffers(ktest_case_t *tc)
 {
     gui_terminal_t term;
@@ -1287,6 +1304,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_terminal_write_wraps_and_retains_history),
     KTEST_CASE(test_terminal_ansi_color_does_not_emit_escape_bytes),
     KTEST_CASE(test_terminal_clear_discards_history_and_resets_cursor),
+    KTEST_CASE(test_terminal_writes_to_later_rows_after_hardening),
     KTEST_CASE(test_terminal_init_rejects_overflow_dimensions_without_touching_buffers),
     KTEST_CASE(test_terminal_ansi_digit_sequence_caps_without_overflow),
     KTEST_CASE(test_terminal_scroll_view_clamps_large_positive_and_negative_inputs),

@@ -70,6 +70,22 @@ static int terminal_row_bytes_u32(const gui_terminal_t *term, uint32_t *bytes)
     return 1;
 }
 
+static int terminal_cell_count_u32(const gui_terminal_t *term, uint32_t *cells)
+{
+    uint64_t total_cells;
+
+    if (!term || !cells || term->cols <= 0 || term->rows <= 0)
+        return 0;
+
+    total_cells = (uint64_t)(uint32_t)term->cols *
+                  (uint64_t)(uint32_t)term->rows;
+    if (total_cells > UINT32_MAX)
+        return 0;
+
+    *cells = (uint32_t)total_cells;
+    return 1;
+}
+
 static const gui_cell_t *terminal_history_row_const(const gui_terminal_t *term,
                                                     int index)
 {
@@ -113,7 +129,7 @@ static void terminal_clear_history(gui_terminal_t *term)
 
 static void terminal_write_cell(gui_terminal_t *term, char c)
 {
-    uint32_t row_bytes;
+    uint32_t cell_count;
     uint32_t cursor_index;
     gui_cell_t *cell;
 
@@ -139,12 +155,11 @@ static void terminal_write_cell(gui_terminal_t *term, char c)
     if (term->cursor_y >= term->rows)
         term->cursor_y = term->rows - 1;
 
-    if (!terminal_row_bytes_u32(term, &row_bytes))
+    if (!terminal_cell_count_u32(term, &cell_count))
         return;
     cursor_index = (uint32_t)term->cursor_y * (uint32_t)term->cols +
                    (uint32_t)term->cursor_x;
-    if (cursor_index >= row_bytes / (uint32_t)sizeof(gui_cell_t) *
-        (uint32_t)sizeof(gui_cell_t))
+    if (cursor_index >= cell_count)
         return;
     cell = &term->live[cursor_index];
     cell->ch = c;
