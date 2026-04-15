@@ -324,6 +324,26 @@ int desktop_write_console_output(desktop_state_t *desktop,
     return (int)len;
 }
 
+int desktop_clear_console(desktop_state_t *desktop)
+{
+    if (!desktop || !desktop->active || !desktop->desktop_enabled)
+        return 0;
+    if (!desktop->shell_window_open || !desktop->shell_cells)
+        return 0;
+
+    for (int row = 0; row < desktop->shell_cells_h; row++)
+        desktop_shell_clear_line(desktop, row);
+
+    desktop->shell_cursor_x = 0;
+    desktop->shell_cursor_y = 0;
+    desktop->shell_wrap_pending = 0;
+    desktop->shell_ansi_state = 0;
+    desktop->shell_ansi_val = 0;
+    desktop->shell_attr = desktop->display->default_attr;
+    desktop_render(desktop);
+    return 1;
+}
+
 int desktop_write_process_output(desktop_state_t *desktop,
                                  uint32_t pid,
                                  uint32_t pgid,

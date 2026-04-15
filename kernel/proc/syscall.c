@@ -1084,14 +1084,20 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
     }
 
     case SYS_CLEAR:
+        if (desktop_is_active() && desktop_clear_console(desktop_global()))
+            return 0;
         clear_screen();
         return 0;
 
     case SYS_SCROLL_UP:
+        if (desktop_is_active())
+            return 0;
         scroll_up((int)ebx);
         return 0;
 
     case SYS_SCROLL_DOWN:
+        if (desktop_is_active())
+            return 0;
         scroll_down((int)ebx);
         return 0;
 

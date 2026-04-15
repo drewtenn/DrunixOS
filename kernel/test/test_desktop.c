@@ -5,6 +5,7 @@
 #include "mouse.h"
 #include "process.h"
 #include "syscall.h"
+#include "tty.h"
 
 static gui_cell_t desktop_cells[80 * 25];
 
@@ -300,6 +301,64 @@ static void test_desktop_full_screen_write_does_not_scroll_until_next_char(ktest
                     (char)('A' + desktop.shell_cells_h - 1));
 }
 
+static void test_syscall_clear_clears_desktop_shell_buffer(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+    desktop_attach_shell_process(&desktop, 7, 7);
+
+    KTEST_ASSERT_EQ(tc,
+                    desktop_write_process_output(&desktop, 7, 7, "abc", 3),
+                    3);
+    KTEST_ASSERT_EQ(tc,
+                    gui_display_cell_at(&display,
+                                        desktop.shell_content.x,
+                                        desktop.shell_content.y).ch,
+                    'a');
+
+    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_CLEAR, 0, 0, 0, 0, 0), 0);
+    KTEST_EXPECT_EQ(tc,
+                    gui_display_cell_at(&display,
+                                        desktop.shell_content.x,
+                                        desktop.shell_content.y).ch,
+                    ' ');
+    KTEST_EXPECT_EQ(tc, desktop.shell_cursor_x, 0);
+    KTEST_EXPECT_EQ(tc, desktop.shell_cursor_y, 0);
+}
+
+static void test_tty_ctrl_c_echo_routes_to_desktop_shell_buffer(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    tty_t *tty;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+    desktop_attach_shell_process(&desktop, 7, 7);
+    tty_init();
+    tty = tty_get(0);
+    KTEST_ASSERT_NOT_NULL(tc, tty);
+    tty->fg_pgid = 7;
+
+    tty_ctrl_c(0);
+
+    KTEST_EXPECT_EQ(tc,
+                    gui_display_cell_at(&display,
+                                        desktop.shell_content.x,
+                                        desktop.shell_content.y).ch,
+                    '^');
+    KTEST_EXPECT_EQ(tc,
+                    gui_display_cell_at(&display,
+                                        desktop.shell_content.x + 1,
+                                        desktop.shell_content.y).ch,
+                    'C');
+}
+
 static void test_mouse_packet_decode_preserves_motion_and_buttons(ktest_case_t *tc)
 {
     desktop_pointer_event_t ev;
@@ -395,6 +454,8 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_syscall_console_write_routes_session_output_to_desktop),
     KTEST_CASE(test_desktop_ansi_color_escape_updates_attr_without_printing),
     KTEST_CASE(test_desktop_full_screen_write_does_not_scroll_until_next_char),
+    KTEST_CASE(test_syscall_clear_clears_desktop_shell_buffer),
+    KTEST_CASE(test_tty_ctrl_c_echo_routes_to_desktop_shell_buffer),
     KTEST_CASE(test_mouse_packet_decode_preserves_motion_and_buttons),
     KTEST_CASE(test_mouse_stream_resyncs_after_noise_and_ack),
     KTEST_CASE(test_mouse_stream_keeps_response_like_bytes_inside_packet),

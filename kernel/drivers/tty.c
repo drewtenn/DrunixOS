@@ -4,6 +4,7 @@
  */
 
 #include "tty.h"
+#include "desktop.h"
 #include "../proc/sched.h"
 #include "kstring.h"
 #include <stdint.h>
@@ -14,6 +15,16 @@ extern void print_char(char c);
 void sched_send_signal_to_pgid(uint32_t pgid, int signum);
 
 static tty_t tty_table[MAX_TTYS];
+
+static void tty_feedback(const char *buf, uint32_t len)
+{
+    desktop_state_t *desktop = desktop_is_active() ? desktop_global() : 0;
+
+    if (desktop && desktop_write_console_output(desktop, buf, len) == (int)len)
+        return;
+
+    print_string((char *)buf);
+}
 
 /* ── public API ─────────────────────────────────────────────────────────── */
 
@@ -115,7 +126,7 @@ void tty_ctrl_z(int tty_idx)
     if (!tty) return;
 
     if (tty->fg_pgid != 0) {
-        print_string("^Z\n");
+        tty_feedback("^Z\n", 3);
         sched_send_signal_to_pgid(tty->fg_pgid, SIGTSTP);
     }
     /* If no fg_pgid, discard — there is no foreground process to stop. */
@@ -128,7 +139,7 @@ void tty_ctrl_c(int tty_idx)
 
     if (tty->fg_pgid == 0) return;
 
-    print_string("^C\n");
+    tty_feedback("^C\n", 3);
     sched_send_signal_to_pgid(tty->fg_pgid, SIGINT);
 }
 

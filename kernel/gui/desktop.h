@@ -63,6 +63,7 @@ int desktop_process_owns_shell(desktop_state_t *desktop,
 int desktop_write_console_output(desktop_state_t *desktop,
                                  const char *buf,
                                  uint32_t len);
+int desktop_clear_console(desktop_state_t *desktop);
 int desktop_write_process_output(desktop_state_t *desktop,
                                  uint32_t pid,
                                  uint32_t pgid,
