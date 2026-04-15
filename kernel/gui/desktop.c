@@ -1,7 +1,7 @@
 #include "desktop.h"
 #include "kstring.h"
 
-static desktop_state_t g_desktop;
+static desktop_state_t *g_desktop = 0;
 
 static void desktop_layout(desktop_state_t *desktop)
 {
@@ -28,17 +28,18 @@ static void desktop_layout(desktop_state_t *desktop)
 
 desktop_state_t *desktop_global(void)
 {
-    return &g_desktop;
+    return g_desktop;
 }
 
 int desktop_is_active(void)
 {
-    return g_desktop.active && g_desktop.desktop_enabled;
+    return g_desktop && g_desktop->active && g_desktop->desktop_enabled;
 }
 
 void desktop_init(desktop_state_t *desktop, gui_display_t *display)
 {
     k_memset(desktop, 0, sizeof(*desktop));
+    g_desktop = desktop;
     desktop->display = display;
     desktop->active = 1;
     desktop->desktop_enabled = 1;
