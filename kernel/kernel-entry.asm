@@ -3,12 +3,21 @@
 section .multiboot
 align 4
     MULTIBOOT_MAGIC    equ 0x1BADB002
-    MULTIBOOT_FLAGS    equ 0x00
+    MULTIBOOT_FLAGS    equ 0x04
     MULTIBOOT_CHECKSUM equ -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
 
     dd MULTIBOOT_MAGIC
     dd MULTIBOOT_FLAGS
     dd MULTIBOOT_CHECKSUM
+    dd 0
+    dd 0
+    dd 0
+    dd 0
+    dd 0
+    dd 0
+    dd 1024
+    dd 768
+    dd 32
 
 ; 16 KB kernel stack in BSS
 section .bss

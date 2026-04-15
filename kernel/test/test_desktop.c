@@ -1,6 +1,7 @@
 #include "ktest.h"
 #include "display.h"
 #include "desktop.h"
+#include "framebuffer.h"
 #include "kstring.h"
 #include "mouse.h"
 #include "process.h"
@@ -472,6 +473,35 @@ static void test_desktop_pointer_event_moves_visible_mouse_pointer(ktest_case_t 
     KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display, 12, 8).ch, '^');
 }
 
+static void test_framebuffer_info_accepts_1024_768_32_rgb(ktest_case_t *tc)
+{
+    multiboot_info_t mbi;
+    framebuffer_info_t info;
+
+    k_memset(&mbi, 0, sizeof(mbi));
+    k_memset(&info, 0, sizeof(info));
+    mbi.flags = MULTIBOOT_FLAG_FRAMEBUFFER;
+    mbi.framebuffer_addr = 0xE0000000ull;
+    mbi.framebuffer_pitch = 1024u * 4u;
+    mbi.framebuffer_width = 1024u;
+    mbi.framebuffer_height = 768u;
+    mbi.framebuffer_bpp = 32u;
+    mbi.framebuffer_type = MULTIBOOT_FRAMEBUFFER_TYPE_RGB;
+    mbi.framebuffer_red_field_position = 16u;
+    mbi.framebuffer_red_mask_size = 8u;
+    mbi.framebuffer_green_field_position = 8u;
+    mbi.framebuffer_green_mask_size = 8u;
+    mbi.framebuffer_blue_field_position = 0u;
+    mbi.framebuffer_blue_mask_size = 8u;
+
+    KTEST_EXPECT_EQ(tc, framebuffer_info_from_multiboot(&mbi, &info), 0);
+    KTEST_EXPECT_EQ(tc, info.width, 1024u);
+    KTEST_EXPECT_EQ(tc, info.height, 768u);
+    KTEST_EXPECT_EQ(tc, info.bpp, 32u);
+    KTEST_EXPECT_EQ(tc, info.cell_cols, 128u);
+    KTEST_EXPECT_EQ(tc, info.cell_rows, 48u);
+}
+
 static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_gui_display_fill_rect_clips_to_bounds),
     KTEST_CASE(test_gui_display_draw_text_stops_at_region_edge),
@@ -495,6 +525,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_pointer_click_ignores_hidden_shell_window),
     KTEST_CASE(test_desktop_render_draws_visible_mouse_pointer),
     KTEST_CASE(test_desktop_pointer_event_moves_visible_mouse_pointer),
+    KTEST_CASE(test_framebuffer_info_accepts_1024_768_32_rgb),
 };
 
 ktest_suite_t *ktest_suite_desktop(void)

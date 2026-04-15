@@ -1,0 +1,29 @@
+#ifndef GUI_FRAMEBUFFER_H
+#define GUI_FRAMEBUFFER_H
+
+#include "pmm.h"
+#include <stdint.h>
+
+#define GUI_FONT_W 8u
+#define GUI_FONT_H 16u
+
+typedef struct framebuffer_info {
+    uintptr_t address;
+    uint32_t pitch;
+    uint32_t width;
+    uint32_t height;
+    uint32_t bpp;
+    uint8_t red_pos;
+    uint8_t red_size;
+    uint8_t green_pos;
+    uint8_t green_size;
+    uint8_t blue_pos;
+    uint8_t blue_size;
+    uint32_t cell_cols;
+    uint32_t cell_rows;
+} framebuffer_info_t;
+
+int framebuffer_info_from_multiboot(const multiboot_info_t *mbi,
+                                    framebuffer_info_t *out);
+
+#endif
