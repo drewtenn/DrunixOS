@@ -10,16 +10,34 @@ static int rgb_mask_overlaps(uint32_t a_pos, uint32_t a_size,
     return a_pos < b_end && b_pos < a_end;
 }
 
+static uint64_t div_u64_by_255(uint64_t value)
+{
+    uint64_t quotient = 0;
+    uint64_t remainder = 0;
+
+    for (int bit = 63; bit >= 0; bit--) {
+        remainder = (remainder << 1) | ((value >> bit) & 1ull);
+        if (remainder >= 255ull) {
+            remainder -= 255ull;
+            quotient |= 1ull << bit;
+        }
+    }
+    return quotient;
+}
+
 static uint32_t scale_color(uint8_t value, uint8_t mask_size)
 {
-    uint32_t max;
+    uint64_t max;
+    uint64_t scaled;
 
-    if (mask_size >= 8)
-        return value;
     if (mask_size == 0)
         return 0;
-    max = (1u << mask_size) - 1u;
-    return ((uint32_t)value * max + 127u) / 255u;
+    if (mask_size >= 32)
+        max = UINT32_MAX;
+    else
+        max = (1ull << mask_size) - 1ull;
+    scaled = (uint64_t)value * max + 127ull;
+    return (uint32_t)div_u64_by_255(scaled);
 }
 
 int framebuffer_info_from_multiboot(const multiboot_info_t *mbi,
@@ -109,29 +127,36 @@ void framebuffer_fill_rect(const framebuffer_info_t *fb,
                            int x, int y, int w, int h,
                            uint32_t color)
 {
+    int64_t left;
+    int64_t top;
+    int64_t right;
+    int64_t bottom;
+    uint32_t *row_ptr;
+
     if (!fb || fb->address == 0 || w <= 0 || h <= 0)
         return;
-    if (x >= (int)fb->width || y >= (int)fb->height)
+    left = x;
+    top = y;
+    right = left + (int64_t)w;
+    bottom = top + (int64_t)h;
+    if (right <= 0 || bottom <= 0)
         return;
-    if (x + w <= 0 || y + h <= 0)
+    if (left < 0)
+        left = 0;
+    if (top < 0)
+        top = 0;
+    if (right > (int64_t)fb->width)
+        right = (int64_t)fb->width;
+    if (bottom > (int64_t)fb->height)
+        bottom = (int64_t)fb->height;
+    if (left >= right || top >= bottom)
         return;
-    if (x < 0) {
-        w += x;
-        x = 0;
-    }
-    if (y < 0) {
-        h += y;
-        y = 0;
-    }
-    if (x + w > (int)fb->width)
-        w = (int)fb->width - x;
-    if (y + h > (int)fb->height)
-        h = (int)fb->height - y;
 
-    for (int row = 0; row < h; row++) {
-        uint32_t *line = (uint32_t *)(fb->address +
-                                      (uintptr_t)(y + row) * fb->pitch);
-        for (int col = 0; col < w; col++)
-            line[x + col] = color;
+    for (int64_t row = top; row < bottom; row++) {
+        row_ptr = (uint32_t *)(fb->address +
+                               (uintptr_t)row * fb->pitch);
+        row_ptr += (uintptr_t)left;
+        for (int64_t col = left; col < right; col++)
+            row_ptr[col - left] = color;
     }
 }

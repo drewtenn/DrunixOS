@@ -588,6 +588,46 @@ static void test_framebuffer_fill_rect_clips_to_bounds(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, pixels[1 * 4 + 1], 0xAABBCCDDu);
     KTEST_EXPECT_EQ(tc, pixels[1 * 4 + 2], 0u);
     KTEST_EXPECT_EQ(tc, pixels[0], 0u);
+    KTEST_EXPECT_EQ(tc, pixels[2 * 4 + 0], 0xAABBCCDDu);
+    KTEST_EXPECT_EQ(tc, pixels[2 * 4 + 1], 0xAABBCCDDu);
+    KTEST_EXPECT_EQ(tc, pixels[2 * 4 + 2], 0u);
+    KTEST_EXPECT_EQ(tc, pixels[3 * 4 + 0], 0u);
+}
+
+static void test_framebuffer_fill_rect_handles_large_dimensions(ktest_case_t *tc)
+{
+    uint32_t pixels[4 * 4];
+    framebuffer_info_t info;
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&info, 0, sizeof(info));
+    info.address = (uintptr_t)pixels;
+    info.pitch = 4u * sizeof(uint32_t);
+    info.width = 4;
+    info.height = 4;
+
+    framebuffer_fill_rect(&info, 2, 1, 2147483647, 1, 0x11223344u);
+
+    KTEST_EXPECT_EQ(tc, pixels[1 * 4 + 0], 0u);
+    KTEST_EXPECT_EQ(tc, pixels[1 * 4 + 1], 0u);
+    KTEST_EXPECT_EQ(tc, pixels[1 * 4 + 2], 0x11223344u);
+    KTEST_EXPECT_EQ(tc, pixels[1 * 4 + 3], 0x11223344u);
+}
+
+static void test_framebuffer_pack_rgb_scales_to_mask_size(ktest_case_t *tc)
+{
+    framebuffer_info_t info;
+
+    k_memset(&info, 0, sizeof(info));
+    info.red_pos = 20;
+    info.red_size = 10;
+    info.green_pos = 10;
+    info.green_size = 10;
+    info.blue_pos = 0;
+    info.blue_size = 10;
+
+    KTEST_EXPECT_EQ(tc, framebuffer_pack_rgb(&info, 0xff, 0xff, 0xff),
+                    0x3fffffffu);
 }
 
 static ktest_case_t desktop_cases[] = {
@@ -620,6 +660,8 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_framebuffer_info_rejects_overlapping_rgb_masks),
     KTEST_CASE(test_framebuffer_pack_rgb_uses_mask_positions),
     KTEST_CASE(test_framebuffer_fill_rect_clips_to_bounds),
+    KTEST_CASE(test_framebuffer_fill_rect_handles_large_dimensions),
+    KTEST_CASE(test_framebuffer_pack_rgb_scales_to_mask_size),
 };
 
 ktest_suite_t *ktest_suite_desktop(void)
