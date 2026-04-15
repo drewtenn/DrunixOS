@@ -53,6 +53,8 @@ static void test_desktop_boot_layout_opens_shell_window(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, desktop.focus, DESKTOP_FOCUS_SHELL);
     KTEST_EXPECT_EQ(tc, desktop.taskbar.y, 24);
     KTEST_EXPECT_GE(tc, desktop.shell_rect.w, 48);
+    KTEST_EXPECT_GE(tc, desktop.launcher_rect.y,
+                    desktop.shell_rect.y + desktop.shell_rect.h);
 }
 
 static void test_desktop_render_draws_taskbar_and_launcher_label(ktest_case_t *tc)
@@ -72,6 +74,22 @@ static void test_desktop_render_draws_taskbar_and_launcher_label(ktest_case_t *t
                                             desktop.launcher_rect.x + 2,
                                             desktop.launcher_rect.y + 1).ch,
                     'S');
+    KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display,
+                                            desktop.launcher_rect.x + 3,
+                                            desktop.launcher_rect.y + 1).ch,
+                    'h');
+    KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display,
+                                            desktop.launcher_rect.x + 4,
+                                            desktop.launcher_rect.y + 1).ch,
+                    'e');
+    KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display,
+                                            desktop.launcher_rect.x + 5,
+                                            desktop.launcher_rect.y + 1).ch,
+                    'l');
+    KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display,
+                                            desktop.launcher_rect.x + 6,
+                                            desktop.launcher_rect.y + 1).ch,
+                    'l');
 }
 
 static ktest_case_t desktop_cases[] = {
