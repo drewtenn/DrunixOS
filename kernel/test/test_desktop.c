@@ -1212,8 +1212,8 @@ static void test_framebuffer_draw_rect_outline_clips_to_bounds(ktest_case_t *tc)
 
     KTEST_EXPECT_EQ(tc, pixels[1 * 6 + 0], 0x00ABCDEFu);
     KTEST_EXPECT_EQ(tc, pixels[1 * 6 + 2], 0x00ABCDEFu);
-    KTEST_EXPECT_EQ(tc, pixels[3 * 6 + 0], 0x00ABCDEFu);
-    KTEST_EXPECT_EQ(tc, pixels[4 * 6 + 0], 0u);
+    KTEST_EXPECT_EQ(tc, pixels[3 * 6 + 0], 0u);
+    KTEST_EXPECT_EQ(tc, pixels[4 * 6 + 0], 0x00ABCDEFu);
 }
 
 static void test_framebuffer_draw_text_clipped_honors_pixel_clip(ktest_case_t *tc)
