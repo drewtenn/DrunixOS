@@ -240,7 +240,10 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
     if (desktop_is_active()) {
         if (!have_boot_framebuffer) {
             desktop_set_presentation_target(&boot_desktop, VIDEO_ADDRESS);
+            klog("BOOT", "desktop VGA fallback enabled");
         } else {
+            desktop_set_framebuffer_target(&boot_desktop, &boot_framebuffer);
+            klog("BOOT", "desktop framebuffer enabled");
             klog_uint("BOOT", "framebuffer desktop cols",
                       (uint32_t)cols);
             klog_uint("BOOT", "framebuffer desktop rows",

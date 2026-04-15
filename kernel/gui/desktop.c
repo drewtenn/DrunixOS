@@ -310,6 +310,18 @@ void desktop_set_presentation_target(desktop_state_t *desktop,
         return;
 
     desktop->video_address = video_address;
+    desktop->framebuffer_enabled = 0;
+    desktop->framebuffer = 0;
+}
+
+void desktop_set_framebuffer_target(desktop_state_t *desktop,
+                                    const framebuffer_info_t *framebuffer)
+{
+    if (!desktop)
+        return;
+
+    desktop->framebuffer = framebuffer;
+    desktop->framebuffer_enabled = framebuffer != 0;
 }
 
 void desktop_attach_shell_pid(desktop_state_t *desktop, uint32_t pid)
@@ -514,6 +526,10 @@ void desktop_render(desktop_state_t *desktop)
 
     desktop_draw_pointer(desktop);
 
-    if (desktop->video_address)
+    if (desktop->framebuffer_enabled && desktop->framebuffer) {
+        gui_display_present_to_framebuffer(desktop->display,
+                                           desktop->framebuffer);
+    } else if (desktop->video_address) {
         gui_display_present_to_vga(desktop->display, desktop->video_address);
+    }
 }

@@ -2,6 +2,7 @@
 #define GUI_DESKTOP_H
 
 #include "display.h"
+#include "framebuffer.h"
 #include <stdint.h>
 
 typedef enum {
@@ -30,6 +31,8 @@ typedef struct {
     gui_rect_t shell_content;
     gui_display_t *display;
     uintptr_t video_address;
+    const framebuffer_info_t *framebuffer;
+    int framebuffer_enabled;
     uint32_t shell_pid;
     uint32_t shell_pgid;
     gui_cell_t *shell_cells;
@@ -55,6 +58,8 @@ void desktop_init(desktop_state_t *desktop, gui_display_t *display);
 void desktop_render(desktop_state_t *desktop);
 void desktop_set_presentation_target(desktop_state_t *desktop,
                                       uintptr_t video_address);
+void desktop_set_framebuffer_target(desktop_state_t *desktop,
+                                    const framebuffer_info_t *framebuffer);
 void desktop_open_shell_window(desktop_state_t *desktop);
 void desktop_attach_shell_pid(desktop_state_t *desktop, uint32_t pid);
 void desktop_attach_shell_process(desktop_state_t *desktop, uint32_t pid,

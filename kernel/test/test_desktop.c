@@ -525,6 +525,35 @@ static void test_desktop_pointer_event_moves_visible_mouse_pointer(ktest_case_t 
     KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display, 12, 8).ch, '^');
 }
 
+static void test_desktop_can_use_framebuffer_presentation_target(ktest_case_t *tc)
+{
+    static uint32_t pixels[16 * 16];
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 16u * sizeof(uint32_t);
+    fb.width = 16u;
+    fb.height = 16u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+
+    gui_display_init(&display, desktop_cells, 2, 1, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    desktop_render(&desktop);
+
+    KTEST_EXPECT_NE(tc, pixels[0], 0u);
+}
+
 static void framebuffer_test_init_valid_record(multiboot_info_t *mbi)
 {
     k_memset(mbi, 0, sizeof(*mbi));
@@ -784,6 +813,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_pointer_click_ignores_hidden_shell_window),
     KTEST_CASE(test_desktop_render_draws_visible_mouse_pointer),
     KTEST_CASE(test_desktop_pointer_event_moves_visible_mouse_pointer),
+    KTEST_CASE(test_desktop_can_use_framebuffer_presentation_target),
     KTEST_CASE(test_framebuffer_info_accepts_1024_768_32_rgb),
     KTEST_CASE(test_boot_framebuffer_grid_clamps_to_static_cell_buffer),
     KTEST_CASE(test_framebuffer_info_rejects_address_above_uintptr),
