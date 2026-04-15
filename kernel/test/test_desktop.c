@@ -48,6 +48,34 @@ static void test_gui_display_draw_text_stops_at_region_edge(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display, 7, 2).ch, ' ');
 }
 
+static void test_gui_display_presents_cells_to_framebuffer(ktest_case_t *tc)
+{
+    gui_cell_t cells[2];
+    uint32_t pixels[8 * 16 * 2];
+    gui_display_t display;
+    framebuffer_info_t fb;
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 16u * sizeof(uint32_t);
+    fb.width = 16;
+    fb.height = 16;
+    fb.red_pos = 16;
+    fb.red_size = 8;
+    fb.green_pos = 8;
+    fb.green_size = 8;
+    fb.blue_pos = 0;
+    fb.blue_size = 8;
+
+    gui_display_init(&display, cells, 2, 1, 0x0f);
+    gui_display_draw_text(&display, 0, 0, 1, "A", 0x0f);
+
+    gui_display_present_to_framebuffer(&display, &fb);
+
+    KTEST_EXPECT_NE(tc, pixels[2], 0u);
+}
+
 static void test_desktop_boot_layout_opens_shell_window(ktest_case_t *tc)
 {
     gui_display_t display;
@@ -695,6 +723,7 @@ static void test_framebuffer_pack_rgb_scales_to_mask_size(ktest_case_t *tc)
 static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_gui_display_fill_rect_clips_to_bounds),
     KTEST_CASE(test_gui_display_draw_text_stops_at_region_edge),
+    KTEST_CASE(test_gui_display_presents_cells_to_framebuffer),
     KTEST_CASE(test_desktop_boot_layout_opens_shell_window),
     KTEST_CASE(test_desktop_render_draws_taskbar_and_launcher_label),
     KTEST_CASE(test_desktop_init_binds_global_keyboard_target),

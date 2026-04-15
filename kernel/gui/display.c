@@ -1,4 +1,19 @@
 #include "display.h"
+#include "framebuffer.h"
+
+static void gui_display_vga_color(uint8_t color, uint8_t *r, uint8_t *g, uint8_t *b)
+{
+    static const uint8_t palette[16][3] = {
+        {0x00,0x00,0x00}, {0x00,0x00,0xaa}, {0x00,0xaa,0x00}, {0x00,0xaa,0xaa},
+        {0xaa,0x00,0x00}, {0xaa,0x00,0xaa}, {0xaa,0x55,0x00}, {0xaa,0xaa,0xaa},
+        {0x55,0x55,0x55}, {0x55,0x55,0xff}, {0x55,0xff,0x55}, {0x55,0xff,0xff},
+        {0xff,0x55,0x55}, {0xff,0x55,0xff}, {0xff,0xff,0x55}, {0xff,0xff,0xff},
+    };
+
+    *r = palette[color & 0x0f][0];
+    *g = palette[color & 0x0f][1];
+    *b = palette[color & 0x0f][2];
+}
 
 static gui_rect_t gui_clip_rect(const gui_display_t *display,
                                 int x, int y, int w, int h)
@@ -125,6 +140,34 @@ void gui_display_present_to_vga(const gui_display_t *display, uintptr_t video_ad
             int off = 2 * (row * display->cols + col);
             vidmem[off] = (unsigned char)cell->ch;
             vidmem[off + 1] = cell->attr;
+        }
+    }
+}
+
+void gui_display_present_to_framebuffer(const gui_display_t *display,
+                                        const framebuffer_info_t *fb)
+{
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+
+    if (!display || !fb)
+        return;
+    if (!display->cells || display->cols <= 0 || display->rows <= 0)
+        return;
+
+    for (int row = 0; row < display->rows; row++) {
+        for (int col = 0; col < display->cols; col++) {
+            const gui_cell_t *cell = &display->cells[row * display->cols + col];
+            uint32_t fg;
+            uint32_t bg;
+
+            gui_display_vga_color(cell->attr & 0x0f, &r, &g, &b);
+            fg = framebuffer_pack_rgb(fb, r, g, b);
+            gui_display_vga_color((cell->attr >> 4) & 0x0f, &r, &g, &b);
+            bg = framebuffer_pack_rgb(fb, r, g, b);
+            framebuffer_draw_glyph(fb, col * 8, row * 16,
+                                   (unsigned char)cell->ch, fg, bg);
         }
     }
 }
