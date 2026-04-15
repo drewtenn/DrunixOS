@@ -2,6 +2,7 @@
 #include "display.h"
 #include "desktop.h"
 #include "mouse.h"
+#include "syscall.h"
 
 static gui_cell_t desktop_cells[80 * 25];
 
@@ -260,6 +261,22 @@ static void test_desktop_non_shell_output_is_rejected_for_legacy_fallback(ktest_
                     0);
 }
 
+static void test_syscall_stdout_would_fallback_when_desktop_declines(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+    desktop_attach_shell_pid(&desktop, 7);
+
+    KTEST_EXPECT_TRUE(tc,
+                      syscall_stdout_would_fallback(&desktop, 8, "x", 1));
+    KTEST_EXPECT_FALSE(tc,
+                       syscall_stdout_would_fallback(&desktop, 7, "x", 1));
+}
+
 static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_gui_display_fill_rect_clips_to_bounds),
     KTEST_CASE(test_gui_display_draw_text_stops_at_region_edge),
@@ -275,6 +292,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_pointer_click_ignores_hidden_shell_window),
     KTEST_CASE(test_desktop_write_process_output_targets_shell_surface),
     KTEST_CASE(test_desktop_non_shell_output_is_rejected_for_legacy_fallback),
+    KTEST_CASE(test_syscall_stdout_would_fallback_when_desktop_declines),
 };
 
 ktest_suite_t *ktest_suite_desktop(void)

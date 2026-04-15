@@ -1925,3 +1925,15 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
         return (uint32_t)-1;
     }
 }
+
+#ifdef KTEST_ENABLED
+int syscall_stdout_would_fallback(void *desktop_ptr,
+                                  uint32_t pid,
+                                  const char *buf,
+                                  uint32_t len)
+{
+    desktop_state_t *desktop = (desktop_state_t *)desktop_ptr;
+
+    return desktop_write_process_output(desktop, pid, buf, len) == 0;
+}
+#endif
