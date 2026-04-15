@@ -103,11 +103,41 @@ static void test_desktop_render_draws_taskbar_and_launcher_label(ktest_case_t *t
                     'h');
 }
 
+static void test_desktop_escape_opens_launcher_and_consumes_input(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+
+    KTEST_EXPECT_EQ(tc, desktop_handle_key(&desktop, 27), DESKTOP_KEY_CONSUMED);
+    KTEST_EXPECT_TRUE(tc, desktop.launcher_open);
+    KTEST_EXPECT_EQ(tc, desktop.focus, DESKTOP_FOCUS_LAUNCHER);
+}
+
+static void test_desktop_plain_text_forwards_to_shell_when_focused(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+
+    KTEST_EXPECT_EQ(tc, desktop_handle_key(&desktop, 'a'), DESKTOP_KEY_FORWARD);
+    KTEST_EXPECT_FALSE(tc, desktop.launcher_open);
+    KTEST_EXPECT_EQ(tc, desktop.focus, DESKTOP_FOCUS_SHELL);
+}
+
 static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_gui_display_fill_rect_clips_to_bounds),
     KTEST_CASE(test_gui_display_draw_text_stops_at_region_edge),
     KTEST_CASE(test_desktop_boot_layout_opens_shell_window),
     KTEST_CASE(test_desktop_render_draws_taskbar_and_launcher_label),
+    KTEST_CASE(test_desktop_escape_opens_launcher_and_consumes_input),
+    KTEST_CASE(test_desktop_plain_text_forwards_to_shell_when_focused),
 };
 
 ktest_suite_t *ktest_suite_desktop(void)

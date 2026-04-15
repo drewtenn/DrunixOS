@@ -1,6 +1,8 @@
 #include "desktop.h"
 #include "kstring.h"
 
+static desktop_state_t g_desktop;
+
 static void desktop_layout(desktop_state_t *desktop)
 {
     desktop->taskbar.x = 0;
@@ -24,6 +26,16 @@ static void desktop_layout(desktop_state_t *desktop)
     desktop->shell_content.h = desktop->shell_rect.h - 2;
 }
 
+desktop_state_t *desktop_global(void)
+{
+    return &g_desktop;
+}
+
+int desktop_is_active(void)
+{
+    return g_desktop.active && g_desktop.desktop_enabled;
+}
+
 void desktop_init(desktop_state_t *desktop, gui_display_t *display)
 {
     k_memset(desktop, 0, sizeof(*desktop));
@@ -32,6 +44,38 @@ void desktop_init(desktop_state_t *desktop, gui_display_t *display)
     desktop->desktop_enabled = 1;
     desktop->focus = DESKTOP_FOCUS_TASKBAR;
     desktop_layout(desktop);
+}
+
+desktop_key_result_t desktop_handle_key(desktop_state_t *desktop, char c)
+{
+    if (!desktop || !desktop->active)
+        return DESKTOP_KEY_FORWARD;
+
+    if (c == 27) {
+        desktop->launcher_open = !desktop->launcher_open;
+        desktop->focus = desktop->launcher_open
+            ? DESKTOP_FOCUS_LAUNCHER
+            : DESKTOP_FOCUS_SHELL;
+        desktop_render(desktop);
+        return DESKTOP_KEY_CONSUMED;
+    }
+
+    if (desktop->launcher_open && c == '\n') {
+        desktop->launcher_open = 0;
+        desktop_open_shell_window(desktop);
+        desktop_render(desktop);
+        return DESKTOP_KEY_CONSUMED;
+    }
+
+    if (desktop->launcher_open && c == '\t') {
+        desktop->focus = DESKTOP_FOCUS_TASKBAR;
+        desktop_render(desktop);
+        return DESKTOP_KEY_CONSUMED;
+    }
+
+    return (desktop->focus == DESKTOP_FOCUS_SHELL)
+        ? DESKTOP_KEY_FORWARD
+        : DESKTOP_KEY_CONSUMED;
 }
 
 void desktop_open_shell_window(desktop_state_t *desktop)
