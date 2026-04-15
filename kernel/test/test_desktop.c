@@ -10,6 +10,7 @@
 #include "process.h"
 #include "syscall.h"
 #include "tty.h"
+#include <limits.h>
 
 static gui_cell_t desktop_cells[80 * 25];
 static gui_cell_t large_desktop_cells[128 * 48];
@@ -17,6 +18,8 @@ static gui_cell_t pointer_motion_cells[60 * 25];
 static uint32_t pointer_motion_pixels[480 * 400];
 static gui_cell_t terminal_cells[16 * 4];
 static gui_cell_t terminal_history[16 * 8];
+static gui_cell_t terminal_tiny_live[2];
+static gui_cell_t terminal_tiny_history[2];
 
 extern int syscall_console_write_for_test(process_t *proc, const char *buf,
                                           uint32_t len);
@@ -83,6 +86,122 @@ static void test_terminal_clear_discards_history_and_resets_cursor(ktest_case_t 
     KTEST_EXPECT_EQ(tc, gui_terminal_cursor_x(&term), 0);
     KTEST_EXPECT_EQ(tc, gui_terminal_cursor_y(&term), 0);
     KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 0, 0).ch, ' ');
+}
+
+static void test_terminal_init_rejects_overflow_dimensions_without_touching_buffers(ktest_case_t *tc)
+{
+    gui_terminal_t term;
+
+    terminal_tiny_live[0].ch = 'L';
+    terminal_tiny_live[0].attr = 0x11;
+    terminal_tiny_live[1].ch = 'l';
+    terminal_tiny_live[1].attr = 0x22;
+    terminal_tiny_history[0].ch = 'H';
+    terminal_tiny_history[0].attr = 0x33;
+    terminal_tiny_history[1].ch = 'h';
+    terminal_tiny_history[1].attr = 0x44;
+
+    KTEST_EXPECT_EQ(tc,
+                    gui_terminal_init_static(&term,
+                                             terminal_tiny_live,
+                                             terminal_tiny_history,
+                                             65536, 65536, 65536, 0x0f),
+                    0);
+    KTEST_EXPECT_EQ(tc, terminal_tiny_live[0].ch, 'L');
+    KTEST_EXPECT_EQ(tc, terminal_tiny_live[0].attr, 0x11);
+    KTEST_EXPECT_EQ(tc, terminal_tiny_live[1].ch, 'l');
+    KTEST_EXPECT_EQ(tc, terminal_tiny_history[0].ch, 'H');
+    KTEST_EXPECT_EQ(tc, terminal_tiny_history[1].attr, 0x44);
+
+    KTEST_EXPECT_EQ(tc,
+                    gui_terminal_init_alloc(&term, 65536, 65536, 65536, 0x0f),
+                    0);
+}
+
+static void test_terminal_ansi_digit_sequence_caps_without_overflow(ktest_case_t *tc)
+{
+    gui_terminal_t term;
+    static const char text[] = "\x1b[123456789012345678901234567890mG";
+
+    KTEST_ASSERT_EQ(tc,
+                    gui_terminal_init_static(&term,
+                                             terminal_cells,
+                                             terminal_history,
+                                             8, 2, 4, 0x0f),
+                    1);
+
+    KTEST_EXPECT_EQ(tc, gui_terminal_write(&term, text, sizeof(text) - 1),
+                    (int)(sizeof(text) - 1));
+    KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 0, 0).ch, 'G');
+    KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 0, 0).attr, 0x0f);
+    KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 1, 0).ch, ' ');
+}
+
+static void test_terminal_scroll_view_clamps_large_positive_and_negative_inputs(ktest_case_t *tc)
+{
+    gui_terminal_t term;
+
+    KTEST_ASSERT_EQ(tc,
+                    gui_terminal_init_static(&term,
+                                             terminal_cells,
+                                             terminal_history,
+                                             4, 2, 4, 0x0f),
+                    1);
+    KTEST_ASSERT_EQ(tc, gui_terminal_write(&term, "abcd\nefgh\nijkl", 14), 14);
+
+    gui_terminal_scroll_view(&term, INT_MAX);
+    KTEST_EXPECT_EQ(tc, gui_terminal_visible_view_top(&term),
+                    gui_terminal_history_count(&term));
+
+    gui_terminal_scroll_view(&term, INT_MIN);
+    KTEST_EXPECT_EQ(tc, gui_terminal_visible_view_top(&term), 0);
+}
+
+static void test_terminal_write_rejects_lengths_above_int_max(ktest_case_t *tc)
+{
+    gui_terminal_t term;
+    uint32_t too_long = (uint32_t)INT_MAX + 1u;
+
+    KTEST_ASSERT_EQ(tc,
+                    gui_terminal_init_static(&term,
+                                             terminal_cells,
+                                             terminal_history,
+                                             8, 2, 4, 0x0f),
+                    1);
+    terminal_cells[0].ch = 'Q';
+    terminal_cells[0].attr = 0x5a;
+
+    KTEST_EXPECT_EQ(tc, gui_terminal_write(&term, "Z", too_long), 0);
+    KTEST_EXPECT_EQ(tc, terminal_cells[0].ch, 'Q');
+    KTEST_EXPECT_EQ(tc, terminal_cells[0].attr, 0x5a);
+}
+
+static void test_terminal_destroy_preserves_static_buffers_and_clears_owned_buffers(ktest_case_t *tc)
+{
+    gui_terminal_t term;
+
+    KTEST_ASSERT_EQ(tc,
+                    gui_terminal_init_static(&term,
+                                             terminal_tiny_live,
+                                             terminal_tiny_history,
+                                             1, 1, 1, 0x0f),
+                    1);
+    terminal_tiny_live[0].ch = 'S';
+    terminal_tiny_live[0].attr = 0x1f;
+    terminal_tiny_history[0].ch = 'T';
+    terminal_tiny_history[0].attr = 0x2f;
+    gui_terminal_destroy(&term);
+    KTEST_EXPECT_EQ(tc, terminal_tiny_live[0].ch, 'S');
+    KTEST_EXPECT_EQ(tc, terminal_tiny_live[0].attr, 0x1f);
+    KTEST_EXPECT_EQ(tc, terminal_tiny_history[0].ch, 'T');
+    KTEST_EXPECT_EQ(tc, terminal_tiny_history[0].attr, 0x2f);
+
+    KTEST_ASSERT_EQ(tc, gui_terminal_init_alloc(&term, 2, 2, 2, 0x0f), 1);
+    KTEST_EXPECT_EQ(tc, term.owns_buffers, 1);
+    gui_terminal_destroy(&term);
+    KTEST_EXPECT_EQ(tc, term.live, 0);
+    KTEST_EXPECT_EQ(tc, term.history, 0);
+    KTEST_EXPECT_EQ(tc, term.owns_buffers, 0);
 }
 
 static void test_gui_display_fill_rect_clips_to_bounds(ktest_case_t *tc)
@@ -1168,6 +1287,11 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_terminal_write_wraps_and_retains_history),
     KTEST_CASE(test_terminal_ansi_color_does_not_emit_escape_bytes),
     KTEST_CASE(test_terminal_clear_discards_history_and_resets_cursor),
+    KTEST_CASE(test_terminal_init_rejects_overflow_dimensions_without_touching_buffers),
+    KTEST_CASE(test_terminal_ansi_digit_sequence_caps_without_overflow),
+    KTEST_CASE(test_terminal_scroll_view_clamps_large_positive_and_negative_inputs),
+    KTEST_CASE(test_terminal_write_rejects_lengths_above_int_max),
+    KTEST_CASE(test_terminal_destroy_preserves_static_buffers_and_clears_owned_buffers),
     KTEST_CASE(test_gui_display_fill_rect_clips_to_bounds),
     KTEST_CASE(test_gui_display_draw_text_stops_at_region_edge),
     KTEST_CASE(test_gui_display_presents_cells_to_framebuffer),

@@ -1,6 +1,7 @@
 #include "terminal.h"
 #include "kheap.h"
 #include "kstring.h"
+#include <limits.h>
 
 static void terminal_clear_line(gui_terminal_t *term, int row);
 static void terminal_push_history(gui_terminal_t *term, const gui_cell_t *row);
@@ -8,45 +9,82 @@ static void terminal_scroll_up(gui_terminal_t *term);
 static void terminal_apply_ansi(gui_terminal_t *term, int code);
 static void terminal_apply_char(gui_terminal_t *term, char c);
 
-static int terminal_row_bytes(const gui_terminal_t *term)
+static int terminal_validate_dimensions(int cols,
+                                        int rows,
+                                        int history_rows,
+                                        uint32_t *live_bytes,
+                                        uint32_t *history_bytes,
+                                        uint32_t *row_bytes)
 {
-    if (!term || term->cols <= 0)
+    uint64_t live_cells;
+    uint64_t history_cells;
+    uint64_t bytes;
+
+    if (cols <= 0 || rows <= 0 || history_rows < 0)
         return 0;
-    return term->cols * (int)sizeof(gui_cell_t);
+    if (history_rows > INT_MAX - rows)
+        return 0;
+
+    bytes = (uint64_t)(uint32_t)cols * (uint64_t)sizeof(gui_cell_t);
+    if (bytes > UINT32_MAX)
+        return 0;
+    if (row_bytes)
+        *row_bytes = (uint32_t)bytes;
+
+    live_cells = (uint64_t)(uint32_t)cols * (uint64_t)(uint32_t)rows;
+    bytes = live_cells * (uint64_t)sizeof(gui_cell_t);
+    if (live_cells == 0 || bytes / (uint64_t)sizeof(gui_cell_t) != live_cells ||
+        bytes > UINT32_MAX)
+        return 0;
+    if (live_bytes)
+        *live_bytes = (uint32_t)bytes;
+
+    if (history_rows > 0) {
+        history_cells = (uint64_t)(uint32_t)cols *
+                        (uint64_t)(uint32_t)history_rows;
+        bytes = history_cells * (uint64_t)sizeof(gui_cell_t);
+        if (history_cells == 0 ||
+            bytes / (uint64_t)sizeof(gui_cell_t) != history_cells ||
+            bytes > UINT32_MAX)
+            return 0;
+        if (history_bytes)
+            *history_bytes = (uint32_t)bytes;
+    } else if (history_bytes) {
+        *history_bytes = 0;
+    }
+
+    return 1;
 }
 
-static int terminal_history_capacity(const gui_terminal_t *term)
+static int terminal_row_bytes_u32(const gui_terminal_t *term, uint32_t *bytes)
 {
-    if (!term || term->history_rows <= 0 || !term->history)
-        return 0;
-    return term->history_rows;
-}
+    uint64_t row_bytes;
 
-static gui_cell_t *terminal_history_row(gui_terminal_t *term, int index)
-{
-    int capacity;
-
-    if (!term || !term->history || index < 0)
+    if (!term || !bytes || term->cols <= 0)
         return 0;
 
-    capacity = terminal_history_capacity(term);
-    if (capacity <= 0 || index >= term->history_count)
+    row_bytes = (uint64_t)(uint32_t)term->cols * (uint64_t)sizeof(gui_cell_t);
+    if (row_bytes > UINT32_MAX)
         return 0;
-    return &term->history[((term->history_head + index) % capacity) *
-                          term->cols];
+    *bytes = (uint32_t)row_bytes;
+    return 1;
 }
 
 static const gui_cell_t *terminal_history_row_const(const gui_terminal_t *term,
                                                     int index)
 {
-    return terminal_history_row((gui_terminal_t *)term, index);
-}
+    uint32_t row_index;
+    uint32_t capacity;
+    uint32_t cols;
 
-static gui_cell_t *terminal_live_row(gui_terminal_t *term, int row)
-{
-    if (!term || !term->live || row < 0 || row >= term->rows)
+    if (!term || !term->history || term->history_rows <= 0 || index < 0 ||
+        index >= term->history_count)
         return 0;
-    return &term->live[row * term->cols];
+
+    capacity = (uint32_t)term->history_rows;
+    row_index = ((uint32_t)term->history_head + (uint32_t)index) % capacity;
+    cols = (uint32_t)term->cols;
+    return &term->history[row_index * cols];
 }
 
 static void terminal_clear_history(gui_terminal_t *term)
@@ -56,16 +94,17 @@ static void terminal_clear_history(gui_terminal_t *term)
     if (!term)
         return;
 
-    capacity = terminal_history_capacity(term);
+    capacity = term->history_rows;
     if (capacity > 0) {
         gui_cell_t blank = { ' ', 0 };
+        uint32_t cols = (uint32_t)term->cols;
 
         blank.attr = term->default_attr;
         for (int row = 0; row < capacity; row++) {
-            int base = row * term->cols;
+            uint32_t base = (uint32_t)row * cols;
 
             for (int col = 0; col < term->cols; col++)
-                term->history[base + col] = blank;
+                term->history[base + (uint32_t)col] = blank;
         }
     }
     term->history_head = 0;
@@ -74,6 +113,8 @@ static void terminal_clear_history(gui_terminal_t *term)
 
 static void terminal_write_cell(gui_terminal_t *term, char c)
 {
+    uint32_t row_bytes;
+    uint32_t cursor_index;
     gui_cell_t *cell;
 
     if (!term || !term->live || term->cols <= 0 || term->rows <= 0)
@@ -98,7 +139,14 @@ static void terminal_write_cell(gui_terminal_t *term, char c)
     if (term->cursor_y >= term->rows)
         term->cursor_y = term->rows - 1;
 
-    cell = &term->live[term->cursor_y * term->cols + term->cursor_x];
+    if (!terminal_row_bytes_u32(term, &row_bytes))
+        return;
+    cursor_index = (uint32_t)term->cursor_y * (uint32_t)term->cols +
+                   (uint32_t)term->cursor_x;
+    if (cursor_index >= row_bytes / (uint32_t)sizeof(gui_cell_t) *
+        (uint32_t)sizeof(gui_cell_t))
+        return;
+    cell = &term->live[cursor_index];
     cell->ch = c;
     cell->attr = term->attr;
     if (term->cursor_x == term->cols - 1) {
@@ -112,53 +160,60 @@ static void terminal_write_cell(gui_terminal_t *term, char c)
 static void terminal_clear_line(gui_terminal_t *term, int row)
 {
     gui_cell_t blank = { ' ', 0 };
-    int base;
+    uint32_t base;
+    uint32_t cols;
 
     if (!term || !term->live || row < 0 || row >= term->rows)
         return;
 
     blank.attr = term->default_attr;
-    base = row * term->cols;
+    cols = (uint32_t)term->cols;
+    base = (uint32_t)row * cols;
     for (int col = 0; col < term->cols; col++)
-        term->live[base + col] = blank;
+        term->live[base + (uint32_t)col] = blank;
 }
 
 static void terminal_push_history(gui_terminal_t *term, const gui_cell_t *row)
 {
-    int capacity;
-    int tail;
+    uint32_t capacity;
+    uint32_t tail;
+    uint32_t bytes;
 
     if (!term || !row)
         return;
 
-    capacity = terminal_history_capacity(term);
+    capacity = (uint32_t)term->history_rows;
     if (capacity <= 0)
+        return;
+    if (!terminal_row_bytes_u32(term, &bytes))
         return;
 
     if (term->history_count < capacity) {
-        tail = (term->history_head + term->history_count) % capacity;
+        tail = ((uint32_t)term->history_head +
+                (uint32_t)term->history_count) % capacity;
         term->history_count++;
     } else {
-        tail = term->history_head;
-        term->history_head = (term->history_head + 1) % capacity;
+        tail = (uint32_t)term->history_head;
+        term->history_head = (term->history_head + 1) % term->history_rows;
     }
 
-    k_memcpy(&term->history[tail * term->cols], row,
-             (uint32_t)terminal_row_bytes(term));
+    k_memcpy(&term->history[tail * (uint32_t)term->cols], row, bytes);
 }
 
 static void terminal_scroll_up(gui_terminal_t *term)
 {
-    int bytes;
+    uint32_t bytes;
+    uint32_t row;
 
     if (!term || !term->live || term->cols <= 0 || term->rows <= 0)
         return;
     terminal_push_history(term, term->live);
-    bytes = term->cols * (int)sizeof(gui_cell_t);
-    for (int row = 1; row < term->rows; row++) {
-        k_memmove(&term->live[(row - 1) * term->cols],
-                  &term->live[row * term->cols],
-                  (uint32_t)bytes);
+    if (!terminal_row_bytes_u32(term, &bytes))
+        return;
+    for (row = 1; row < (uint32_t)term->rows; row++) {
+        k_memmove(&term->live[(row - 1u) * (uint32_t)term->cols],
+                  &term->live[row * (uint32_t)term->cols],
+                  bytes);
     }
     terminal_clear_line(term, term->rows - 1);
     if (term->cursor_y > 0)
@@ -200,7 +255,13 @@ static void terminal_apply_char(gui_terminal_t *term, char c)
 
     if (term->ansi_state == 2) {
         if (c >= '0' && c <= '9') {
-            term->ansi_val = (term->ansi_val * 10) + (c - '0');
+            if (term->ansi_val >= 100) {
+                term->ansi_val = 999;
+            } else {
+                term->ansi_val = (term->ansi_val * 10) + (c - '0');
+                if (term->ansi_val > 999)
+                    term->ansi_val = 999;
+            }
             return;
         }
         if (c == 'm') {
@@ -260,8 +321,12 @@ int gui_terminal_init_static(gui_terminal_t *term,
                              int history_rows,
                              uint8_t default_attr)
 {
-    if (!term || !live || cols <= 0 || rows <= 0 || history_rows < 0 ||
-        (history_rows > 0 && !history))
+    if (!term || !live)
+        return 0;
+
+    if (!terminal_validate_dimensions(cols, rows, history_rows, 0, 0, 0))
+        return 0;
+    if (history_rows > 0 && !history)
         return 0;
 
     k_memset(term, 0, sizeof(*term));
@@ -270,6 +335,7 @@ int gui_terminal_init_static(gui_terminal_t *term,
     term->cols = cols;
     term->rows = rows;
     term->history_rows = history_rows;
+    term->owns_buffers = 0;
     term->attr = default_attr;
     term->default_attr = default_attr;
     term->view_top = 0;
@@ -292,11 +358,12 @@ int gui_terminal_init_alloc(gui_terminal_t *term,
     uint32_t live_bytes;
     uint32_t history_bytes;
 
-    if (!term || cols <= 0 || rows <= 0 || history_rows < 0)
+    if (!term)
         return 0;
 
-    live_bytes = (uint32_t)(cols * rows * (int)sizeof(gui_cell_t));
-    history_bytes = (uint32_t)(cols * history_rows * (int)sizeof(gui_cell_t));
+    if (!terminal_validate_dimensions(cols, rows, history_rows,
+                                      &live_bytes, &history_bytes, 0))
+        return 0;
 
     live = (gui_cell_t *)kmalloc(live_bytes);
     if (!live)
@@ -320,7 +387,23 @@ int gui_terminal_init_alloc(gui_terminal_t *term,
         return 0;
     }
 
+    term->owns_buffers = 1;
     return 1;
+}
+
+void gui_terminal_destroy(gui_terminal_t *term)
+{
+    if (!term)
+        return;
+
+    if (term->owns_buffers) {
+        if (term->history)
+            kfree(term->history);
+        if (term->live)
+            kfree(term->live);
+    }
+
+    k_memset(term, 0, sizeof(*term));
 }
 
 void gui_terminal_clear(gui_terminal_t *term)
@@ -347,6 +430,8 @@ int gui_terminal_write(gui_terminal_t *term, const char *buf, uint32_t len)
 
     if (!term || !buf)
         return 0;
+    if (len > (uint32_t)INT_MAX)
+        return 0;
 
     for (i = 0; i < len; i++)
         terminal_apply_char(term, buf[i]);
@@ -358,14 +443,19 @@ int gui_terminal_write(gui_terminal_t *term, const char *buf, uint32_t len)
 
 void gui_terminal_scroll_view(gui_terminal_t *term, int rows)
 {
+    int64_t view_top;
+
     if (!term)
         return;
 
-    term->view_top += rows;
-    if (term->view_top < 0)
-        term->view_top = 0;
-    if (term->view_top > term->history_count)
-        term->view_top = term->history_count;
+    view_top = (int64_t)term->view_top + (int64_t)rows;
+    if (view_top < 0)
+        view_top = 0;
+    if (view_top > (int64_t)term->history_count)
+        view_top = term->history_count;
+    if (view_top > (int64_t)INT_MAX)
+        view_top = INT_MAX;
+    term->view_top = (int)view_top;
     term->live_view = (term->view_top == 0);
 }
 
@@ -430,6 +520,8 @@ int gui_terminal_total_rows(const gui_terminal_t *term)
 {
     if (!term)
         return 0;
+    if (term->history_count > INT_MAX - term->rows)
+        return INT_MAX;
     return term->history_count + term->rows;
 }
 

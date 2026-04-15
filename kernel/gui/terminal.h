@@ -11,6 +11,7 @@ typedef struct {
     int cols;
     int rows;
     int history_rows;
+    int owns_buffers;
     int history_head;
     int history_count;
     int cursor_x;
@@ -39,6 +40,7 @@ int gui_terminal_init_alloc(gui_terminal_t *term,
                             int rows,
                             int history_rows,
                             uint8_t default_attr);
+void gui_terminal_destroy(gui_terminal_t *term);
 void gui_terminal_clear(gui_terminal_t *term);
 int gui_terminal_write(gui_terminal_t *term, const char *buf, uint32_t len);
 void gui_terminal_scroll_view(gui_terminal_t *term, int rows);
