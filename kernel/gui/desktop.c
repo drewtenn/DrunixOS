@@ -695,6 +695,8 @@ static int desktop_render_framebuffer_write_dirty(desktop_state_t *desktop,
     unsigned char ch;
     int written_x;
     int written_y;
+    int after_cursor_x;
+    int after_cursor_y;
 
     if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
         return 0;
@@ -710,30 +712,34 @@ static int desktop_render_framebuffer_write_dirty(desktop_state_t *desktop,
         return 0;
 
     ch = (unsigned char)buf[0];
-    if (ch < ' ' || ch == 0x7fu)
+    if (ch == 0x7fu)
         return 0;
 
-    if (before_wrap_pending) {
-        written_x = 0;
-        written_y = before_cursor_y + 1;
-    } else {
-        written_x = before_cursor_x;
-        written_y = before_cursor_y;
-    }
-    if (written_x < 0 || written_y < 0 ||
-        written_x >= desktop->shell_terminal.cols ||
-        written_y >= desktop->shell_terminal.rows)
+    after_cursor_x = gui_terminal_cursor_x(&desktop->shell_terminal);
+    after_cursor_y = gui_terminal_cursor_y(&desktop->shell_terminal);
+
+    if (ch >= ' ') {
+        if (before_wrap_pending) {
+            written_x = 0;
+            written_y = before_cursor_y + 1;
+        } else {
+            written_x = before_cursor_x;
+            written_y = before_cursor_y;
+        }
+        if (written_x < 0 || written_y < 0 ||
+            written_x >= desktop->shell_terminal.cols ||
+            written_y >= desktop->shell_terminal.rows)
+            return 0;
+        desktop_terminal_dirty_include_cell(desktop, &dirty,
+                                            written_x, written_y);
+    } else if (ch != '\b' && ch != '\r' && ch != '\n') {
         return 0;
+    }
 
     desktop_terminal_dirty_include_cell(desktop, &dirty,
                                         before_cursor_x, before_cursor_y);
     desktop_terminal_dirty_include_cell(desktop, &dirty,
-                                        written_x, written_y);
-    desktop_terminal_dirty_include_cell(desktop, &dirty,
-                                        gui_terminal_cursor_x(
-                                            &desktop->shell_terminal),
-                                        gui_terminal_cursor_y(
-                                            &desktop->shell_terminal));
+                                        after_cursor_x, after_cursor_y);
     if (dirty.w <= 0 || dirty.h <= 0)
         return 0;
 
