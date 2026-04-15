@@ -46,6 +46,8 @@ typedef struct {
     uint32_t framebuffer_height;
     uint8_t  framebuffer_bpp;
     uint8_t  framebuffer_type;
+    /* GRUB's Multiboot1 color-info union is 32-bit aligned. */
+    uint8_t  framebuffer_color_info_pad[2];
     uint8_t  framebuffer_red_field_position;
     uint8_t  framebuffer_red_mask_size;
     uint8_t  framebuffer_green_field_position;

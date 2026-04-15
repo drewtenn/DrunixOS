@@ -607,6 +607,18 @@ static void test_framebuffer_info_accepts_1024_768_32_rgb(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, info.cell_rows, 48u);
 }
 
+static void test_multiboot_framebuffer_color_info_uses_grub_layout(ktest_case_t *tc)
+{
+    KTEST_EXPECT_EQ(tc,
+                    __builtin_offsetof(multiboot_info_t,
+                                       framebuffer_red_field_position),
+                    112u);
+    KTEST_EXPECT_EQ(tc,
+                    __builtin_offsetof(multiboot_info_t,
+                                       framebuffer_blue_mask_size),
+                    117u);
+}
+
 static void
 test_boot_framebuffer_grid_clamps_to_static_cell_buffer(ktest_case_t *tc)
 {
@@ -878,6 +890,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_pointer_event_moves_visible_mouse_pointer),
     KTEST_CASE(test_desktop_can_use_framebuffer_presentation_target),
     KTEST_CASE(test_framebuffer_info_accepts_1024_768_32_rgb),
+    KTEST_CASE(test_multiboot_framebuffer_color_info_uses_grub_layout),
     KTEST_CASE(test_boot_framebuffer_grid_clamps_to_static_cell_buffer),
     KTEST_CASE(test_framebuffer_mapping_reaches_high_physical_lfb),
     KTEST_CASE(test_framebuffer_info_rejects_address_above_uintptr),
