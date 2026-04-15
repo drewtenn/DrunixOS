@@ -6,7 +6,7 @@
 
 Chapter 16 left us with a complete syscall ABI and blocking wait queues. Every open file in a Unix-like system is identified by a small integer called a **file descriptor** (fd). The fd is not a pointer into the filesystem — it is an index into a per-process table. Each slot in the table holds our view of an open file: the inode number, the current read/write position, the file's cached size, and a flag indicating whether the descriptor is writable.
 
-Each process carries this table inside its `process_t` descriptor. The table has a fixed number of slots. By convention, the first three are pre-reserved: fd 0 is standard input (connected to the keyboard character device), fd 1 is standard output (connected to the VGA console), and fd 2 is standard error (not yet implemented). Regular disk-backed files start at fd 3 and occupy higher slots.
+Each process carries this table inside its `process_t` descriptor. The table has a fixed number of slots. By convention, the first three are pre-reserved: fd 0 is standard input (connected to the TTY input path), fd 1 is standard output (connected to the active console presentation path, which may be the framebuffer desktop shell or the VGA fallback console), and fd 2 is standard error (not yet implemented). Regular disk-backed files start at fd 3 and occupy higher slots.
 
 When a process has two files open, the table might look like this:
 

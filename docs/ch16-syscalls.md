@@ -55,7 +55,7 @@ The complete syscall table:
 | 1  | `SYS_EXIT`          | Mark process zombie with exit status |
 | 2  | `SYS_FWRITE`        | Write bytes to an open writable fd |
 | 3  | `SYS_READ`          | Read from stdin or an open fd |
-| 4  | `SYS_WRITE`         | Write a counted buffer to the VGA console |
+| 4  | `SYS_WRITE`         | Write a counted buffer to the active console or desktop shell |
 | 5  | `SYS_OPEN`          | Open a file read-only |
 | 6  | `SYS_CLOSE`         | Close a file descriptor |
 | 7  | `SYS_WAIT`          | Block until a PID exits |
@@ -63,7 +63,7 @@ The complete syscall table:
 | 9  | `SYS_UNLINK`        | Delete a file |
 | 10 | `SYS_FORK`          | Clone the current process |
 | 11 | `SYS_EXEC`          | Replace the current process image with an ELF file |
-| 12 | `SYS_CLEAR`         | Clear the VGA console |
+| 12 | `SYS_CLEAR`         | Clear the active console or desktop shell |
 | 13 | `SYS_SCROLL_UP`     | Page backward through terminal history |
 | 14 | `SYS_SCROLL_DOWN`   | Page forward toward the live console |
 | 15 | `SYS_MKDIR`         | Create a directory |

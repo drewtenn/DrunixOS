@@ -98,11 +98,12 @@ typedef struct {
 /* Terminate the current process. Never returns. */
 void sys_exit(int code);
 
-/* Write a null-terminated string to VGA output. */
+/* Write a null-terminated string to the active console or desktop shell. */
 void sys_write(const char *msg);
 
-/* Write exactly `count` bytes from buf to VGA output.  Unlike sys_write,
- * this does not stop at an embedded NUL byte — use it for binary data. */
+/* Write exactly `count` bytes from buf to the active console or desktop shell.
+ * Unlike sys_write, this does not stop at an embedded NUL byte — use it for
+ * binary data. */
 void sys_write_n(const char *buf, int count);
 
 /* Read up to count bytes from fd into buf. Returns bytes read, 0 at EOF. */
@@ -147,7 +148,7 @@ int sys_execve(const char *filename, char **argv, int argc, char **envp, int env
 /* Wait for process pid to exit.  Returns the child's exit status, or -1. */
 int sys_wait(int pid);
 
-/* Clear the VGA screen. */
+/* Clear the active console or desktop shell. */
 void sys_clear(void);
 
 /*

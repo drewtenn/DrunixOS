@@ -23,12 +23,14 @@ That last point is what makes GRUB useful: there is a published standard, called
 
 The Multiboot1 specification has two sides. The kernel must publish a small header — a fixed pattern of bytes within the first 8 KB of the executable file — that tells GRUB "I am Multiboot-compliant". GRUB, in return, promises to jump to the kernel with a specific CPU state and with a pointer to a structure describing the machine.
 
-The header is embedded near the start of the kernel binary. It is twelve bytes long: a magic number GRUB scans for (`0x1BADB002`), a flags field (we use `0`, the minimum), and a checksum that makes the three values add up to zero modulo 2³². The linker is instructed to place the header at the very front of the binary so it always lands within GRUB's 8 KB scan window.
+The header is embedded near the start of the kernel binary. Its first twelve bytes are the mandatory fields: a magic number GRUB scans for (`0x1BADB002`), a flags field, and a checksum that makes the three values add up to zero modulo 2³². Drunix sets the Multiboot video-mode flag as well, so the header also includes a preferred graphics mode: `1024x768` at 32 bits per pixel. That does not guarantee the exact mode will be available on every machine, but it asks GRUB to include linear-framebuffer metadata in the Multiboot info structure when it can.
+
+The linker is instructed to place the header at the very front of the binary so it always lands within GRUB's 8 KB scan window.
 
 When GRUB finds the header, validates the checksum, loads the kernel, and jumps into it, two registers carry information across the handoff boundary:
 
 - `EAX` (the accumulator register) contains the value `0x2BADB002` — a different magic number that tells the kernel it was loaded by a Multiboot-compliant bootloader and that the other register can be trusted.
-- `EBX` (the base register) contains a 32-bit physical address pointing to a **Multiboot info structure** — a block of memory GRUB filled in with the RAM map, the boot command line, and any modules loaded alongside the kernel.
+- `EBX` (the base register) contains a 32-bit physical address pointing to a **Multiboot info structure** — a block of memory GRUB filled in with the RAM map, the boot command line, framebuffer details when graphics mode was established, and any modules loaded alongside the kernel.
 
 The CPU state at the moment GRUB transfers control to `_start` looks like this:
 

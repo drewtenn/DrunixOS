@@ -72,11 +72,11 @@ The middle phase is especially pleasant for debugging because the exception path
 
 A debugger is not the only source of truth. We deliberately keep several output paths alive because the most interesting failures are often the ones that make interactive stepping awkward.
 
-- The VGA console shows the ordinary boot narrative.
+- The visible console or framebuffer desktop shows the ordinary boot narrative.
 - COM1 serial logging survives many failures that leave the screen stale.
 - QEMU's debug console on port `0xE9` is even simpler and often remains usable when other output paths are compromised.
 
-For fatal kernel faults, the panic path writes directly to serial and debugcon rather than depending on the normal VGA code path. That is why a crash can still leave readable diagnostics behind even when the visible screen looks frozen.
+For fatal kernel faults, the panic path writes directly to serial and debugcon rather than depending on the normal display code path. That is why a crash can still leave readable diagnostics behind even when the framebuffer or VGA screen looks frozen.
 
 ### Live Debugging and Post-Mortem Debugging
 

@@ -14,13 +14,13 @@ klog exposes three convenience functions, and between them they cover the common
 
 Underneath those wrappers sits the more general `klog_log(level, tag, msg)` entry point. That is what gives the log stream explicit severity levels such as `DEBUG`, `INFO`, `WARN`, and `ERROR` while still keeping the older helper calls small and readable.
 
-Every call produces a single line on the VGA console and on QEMU's debugcon when that output is enabled. The rendered format now includes a boot-relative timestamp, a severity, a subsystem tag, and the message text:
+Every call produces a single line on the boot console and on QEMU's debugcon when that output is enabled. Early in boot that visible console is the VGA text buffer; after the desktop starts, user-facing shell output is routed through the desktop while kernel diagnostics remain available through debugcon and `/proc/kmsg`. The rendered format now includes a boot-relative timestamp, a severity, a subsystem tag, and the message text:
 
 ![](diagrams/ch09-diag01.svg)
 
 ### How It Is Implemented
 
-klog still depends on `print_string`, the VGA text output function from Chapter 3, and still mirrors output to the optional debug console. But the log is no longer write-only. Each rendered message is also copied into a fixed-size in-memory ring buffer so the most recent history survives after the VGA screen has scrolled away.
+klog still depends on `print_string`, the legacy text output function from Chapter 3, and still mirrors output to the optional debug console. But the log is no longer write-only. Each rendered message is also copied into a fixed-size in-memory ring buffer so the most recent history survives after the visible screen has scrolled away or the desktop has taken over the display.
 
 The retained record is intentionally compact: it stores the uptime tick count, the chosen log level, a short tag, and a bounded message string. The timestamp comes from the same PIT-driven timebase that we advance every timer interrupt, so the log lines can be rendered later as `seconds.milliseconds since boot` without consulting the RTC again.
 
@@ -34,7 +34,7 @@ With klog in use everywhere, the kernel's startup path reads as a structured tra
 
 Each line is produced by a `klog` call somewhere in `start_kernel` or one of the subsystem initialisers. The PMM lines are intentionally permanent — knowing the number of free pages at boot is operationally useful and catches memory-map parsing bugs the moment they appear.
 
-Because the recent history is retained in memory, the boot log is no longer limited to what still fits on the visible VGA screen. `procfs` exposes that retained transcript as `/proc/kmsg`, and the user-space `dmesg` utility simply opens and prints that file through the normal `SYS_OPEN` and `SYS_READ` path. We therefore have both immediate human-visible console output and a later-readable diagnostic history.
+Because the recent history is retained in memory, the boot log is no longer limited to what still fits on the visible screen. `procfs` exposes that retained transcript as `/proc/kmsg`, and the user-space `dmesg` utility simply opens and prints that file through the normal `SYS_OPEN` and `SYS_READ` path. We therefore have both immediate human-visible console output and a later-readable diagnostic history.
 
 ### When to Add a klog Call
 

@@ -1,6 +1,6 @@
 \newpage
 
-## Chapter 3 — The Kernel Entry and VGA Output
+## Chapter 3 — The Kernel Entry and Display Output
 
 ### Where the CPU Lands When C Begins
 
@@ -18,7 +18,7 @@ Next comes memory setup. The kernel copies the Multiboot flags out of the boot s
 
 Immediately after that, the kernel turns on paging. Paging means the CPU stops treating addresses as direct physical locations and instead sends them through the **MMU** (Memory Management Unit, the hardware that translates virtual addresses into physical ones). We are still early in the boot, but from this point forward the CPU is running with virtual memory active.
 
-Once paging is live, the kernel activates its heap allocator so that any later initialization code can request and release variable-sized memory blocks on demand. Right after that, whatever text is already visible in the VGA buffer is captured into an in-memory mirror so the console driver can take over cleanly. That detail matters because the console driver is about to become the narrator for every later bootstrap step.
+Once paging is live, the kernel maps any framebuffer GRUB reported above the early identity range, then activates its heap allocator so that later initialization code can request and release variable-sized memory blocks on demand. Right after that, whatever text is already visible in the VGA buffer is captured into an in-memory mirror so the legacy console driver can take over cleanly if the graphical path is unavailable. That detail matters because the console code is about to become the narrator for every later bootstrap step.
 
 The next milestone is rebuilding the descriptor tables under full kernel control. The small boot-time GDT is replaced with the kernel's permanent one: null, kernel code, kernel data, user code, user data, and a **TSS** (Task State Segment, a hardware structure the CPU uses when switching from user privilege back into kernel privilege). The kernel code and data selectors stay at `0x08` and `0x10`, because later interrupt-entry code expects those exact selector values.
 
@@ -36,7 +36,7 @@ The last stretch launches the first user program. The scheduler table is cleared
 
 ### Why the Screen Driver Matters So Early
 
-All the way through that sequence, the kernel keeps printing status lines. At this stage there is no terminal emulator, no window system, and no pixel-addressed framebuffer driver. The only output device we can rely on is the **VGA** (Video Graphics Array) text buffer.
+All the way through that sequence, the kernel keeps printing status lines. Early boot still relies on the **VGA** (Video Graphics Array) text buffer because it is simple, fixed, and available before any dynamic display setup. Later in `start_kernel`, after memory management and the filesystem are ready, the kernel switches the user-facing shell into a desktop surface. If GRUB supplied a usable 32-bit RGB linear framebuffer, that desktop is presented as pixels; otherwise it falls back to the VGA text buffer.
 
 The VGA text buffer is a region of physical memory at address `0xB8000`. The display hardware continuously reads from that memory and interprets it as an 80-column by 25-row grid of character cells. If we change bytes in that region, the next refresh shows different characters on the monitor. There is no higher-level protocol involved yet. The "driver" is just memory writes plus a few controller-register updates.
 
@@ -100,6 +100,16 @@ The integer `sb_view` says how far back the user is looking. When `sb_view` is z
 
 A separate variable, `shadow_cursor`, tracks the logical write position even when the hardware cursor is hidden. When `sb_view` is non-zero, the driver pushes the hardware cursor off-screen so it does not appear in the middle of old history. The moment new output arrives, the driver snaps the view back to live mode, restores the visible cursor, and continues writing at `shadow_cursor`.
 
+### The Framebuffer Desktop
+
+The Multiboot header asks GRUB for a `1024x768x32` graphics mode. When GRUB succeeds, it sets the framebuffer flag in the Multiboot info structure and provides the physical address, pitch, dimensions, pixel depth, and RGB mask layout for the linear framebuffer. Drunix accepts only 32-bit RGB framebuffers for now. That keeps the renderer small: each pixel can be written as a packed 32-bit value after the colour components are shifted into the mask positions GRUB reported.
+
+The framebuffer may live high in physical memory, well above the first 128 MB identity map used during early paging. Before drawing to it, the kernel identity-maps the full visible framebuffer range as supervisor-writable memory. That mapping is also copied into later user page directories without the user-access bit, so the kernel can keep drawing while user processes run but ring-3 code cannot write directly to video memory.
+
+The graphical desktop still uses a text grid internally. An 8x16 bitmap font turns character cells into pixels, so the requested 1024x768 mode yields a 128-column by 48-row desktop. The shell opens as the main desktop window, with a one-line taskbar and a small launcher menu. Console output from the shell and foreground jobs is routed into that shell surface instead of the legacy VGA console.
+
+Mouse input comes from the PS/2 mouse on IRQ12. The driver decodes three-byte packets into movement and button events, the desktop tracks a pixel-positioned pointer, and the framebuffer renderer draws a small arrow cursor. Pointer motion and shell output are intentionally presented with dirty rectangles rather than full-screen repaints. On a framebuffer, repainting the whole desktop for every mouse packet or typed character would erase and redraw the pointer so visibly that it looks like blinking. Dirty presentation restores only the old cursor cells, the new cursor cells, or the shell cells that actually changed, then draws the pointer on top.
+
 ### Where the Machine Is by the End of Chapter 3
 
 By the end of this chapter, the CPU has crossed the line from "bootstrapping the kernel" to "running a real system":
@@ -109,6 +119,7 @@ By the end of this chapter, the CPU has crossed the line from "bootstrapping the
 - The timer, keyboard, TTY layer, ATA driver, and filesystem registrations are in place.
 - Hardware interrupts are enabled, so the CPU can now be preempted by timer ticks and input events.
 - The VGA text driver can draw characters, manage colours, move the cursor, scroll, and show history from its 500-row scrollback ring.
+- When GRUB provides a supported linear framebuffer, the kernel presents the shell inside a simple framebuffer desktop with an 8x16 font, taskbar/menu shell launcher, and PS/2 mouse pointer.
 - DUFS is mounted at `/`, with `devfs` at `/dev` and `procfs` at `/proc`.
 - The shell has been loaded from disk and launched in ring 3 as the first user-space process.
 

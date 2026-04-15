@@ -12,7 +12,7 @@ After that, the shell stays alive as a parent process. It does not get replaced 
 
 By the time `_start` hands control to `main`, the kernel has already placed the user at a shell prompt. From that moment on, everything the user sees is driven by one tight loop.
 
-`readline` blocks inside a `SYS_READ` call, waiting for the keyboard driver to produce a character. When a character arrives it is echoed immediately and appended to the line buffer. A backspace removes the last character from the buffer and overwrites it on screen with a space. Page Up and Page Down invoke the VGA scrollback syscalls without disturbing the input buffer. `ETX` (End-of-Text, the byte value `0x03` produced when the user holds Ctrl and presses C) discards the current buffer and re-displays the prompt. When Enter arrives the buffer is returned to the caller as a complete line.
+`readline` blocks inside a `SYS_READ` call, waiting for the keyboard driver to produce a character. When a character arrives it is echoed immediately and appended to the line buffer. A backspace removes the last character from the buffer and overwrites it on screen with a space. Page Up and Page Down invoke the legacy VGA scrollback syscalls without disturbing the input buffer; while the framebuffer desktop is active those syscalls are deliberately ignored because shell output is presented inside a desktop window rather than the raw VGA console. `ETX` (End-of-Text, the byte value `0x03` produced when the user holds Ctrl and presses C) discards the current buffer and re-displays the prompt. When Enter arrives the buffer is returned to the caller as a complete line.
 
 The returned line is tokenised in place. The shell scans for whitespace, replaces each run of it with a null byte, and fills a `char *tokens[]` array with pointers into the original buffer. No heap allocation is involved: each pointer directly addresses a substring of the original line, which is already a valid C string because the null replacement terminates it. The first token is the command name; the rest are its arguments.
 
@@ -76,7 +76,7 @@ When the shell launches a foreground child and calls `SYS_TCSETPGRP`, the TTY's 
 
 ### Prompt and ANSI Colours
 
-Before printing each prompt the shell queries the kernel for the current working directory and assembles the prompt string using **ANSI** (American National Standards Institute) terminal escape sequences. An ANSI escape sequence is a byte string beginning with the ESC character (`0x1B`) followed by `[`, a numeric attribute code, and `m`. The VGA console driver interprets these sequences, applying the requested colour to subsequent characters until a reset sequence is encountered.
+Before printing each prompt the shell queries the kernel for the current working directory and assembles the prompt string using **ANSI** (American National Standards Institute) terminal escape sequences. An ANSI escape sequence is a byte string beginning with the ESC character (`0x1B`) followed by `[`, a numeric attribute code, and `m`. The active console presentation path interprets these sequences, applying the requested colour to subsequent characters until a reset sequence is encountered. In the framebuffer desktop this happens in the shell window's backing cell buffer before those cells are converted into pixels; in VGA fallback mode it happens in the legacy text console.
 
 The shell prints the hostname in cyan, the working directory in green, and the `>` separator in cyan, then resets the colour before the cursor — keeping the user's typed input in the default white-on-black style rather than inheriting the prompt colour.
 
@@ -100,6 +100,12 @@ The longest-common-prefix step mirrors the behaviour of every POSIX shell: the f
 
 All of this happens entirely inside the shell's line editor — no new syscalls are involved. The completer writes directly to standard output using the same output path the rest of the line editor uses for echo and backspace, keeping the screen state consistent with the buffer at every step.
 
+### Running Inside the Desktop
+
+The boot shell is still an ordinary ring-3 process, but the kernel now opens it as the main app inside the desktop shell window. Standard output from the shell, its foreground children, and foreground process groups is routed into that window when the desktop is active. If the framebuffer path is available, those changed shell cells are redrawn as 8x16 glyphs in the linear framebuffer; otherwise the same cell buffer is presented through the VGA text fallback.
+
+The mouse pointer is desktop state rather than shell state. PS/2 mouse packets move a pixel-positioned cursor, and clicking the shell window focuses it. Clicking the taskbar's menu region toggles the small launcher menu, which can open the shell window again if it has been hidden in a later extension. The shell does not need to know any of this happened: it continues to read fd 0, write fd 1, and manage jobs through the same syscalls as before.
+
 ### Where the Machine Is by the End of Chapter 22
 
-We now have a real interactive parent process with job control, environment management, and PATH-based command resolution. The shell can navigate an arbitrary directory tree, launch external programs with argument vectors and an inherited environment, connect two programs through a kernel pipe, and suspend and resume jobs with terminal handoff. Every user-visible action goes through the syscall layer, making the shell the place where the process, filesystem, driver, environment, and console subsystems all meet for the first time.
+We now have a real interactive parent process with job control, environment management, and PATH-based command resolution. The shell can navigate an arbitrary directory tree, launch external programs with argument vectors and an inherited environment, connect two programs through a kernel pipe, and suspend and resume jobs with terminal handoff. Every user-visible action goes through the syscall layer, making the shell the place where the process, filesystem, driver, environment, console, and desktop subsystems all meet.

@@ -57,7 +57,7 @@ typedef struct {
 } FILE;
 ```
 
-The flags word carries direction bits, error and EOF indicators, and a buffering mode. The pointers `stdin`, `stdout`, and `stderr` are global variables that point at those three static instances. Every program that includes `stdio.h` sees them; they are pre-wired to the file descriptors the kernel gives every new process (fd 0 for TTY input, fd 1 for VGA output, fd 2 for unbuffered error output).
+The flags word carries direction bits, error and EOF indicators, and a buffering mode. The pointers `stdin`, `stdout`, and `stderr` are global variables that point at those three static instances. Every program that includes `stdio.h` sees them; they are pre-wired to the file descriptors the kernel gives every new process (fd 0 for TTY input, fd 1 for the active console or desktop shell output path, fd 2 for unbuffered error output).
 
 `fopen` maps a POSIX mode string to the corresponding kernel file operation: mode `"r"` opens an existing file, mode `"w"` creates or truncates one. It allocates a `FILE` on the heap with `malloc`. Closing a heap-allocated `FILE` closes the underlying descriptor and frees the allocation, but closing one of the three static standard streams is a no-op — they are statically allocated and must never be freed.
 

@@ -2,7 +2,9 @@
 
 ## Project Summary
 
-Drunix is a 32-bit x86 hobby operating system that boots through GRUB2 with the Multiboot1 protocol and runs a freestanding C kernel. The kernel provides protected-mode interrupt handling, paging, a physical and heap allocator, ATA disk I/O, a DUFS filesystem, a mount-tree VFS with synthetic `/dev` and `/proc` namespaces, preemptive scheduling built around generic wait queues, signals, a TTY subsystem with job control, an ELF user-program loader, and per-process virtual-memory bookkeeping for demand-paged heaps, grow-down stacks, copy-on-write fork, and anonymous `mmap` regions. The disk image includes a small userland with a shell and basic utilities.
+Drunix is a 32-bit x86 hobby operating system that boots through GRUB2 with the Multiboot1 protocol and runs a freestanding C kernel. The kernel provides protected-mode interrupt handling, paging, a physical and heap allocator, ATA disk I/O, a DUFS filesystem, a mount-tree VFS with synthetic `/dev` and `/proc` namespaces, preemptive scheduling built around generic wait queues, signals, a TTY subsystem with job control, an ELF user-program loader, and per-process virtual-memory bookkeeping for demand-paged heaps, grow-down stacks, copy-on-write fork, and anonymous `mmap` regions.
+
+The normal boot path asks GRUB for a 1024x768x32 linear framebuffer and starts a simple GUI desktop. The boot shell is opened as the main desktop app inside that GUI shell, with keyboard input, PS/2 mouse pointer support, taskbar/menu launching, framebuffer text rendering, and a VGA text-mode fallback when a suitable framebuffer is unavailable. The disk image includes a small userland with the shell and basic utilities.
 
 ## Dependencies
 
@@ -97,6 +99,8 @@ Build the kernel, ISO, disk image, and launch QEMU:
 make
 ```
 
+On a normal QEMU boot, Drunix opens the shell inside the framebuffer desktop. If the bootloader does not provide a usable 32-bit RGB framebuffer, the kernel falls back to the legacy VGA text presentation path.
+
 Useful targets:
 
 - `make run` rebuilds the kernel and ISO, then launches QEMU without rebuilding `disk.img`
@@ -129,4 +133,4 @@ Runtime logs:
 - `serial.log` captures COM1 output
 - `debugcon.log` captures QEMU debug console output on port `0xE9`
 
-Fatal kernel faults write diagnostics to serial and debugcon so they remain visible even when VGA output is no longer reliable.
+Fatal kernel faults write diagnostics to serial and debugcon so they remain visible even when the framebuffer or VGA display path is no longer reliable.
