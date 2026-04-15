@@ -7,6 +7,7 @@
 #include "irq.h"
 #include "chardev.h"
 #include "sched.h"
+#include "desktop.h"
 #include "tty.h"
 
 #define KEYBOARD_DATA_PORT 0x60
@@ -66,6 +67,14 @@ static int e0_prefix  = 0;  /* set when 0xE0 extended scancode prefix is seen */
 static int shift_held = 0;  /* non-zero while either shift key is depressed */
 static int ctrl_held  = 0;  /* non-zero while Ctrl is depressed */
 
+static void keyboard_deliver_char(char c)
+{
+    if (desktop_is_active() &&
+        desktop_handle_key(desktop_global(), c) == DESKTOP_KEY_CONSUMED)
+        return;
+    tty_input_char(0, c);
+}
+
 static void kb_push(char c) {
     int next = (kb_head + 1) % KB_BUFFER_SIZE;
     if (next != kb_tail) {
@@ -119,16 +128,16 @@ void keyboard_handler(void) {
 
     if (e0_prefix) {
         e0_prefix = 0;
-        if (scancode == 0x49) tty_input_char(0, '\x01');  /* Page Up   → SOH */
-        if (scancode == 0x51) tty_input_char(0, '\x02');  /* Page Down → STX */
-        if (scancode == 0x53) tty_input_char(0, 0x7F);    /* Delete    → DEL */
+        if (scancode == 0x49) keyboard_deliver_char('\x01');  /* Page Up   → SOH */
+        if (scancode == 0x51) keyboard_deliver_char('\x02');  /* Page Down → STX */
+        if (scancode == 0x53) keyboard_deliver_char(0x7F);    /* Delete    → DEL */
         return;
     }
 
     if (scancode < SCANCODE_MAX) {
         char c = shift_held ? scancode_ascii_shifted[scancode]
                             : scancode_ascii[scancode];
-        if (c) tty_input_char(0, c);
+        if (c) keyboard_deliver_char(c);
     }
 }
 

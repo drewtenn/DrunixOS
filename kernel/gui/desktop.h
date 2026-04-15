@@ -33,8 +33,16 @@ typedef struct {
     uint32_t shell_pid;
 } desktop_state_t;
 
+typedef enum {
+    DESKTOP_KEY_FORWARD = 0,
+    DESKTOP_KEY_CONSUMED = 1,
+} desktop_key_result_t;
+
 void desktop_init(desktop_state_t *desktop, gui_display_t *display);
 void desktop_render(desktop_state_t *desktop);
 void desktop_open_shell_window(desktop_state_t *desktop);
+desktop_key_result_t desktop_handle_key(desktop_state_t *desktop, char c);
+int desktop_is_active(void);
+desktop_state_t *desktop_global(void);
 
 #endif /* GUI_DESKTOP_H */
