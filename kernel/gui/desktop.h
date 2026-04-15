@@ -41,6 +41,8 @@ typedef enum {
 void desktop_init(desktop_state_t *desktop, gui_display_t *display);
 void desktop_render(desktop_state_t *desktop);
 void desktop_open_shell_window(desktop_state_t *desktop);
+void desktop_handle_pointer(desktop_state_t *desktop,
+                            const desktop_pointer_event_t *ev);
 desktop_key_result_t desktop_handle_key(desktop_state_t *desktop, char c);
 int desktop_is_active(void);
 desktop_state_t *desktop_global(void);

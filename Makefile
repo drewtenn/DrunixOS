@@ -82,7 +82,7 @@ KOBJS = kernel/kernel-entry.o kernel/kernel.o \
         kernel/arch/gdt.o kernel/arch/gdt_flush.o \
         kernel/arch/idt.o kernel/arch/isr.o kernel/arch/sse.o kernel/arch/df_test.o \
         kernel/arch/irq.o kernel/arch/pit.o kernel/arch/clock.o \
-        kernel/drivers/keyboard.o kernel/drivers/ata.o \
+        kernel/drivers/keyboard.o kernel/drivers/mouse.o kernel/drivers/ata.o \
         kernel/drivers/blkdev.o kernel/drivers/chardev.o kernel/drivers/tty.o \
         kernel/gui/display.o kernel/gui/desktop.o \
         kernel/mm/pmm.o kernel/mm/paging.o kernel/mm/paging_asm.o kernel/mm/fault.o kernel/mm/vma.o kernel/mm/kheap.o kernel/mm/slab.o \
