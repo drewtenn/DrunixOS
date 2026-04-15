@@ -51,7 +51,7 @@ static void test_gui_display_draw_text_stops_at_region_edge(ktest_case_t *tc)
 static void test_gui_display_presents_cells_to_framebuffer(ktest_case_t *tc)
 {
     gui_cell_t cells[2];
-    uint32_t pixels[8 * 16 * 2];
+    static uint32_t pixels[8 * 16 * 2];
     gui_display_t display;
     framebuffer_info_t fb;
 
