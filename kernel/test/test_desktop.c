@@ -62,11 +62,16 @@ static void test_desktop_render_draws_taskbar_and_launcher_label(ktest_case_t *t
 
     gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
     desktop_init(&desktop, &display);
+    desktop.launcher_open = 1;
     desktop_render(&desktop);
 
     KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display, 0, 24).ch, ' ');
     KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display, 2, 24).ch, 'M');
     KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display, 3, 24).ch, 'e');
+    KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display,
+                                            desktop.launcher_rect.x + 2,
+                                            desktop.launcher_rect.y + 1).ch,
+                    'S');
 }
 
 static ktest_case_t desktop_cases[] = {
