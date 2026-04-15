@@ -18,6 +18,7 @@
 #include "fs.h"
 #include "vfs.h"
 #include "desktop.h"
+#include "framebuffer.h"
 #include "klog.h"
 #include "kstring.h"
 #include "tty.h"
@@ -35,6 +36,10 @@
 #define MAX_COLS 80
 #define WHITE_ON_BLACK 0x0f
 #define TAB_WIDTH 8
+#define FB_REQUEST_WIDTH 1024
+#define FB_REQUEST_HEIGHT 768
+#define FB_CELL_COLS (FB_REQUEST_WIDTH / 8)
+#define FB_CELL_ROWS (FB_REQUEST_HEIGHT / 16)
 
 #define SCROLLBACK_ROWS 500
 #define ROW_BYTES (MAX_COLS * 2)
@@ -46,7 +51,9 @@ static int sb_count = 0;                     /* rows stored (0..SCROLLBACK_ROWS)
 static int sb_view = 0;                      /* 0 = live; N = scrolled N rows back */
 static int shadow_cursor = 0;                /* "true" cursor byte-offset */
 
-static gui_cell_t boot_desktop_cells[MAX_ROWS * MAX_COLS];
+static gui_cell_t boot_vga_cells[MAX_ROWS * MAX_COLS];
+static gui_cell_t boot_fb_cells[FB_CELL_COLS * FB_CELL_ROWS];
+static framebuffer_info_t boot_framebuffer;
 static gui_display_t boot_display;
 static desktop_state_t boot_desktop;
 
@@ -87,6 +94,8 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
     /* Save flags before pmm_init, which writes the bitmap at 0x10000 and
      * may overwrite mbi if GRUB placed it at the same address. */
     uint32_t mbi_flags = mbi ? mbi->flags : 0;
+    int have_boot_framebuffer =
+        framebuffer_info_from_multiboot(mbi, &boot_framebuffer) == 0;
 
     klog("BOOT", "initializing memory managers");
     pmm_init(mbi);
@@ -188,11 +197,21 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
     klog("BOOT", "scheduler ready");
 
     klog("BOOT", "initializing desktop");
-    gui_display_init(&boot_display, boot_desktop_cells, MAX_COLS, MAX_ROWS,
-                     WHITE_ON_BLACK);
+    gui_cell_t *cells = have_boot_framebuffer ? boot_fb_cells : boot_vga_cells;
+    int cols = have_boot_framebuffer ? (int)boot_framebuffer.cell_cols : MAX_COLS;
+    int rows = have_boot_framebuffer ? (int)boot_framebuffer.cell_rows : MAX_ROWS;
+
+    gui_display_init(&boot_display, cells, cols, rows, WHITE_ON_BLACK);
     desktop_init(&boot_desktop, &boot_display);
     if (desktop_is_active()) {
-        desktop_set_presentation_target(&boot_desktop, VIDEO_ADDRESS);
+        if (!have_boot_framebuffer) {
+            desktop_set_presentation_target(&boot_desktop, VIDEO_ADDRESS);
+        } else {
+            klog_uint("BOOT", "framebuffer desktop cols",
+                      boot_framebuffer.cell_cols);
+            klog_uint("BOOT", "framebuffer desktop rows",
+                      boot_framebuffer.cell_rows);
+        }
         desktop_open_shell_window(&boot_desktop);
         desktop_render(&boot_desktop);
         klog("BOOT", "desktop enabled");

@@ -10,6 +10,7 @@
 #include "tty.h"
 
 static gui_cell_t desktop_cells[80 * 25];
+static gui_cell_t large_desktop_cells[128 * 48];
 
 extern int syscall_console_write_for_test(process_t *proc, const char *buf,
                                           uint32_t len);
@@ -97,6 +98,22 @@ static void test_desktop_boot_layout_opens_shell_window(ktest_case_t *tc)
     KTEST_EXPECT_GE(tc, desktop.shell_rect.w, 48);
     KTEST_EXPECT_GE(tc, desktop.launcher_rect.y,
                     desktop.shell_rect.y + desktop.shell_rect.h);
+}
+
+static void test_desktop_layout_scales_to_framebuffer_grid(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+
+    gui_display_init(&display, large_desktop_cells, 128, 48, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+
+    KTEST_EXPECT_EQ(tc, desktop.taskbar.y, 47);
+    KTEST_EXPECT_GE(tc, desktop.shell_rect.w, 100);
+    KTEST_EXPECT_GE(tc, desktop.shell_rect.h, 30);
+    KTEST_EXPECT_GE(tc, desktop.shell_content.w, 98);
+    KTEST_EXPECT_GE(tc, desktop.shell_content.h, 28);
 }
 
 static void test_desktop_render_draws_taskbar_and_launcher_label(ktest_case_t *tc)
@@ -728,6 +745,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_gui_display_draw_text_stops_at_region_edge),
     KTEST_CASE(test_gui_display_presents_cells_to_framebuffer),
     KTEST_CASE(test_desktop_boot_layout_opens_shell_window),
+    KTEST_CASE(test_desktop_layout_scales_to_framebuffer_grid),
     KTEST_CASE(test_desktop_render_draws_taskbar_and_launcher_label),
     KTEST_CASE(test_desktop_init_binds_global_keyboard_target),
     KTEST_CASE(test_desktop_escape_opens_launcher_and_consumes_input),

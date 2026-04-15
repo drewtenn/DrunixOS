@@ -6,6 +6,12 @@ static desktop_state_t *g_desktop = 0;
 
 static void desktop_layout(desktop_state_t *desktop)
 {
+    int margin_x = desktop->display->cols >= 100 ? 10 : 6;
+    int margin_top = desktop->display->rows >= 40 ? 4 : 3;
+    int taskbar_gap = desktop->display->rows >= 40 ? 8 : 7;
+    int shell_w;
+    int shell_h;
+
     desktop->taskbar.x = 0;
     desktop->taskbar.y = desktop->display->rows - 1;
     desktop->taskbar.w = desktop->display->cols;
@@ -16,10 +22,17 @@ static void desktop_layout(desktop_state_t *desktop)
     desktop->launcher_rect.w = 18;
     desktop->launcher_rect.h = 5;
 
-    desktop->shell_rect.x = 6;
-    desktop->shell_rect.y = 3;
-    desktop->shell_rect.w = desktop->display->cols - 12;
-    desktop->shell_rect.h = desktop->display->rows - 10;
+    shell_w = desktop->display->cols - margin_x * 2;
+    shell_h = desktop->display->rows - margin_top - taskbar_gap;
+    if (shell_w < 48 && desktop->display->cols >= 60)
+        shell_w = 48;
+    if (shell_h < 15 && desktop->display->rows >= 25)
+        shell_h = 15;
+
+    desktop->shell_rect.x = margin_x;
+    desktop->shell_rect.y = margin_top;
+    desktop->shell_rect.w = shell_w;
+    desktop->shell_rect.h = shell_h;
 
     desktop->shell_content.x = desktop->shell_rect.x + 1;
     desktop->shell_content.y = desktop->shell_rect.y + 1;
