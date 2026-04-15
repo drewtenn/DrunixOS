@@ -1,5 +1,6 @@
 #include "ktest.h"
 #include "display.h"
+#include "desktop.h"
 
 static gui_cell_t desktop_cells[80 * 25];
 
@@ -37,9 +38,42 @@ static void test_gui_display_draw_text_stops_at_region_edge(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display, 7, 2).ch, ' ');
 }
 
+static void test_desktop_boot_layout_opens_shell_window(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+
+    KTEST_EXPECT_TRUE(tc, desktop.active);
+    KTEST_EXPECT_TRUE(tc, desktop.shell_window_open);
+    KTEST_EXPECT_FALSE(tc, desktop.launcher_open);
+    KTEST_EXPECT_EQ(tc, desktop.focus, DESKTOP_FOCUS_SHELL);
+    KTEST_EXPECT_EQ(tc, desktop.taskbar.y, 24);
+    KTEST_EXPECT_GE(tc, desktop.shell_rect.w, 48);
+}
+
+static void test_desktop_render_draws_taskbar_and_launcher_label(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_render(&desktop);
+
+    KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display, 0, 24).ch, ' ');
+    KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display, 2, 24).ch, 'M');
+    KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display, 3, 24).ch, 'e');
+}
+
 static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_gui_display_fill_rect_clips_to_bounds),
     KTEST_CASE(test_gui_display_draw_text_stops_at_region_edge),
+    KTEST_CASE(test_desktop_boot_layout_opens_shell_window),
+    KTEST_CASE(test_desktop_render_draws_taskbar_and_launcher_label),
 };
 
 ktest_suite_t *ktest_suite_desktop(void)
