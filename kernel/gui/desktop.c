@@ -91,7 +91,8 @@ void desktop_handle_pointer(desktop_state_t *desktop,
     if (!desktop || !ev)
         return;
 
-    if (ev->left_down &&
+    if (desktop->shell_window_open &&
+        ev->left_down &&
         ev->x >= desktop->shell_rect.x &&
         ev->x < desktop->shell_rect.x + desktop->shell_rect.w &&
         ev->y >= desktop->shell_rect.y &&

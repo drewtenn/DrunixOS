@@ -121,8 +121,11 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
     klog("TTY", "tty0 initialized");
     keyboard_init();
     klog("IRQ", "keyboard handler registered");
-    if (mouse_init() == 0)
+    int mouse_rc = mouse_init();
+    if (mouse_rc == 0)
         klog("IRQ", "mouse handler registered");
+    else
+        klog_uint("IRQ", "mouse init failed rc", (uint32_t)(-mouse_rc));
     klog("BOOT", "console and input devices ready");
 
 #ifdef KTEST_ENABLED

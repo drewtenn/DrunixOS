@@ -25,6 +25,16 @@ typedef void (*irq_handler_fn)(void);
 void irq_dispatch_init(void);
 
 /*
+ * PIC mask helpers.  IRQ numbers are the same 0–15 hardware lines used by
+ * irq_register().  irq_unmask() also clears the master cascade bit when an
+ * IRQ on the slave PIC is enabled.
+ */
+void irq_unmask(uint8_t irq_num);
+void irq_mask(uint8_t irq_num);
+void irq_set_pic_masks(uint8_t master_mask, uint8_t slave_mask);
+void irq_apply_pic_masks(void);
+
+/*
  * Register handler fn for hardware IRQ line irq_num (0 = PIT timer,
  * 1 = PS/2 keyboard, …).  Passing NULL clears the registration.
  */
