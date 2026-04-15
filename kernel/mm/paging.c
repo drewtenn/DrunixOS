@@ -43,6 +43,52 @@ void paging_init(void) {
     paging_enable();
 }
 
+int paging_identity_map_kernel_range(uint32_t phys_start,
+                                     uint32_t byte_len,
+                                     uint32_t flags)
+{
+    uint32_t *pd = (uint32_t *)PAGE_DIR_ADDR;
+    uint32_t start = phys_start & ~0xFFFu;
+    uint64_t end64;
+    uint32_t end;
+    uint32_t page_flags;
+
+    if (byte_len == 0)
+        return 0;
+    if (phys_start > UINT32_MAX - (byte_len - 1u))
+        return -1;
+
+    end64 = ((uint64_t)phys_start + byte_len + 0xFFFu) & ~0xFFFull;
+    if (end64 > UINT32_MAX)
+        return -1;
+    end = (uint32_t)end64;
+
+    page_flags = (flags | PG_PRESENT) & ~(uint32_t)PG_USER;
+    for (uint32_t virt = start; virt < end; virt += 0x1000u) {
+        uint32_t pdi = virt >> 22;
+        uint32_t pti = (virt >> 12) & 0x3FFu;
+        uint32_t *pt;
+
+        if (!(pd[pdi] & PG_PRESENT)) {
+            uint32_t pt_phys = pmm_alloc_page();
+            if (!pt_phys)
+                return -1;
+
+            pt = (uint32_t *)pt_phys;
+            for (int i = 0; i < 1024; i++)
+                pt[i] = 0;
+            pd[pdi] = paging_entry_build(pt_phys,
+                                         PG_PRESENT | PG_WRITABLE);
+        } else {
+            pt = (uint32_t *)paging_entry_addr(pd[pdi]);
+        }
+
+        pt[pti] = paging_entry_build(virt, page_flags);
+        paging_invlpg(virt);
+    }
+    return 0;
+}
+
 uint32_t paging_create_user_space(void)
 {
     uint32_t pd_phys = pmm_alloc_page();
@@ -56,13 +102,15 @@ uint32_t paging_create_user_space(void)
         new_pd[i] = 0;
 
     /*
-     * Copy kernel PDEs 0–31 (covers the 128 MB identity map).
-     * These entries do NOT have PG_USER set, so ring-3 code cannot read or
-     * write kernel memory even though the mappings exist in the PD.
-     * Supervisor (ring-0) accesses are unaffected by PG_USER.
+     * Copy every supervisor-only kernel PDE, including device mappings added
+     * after paging_init(). These entries do NOT have PG_USER set, so ring-3
+     * code cannot read or write kernel memory even though supervisor code can
+     * still use the mappings while running on a process page directory.
      */
-    for (int i = 0; i < 32; i++)
-        new_pd[i] = kernel_pd[i];
+    for (int i = 0; i < 1024; i++) {
+        if ((kernel_pd[i] & (PG_PRESENT | PG_USER)) == PG_PRESENT)
+            new_pd[i] = kernel_pd[i];
+    }
 
     return pd_phys;
 }

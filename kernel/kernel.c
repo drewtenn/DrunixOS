@@ -98,6 +98,26 @@ static int boot_framebuffer_grid(const framebuffer_info_t *fb,
     return 1;
 }
 
+static int boot_map_framebuffer(const framebuffer_info_t *fb)
+{
+    uint64_t visible_row_bytes;
+    uint64_t last_row_offset;
+    uint64_t byte_len;
+
+    if (!fb || fb->height == 0)
+        return -1;
+
+    visible_row_bytes = (uint64_t)fb->width * 4u;
+    last_row_offset = (uint64_t)(fb->height - 1u) * fb->pitch;
+    byte_len = last_row_offset + visible_row_bytes;
+    if (byte_len == 0 || byte_len > UINT32_MAX)
+        return -1;
+
+    return paging_identity_map_kernel_range((uint32_t)fb->address,
+                                            (uint32_t)byte_len,
+                                            PG_PRESENT | PG_WRITABLE);
+}
+
 #ifdef KTEST_ENABLED
 int boot_framebuffer_grid_for_test(const framebuffer_info_t *fb,
                                    int *cols,
@@ -127,6 +147,10 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
     klog("BOOT", "initializing memory managers");
     pmm_init(mbi);
     paging_init();
+    if (have_boot_framebuffer && boot_map_framebuffer(&boot_framebuffer) != 0) {
+        klog("BOOT", "framebuffer map failed, using VGA fallback");
+        have_boot_framebuffer = 0;
+    }
     kheap_init();
     klog_uint("HEAP", "after kheap_init", kheap_free_bytes());
     scrollback_init();

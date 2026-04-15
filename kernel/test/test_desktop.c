@@ -5,6 +5,7 @@
 #include "framebuffer.h"
 #include "kstring.h"
 #include "mouse.h"
+#include "paging.h"
 #include "process.h"
 #include "syscall.h"
 #include "tty.h"
@@ -622,6 +623,30 @@ test_boot_framebuffer_grid_clamps_to_static_cell_buffer(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, rows, 48);
 }
 
+static void test_framebuffer_mapping_reaches_high_physical_lfb(ktest_case_t *tc)
+{
+    uint32_t high_fb = 0xE0000000u;
+    uint32_t *kernel_pte;
+    uint32_t *user_pte;
+    uint32_t user_pd;
+
+    KTEST_ASSERT_EQ(tc,
+                    paging_identity_map_kernel_range(high_fb, 0x2000u,
+                                                     PG_PRESENT | PG_WRITABLE),
+                    0);
+    KTEST_ASSERT_EQ(tc, paging_walk(PAGE_DIR_ADDR, high_fb, &kernel_pte), 0);
+    KTEST_EXPECT_EQ(tc, paging_entry_addr(*kernel_pte), high_fb);
+    KTEST_EXPECT_EQ(tc, *kernel_pte & (PG_PRESENT | PG_WRITABLE),
+                    PG_PRESENT | PG_WRITABLE);
+    KTEST_EXPECT_EQ(tc, *kernel_pte & PG_USER, 0u);
+
+    user_pd = paging_create_user_space();
+    KTEST_ASSERT_NE(tc, user_pd, 0u);
+    KTEST_ASSERT_EQ(tc, paging_walk(user_pd, high_fb, &user_pte), 0);
+    KTEST_EXPECT_EQ(tc, paging_entry_addr(*user_pte), high_fb);
+    KTEST_EXPECT_EQ(tc, *user_pte & PG_USER, 0u);
+}
+
 static void test_framebuffer_info_rejects_address_above_uintptr(ktest_case_t *tc)
 {
     multiboot_info_t mbi;
@@ -854,6 +879,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_can_use_framebuffer_presentation_target),
     KTEST_CASE(test_framebuffer_info_accepts_1024_768_32_rgb),
     KTEST_CASE(test_boot_framebuffer_grid_clamps_to_static_cell_buffer),
+    KTEST_CASE(test_framebuffer_mapping_reaches_high_physical_lfb),
     KTEST_CASE(test_framebuffer_info_rejects_address_above_uintptr),
     KTEST_CASE(test_framebuffer_info_rejects_extent_above_uintptr),
     KTEST_CASE(test_framebuffer_info_rejects_pitch_overflow_width),

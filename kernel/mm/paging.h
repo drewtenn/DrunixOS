@@ -40,6 +40,23 @@ static inline uint32_t paging_entry_replace_addr(uint32_t entry, uint32_t addr)
 
 void paging_init(void);
 
+/*
+ * paging_identity_map_kernel_range: identity-map a physical range in the
+ * shared kernel page directory as supervisor memory.
+ *
+ * This is used for device memory such as a Multiboot-provided framebuffer that
+ * can live above the low 128 MB identity map created at boot.
+ *
+ * phys_start: physical start address; may be unaligned.
+ * byte_len:   number of bytes to map.
+ * flags:      PTE flags; PG_USER is intentionally stripped.
+ *
+ * Returns 0 on success, -1 on overflow or page-table allocation failure.
+ */
+int paging_identity_map_kernel_range(uint32_t phys_start,
+                                     uint32_t byte_len,
+                                     uint32_t flags);
+
 /* Implemented in paging.asm — CR3/CR0 cannot be written from plain C */
 extern void paging_load_cr3(uint32_t pd_phys);
 extern void paging_enable(void);
@@ -47,7 +64,7 @@ extern void paging_enable(void);
 /*
  * paging_create_user_space: allocate a fresh page directory for a new process.
  *
- * Copies kernel PDEs 0–31 (the 128 MB identity map) into the new directory
+ * Copies all present supervisor-only kernel PDEs into the new directory
  * without PG_USER, so ring-3 code cannot reach kernel memory. User pages are
  * added separately with paging_map_page().
  *
