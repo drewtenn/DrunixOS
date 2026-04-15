@@ -5,7 +5,7 @@ PYTHON  := python3
 QEMU    := qemu-system-i386
 GDB     := i386-elf-gdb
 CFLAGS  := -m32 -g -ffreestanding -mno-sse -mno-sse2 -mno-mmx -msoft-float -Wstack-usage=1024
-INC     := -I kernel -I kernel/arch -I kernel/mm -I kernel/drivers -I kernel/proc -I kernel/fs -I kernel/lib
+INC     := -I kernel -I kernel/arch -I kernel/mm -I kernel/drivers -I kernel/proc -I kernel/fs -I kernel/lib -I kernel/gui
 DEPFLAGS := -MMD -MP
 
 # ─── Unit tests ──────────────────────────────────────────────────────────────
@@ -23,7 +23,8 @@ KTOBJS  = kernel/test/ktest.o \
            kernel/test/test_process.o \
            kernel/test/test_sched.o \
            kernel/test/test_fs.o \
-           kernel/test/test_uaccess.o
+           kernel/test/test_uaccess.o \
+           kernel/test/test_desktop.o
 else
 KLOG_TO_DEBUGCON ?= 0
 KTOBJS  =
@@ -83,6 +84,7 @@ KOBJS = kernel/kernel-entry.o kernel/kernel.o \
         kernel/arch/irq.o kernel/arch/pit.o kernel/arch/clock.o \
         kernel/drivers/keyboard.o kernel/drivers/ata.o \
         kernel/drivers/blkdev.o kernel/drivers/chardev.o kernel/drivers/tty.o \
+        kernel/gui/display.o \
         kernel/mm/pmm.o kernel/mm/paging.o kernel/mm/paging_asm.o kernel/mm/fault.o kernel/mm/vma.o kernel/mm/kheap.o kernel/mm/slab.o \
         kernel/proc/elf.o kernel/proc/process.o kernel/proc/process_asm.o \
         kernel/proc/sched.o kernel/proc/syscall.o kernel/proc/core.o kernel/proc/mem_forensics.o kernel/proc/pipe.o kernel/proc/switch.o \

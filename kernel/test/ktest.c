@@ -85,6 +85,7 @@ void ktest_run_all(void) {
     ktest_run_suite(ktest_suite_sched());
     ktest_run_suite(ktest_suite_fs());
     ktest_run_suite(ktest_suite_uaccess());
+    ktest_run_suite(ktest_suite_desktop());
 
     klog("KTEST", "=== kernel unit tests end ===");
 }
