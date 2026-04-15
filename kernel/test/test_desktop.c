@@ -164,6 +164,24 @@ static void test_desktop_render_draws_taskbar_and_launcher_label(ktest_case_t *t
                     'h');
 }
 
+static void test_framebuffer_grid_desktop_renders_taskbar_and_shell_title(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+
+    gui_display_init(&display, large_desktop_cells, 128, 48, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+    desktop_render(&desktop);
+
+    KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display, 2, 47).ch, 'M');
+    KTEST_EXPECT_EQ(tc,
+                    gui_display_cell_at(&display,
+                                        desktop.shell_rect.x + 2,
+                                        desktop.shell_rect.y).ch,
+                    'S');
+}
+
 static void test_desktop_init_binds_global_keyboard_target(ktest_case_t *tc)
 {
     gui_display_t display;
@@ -814,6 +832,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_boot_layout_opens_shell_window),
     KTEST_CASE(test_desktop_layout_scales_to_framebuffer_grid),
     KTEST_CASE(test_desktop_render_draws_taskbar_and_launcher_label),
+    KTEST_CASE(test_framebuffer_grid_desktop_renders_taskbar_and_shell_title),
     KTEST_CASE(test_desktop_init_binds_global_keyboard_target),
     KTEST_CASE(test_desktop_escape_opens_launcher_and_consumes_input),
     KTEST_CASE(test_desktop_plain_text_forwards_to_shell_when_focused),

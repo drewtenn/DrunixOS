@@ -2,6 +2,12 @@
 #include "kheap.h"
 #include "kstring.h"
 
+#define DESKTOP_ATTR_BACKGROUND 0x1f
+#define DESKTOP_ATTR_TASKBAR    0x70
+#define DESKTOP_ATTR_WINDOW     0x1e
+#define DESKTOP_ATTR_TITLE      0x70
+#define DESKTOP_ATTR_LAUNCHER   0x70
+
 static desktop_state_t *g_desktop = 0;
 
 static void desktop_layout(desktop_state_t *desktop)
@@ -493,24 +499,24 @@ void desktop_render(desktop_state_t *desktop)
 
     gui_display_fill_rect(desktop->display, 0, 0,
                           desktop->display->cols, desktop->display->rows,
-                          ' ', 0x1f);
+                          ' ', DESKTOP_ATTR_BACKGROUND);
     gui_display_fill_rect(desktop->display,
                           desktop->taskbar.x, desktop->taskbar.y,
                           desktop->taskbar.w, desktop->taskbar.h,
-                          ' ', 0x70);
+                          ' ', DESKTOP_ATTR_TASKBAR);
     gui_display_draw_text(desktop->display, 2, desktop->taskbar.y, 10,
-                          "Menu", 0x70);
+                          "Menu", DESKTOP_ATTR_TITLE);
 
     if (desktop->shell_window_open) {
         gui_display_draw_frame(desktop->display,
                                desktop->shell_rect.x, desktop->shell_rect.y,
                                desktop->shell_rect.w, desktop->shell_rect.h,
-                               0x1e);
+                               DESKTOP_ATTR_WINDOW);
         gui_display_draw_text(desktop->display,
                               desktop->shell_rect.x + 2,
                               desktop->shell_rect.y,
                               desktop->shell_rect.w - 4,
-                              "Shell", 0x1e);
+                              "Shell", DESKTOP_ATTR_WINDOW);
     }
 
     if (desktop->launcher_open) {
@@ -519,12 +525,12 @@ void desktop_render(desktop_state_t *desktop)
                                desktop->launcher_rect.y,
                                desktop->launcher_rect.w,
                                desktop->launcher_rect.h,
-                               0x70);
+                               DESKTOP_ATTR_LAUNCHER);
         gui_display_draw_text(desktop->display,
                               desktop->launcher_rect.x + 2,
                               desktop->launcher_rect.y + 1,
                               desktop->launcher_rect.w - 4,
-                              "Shell", 0x70);
+                              "Shell", DESKTOP_ATTR_LAUNCHER);
     }
 
     if (desktop->shell_window_open)
