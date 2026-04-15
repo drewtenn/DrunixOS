@@ -809,6 +809,73 @@ static void test_desktop_full_screen_write_does_not_scroll_until_next_char(ktest
     desktop_test_destroy(&desktop);
 }
 
+static void desktop_write_history_for_scroll_test(ktest_case_t *tc,
+                                                  desktop_state_t *desktop)
+{
+    char row_char;
+
+    for (int row = 0; row < desktop->shell_terminal.rows + 2; row++) {
+        row_char = (char)('A' + (row % 26));
+        for (int col = 0; col < desktop->shell_terminal.cols; col++)
+            KTEST_ASSERT_EQ(tc,
+                            desktop_write_console_output(desktop,
+                                                         &row_char, 1),
+                            1);
+        KTEST_ASSERT_EQ(tc, desktop_write_console_output(desktop, "\n", 1),
+                        1);
+    }
+    KTEST_EXPECT_GE(tc,
+                    gui_terminal_history_count(&desktop->shell_terminal),
+                    1);
+}
+
+static void test_desktop_scroll_syscall_moves_terminal_view(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+    desktop_attach_shell_process(&desktop, 7, 7);
+    desktop_write_history_for_scroll_test(tc, &desktop);
+
+    KTEST_EXPECT_TRUE(tc, desktop.shell_terminal.live_view);
+    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_SCROLL_UP, 1, 0, 0, 0, 0), 0);
+    KTEST_EXPECT_EQ(tc,
+                    gui_terminal_visible_view_top(&desktop.shell_terminal),
+                    1);
+    KTEST_EXPECT_FALSE(tc, desktop.shell_terminal.live_view);
+
+    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_SCROLL_DOWN, 1, 0, 0, 0, 0), 0);
+    KTEST_EXPECT_EQ(tc,
+                    gui_terminal_visible_view_top(&desktop.shell_terminal),
+                    0);
+    KTEST_EXPECT_TRUE(tc, desktop.shell_terminal.live_view);
+    desktop_test_destroy(&desktop);
+}
+
+static void test_desktop_new_output_snaps_scrollback_to_live(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+    desktop_write_history_for_scroll_test(tc, &desktop);
+
+    KTEST_ASSERT_EQ(tc, desktop_scroll_console(&desktop, 1), 1);
+    KTEST_ASSERT_TRUE(tc, !desktop.shell_terminal.live_view);
+
+    KTEST_EXPECT_EQ(tc, desktop_write_console_output(&desktop, "x", 1), 1);
+    KTEST_EXPECT_EQ(tc,
+                    gui_terminal_visible_view_top(&desktop.shell_terminal),
+                    0);
+    KTEST_EXPECT_TRUE(tc, desktop.shell_terminal.live_view);
+    desktop_test_destroy(&desktop);
+}
+
 static void test_syscall_clear_clears_desktop_shell_buffer(ktest_case_t *tc)
 {
     gui_display_t display;
@@ -1717,6 +1784,8 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_syscall_console_write_routes_session_output_to_desktop),
     KTEST_CASE(test_desktop_ansi_color_escape_updates_attr_without_printing),
     KTEST_CASE(test_desktop_full_screen_write_does_not_scroll_until_next_char),
+    KTEST_CASE(test_desktop_scroll_syscall_moves_terminal_view),
+    KTEST_CASE(test_desktop_new_output_snaps_scrollback_to_live),
     KTEST_CASE(test_syscall_clear_clears_desktop_shell_buffer),
     KTEST_CASE(test_tty_ctrl_c_echo_routes_to_desktop_shell_buffer),
     KTEST_CASE(test_mouse_packet_decode_preserves_motion_and_buttons),

@@ -826,6 +826,19 @@ int desktop_clear_console(desktop_state_t *desktop)
     return 1;
 }
 
+int desktop_scroll_console(desktop_state_t *desktop, int rows)
+{
+    if (!desktop || !desktop->active || !desktop->desktop_enabled)
+        return 0;
+    if (!desktop->shell_window_open || !desktop->shell_terminal.live)
+        return 0;
+
+    gui_terminal_scroll_view(&desktop->shell_terminal, rows);
+    desktop_sync_legacy_shell_from_terminal(desktop);
+    desktop_render(desktop);
+    return 1;
+}
+
 int desktop_write_process_output(desktop_state_t *desktop,
                                  uint32_t pid,
                                  uint32_t pgid,
