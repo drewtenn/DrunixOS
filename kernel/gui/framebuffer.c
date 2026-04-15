@@ -1,6 +1,7 @@
 #include "framebuffer.h"
 #include "font8x16.h"
 #include "kstring.h"
+#include <limits.h>
 
 static int rgb_mask_overlaps(uint32_t a_pos, uint32_t a_size,
                              uint32_t b_pos, uint32_t b_size)
@@ -182,12 +183,14 @@ void framebuffer_draw_glyph(const framebuffer_info_t *fb,
 
     if (!fb || fb->address == 0)
         return;
+    if (x > INT_MAX - 7 || y > INT_MAX - 15)
+        return;
 
     glyph = font8x16_glyph(ch);
     for (int row = 0; row < 16; row++) {
         uint8_t bits = glyph[row];
         for (int col = 0; col < 8; col++) {
-            uint32_t color = (bits & (0x80u >> col)) ? fg : bg;
+            uint32_t color = (bits & (1u << col)) ? fg : bg;
             framebuffer_fill_rect(fb, x + col, y + row, 1, 1, color);
         }
     }
