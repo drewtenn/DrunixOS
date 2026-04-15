@@ -27,6 +27,23 @@ static uint64_t div_u64_by_255(uint64_t value)
     return quotient;
 }
 
+static uint64_t div_u64_by_u64(uint64_t numerator, uint64_t denominator)
+{
+    uint64_t quotient = 0;
+    uint64_t remainder = 0;
+
+    if (denominator == 0)
+        return 0;
+    for (int bit = 63; bit >= 0; bit--) {
+        remainder = (remainder << 1) | ((numerator >> bit) & 1ull);
+        if (remainder >= denominator) {
+            remainder -= denominator;
+            quotient |= 1ull << bit;
+        }
+    }
+    return quotient;
+}
+
 static uint32_t scale_color(uint8_t value, uint8_t mask_size)
 {
     uint64_t max;
@@ -179,49 +196,106 @@ static gui_pixel_rect_t framebuffer_clip_pixel_rect(const framebuffer_info_t *fb
                                                     int x, int y, int w, int h)
 {
     gui_pixel_rect_t out = { 0, 0, 0, 0 };
-    int right;
-    int bottom;
+    int64_t left;
+    int64_t top;
+    int64_t right;
+    int64_t bottom;
 
     if (!fb || w <= 0 || h <= 0)
         return out;
-    if (x >= (int)fb->width || y >= (int)fb->height)
+    left = x;
+    top = y;
+    right = left + (int64_t)w;
+    bottom = top + (int64_t)h;
+    if (left >= (int64_t)fb->width || top >= (int64_t)fb->height)
         return out;
-    right = x + w;
-    bottom = y + h;
     if (right <= 0 || bottom <= 0)
         return out;
-    if (x < 0)
-        x = 0;
-    if (y < 0)
-        y = 0;
-    if (right > (int)fb->width)
-        right = (int)fb->width;
-    if (bottom > (int)fb->height)
-        bottom = (int)fb->height;
-    if (x >= right || y >= bottom)
+    if (left < 0)
+        left = 0;
+    if (top < 0)
+        top = 0;
+    if (right > (int64_t)fb->width)
+        right = (int64_t)fb->width;
+    if (bottom > (int64_t)fb->height)
+        bottom = (int64_t)fb->height;
+    if (left >= right || top >= bottom)
         return out;
-    out.x = x;
-    out.y = y;
-    out.w = right - x;
-    out.h = bottom - y;
+    if (left > INT_MAX || top > INT_MAX)
+        return out;
+    if (right - left > INT_MAX || bottom - top > INT_MAX)
+        return out;
+    out.x = (int)left;
+    out.y = (int)top;
+    out.w = (int)(right - left);
+    out.h = (int)(bottom - top);
     return out;
+}
+
+static void framebuffer_fill_rect_clipped64(const framebuffer_info_t *fb,
+                                            int64_t x, int64_t y,
+                                            int64_t w, int64_t h,
+                                            uint32_t color)
+{
+    int64_t left;
+    int64_t top;
+    int64_t right;
+    int64_t bottom;
+
+    if (!fb || fb->address == 0 || w <= 0 || h <= 0)
+        return;
+    left = x;
+    top = y;
+    right = left + w;
+    bottom = top + h;
+    if (right <= 0 || bottom <= 0)
+        return;
+    if (left < 0)
+        left = 0;
+    if (top < 0)
+        top = 0;
+    if (right > (int64_t)fb->width)
+        right = (int64_t)fb->width;
+    if (bottom > (int64_t)fb->height)
+        bottom = (int64_t)fb->height;
+    if (left >= right || top >= bottom)
+        return;
+    if (left > INT_MAX || top > INT_MAX)
+        return;
+    if (right - left > INT_MAX || bottom - top > INT_MAX)
+        return;
+    framebuffer_fill_rect(fb, (int)left, (int)top,
+                          (int)(right - left), (int)(bottom - top), color);
 }
 
 void framebuffer_draw_rect_outline(const framebuffer_info_t *fb,
                                    int x, int y, int w, int h,
                                    uint32_t color)
 {
+    int64_t left;
+    int64_t top;
+    int64_t right;
+    int64_t bottom;
+
     if (!fb || w <= 0 || h <= 0)
         return;
-    framebuffer_fill_rect(fb, x, y, w, 1, color);
-    framebuffer_fill_rect(fb, x, y + h - 1, w, 1, color);
-    framebuffer_fill_rect(fb, x, y, 1, h, color);
-    framebuffer_fill_rect(fb, x + w - 1, y, 1, h, color);
+    left = x;
+    top = y;
+    right = left + (int64_t)w;
+    bottom = top + (int64_t)h;
+    if (right <= left || bottom <= top)
+        return;
+    framebuffer_fill_rect_clipped64(fb, left, top, right - left, 1, color);
+    framebuffer_fill_rect_clipped64(fb, left, bottom - 1, right - left, 1,
+                                    color);
+    framebuffer_fill_rect_clipped64(fb, left, top, 1, bottom - top, color);
+    framebuffer_fill_rect_clipped64(fb, right - 1, top, 1, bottom - top,
+                                    color);
 }
 
 static void framebuffer_draw_glyph_clipped(const framebuffer_info_t *fb,
                                            const gui_pixel_rect_t *clip,
-                                           int x, int y,
+                                           int64_t x, int64_t y,
                                            unsigned char ch,
                                            uint32_t fg,
                                            uint32_t bg)
@@ -230,24 +304,22 @@ static void framebuffer_draw_glyph_clipped(const framebuffer_info_t *fb,
 
     if (!fb || !clip || fb->address == 0)
         return;
-    if (x > INT_MAX - 7 || y > INT_MAX - 15)
-        return;
 
     glyph = font8x16_glyph(ch);
     for (int row = 0; row < 16; row++) {
         uint8_t bits = glyph[row];
-        int py = y + row;
+        int64_t py = y + row;
 
-        if (py < clip->y || py >= clip->y + clip->h)
+        if (py < clip->y || py >= (int64_t)clip->y + clip->h)
             continue;
         for (int col = 0; col < 8; col++) {
-            int px = x + col;
+            int64_t px = x + col;
             uint32_t color;
 
-            if (px < clip->x || px >= clip->x + clip->w)
+            if (px < clip->x || px >= (int64_t)clip->x + clip->w)
                 continue;
             color = (bits & (1u << col)) ? fg : bg;
-            framebuffer_fill_rect(fb, px, py, 1, 1, color);
+            framebuffer_fill_rect_clipped64(fb, px, py, 1, 1, color);
         }
     }
 }
@@ -260,6 +332,8 @@ void framebuffer_draw_text_clipped(const framebuffer_info_t *fb,
                                    uint32_t bg)
 {
     gui_pixel_rect_t bounded;
+    int64_t cursor_x;
+    int64_t clip_right;
     int col = 0;
 
     if (!fb || !clip || !text)
@@ -268,13 +342,21 @@ void framebuffer_draw_text_clipped(const framebuffer_info_t *fb,
                                            clip->h);
     if (bounded.w <= 0 || bounded.h <= 0)
         return;
+    cursor_x = x;
+    clip_right = (int64_t)bounded.x + (int64_t)bounded.w;
     while (text[col]) {
-        framebuffer_draw_glyph_clipped(fb, &bounded,
-                                       x + col * (int)GUI_FONT_W,
-                                       y,
-                                       (unsigned char)text[col],
-                                       fg,
-                                       bg);
+        if (cursor_x > INT_MAX - 7)
+            break;
+        if (cursor_x + 7 < bounded.x) {
+            cursor_x += GUI_FONT_W;
+            col++;
+            continue;
+        }
+        if (cursor_x >= clip_right)
+            break;
+        framebuffer_draw_glyph_clipped(fb, &bounded, cursor_x, y,
+                                       (unsigned char)text[col], fg, bg);
+        cursor_x += GUI_FONT_W;
         col++;
     }
 }
@@ -287,31 +369,37 @@ void framebuffer_draw_scrollbar(const framebuffer_info_t *fb,
                                 uint32_t track,
                                 uint32_t thumb)
 {
-    int thumb_h;
-    int thumb_y;
-    int max_top;
-    int travel;
+    uint64_t thumb_h;
+    int64_t thumb_y;
+    uint64_t max_top;
+    uint64_t travel;
+    uint64_t total;
+    uint64_t visible;
+    uint64_t view_top_u;
 
     if (!fb || w <= 0 || h <= 0)
         return;
-    framebuffer_fill_rect(fb, x, y, w, h, track);
+    framebuffer_fill_rect_clipped64(fb, x, y, w, h, track);
     if (total_rows <= 0 || visible_rows <= 0 || total_rows <= visible_rows)
         return;
+    total = total_rows;
+    visible = visible_rows;
     if (view_top < 0)
         view_top = 0;
-    max_top = total_rows - visible_rows;
-    if (view_top > max_top)
-        view_top = max_top;
-    thumb_h = (h * visible_rows) / total_rows;
+    max_top = total - visible;
+    view_top_u = (uint64_t)view_top;
+    if (view_top_u > max_top)
+        view_top_u = max_top;
+    thumb_h = div_u64_by_u64((uint64_t)h * visible, total);
     if (thumb_h < 8)
         thumb_h = h < 8 ? h : 8;
     if (thumb_h > h)
         thumb_h = h;
-    travel = h - thumb_h;
+    travel = (uint64_t)h - thumb_h;
     thumb_y = y;
     if (max_top > 0)
-        thumb_y += (travel * view_top) / max_top;
-    framebuffer_fill_rect(fb, x, thumb_y, w, thumb_h, thumb);
+        thumb_y += (int64_t)div_u64_by_u64(travel * view_top_u, max_top);
+    framebuffer_fill_rect_clipped64(fb, x, thumb_y, w, thumb_h, thumb);
 }
 
 void framebuffer_draw_glyph(const framebuffer_info_t *fb,

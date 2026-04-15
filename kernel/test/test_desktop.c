@@ -891,6 +891,27 @@ static void test_framebuffer_fill_rect_handles_large_dimensions(ktest_case_t *tc
     KTEST_EXPECT_EQ(tc, pixels[1 * 4 + 3], 0x11223344u);
 }
 
+static void test_framebuffer_draw_rect_outline_handles_large_dimensions(ktest_case_t *tc)
+{
+    uint32_t pixels[4 * 4];
+    framebuffer_info_t fb;
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 4u * sizeof(uint32_t);
+    fb.width = 4;
+    fb.height = 4;
+
+    framebuffer_draw_rect_outline(&fb, -2, -2147483646, 2147483647, 2147483647,
+                                  0x00ABCDEFu);
+
+    KTEST_EXPECT_EQ(tc, pixels[0 * 4 + 0], 0x00ABCDEFu);
+    KTEST_EXPECT_EQ(tc, pixels[0 * 4 + 3], 0x00ABCDEFu);
+    KTEST_EXPECT_EQ(tc, pixels[1 * 4 + 0], 0u);
+    KTEST_EXPECT_EQ(tc, pixels[1 * 4 + 1], 0u);
+}
+
 static void test_framebuffer_draw_rect_outline_clips_to_bounds(ktest_case_t *tc)
 {
     uint32_t pixels[6 * 6];
@@ -928,8 +949,29 @@ static void test_framebuffer_draw_text_clipped_honors_pixel_clip(ktest_case_t *t
                                   0x00FFFFFFu, 0x00112233u);
 
     KTEST_EXPECT_EQ(tc, pixels[0 * 32 + 0], 0u);
-    KTEST_EXPECT_NE(tc, pixels[0 * 32 + 8], 0u);
+    KTEST_EXPECT_EQ(tc, pixels[0 * 32 + 8], 0x00FFFFFFu);
     KTEST_EXPECT_EQ(tc, pixels[0 * 32 + 16], 0u);
+}
+
+static void test_framebuffer_draw_text_clipped_huge_origin_is_noop(ktest_case_t *tc)
+{
+    uint32_t pixels[16 * 16];
+    framebuffer_info_t fb;
+    gui_pixel_rect_t clip = { 0, 0, 8, 16 };
+
+    for (uint32_t i = 0; i < 16u * 16u; i++)
+        pixels[i] = 0xDEADBEEFu;
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 16u * sizeof(uint32_t);
+    fb.width = 16;
+    fb.height = 16;
+
+    framebuffer_draw_text_clipped(&fb, &clip, 2147483644, 0, "AB",
+                                  0x00FFFFFFu, 0x00112233u);
+
+    KTEST_EXPECT_EQ(tc, pixels[0], 0xDEADBEEFu);
+    KTEST_EXPECT_EQ(tc, pixels[15], 0xDEADBEEFu);
 }
 
 static void test_framebuffer_draw_scrollbar_places_thumb(ktest_case_t *tc)
@@ -950,6 +992,27 @@ static void test_framebuffer_draw_scrollbar_places_thumb(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, pixels[4 * 8 + 2], 0x00010101u);
     KTEST_EXPECT_EQ(tc, pixels[20 * 8 + 2], 0x00EEEEEEu);
     KTEST_EXPECT_EQ(tc, pixels[35 * 8 + 5], 0x00010101u);
+}
+
+static void test_framebuffer_draw_scrollbar_handles_large_row_counts(ktest_case_t *tc)
+{
+    uint32_t pixels[8 * 40];
+    framebuffer_info_t fb;
+
+    for (uint32_t i = 0; i < 8u * 40u; i++)
+        pixels[i] = 0xDEADBEEFu;
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 8u * sizeof(uint32_t);
+    fb.width = 8;
+    fb.height = 40;
+
+    framebuffer_draw_scrollbar(&fb, 2, 4, 4, 32, 2147483647, 1073741824,
+                               2147483646, 0x00010101u, 0x00EEEEEEu);
+
+    KTEST_EXPECT_EQ(tc, pixels[4 * 8 + 2], 0x00010101u);
+    KTEST_EXPECT_EQ(tc, pixels[20 * 8 + 2], 0x00EEEEEEu);
+    KTEST_EXPECT_EQ(tc, pixels[36 * 8 + 2], 0xDEADBEEFu);
 }
 
 static void test_framebuffer_draws_pixel_arrow_cursor(ktest_case_t *tc)
@@ -1079,9 +1142,12 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_framebuffer_pack_rgb_uses_mask_positions),
     KTEST_CASE(test_framebuffer_fill_rect_clips_to_bounds),
     KTEST_CASE(test_framebuffer_fill_rect_handles_large_dimensions),
+    KTEST_CASE(test_framebuffer_draw_rect_outline_handles_large_dimensions),
     KTEST_CASE(test_framebuffer_draw_rect_outline_clips_to_bounds),
     KTEST_CASE(test_framebuffer_draw_text_clipped_honors_pixel_clip),
+    KTEST_CASE(test_framebuffer_draw_text_clipped_huge_origin_is_noop),
     KTEST_CASE(test_framebuffer_draw_scrollbar_places_thumb),
+    KTEST_CASE(test_framebuffer_draw_scrollbar_handles_large_row_counts),
     KTEST_CASE(test_framebuffer_draws_pixel_arrow_cursor),
     KTEST_CASE(test_font8x16_glyph_returns_stable_storage),
     KTEST_CASE(test_framebuffer_draw_glyph_writes_foreground_pixels),
