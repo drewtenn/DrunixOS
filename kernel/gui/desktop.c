@@ -1709,7 +1709,11 @@ void desktop_handle_pointer(desktop_state_t *desktop,
         ev->x < desktop->shell_rect.x + desktop->shell_rect.w &&
         ev->y >= desktop->shell_rect.y &&
         ev->y < desktop->shell_rect.y + desktop->shell_rect.h) {
-        desktop->focus = DESKTOP_FOCUS_SHELL;
+        desktop_window_t *shell_win =
+            desktop_find_app_window(desktop, DESKTOP_APP_SHELL);
+
+        if (shell_win)
+            desktop_focus_window(desktop, shell_win->id);
     }
 
     if (ev->left_down &&
