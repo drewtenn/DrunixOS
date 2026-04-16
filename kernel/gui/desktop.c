@@ -1,4 +1,5 @@
 #include "desktop.h"
+#include "desktop_apps.h"
 #include "kheap.h"
 #include "kstring.h"
 #include <limits.h>
@@ -13,6 +14,10 @@
 #define DESKTOP_TERMINAL_HISTORY_ROWS 500
 #define DESKTOP_TERMINAL_PADDING_X 8
 #define DESKTOP_TERMINAL_PADDING_Y 6
+#define DESKTOP_WINDOW_CHROME_H 20
+#define DESKTOP_WINDOW_CLOSE_BUTTON_W 12
+#define DESKTOP_WINDOW_CLOSE_BUTTON_H 12
+#define DESKTOP_WINDOW_CLOSE_BUTTON_MARGIN 4
 
 static desktop_state_t *g_desktop = 0;
 static int g_framebuffer_present_depth = 0;
@@ -127,6 +132,43 @@ static void desktop_pixel_draw_outline(const framebuffer_info_t *fb,
     desktop_pixel_fill_rect(fb, clip, x + w - 1, y, 1, h, color);
 }
 
+static int desktop_point_in_pixel_rect(int x, int y,
+                                       const gui_pixel_rect_t *rect)
+{
+    if (!rect || rect->w <= 0 || rect->h <= 0)
+        return 0;
+    return x >= rect->x && x < rect->x + rect->w &&
+           y >= rect->y && y < rect->y + rect->h;
+}
+
+static int desktop_point_in_titlebar(const desktop_window_t *win,
+                                     int x, int y)
+{
+    gui_pixel_rect_t titlebar;
+
+    if (!win)
+        return 0;
+    titlebar = win->rect;
+    titlebar.h = DESKTOP_WINDOW_CHROME_H;
+    return desktop_point_in_pixel_rect(x, y, &titlebar);
+}
+
+static int desktop_point_in_close_button(const desktop_window_t *win,
+                                         int x, int y)
+{
+    gui_pixel_rect_t close_button;
+
+    if (!win)
+        return 0;
+    close_button.x = win->rect.x + win->rect.w -
+                     DESKTOP_WINDOW_CLOSE_BUTTON_W -
+                     DESKTOP_WINDOW_CLOSE_BUTTON_MARGIN;
+    close_button.y = win->rect.y + DESKTOP_WINDOW_CLOSE_BUTTON_MARGIN;
+    close_button.w = DESKTOP_WINDOW_CLOSE_BUTTON_W;
+    close_button.h = DESKTOP_WINDOW_CLOSE_BUTTON_H;
+    return desktop_point_in_pixel_rect(x, y, &close_button);
+}
+
 static gui_pixel_theme_t desktop_pixel_theme(const framebuffer_info_t *fb)
 {
     gui_pixel_theme_t theme;
@@ -162,9 +204,9 @@ static void desktop_layout(desktop_state_t *desktop)
     desktop->taskbar.h = 1;
 
     desktop->launcher_rect.x = 1;
-    desktop->launcher_rect.y = desktop->display->rows - 6;
+    desktop->launcher_rect.y = desktop->display->rows - 7;
     desktop->launcher_rect.w = 18;
-    desktop->launcher_rect.h = 5;
+    desktop->launcher_rect.h = 6;
 
     shell_w = desktop->display->cols - margin_x * 2;
     shell_h = desktop->display->rows - margin_top - taskbar_gap;
@@ -225,6 +267,304 @@ static void desktop_layout(desktop_state_t *desktop)
         desktop->shell_pixel_rect.w = 0;
     if (desktop->shell_pixel_rect.h < 0)
         desktop->shell_pixel_rect.h = 0;
+}
+
+static const char *desktop_app_title(desktop_app_kind_t app)
+{
+    switch (app) {
+    case DESKTOP_APP_SHELL:
+        return "Shell";
+    case DESKTOP_APP_FILES:
+        return "Files";
+    case DESKTOP_APP_PROCESSES:
+        return "Processes";
+    case DESKTOP_APP_HELP:
+        return "Help";
+    default:
+        return "Window";
+    }
+}
+
+static int desktop_app_kind_is_valid(desktop_app_kind_t app)
+{
+    switch (app) {
+    case DESKTOP_APP_SHELL:
+    case DESKTOP_APP_FILES:
+    case DESKTOP_APP_PROCESSES:
+    case DESKTOP_APP_HELP:
+        return 1;
+    case DESKTOP_APP_NONE:
+    default:
+        return 0;
+    }
+}
+
+static desktop_window_t *desktop_find_window(desktop_state_t *desktop,
+                                             int window_id)
+{
+    if (!desktop)
+        return 0;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        if (desktop->windows[i].open && desktop->windows[i].id == window_id)
+            return &desktop->windows[i];
+    }
+    return 0;
+}
+
+static desktop_window_t *desktop_find_app_window(desktop_state_t *desktop,
+                                                 desktop_app_kind_t app)
+{
+    if (!desktop)
+        return 0;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        if (desktop->windows[i].open && desktop->windows[i].app == app)
+            return &desktop->windows[i];
+    }
+    return 0;
+}
+
+static desktop_window_t *desktop_find_topmost_open_window(desktop_state_t *desktop)
+{
+    desktop_window_t *best = 0;
+
+    if (!desktop)
+        return 0;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        desktop_window_t *win = &desktop->windows[i];
+
+        if (!win->open)
+            continue;
+        if (!best || win->z > best->z)
+            best = win;
+    }
+    return best;
+}
+
+static desktop_window_t *desktop_next_window_by_z(desktop_state_t *desktop,
+                                                  int min_z)
+{
+    desktop_window_t *best = 0;
+
+    if (!desktop)
+        return 0;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        desktop_window_t *win = &desktop->windows[i];
+        if (!win->open || win->z <= min_z)
+            continue;
+        if (!best || win->z < best->z)
+            best = win;
+    }
+    return best;
+}
+
+static int desktop_shell_content_has_overlap_above(desktop_state_t *desktop,
+                                                   const gui_pixel_rect_t *rect)
+{
+    desktop_window_t *shell_win;
+
+    if (!desktop || !rect)
+        return 0;
+
+    shell_win = desktop_find_app_window(desktop, DESKTOP_APP_SHELL);
+    if (!shell_win || !shell_win->open)
+        return 0;
+
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        desktop_window_t *win = &desktop->windows[i];
+        gui_pixel_rect_t overlap;
+
+        if (!win->open || win->id == shell_win->id || win->z <= shell_win->z)
+            continue;
+        if (desktop_pixel_rect_intersect(win->rect, *rect, &overlap))
+            return 1;
+    }
+    return 0;
+}
+
+static desktop_window_t *desktop_top_window_at(desktop_state_t *desktop,
+                                               int x,
+                                               int y)
+{
+    desktop_window_t *best = 0;
+
+    if (!desktop)
+        return 0;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        desktop_window_t *win = &desktop->windows[i];
+
+        if (!win->open)
+            continue;
+        if (!desktop_point_in_pixel_rect(x, y, &win->rect))
+            continue;
+        if (!best || win->z > best->z)
+            best = win;
+    }
+    return best;
+}
+
+static desktop_window_t *desktop_taskbar_window_at(desktop_state_t *desktop,
+                                                   int cell_x,
+                                                   int cell_y)
+{
+    int slot = 0;
+
+    if (!desktop || cell_y != desktop->taskbar.y)
+        return 0;
+    if (cell_x < 8)
+        return 0;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        if (!desktop->windows[i].open)
+            continue;
+        if (cell_x >= 8 + slot * 10 && cell_x < 17 + slot * 10)
+            return &desktop->windows[i];
+        slot++;
+    }
+    return 0;
+}
+
+static void desktop_default_window_rect(desktop_state_t *desktop,
+                                        desktop_app_kind_t app,
+                                        gui_pixel_rect_t *out)
+{
+    int desktop_w = desktop && desktop->framebuffer
+        ? (int)desktop->framebuffer->width
+        : desktop->display->cols * (int)GUI_FONT_W;
+    int desktop_h = desktop && desktop->framebuffer
+        ? (int)desktop->framebuffer->height
+        : desktop->display->rows * (int)GUI_FONT_H;
+    int taskbar_h = (int)GUI_FONT_H;
+
+    if (!out)
+        return;
+
+    out->w = desktop_w - 160;
+    out->h = desktop_h - taskbar_h - 96;
+    if (out->w < 280)
+        out->w = 280;
+    if (out->h < 180)
+        out->h = 180;
+    if (app == DESKTOP_APP_SHELL) {
+        out->x = 48;
+        out->y = 48;
+    } else if (app == DESKTOP_APP_FILES) {
+        out->x = 72;
+        out->y = 64;
+        out->w = 360;
+        out->h = 260;
+    } else if (app == DESKTOP_APP_PROCESSES) {
+        out->x = 160;
+        out->y = 96;
+        out->w = 420;
+        out->h = 240;
+    } else {
+        out->x = 220;
+        out->y = 128;
+        out->w = 360;
+        out->h = 240;
+    }
+}
+
+static void desktop_update_window_content_rect(desktop_window_t *win)
+{
+    if (!win)
+        return;
+    win->content_rect.x = win->rect.x + 8;
+    win->content_rect.y = win->rect.y + 24;
+    win->content_rect.w = win->rect.w - 16;
+    win->content_rect.h = win->rect.h - 32;
+    if (win->content_rect.w < 0)
+        win->content_rect.w = 0;
+    if (win->content_rect.h < 0)
+        win->content_rect.h = 0;
+}
+
+static void desktop_clamp_window_rect(desktop_state_t *desktop,
+                                      gui_pixel_rect_t *rect)
+{
+    int max_w;
+    int max_h;
+
+    if (!desktop || !rect)
+        return;
+
+    if (desktop->framebuffer_enabled && desktop->framebuffer) {
+        max_w = (int)desktop->framebuffer->width;
+        max_h = (int)desktop->framebuffer->height;
+    } else if (desktop->display) {
+        max_w = desktop->display->cols * (int)GUI_FONT_W;
+        max_h = desktop->display->rows * (int)GUI_FONT_H;
+    } else {
+        return;
+    }
+
+    if (rect->w < 0)
+        rect->w = 0;
+    if (rect->h < 0)
+        rect->h = 0;
+    if (rect->w > max_w)
+        rect->w = max_w;
+    if (rect->h > max_h)
+        rect->h = max_h;
+    if (rect->x < 0)
+        rect->x = 0;
+    if (rect->y < 0)
+        rect->y = 0;
+    if (rect->x + rect->w > max_w)
+        rect->x = max_w - rect->w;
+    if (rect->y + rect->h > max_h)
+        rect->y = max_h - rect->h;
+    if (rect->x < 0)
+        rect->x = 0;
+    if (rect->y < 0)
+        rect->y = 0;
+}
+
+static void desktop_sync_shell_geometry(desktop_state_t *desktop,
+                                        const desktop_window_t *win)
+{
+    int shell_w;
+    int shell_h;
+    int content_w;
+    int content_h;
+
+    if (!desktop || !win || win->app != DESKTOP_APP_SHELL)
+        return;
+
+    shell_w = desktop->shell_rect.w;
+    shell_h = desktop->shell_rect.h;
+    content_w = desktop->shell_content.w;
+    content_h = desktop->shell_content.h;
+    desktop->shell_rect.x = win->rect.x / (int)GUI_FONT_W;
+    desktop->shell_rect.y = win->rect.y / (int)GUI_FONT_H;
+    if (shell_w > 0)
+        desktop->shell_rect.w = shell_w;
+    if (shell_h > 0)
+        desktop->shell_rect.h = shell_h;
+
+    desktop->shell_content.x = desktop->shell_rect.x + 1;
+    desktop->shell_content.y = desktop->shell_rect.y + 1;
+    if (content_w > 0)
+        desktop->shell_content.w = content_w;
+    if (content_h > 0)
+        desktop->shell_content.h = content_h;
+
+    desktop->window_pixel_rect = win->rect;
+    desktop->shell_pixel_rect.x = win->rect.x + 8;
+    desktop->shell_pixel_rect.y = win->rect.y + DESKTOP_WINDOW_CHROME_H + 4;
+    desktop->shell_pixel_rect.w = DESKTOP_TERMINAL_PADDING_X +
+                                  content_w *
+                                      (int)GUI_FONT_W;
+    desktop->shell_pixel_rect.h = DESKTOP_TERMINAL_PADDING_Y +
+                                  content_h *
+                                      (int)GUI_FONT_H;
+    if (desktop->shell_pixel_rect.w < 0)
+        desktop->shell_pixel_rect.w = 0;
+    if (desktop->shell_pixel_rect.h < 0)
+        desktop->shell_pixel_rect.h = 0;
+    gui_terminal_set_pixel_rect(&desktop->shell_terminal,
+                                desktop->shell_pixel_rect,
+                                DESKTOP_TERMINAL_PADDING_X,
+                                DESKTOP_TERMINAL_PADDING_Y);
 }
 
 static void desktop_dirty_include(gui_rect_t *dirty, int x, int y, int w, int h)
@@ -616,13 +956,79 @@ static void desktop_draw_framebuffer_pointer(desktop_state_t *desktop)
                             shadow);
 }
 
+static void desktop_sync_shell_framebuffer_rect(desktop_state_t *desktop,
+                                                const desktop_window_t *win)
+{
+    if (!desktop || !win || win->app != DESKTOP_APP_SHELL)
+        return;
+
+    desktop->shell_pixel_rect.x = win->content_rect.x;
+    desktop->shell_pixel_rect.y = win->content_rect.y;
+    desktop->shell_pixel_rect.w = DESKTOP_TERMINAL_PADDING_X +
+                                  desktop->shell_terminal.cols *
+                                      (int)GUI_FONT_W;
+    desktop->shell_pixel_rect.h = DESKTOP_TERMINAL_PADDING_Y +
+                                  desktop->shell_terminal.rows *
+                                      (int)GUI_FONT_H;
+    if (desktop->shell_pixel_rect.w < 0)
+        desktop->shell_pixel_rect.w = 0;
+    if (desktop->shell_pixel_rect.h < 0)
+        desktop->shell_pixel_rect.h = 0;
+    gui_terminal_set_pixel_rect(&desktop->shell_terminal,
+                                desktop->shell_pixel_rect,
+                                DESKTOP_TERMINAL_PADDING_X,
+                                DESKTOP_TERMINAL_PADDING_Y);
+}
+
+static void desktop_render_framebuffer_window(desktop_state_t *desktop,
+                                              const gui_pixel_rect_t *clip,
+                                              const gui_pixel_theme_t *theme,
+                                              const desktop_window_t *win)
+{
+    const framebuffer_info_t *fb;
+    gui_pixel_surface_t surface;
+
+    if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer ||
+        !clip || !theme || !win || !win->open)
+        return;
+
+    fb = desktop->framebuffer;
+    desktop_pixel_fill_rect(fb, clip, win->rect.x, win->rect.y, win->rect.w,
+                            win->rect.h, theme->window_bg);
+    desktop_pixel_fill_rect(fb, clip, win->rect.x, win->rect.y, win->rect.w,
+                            DESKTOP_WINDOW_CHROME_H, theme->title_bg);
+    framebuffer_draw_text_clipped(fb, clip, win->rect.x + 16, win->rect.y + 2,
+                                  desktop_app_title(win->app),
+                                  theme->title_fg, theme->title_bg);
+    framebuffer_draw_text_clipped(fb, clip,
+                                  win->rect.x + win->rect.w -
+                                      DESKTOP_WINDOW_CLOSE_BUTTON_W -
+                                      DESKTOP_WINDOW_CLOSE_BUTTON_MARGIN,
+                                  win->rect.y + DESKTOP_WINDOW_CLOSE_BUTTON_MARGIN,
+                                  "x",
+                                  theme->title_fg,
+                                  theme->title_bg);
+
+    surface.fb = fb;
+    surface.clip = *clip;
+    if (win->app == DESKTOP_APP_SHELL) {
+        desktop_sync_shell_framebuffer_rect(desktop, win);
+        gui_terminal_render(&desktop->shell_terminal, &surface, theme, 1);
+    } else {
+        desktop_app_render(&desktop->app_state, win->app, &surface, theme,
+                           &win->content_rect);
+    }
+    desktop_pixel_draw_outline(fb, clip, win->rect.x, win->rect.y,
+                               win->rect.w, win->rect.h, theme->window_border);
+}
+
 static void desktop_render_framebuffer_region(desktop_state_t *desktop,
                                               const gui_pixel_rect_t *clip)
 {
     const framebuffer_info_t *fb;
     gui_pixel_theme_t theme;
-    gui_pixel_surface_t surface;
-    gui_pixel_rect_t window;
+    desktop_window_t *win;
+    int min_z;
 
     if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer ||
         !clip)
@@ -644,22 +1050,24 @@ static void desktop_render_framebuffer_region(desktop_state_t *desktop,
                                   "Menu",
                                   theme.taskbar_fg,
                                   theme.taskbar_bg);
+    {
+        int task_x = desktop->taskbar_pixel_rect.x + 72;
 
-    if (desktop->shell_window_open) {
-        window = desktop->window_pixel_rect;
-        desktop_pixel_fill_rect(fb, clip, window.x, window.y, window.w,
-                                window.h, theme.window_bg);
-        desktop_pixel_fill_rect(fb, clip, window.x, window.y, window.w, 20,
-                                theme.title_bg);
-        framebuffer_draw_text_clipped(fb, clip, window.x + 16, window.y + 2,
-                                      "Shell", theme.title_fg,
-                                      theme.title_bg);
+        for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+            if (!desktop->windows[i].open)
+                continue;
+            framebuffer_draw_text_clipped(fb, clip, task_x,
+                                          desktop->taskbar_pixel_rect.y,
+                                          desktop->windows[i].title,
+                                          theme.taskbar_fg, theme.taskbar_bg);
+            task_x += 80;
+        }
+    }
 
-        surface.fb = fb;
-        surface.clip = *clip;
-        gui_terminal_render(&desktop->shell_terminal, &surface, &theme, 1);
-        desktop_pixel_draw_outline(fb, clip, window.x, window.y, window.w,
-                                   window.h, theme.window_border);
+    min_z = INT_MIN;
+    while ((win = desktop_next_window_by_z(desktop, min_z)) != 0) {
+        desktop_render_framebuffer_window(desktop, clip, &theme, win);
+        min_z = win->z;
     }
 
     if (desktop->launcher_open) {
@@ -671,7 +1079,16 @@ static void desktop_render_framebuffer_region(desktop_state_t *desktop,
                                    launcher.w, launcher.h,
                                    theme.window_border);
         framebuffer_draw_text_clipped(fb, clip, launcher.x + 16,
-                                      launcher.y + 16, "Shell",
+                                      launcher.y + 12, "1 Shell",
+                                      theme.taskbar_fg, theme.taskbar_bg);
+        framebuffer_draw_text_clipped(fb, clip, launcher.x + 16,
+                                      launcher.y + 28, "2 Files",
+                                      theme.taskbar_fg, theme.taskbar_bg);
+        framebuffer_draw_text_clipped(fb, clip, launcher.x + 16,
+                                      launcher.y + 44, "3 Processes",
+                                      theme.taskbar_fg, theme.taskbar_bg);
+        framebuffer_draw_text_clipped(fb, clip, launcher.x + 16,
+                                      launcher.y + 60, "4 Help",
                                       theme.taskbar_fg, theme.taskbar_bg);
     }
 }
@@ -693,8 +1110,16 @@ static void desktop_render_framebuffer(desktop_state_t *desktop)
 
 static void desktop_render_framebuffer_terminal(desktop_state_t *desktop)
 {
+    desktop_window_t *shell_win;
+
     if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
         return;
+
+    shell_win = desktop_find_app_window(desktop, DESKTOP_APP_SHELL);
+    if (!shell_win || !shell_win->open)
+        return;
+
+    desktop_sync_shell_framebuffer_rect(desktop, shell_win);
     if (desktop->shell_pixel_rect.w <= 0 || desktop->shell_pixel_rect.h <= 0)
         return;
 
@@ -1137,6 +1562,8 @@ static int desktop_render_framebuffer_scroll_dirty(desktop_state_t *desktop,
         return 0;
     if (scroll_rows > INT_MAX / (int)GUI_FONT_H)
         return 0;
+    if (desktop_shell_content_has_overlap_above(desktop, &content))
+        return 0;
 
     theme = desktop_pixel_theme(desktop->framebuffer);
     scroll_pixels = scroll_rows * (int)GUI_FONT_H;
@@ -1219,6 +1646,7 @@ void desktop_init(desktop_state_t *desktop, gui_display_t *display)
     desktop->active = 1;
     desktop->desktop_enabled = 1;
     desktop->focus = DESKTOP_FOCUS_TASKBAR;
+    desktop->launcher_selection = DESKTOP_APP_SHELL;
     desktop_layout(desktop);
     desktop_set_pointer(desktop, display->cols / 2, display->rows / 2);
     desktop->shell_cells_w = desktop->shell_content.w;
@@ -1262,8 +1690,14 @@ void desktop_init(desktop_state_t *desktop, gui_display_t *display)
     desktop->shell_ansi_state = 0;
     desktop->shell_ansi_val = 0;
     desktop->shell_attr = display->default_attr;
+    desktop_apps_init(&desktop->app_state);
+    desktop_app_refresh(&desktop->app_state);
     for (int row = 0; row < desktop->shell_cells_h; row++)
         desktop_shell_clear_line(desktop, row, 0);
+    desktop->next_window_id = 0;
+    desktop->focused_window_id = 0;
+    desktop->next_z = 0;
+    desktop->dragging_window_id = 0;
 }
 
 void desktop_set_presentation_target(desktop_state_t *desktop,
@@ -1439,6 +1873,9 @@ int desktop_write_process_output(desktop_state_t *desktop,
 
 desktop_key_result_t desktop_handle_key(desktop_state_t *desktop, char c)
 {
+    desktop_window_t *focused_window;
+    desktop_app_key_result_t app_key_result;
+
     if (!desktop || !desktop->active)
         return DESKTOP_KEY_FORWARD;
 
@@ -1453,7 +1890,17 @@ desktop_key_result_t desktop_handle_key(desktop_state_t *desktop, char c)
 
     if (desktop->launcher_open && c == '\n') {
         desktop->launcher_open = 0;
-        desktop_open_shell_window(desktop);
+        desktop_open_app_window(desktop, desktop->launcher_selection);
+        desktop_render(desktop);
+        return DESKTOP_KEY_CONSUMED;
+    }
+
+    if (desktop->launcher_open && c >= '1' && c <= '4') {
+        desktop->launcher_selection =
+            c == '1' ? DESKTOP_APP_SHELL :
+            c == '2' ? DESKTOP_APP_FILES :
+            c == '3' ? DESKTOP_APP_PROCESSES :
+                       DESKTOP_APP_HELP;
         desktop_render(desktop);
         return DESKTOP_KEY_CONSUMED;
     }
@@ -1464,6 +1911,22 @@ desktop_key_result_t desktop_handle_key(desktop_state_t *desktop, char c)
         return DESKTOP_KEY_CONSUMED;
     }
 
+    focused_window = desktop_find_window(desktop, desktop->focused_window_id);
+    if (desktop->focus == DESKTOP_FOCUS_WINDOW &&
+        focused_window &&
+        focused_window->app != DESKTOP_APP_SHELL) {
+        app_key_result = desktop_app_handle_key(&desktop->app_state,
+                                                focused_window->app,
+                                                (uint32_t)c);
+        if (app_key_result == DESKTOP_APP_KEY_CLOSE) {
+            desktop_close_window(desktop, focused_window->id);
+            desktop_render(desktop);
+        } else if (app_key_result == DESKTOP_APP_KEY_HANDLED) {
+            desktop_render(desktop);
+        }
+        return DESKTOP_KEY_CONSUMED;
+    }
+
     return (desktop->focus == DESKTOP_FOCUS_SHELL)
         ? DESKTOP_KEY_FORWARD
         : DESKTOP_KEY_CONSUMED;
@@ -1471,8 +1934,111 @@ desktop_key_result_t desktop_handle_key(desktop_state_t *desktop, char c)
 
 void desktop_open_shell_window(desktop_state_t *desktop)
 {
+    if (!desktop)
+        return;
     desktop->shell_window_open = 1;
-    desktop->focus = DESKTOP_FOCUS_SHELL;
+    desktop_open_app_window(desktop, DESKTOP_APP_SHELL);
+}
+
+void desktop_focus_window(desktop_state_t *desktop, int window_id)
+{
+    desktop_window_t *target;
+
+    if (!desktop)
+        return;
+    target = desktop_find_window(desktop, window_id);
+    if (!target)
+        return;
+    desktop->focused_window_id = window_id;
+    desktop->focus = target->app == DESKTOP_APP_SHELL
+        ? DESKTOP_FOCUS_SHELL
+        : DESKTOP_FOCUS_WINDOW;
+    desktop_app_refresh_for_focus(&desktop->app_state, target->app);
+    target->z = ++desktop->next_z;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++)
+        desktop->windows[i].focused = desktop->windows[i].id == window_id;
+}
+
+int desktop_open_app_window(desktop_state_t *desktop, desktop_app_kind_t app)
+{
+    desktop_window_t *existing;
+    desktop_window_t *slot = 0;
+
+    if (!desktop || !desktop_app_kind_is_valid(app))
+        return -1;
+    existing = desktop_find_app_window(desktop, app);
+    if (existing) {
+        if (app == DESKTOP_APP_SHELL) {
+            existing->rect = desktop->window_pixel_rect;
+            desktop_clamp_window_rect(desktop, &existing->rect);
+            desktop_update_window_content_rect(existing);
+            desktop_sync_shell_geometry(desktop, existing);
+            desktop->shell_window_open = 1;
+        }
+        desktop_focus_window(desktop, existing->id);
+        return existing->id;
+    }
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        if (!desktop->windows[i].open) {
+            slot = &desktop->windows[i];
+            break;
+        }
+    }
+    if (!slot)
+        return -1;
+
+    k_memset(slot, 0, sizeof(*slot));
+    slot->id = ++desktop->next_window_id;
+    slot->open = 1;
+    slot->app = app;
+    k_strncpy(slot->title, desktop_app_title(app),
+              DESKTOP_WINDOW_TITLE_MAX - 1);
+    desktop_default_window_rect(desktop, app, &slot->rect);
+    if (app == DESKTOP_APP_SHELL) {
+        slot->rect = desktop->window_pixel_rect;
+    }
+    desktop_clamp_window_rect(desktop, &slot->rect);
+    desktop_update_window_content_rect(slot);
+    if (app == DESKTOP_APP_SHELL) {
+        desktop_sync_shell_geometry(desktop, slot);
+        desktop->shell_window_open = 1;
+    }
+    desktop_focus_window(desktop, slot->id);
+    return slot->id;
+}
+
+int desktop_close_window(desktop_state_t *desktop, int window_id)
+{
+    desktop_window_t *win = desktop_find_window(desktop, window_id);
+    desktop_window_t *next;
+
+    if (!win)
+        return 0;
+    if (desktop->dragging_window_id == window_id)
+        desktop->dragging_window_id = 0;
+    if (win->app == DESKTOP_APP_SHELL)
+        desktop->shell_window_open = 0;
+    k_memset(win, 0, sizeof(*win));
+    if (desktop->focused_window_id != window_id)
+        return 1;
+
+    desktop->focused_window_id = 0;
+    next = 0;
+    if (desktop->shell_window_open)
+        next = desktop_find_app_window(desktop, DESKTOP_APP_SHELL);
+    if (!next)
+        next = desktop_find_topmost_open_window(desktop);
+    if (next) {
+        desktop->focused_window_id = next->id;
+        desktop->focus = next->app == DESKTOP_APP_SHELL
+            ? DESKTOP_FOCUS_SHELL
+            : DESKTOP_FOCUS_WINDOW;
+        next->focused = 1;
+        next->z = ++desktop->next_z;
+    } else {
+        desktop->focus = DESKTOP_FOCUS_TASKBAR;
+    }
+    return 1;
 }
 
 void desktop_handle_pointer(desktop_state_t *desktop,
@@ -1482,6 +2048,10 @@ void desktop_handle_pointer(desktop_state_t *desktop,
     int old_pixel_x;
     int old_pixel_y;
     int launcher_open;
+    int pointer_pixel_x;
+    int pointer_pixel_y;
+    desktop_window_t *top;
+    desktop_window_t *drag;
 
     if (!desktop || !ev)
         return;
@@ -1489,20 +2059,56 @@ void desktop_handle_pointer(desktop_state_t *desktop,
     old_pixel_x = desktop->pointer_pixel_x;
     old_pixel_y = desktop->pointer_pixel_y;
     launcher_open = desktop->launcher_open;
+    pointer_pixel_x = ev->pixel_x;
+    pointer_pixel_y = ev->pixel_y;
+    if (!desktop->framebuffer_enabled && !desktop->framebuffer &&
+        pointer_pixel_x == 0 && pointer_pixel_y == 0 &&
+        (ev->x != 0 || ev->y != 0)) {
+        pointer_pixel_x = ev->x * (int)GUI_FONT_W;
+        pointer_pixel_y = ev->y * (int)GUI_FONT_H;
+    }
 
     desktop_set_pointer(desktop, ev->x, ev->y);
     if (desktop->framebuffer_enabled && desktop->framebuffer) {
-        desktop->pointer_pixel_x = desktop_clamp_pixel_x(desktop, ev->pixel_x);
-        desktop->pointer_pixel_y = desktop_clamp_pixel_y(desktop, ev->pixel_y);
+        desktop->pointer_pixel_x = desktop_clamp_pixel_x(desktop,
+                                                         pointer_pixel_x);
+        desktop->pointer_pixel_y = desktop_clamp_pixel_y(desktop,
+                                                         pointer_pixel_y);
     }
 
-    if (desktop->shell_window_open &&
-        ev->left_down &&
-        ev->x >= desktop->shell_rect.x &&
-        ev->x < desktop->shell_rect.x + desktop->shell_rect.w &&
-        ev->y >= desktop->shell_rect.y &&
-        ev->y < desktop->shell_rect.y + desktop->shell_rect.h) {
-        desktop->focus = DESKTOP_FOCUS_SHELL;
+    if (!ev->left_down) {
+        desktop->dragging_window_id = 0;
+    } else if (desktop->dragging_window_id != 0) {
+        drag = desktop_find_window(desktop, desktop->dragging_window_id);
+        if (drag) {
+            drag->rect.x = pointer_pixel_x - desktop->drag_offset_x;
+            drag->rect.y = pointer_pixel_y - desktop->drag_offset_y;
+            desktop_clamp_window_rect(desktop, &drag->rect);
+            desktop_update_window_content_rect(drag);
+            if (drag->app == DESKTOP_APP_SHELL)
+                desktop_sync_shell_geometry(desktop, drag);
+            desktop_render(desktop);
+            return;
+        }
+        desktop->dragging_window_id = 0;
+    }
+
+    top = desktop_top_window_at(desktop, pointer_pixel_x, pointer_pixel_y);
+    if (top && ev->left_down) {
+        desktop_focus_window(desktop, top->id);
+        if (desktop_point_in_close_button(top, pointer_pixel_x,
+                                          pointer_pixel_y)) {
+            desktop_close_window(desktop, top->id);
+            desktop_render(desktop);
+            return;
+        }
+        if (desktop_point_in_titlebar(top, pointer_pixel_x, pointer_pixel_y)) {
+            desktop->dragging_window_id = top->id;
+            desktop->drag_offset_x = pointer_pixel_x - top->rect.x;
+            desktop->drag_offset_y = pointer_pixel_y - top->rect.y;
+            desktop_render(desktop);
+            return;
+        }
     }
 
     if (ev->left_down &&
@@ -1512,6 +2118,17 @@ void desktop_handle_pointer(desktop_state_t *desktop,
         desktop->focus = desktop->launcher_open
             ? DESKTOP_FOCUS_LAUNCHER
             : DESKTOP_FOCUS_SHELL;
+    }
+
+    if (ev->left_down) {
+        desktop_window_t *task_win =
+            desktop_taskbar_window_at(desktop, ev->x, ev->y);
+
+        if (task_win) {
+            desktop_focus_window(desktop, task_win->id);
+            desktop_render(desktop);
+            return;
+        }
     }
 
     if (desktop->framebuffer_enabled && desktop->framebuffer &&
@@ -1549,6 +2166,19 @@ void desktop_render(desktop_state_t *desktop)
                           ' ', DESKTOP_ATTR_TASKBAR);
     gui_display_draw_text(desktop->display, 2, desktop->taskbar.y, 10,
                           "Menu", DESKTOP_ATTR_TITLE);
+    {
+        int task_x = 8;
+
+        for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+            if (!desktop->windows[i].open)
+                continue;
+            gui_display_draw_text(desktop->display, task_x,
+                                  desktop->taskbar.y, 9,
+                                  desktop->windows[i].title,
+                                  DESKTOP_ATTR_TITLE);
+            task_x += 10;
+        }
+    }
 
     if (desktop->shell_window_open) {
         gui_display_draw_frame(desktop->display,
@@ -1560,6 +2190,12 @@ void desktop_render(desktop_state_t *desktop)
                               desktop->shell_rect.y,
                               desktop->shell_rect.w - 4,
                               "Shell", DESKTOP_ATTR_WINDOW);
+        gui_display_draw_text(desktop->display,
+                              desktop->shell_rect.x + desktop->shell_rect.w - 3,
+                              desktop->shell_rect.y,
+                              1,
+                              "x",
+                              DESKTOP_ATTR_WINDOW);
     }
 
     if (desktop->launcher_open) {
@@ -1573,7 +2209,22 @@ void desktop_render(desktop_state_t *desktop)
                               desktop->launcher_rect.x + 2,
                               desktop->launcher_rect.y + 1,
                               desktop->launcher_rect.w - 4,
-                              "Shell", DESKTOP_ATTR_LAUNCHER);
+                              "1 Shell", DESKTOP_ATTR_LAUNCHER);
+        gui_display_draw_text(desktop->display,
+                              desktop->launcher_rect.x + 2,
+                              desktop->launcher_rect.y + 2,
+                              desktop->launcher_rect.w - 4,
+                              "2 Files", DESKTOP_ATTR_LAUNCHER);
+        gui_display_draw_text(desktop->display,
+                              desktop->launcher_rect.x + 2,
+                              desktop->launcher_rect.y + 3,
+                              desktop->launcher_rect.w - 4,
+                              "3 Processes", DESKTOP_ATTR_LAUNCHER);
+        gui_display_draw_text(desktop->display,
+                              desktop->launcher_rect.x + 2,
+                              desktop->launcher_rect.y + 4,
+                              desktop->launcher_rect.w - 4,
+                              "4 Help", DESKTOP_ATTR_LAUNCHER);
     }
 
     if (desktop->shell_window_open)
@@ -1586,3 +2237,63 @@ void desktop_render(desktop_state_t *desktop)
         desktop_draw_pointer(desktop);
     }
 }
+
+#ifdef KTEST_ENABLED
+int desktop_window_count_for_test(const desktop_state_t *desktop)
+{
+    int count = 0;
+
+    if (!desktop)
+        return 0;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        if (desktop->windows[i].open)
+            count++;
+    }
+    return count;
+}
+
+desktop_app_kind_t desktop_focused_app_for_test(const desktop_state_t *desktop)
+{
+    if (!desktop)
+        return DESKTOP_APP_NONE;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        if (desktop->windows[i].open &&
+            desktop->windows[i].id == desktop->focused_window_id)
+            return desktop->windows[i].app;
+    }
+    return DESKTOP_APP_NONE;
+}
+
+int desktop_window_z_for_test(const desktop_state_t *desktop, int window_id)
+{
+    if (!desktop)
+        return 0;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        if (desktop->windows[i].open && desktop->windows[i].id == window_id)
+            return desktop->windows[i].z;
+    }
+    return 0;
+}
+
+const desktop_window_t *desktop_window_for_test(
+    const desktop_state_t *desktop, int window_id)
+{
+    if (!desktop)
+        return 0;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        if (desktop->windows[i].open && desktop->windows[i].id == window_id)
+            return &desktop->windows[i];
+    }
+    return 0;
+}
+
+int desktop_dragging_window_for_test(const desktop_state_t *desktop)
+{
+    return desktop ? desktop->dragging_window_id : 0;
+}
+
+void desktop_focus_window_for_test(desktop_state_t *desktop, int window_id)
+{
+    desktop_focus_window(desktop, window_id);
+}
+#endif
