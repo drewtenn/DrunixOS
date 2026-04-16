@@ -1622,10 +1622,11 @@ static void run_program(char **argv, int argc)
     if (pid == 0)
     {
         char *exec_envp[MAX_ENV_VARS + 1];
-        int exec_envc = env_compose_exec(exec_envp, MAX_ENV_VARS + 1);
+        env_compose_exec(exec_envp, MAX_ENV_VARS + 1);
         shell_reset_job_signal_state();
         sys_setpgid(0, 0);
-        sys_execve(exec_path, argv, argc, exec_envp, exec_envc);
+        (void)argc;
+        sys_execve(exec_path, argv, exec_envp);
         printf("not found: %s\n", cmd_name);
         sys_exit(127);
     }
@@ -1683,8 +1684,9 @@ static int exec_replace_self(char **argv, int argc)
     }
 
     exec_envc = env_compose_exec(exec_envp, MAX_ENV_VARS + 1);
+    (void)exec_envc;
     shell_reset_job_signal_state();
-    sys_execve(exec_path, &argv[1], argc - 1, exec_envp, exec_envc);
+    sys_execve(exec_path, &argv[1], exec_envp);
     printf("exec failed: %s\n", argv[1]);
     shell_install_signal_state();
     return 126;
@@ -1720,7 +1722,7 @@ static void run_piped(char **lv, int lc, char **rv, int rc)
     {
         char exec_path[128];
         char *exec_envp[MAX_ENV_VARS + 1];
-        int exec_envc = env_compose_exec(exec_envp, MAX_ENV_VARS + 1);
+        env_compose_exec(exec_envp, MAX_ENV_VARS + 1);
         shell_reset_job_signal_state();
         sys_setpgid(0, 0);
         /* Child: redirect stdout to the write end, then exec the left command.
@@ -1734,7 +1736,8 @@ static void run_piped(char **lv, int lc, char **rv, int rc)
             printf("pipe: left exec failed\n");
             sys_exit(1);
         }
-        sys_execve(exec_path, lv, lc, exec_envp, exec_envc);
+        (void)lc;
+        sys_execve(exec_path, lv, exec_envp);
         printf("pipe: left exec failed\n");
         sys_exit(1);
     }
@@ -1753,7 +1756,7 @@ static void run_piped(char **lv, int lc, char **rv, int rc)
     {
         char exec_path[128];
         char *exec_envp[MAX_ENV_VARS + 1];
-        int exec_envc = env_compose_exec(exec_envp, MAX_ENV_VARS + 1);
+        env_compose_exec(exec_envp, MAX_ENV_VARS + 1);
         shell_reset_job_signal_state();
         sys_setpgid(0, lpid);
         /* Child: redirect stdin to the read end, then exec the right command. */
@@ -1765,7 +1768,8 @@ static void run_piped(char **lv, int lc, char **rv, int rc)
             printf("pipe: right exec failed\n");
             sys_exit(1);
         }
-        sys_execve(exec_path, rv, rc, exec_envp, exec_envc);
+        (void)rc;
+        sys_execve(exec_path, rv, exec_envp);
         printf("pipe: right exec failed\n");
         sys_exit(1);
     }

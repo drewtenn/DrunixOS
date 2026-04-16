@@ -105,7 +105,7 @@ void sys_exit(int code);
 /* Write a null-terminated string to the active console or desktop shell. */
 void sys_write(const char *msg);
 
-/* Write exactly `count` bytes from buf to the active console or desktop shell.
+/* Write exactly `count` bytes from buf to fd 1.
  * Unlike sys_write, this does not stop at an embedded NUL byte — use it for
  * binary data. */
 void sys_write_n(const char *buf, int count);
@@ -147,7 +147,7 @@ extern char **environ;
  * Does not return on success. Returns -1 on error.
  */
 int sys_exec(const char *filename, char **argv, int argc);
-int sys_execve(const char *filename, char **argv, int argc, char **envp, int envc);
+int sys_execve(const char *filename, char **argv, char **envp);
 
 /* Wait for process pid to exit.  Returns the child's exit status, or -1. */
 int sys_wait(int pid);
@@ -253,8 +253,9 @@ int sys_munmap(void *addr, unsigned int length);
 int sys_mprotect(void *addr, unsigned int length, int prot);
 
 /*
- * Block the calling process for up to `seconds` whole seconds.
- * Returns 0 on full sleep, or the remaining whole seconds if interrupted.
+ * Block the calling process for up to `seconds` whole seconds via Linux
+ * i386 nanosleep(2). Returns 0 on full sleep, or the remaining whole seconds
+ * if interrupted.
  *
  * The POSIX-style sleep() wrapper lives in user/lib/unistd.h and forwards
  * here.  Call sys_sleep() directly only if you deliberately want to bypass

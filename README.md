@@ -167,10 +167,12 @@ runtime. Code that depends on those features should fail at compile or link
 time instead of pulling in hosted runtime libraries implicitly.
 
 The C smoke binary is `/bin/chello`, built from `user/chello.c`. The C++
-smoke binary is `/bin/cpphello`, built from `user/cpphello.cpp`.
+smoke binary is `/bin/cpphello`, built from `user/cpphello.cpp`. The Linux
+i386 ABI smoke binary is `/bin/linuxhello`, built from handwritten assembly
+that invokes Linux `write(2)` and `exit(2)` syscall numbers directly.
 `user/Makefile` keeps the runtime lanes explicit: C programs link the C
-runtime objects, while C++ programs link those same C runtime objects plus
-the C++ runtime objects.
+runtime objects, C++ programs link those same C runtime objects plus the C++
+runtime objects, and the Linux smoke binary links no Drunix runtime at all.
 The book-level walkthrough is Chapter 30, `docs/ch30-cpp-userland.md`.
 
 ## Debugging

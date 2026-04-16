@@ -1785,13 +1785,13 @@ static void test_desktop_scroll_syscall_moves_terminal_view(ktest_case_t *tc)
     desktop_write_history_for_scroll_test(tc, &desktop);
 
     KTEST_EXPECT_TRUE(tc, desktop.shell_terminal.live_view);
-    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_SCROLL_UP, 1, 0, 0, 0, 0), 0);
+    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_DRUNIX_SCROLL_UP, 1, 0, 0, 0, 0), 0);
     KTEST_EXPECT_EQ(tc,
                     gui_terminal_visible_view_top(&desktop.shell_terminal),
                     1);
     KTEST_EXPECT_FALSE(tc, desktop.shell_terminal.live_view);
 
-    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_SCROLL_DOWN, 1, 0, 0, 0, 0), 0);
+    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_DRUNIX_SCROLL_DOWN, 1, 0, 0, 0, 0), 0);
     KTEST_EXPECT_EQ(tc,
                     gui_terminal_visible_view_top(&desktop.shell_terminal),
                     0);
@@ -1839,7 +1839,7 @@ static void test_syscall_clear_clears_desktop_shell_buffer(ktest_case_t *tc)
                                         desktop.shell_content.y).ch,
                     'a');
 
-    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_CLEAR, 0, 0, 0, 0, 0), 0);
+    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_DRUNIX_CLEAR, 0, 0, 0, 0, 0), 0);
     KTEST_EXPECT_EQ(tc,
                     gui_display_cell_at(&display,
                                         desktop.shell_content.x,
@@ -2873,6 +2873,68 @@ static void test_framebuffer_terminal_scroll_does_not_copy_mouse_pointer(
     desktop_test_destroy(&desktop);
 }
 
+static void test_framebuffer_terminal_scroll_paints_line_written_before_newline(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+    uint32_t terminal_fg;
+    int found_fg;
+    int glyph_base_x;
+    int glyph_base_y;
+
+    k_memset(pointer_motion_pixels, 0, sizeof(pointer_motion_pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pointer_motion_pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    desktop_open_shell_window(&desktop);
+    desktop_render(&desktop);
+
+    for (int row = 0; row < desktop.shell_terminal.rows - 1; row++)
+        KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, "\n", 1),
+                        1);
+
+    KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, "A\n", 2), 2);
+    KTEST_ASSERT_EQ(tc,
+                    gui_terminal_cell_at(&desktop.shell_terminal,
+                                         0,
+                                         desktop.shell_terminal.rows - 2).ch,
+                    'A');
+
+    terminal_fg = framebuffer_pack_rgb(&fb, 0xf6, 0xf1, 0xde);
+    glyph_base_x = desktop.shell_pixel_rect.x +
+                   desktop.shell_terminal.padding_x;
+    glyph_base_y = desktop.shell_pixel_rect.y +
+                   desktop.shell_terminal.padding_y +
+                   (desktop.shell_terminal.rows - 2) * (int)GUI_FONT_H;
+    found_fg = 0;
+    for (int py = 0; py < (int)GUI_FONT_H; py++) {
+        for (int px = 0; px < (int)GUI_FONT_W; px++) {
+            int index = (glyph_base_y + py) * 480 + glyph_base_x + px;
+
+            if (pointer_motion_pixels[index] == terminal_fg)
+                found_fg = 1;
+        }
+    }
+
+    KTEST_EXPECT_TRUE(tc, found_fg);
+    desktop_test_destroy(&desktop);
+}
+
 static void test_framebuffer_shell_scroll_keeps_overlapped_window_pixels(
     ktest_case_t *tc)
 {
@@ -3756,6 +3818,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_framebuffer_shell_return_prompt_keeps_unrelated_pixels),
     KTEST_CASE(test_framebuffer_terminal_scroll_keeps_padding_pixels),
     KTEST_CASE(test_framebuffer_terminal_scroll_does_not_copy_mouse_pointer),
+    KTEST_CASE(test_framebuffer_terminal_scroll_paints_line_written_before_newline),
     KTEST_CASE(test_framebuffer_shell_scroll_keeps_overlapped_window_pixels),
     KTEST_CASE(test_framebuffer_terminal_scroll_blocks_mouse_pointer_interleave),
     KTEST_CASE(test_framebuffer_desktop_renders_shell_terminal_background),

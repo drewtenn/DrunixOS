@@ -19,12 +19,12 @@ typedef int ssize_t;
  * the kernel-provided file descriptors:
  *
  *   stdin  → fd 0 (FD_TYPE_TTY in the kernel, line-disciplined keyboard)
- *   stdout → fd 1 (FD_TYPE_STDOUT, routed to VGA by SYS_FWRITE, but will
+ *   stdout → fd 1 (FD_TYPE_STDOUT, routed to VGA by SYS_WRITE, but will
  *                  transparently follow a dup2 into a pipe or file)
  *   stderr → fd 2 (FD_TYPE_STDOUT, same as stdout by default)
  *
- * Because the kernel already dispatches SYS_FWRITE on the per-process fd
- * type, printf going through sys_fwrite(stdout->fd, ...) flows through a
+ * Because the kernel already dispatches SYS_WRITE on the per-process fd type,
+ * printf going through sys_fwrite(stdout->fd, ...) flows through a
  * shell pipeline with no special cases in libc.
  */
 

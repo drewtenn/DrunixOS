@@ -1,6 +1,7 @@
-PROGS = chello hello shell writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello
+PROGS = chello hello shell writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello linuxhello
 C_PROGS = chello shell
 CXX_PROGS = hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello
+LINUX_PROGS = linuxhello
 
 all: $(PROGS)
 
@@ -67,11 +68,17 @@ lib/cxxabi.o: lib/cxxabi.cpp lib/syscall.h
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -I . -c -o $@ $<
 
+%.o: %.asm
+	$(NASM) -f elf32 -o $@ $<
+
 $(C_PROGS): %: %.o $(C_LINK_OBJS) user.ld
 	$(LD) -m elf_i386 -T user.ld -o $@ $(C_LINK_OBJS) $@.o
 
 $(CXX_PROGS): %: %.o $(CXX_LINK_OBJS) user.ld
 	$(LD) -m elf_i386 -T user.ld -o $@ $(CXX_LINK_OBJS) $@.o $(CXXLIBS)
+
+$(LINUX_PROGS): %: %.o
+	$(LD) -m elf_i386 -nostdlib -e _start -Ttext 0x08048000 -o $@ $@.o
 
 clean:
 	find . -name '*.o' -delete

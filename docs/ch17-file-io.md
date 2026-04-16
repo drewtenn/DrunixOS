@@ -24,7 +24,7 @@ Identifying files by inode number rather than by raw disk **LBA** (Logical Block
 
 `SYS_OPEN` resolves the caller's path string through the VFS (Virtual File System) layer, which returns an inode number and file size. The kernel then scans the current process's `open_files[]` array for the first free slot and installs that metadata with `offset = 0` and `writable = 0`. The returned value is the slot index — the fd number the caller uses for all subsequent operations on this file.
 
-`SYS_CREATE` does the same but requests a writable slot. On the filesystem side, if a file with the given name already exists, it is truncated: its data blocks are freed and the inode size is reset to zero. If no such file exists, a fresh inode is allocated and a directory entry is created. Either way the descriptor starts at `offset = 0` and `size = 0`, representing an empty file ready to receive writes. DUFS stamps the file with the current wall-clock time as the creation or modification timestamp.
+`SYS_CREAT` does the same but requests a writable slot. On the filesystem side, if a file with the given name already exists, it is truncated: its data blocks are freed and the inode size is reset to zero. If no such file exists, a fresh inode is allocated and a directory entry is created. Either way the descriptor starts at `offset = 0` and `size = 0`, representing an empty file ready to receive writes. DUFS stamps the file with the current wall-clock time as the creation or modification timestamp.
 
 `SYS_CLOSE` marks the slot as free. If the descriptor was opened writable, we flush the inode before releasing the slot. In the current DUFS implementation, `fs_write` already persists the inode on every write, so the flush at close time is a no-op — but it exists as the correct hook for future caching layers.
 
@@ -38,9 +38,9 @@ For a file read, we first check whether the current `offset` has reached `size` 
 
 ### Creating and Writing
 
-`SYS_FWRITE` writes through a writable descriptor. The kernel passes the descriptor's inode number, current offset, user buffer, and byte count down to the filesystem layer. There the write may allocate new data blocks on demand, perform read-modify-write for partial-block updates, advance through the inode's direct and indirect block chains, update the inode's size and modification timestamp, and flush the updated metadata to disk. On return, the descriptor's `offset` and cached `size` advance by the number of bytes written.
+`SYS_WRITE` writes through a descriptor. The kernel passes the descriptor's inode number, current offset, user buffer, and byte count down to the filesystem layer for writable files, or routes fd 1 and fd 2 to the console/terminal path. File writes may allocate new data blocks on demand, perform read-modify-write for partial-block updates, advance through the inode's direct and indirect block chains, update the inode's size and modification timestamp, and flush the updated metadata to disk. On return, the descriptor's `offset` and cached `size` advance by the number of bytes written.
 
-The write path is necessarily heavier than the read path because it may change the filesystem's physical layout — new blocks must be allocated, new indirect table entries may need to be written, and the bitmaps on disk must reflect the current allocation state. These writes happen synchronously: when `SYS_FWRITE` returns, the data is on disk.
+The write path is necessarily heavier than the read path because it may change the filesystem's physical layout — new blocks must be allocated, new indirect table entries may need to be written, and the bitmaps on disk must reflect the current allocation state. These writes happen synchronously: when `SYS_WRITE` returns for a file, the data is on disk.
 
 ### Deletion, Rename, and Directories
 

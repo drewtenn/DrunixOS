@@ -250,6 +250,48 @@ static void syscall_apply_mprotect(process_t *proc,
     }
 }
 
+static int snapshot_user_string_vector(process_t *proc,
+                                       uint32_t uvec,
+                                       uint32_t max_count,
+                                       uint32_t max_bytes,
+                                       const char **out_vec,
+                                       char *out_strs,
+                                       int *out_count)
+{
+    uint32_t used = 0;
+
+    *out_count = 0;
+    if (uvec == 0) {
+        out_vec[0] = 0;
+        return 0;
+    }
+
+    for (uint32_t i = 0; i < max_count; i++) {
+        uint32_t us = 0;
+        uint32_t remaining;
+
+        if (uaccess_copy_from_user(proc, &us, uvec + i * sizeof(uint32_t),
+                                   sizeof(uint32_t)) != 0)
+            return -1;
+        if (us == 0) {
+            out_vec[i] = 0;
+            *out_count = (int)i;
+            return 0;
+        }
+
+        if (used >= max_bytes)
+            return -1;
+        remaining = max_bytes - used;
+        out_vec[i] = &out_strs[used];
+        if (uaccess_copy_string_from_user(proc, &out_strs[used],
+                                          remaining, us) != 0)
+            return -1;
+        used += k_strlen(&out_strs[used]) + 1;
+    }
+
+    return -1;
+}
+
 static int fd_install_vfs_node(process_t *proc, const vfs_node_t *node,
                                uint32_t writable)
 {
@@ -407,7 +449,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
 {
     switch (eax) {
 
-    case SYS_FWRITE: {
+    case SYS_WRITE: {
         /*
          * ebx = fd
          * ecx = pointer to byte buffer in user virtual space
@@ -528,40 +570,6 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
 
         return (uint32_t)-1;
     }
-
-    case SYS_WRITE:
-        /*
-         * ebx = pointer to a byte buffer in user virtual space
-         * ecx = number of bytes to write
-         *
-         * The buffer is NOT required to be null-terminated — SYS_WRITE emits
-         * exactly `count` bytes to the console.  This lets user code pipe
-         * binary data (for example, the bytes of an ELF image) through the
-         * write path without an embedded 0x00 truncating the output.
-         *
-         * Returns the number of bytes written.
-         */
-        {
-            process_t *cur = sched_current();
-            uint8_t kbuf[USER_IO_CHUNK];
-            uint32_t written = 0;
-
-            if (!cur)
-                return (uint32_t)-1;
-            if (uaccess_prepare(cur, ebx, ecx, 0) != 0)
-                return (uint32_t)-1;
-
-            while (written < ecx) {
-                uint32_t chunk = ecx - written;
-                if (chunk > USER_IO_CHUNK)
-                    chunk = USER_IO_CHUNK;
-                if (uaccess_copy_from_user(cur, kbuf, ebx + written, chunk) != 0)
-                    return written ? written : (uint32_t)-1;
-                syscall_write_console_bytes(cur, (const char *)kbuf, chunk);
-                written += chunk;
-            }
-            return written;
-        }
 
     case SYS_READ: {
         /*
@@ -805,13 +813,11 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
         return 0;
     }
 
-    case SYS_EXEC: {
+    case SYS_EXECVE: {
         /*
          * ebx = pointer to null-terminated filename in user space
          * ecx = pointer to a user-space char *[] array (or 0 for no argv)
-         * edx = argc (number of non-NULL entries in argv; 0 if ecx is 0)
-         * esi = pointer to a user-space envp[] array (or 0 for no env)
-         * edi = envc (number of non-NULL entries in envp; 0 if esi is 0)
+         * edx = pointer to a user-space envp[] array (or 0 for no env)
          *
          * Replace the calling process in-place.  PID, parent linkage,
          * process-group/session membership, cwd, and the open-fd table are
@@ -821,16 +827,6 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
          * On success this syscall does not return to the old image.
          */
 
-        /*
-         * Snapshot argv into kernel memory.  Pointer argument arrives in
-         * the caller's virtual address space, which is still active here,
-         * so we can dereference it directly — but process_create will
-         * write the new process's stack through physical addresses behind
-         * a different page directory, so every string has to live in
-         * identity-mapped kernel space first.
-         */
-        /* kargv points into kstrs; both are heap-allocated to keep this
-         * frame small (process_t alone is ~5 KB on the stack). */
         const char *kargv[PROCESS_ARGV_MAX_COUNT + 1];
         char       *kstrs = (char *)kmalloc(PROCESS_ARGV_MAX_BYTES);
         process_t  *exec_cur = sched_current();
@@ -841,93 +837,29 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
         if (!kenvstrs) { kfree(kstrs); return (uint32_t)-1; }
         int kenvc = 0;
 
-        /*
-         * argv and argc must agree: either both zero (no arguments) or
-         * both non-zero (argc entries at ecx).  A NULL argv with argc > 0
-         * — or a non-NULL argv with argc == 0 — is a caller bug, and we
-         * refuse to silently drop arguments or fabricate an empty frame.
-         */
-        if ((ecx == 0) != (edx == 0)) {
-            klog("EXEC", "argv/argc mismatch");
-            kfree(kenvstrs);
-            kfree(kstrs);
-            return (uint32_t)-1;
-        }
-        if ((esi == 0) != (edi == 0)) {
-            klog("EXEC", "envp/envc mismatch");
+        if (!exec_cur) {
             kfree(kenvstrs);
             kfree(kstrs);
             return (uint32_t)-1;
         }
 
-        if (ecx != 0) {
-            if (edx > PROCESS_ARGV_MAX_COUNT) {
-                klog("EXEC", "argc over limit");
-                kfree(kenvstrs);
-                kfree(kstrs);
-                return (uint32_t)-1;
-            }
-            uint32_t used = 0;
-            for (uint32_t i = 0; i < edx; i++) {
-                uint32_t us = 0;
-                uint32_t remaining = PROCESS_ARGV_MAX_BYTES - used;
-
-                if (uaccess_copy_from_user(exec_cur,
-                                           &us, ecx + i * sizeof(uint32_t),
-                                           sizeof(uint32_t)) != 0 || us == 0) {
-                    klog("EXEC", "null argv entry");
-                    kfree(kenvstrs);
-                    kfree(kstrs);
-                    return (uint32_t)-1;
-                }
-                kargv[i] = &kstrs[used];
-                if (uaccess_copy_string_from_user(exec_cur,
-                                                  &kstrs[used], remaining,
-                                                  us) != 0) {
-                    klog("EXEC", "argv bytes over limit");
-                    kfree(kenvstrs);
-                    kfree(kstrs);
-                    return (uint32_t)-1;
-                }
-                used += k_strlen(&kstrs[used]) + 1;
-            }
-            kargv[edx] = 0;
-            kargc = (int)edx;
+        if (snapshot_user_string_vector(exec_cur, ecx,
+                                        PROCESS_ARGV_MAX_COUNT,
+                                        PROCESS_ARGV_MAX_BYTES,
+                                        kargv, kstrs, &kargc) != 0) {
+            klog("EXEC", "bad argv");
+            kfree(kenvstrs);
+            kfree(kstrs);
+            return (uint32_t)-1;
         }
-
-        if (esi != 0) {
-            if (edi > PROCESS_ENV_MAX_COUNT) {
-                klog("EXEC", "envc over limit");
-                kfree(kenvstrs);
-                kfree(kstrs);
-                return (uint32_t)-1;
-            }
-            uint32_t used = 0;
-            for (uint32_t i = 0; i < edi; i++) {
-                uint32_t us = 0;
-                uint32_t remaining = PROCESS_ENV_MAX_BYTES - used;
-
-                if (uaccess_copy_from_user(exec_cur,
-                                           &us, esi + i * sizeof(uint32_t),
-                                           sizeof(uint32_t)) != 0 || us == 0) {
-                    klog("EXEC", "null envp entry");
-                    kfree(kenvstrs);
-                    kfree(kstrs);
-                    return (uint32_t)-1;
-                }
-                kenvp[i] = &kenvstrs[used];
-                if (uaccess_copy_string_from_user(exec_cur,
-                                                  &kenvstrs[used], remaining,
-                                                  us) != 0) {
-                    klog("EXEC", "env bytes over limit");
-                    kfree(kenvstrs);
-                    kfree(kstrs);
-                    return (uint32_t)-1;
-                }
-                used += k_strlen(&kenvstrs[used]) + 1;
-            }
-            kenvp[edi] = 0;
-            kenvc = (int)edi;
+        if (snapshot_user_string_vector(exec_cur, edx,
+                                        PROCESS_ENV_MAX_COUNT,
+                                        PROCESS_ENV_MAX_BYTES,
+                                        kenvp, kenvstrs, &kenvc) != 0) {
+            klog("EXEC", "bad envp");
+            kfree(kenvstrs);
+            kfree(kstrs);
+            return (uint32_t)-1;
         }
 
         char *exec_rpath = (char *)kmalloc(4096);
@@ -1004,16 +936,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
         return 0;
     }
 
-    case SYS_WAIT:
-        /*
-         * ebx = pid to wait for.
-         * Blocks via schedule() until the target process exits.
-         * Returns the target's encoded exit status, or -1 if not found.
-         * Status is Linux-encoded: (exit_code << 8), low 7 bits == 0.
-         */
-        return (uint32_t)sched_waitpid(ebx, 0);
-
-    case SYS_CREATE: {
+    case SYS_CREAT: {
         /*
          * ebx = pointer to null-terminated filename in user space.
          *
@@ -1113,13 +1036,13 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
         return (uint32_t)cpid;  /* parent gets child PID; child frame already has EAX=0 */
     }
 
-    case SYS_CLEAR:
+    case SYS_DRUNIX_CLEAR:
         if (desktop_is_active() && desktop_clear_console(desktop_global()))
             return 0;
         clear_screen();
         return 0;
 
-    case SYS_SCROLL_UP:
+    case SYS_DRUNIX_SCROLL_UP:
         if (desktop_is_active() &&
             desktop_scroll_console(desktop_global(),
                                    syscall_scroll_count(ebx)))
@@ -1127,7 +1050,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
         scroll_up(syscall_scroll_count(ebx));
         return 0;
 
-    case SYS_SCROLL_DOWN:
+    case SYS_DRUNIX_SCROLL_DOWN:
         if (desktop_is_active() &&
             desktop_scroll_console(desktop_global(),
                                    -syscall_scroll_count(ebx)))
@@ -1140,21 +1063,32 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
         schedule();
         return 0;
 
-    case SYS_SLEEP: {
+    case SYS_NANOSLEEP: {
         /*
-         * ebx = whole seconds to sleep.
+         * ebx = const struct timespec *req, ecx = struct timespec *rem.
          *
          * Blocks the caller until the deadline expires or a signal wakes it.
-         * Returns 0 on full sleep, or the remaining whole seconds if
+         * Returns 0 on full sleep, or -1 after copying remaining time when
          * interrupted by a signal.
          */
         process_t *cur = sched_current();
-        if (!cur) return (uint32_t)-1;
-        if (ebx == 0) return 0;
+        uint32_t req[2];
+        if (!cur || ebx == 0) return (uint32_t)-1;
+        if (uaccess_copy_from_user(cur, req, ebx, sizeof(req)) != 0)
+            return (uint32_t)-1;
+        if (req[1] >= 1000000000u)
+            return (uint32_t)-1;
+        if (req[0] == 0 && req[1] == 0) return 0;
 
         uint32_t start = sched_ticks();
+        uint32_t sec_ticks =
+            (req[0] > (0xFFFFFFFFu / SCHED_HZ)) ? 0xFFFFFFFFu : req[0] * SCHED_HZ;
+        uint32_t tick_nsec = 1000000000u / SCHED_HZ;
+        uint32_t nsec_ticks =
+            (req[1] == 0) ? 0 : (req[1] + tick_nsec - 1u) / tick_nsec;
         uint32_t delta_ticks =
-            (ebx > (0xFFFFFFFFu / SCHED_HZ)) ? 0xFFFFFFFFu : ebx * SCHED_HZ;
+            (sec_ticks > 0xFFFFFFFFu - nsec_ticks) ? 0xFFFFFFFFu :
+            sec_ticks + nsec_ticks;
         uint32_t deadline = start + delta_ticks;
 
         sched_block_until(deadline);
@@ -1162,7 +1096,14 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
         uint32_t now = sched_ticks();
         if ((int32_t)(deadline - now) > 0) {
             uint32_t remaining_ticks = deadline - now;
-            return (remaining_ticks + SCHED_HZ - 1u) / SCHED_HZ;
+            if (ecx != 0) {
+                uint32_t rem[2];
+                rem[0] = remaining_ticks / SCHED_HZ;
+                rem[1] = (remaining_ticks % SCHED_HZ) * tick_nsec;
+                if (uaccess_copy_to_user(cur, ecx, rem, sizeof(rem)) != 0)
+                    return (uint32_t)-1;
+            }
+            return (uint32_t)-1;
         }
         return 0;
     }
@@ -1423,7 +1364,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
         return 0;
     }
 
-    case SYS_MODLOAD: {
+    case SYS_DRUNIX_MODLOAD: {
         /*
          * ebx = pointer to null-terminated module filename in user space.
          *
@@ -1824,7 +1765,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
         return 0;
     }
 
-    case SYS_TCGETATTR: {
+    case SYS_DRUNIX_TCGETATTR: {
         /* ebx = fd, ecx = termios_t* (user pointer) */
         process_t *cur = sched_current();
         tty_t *tty = syscall_tty_from_fd(cur, ebx, 0);
@@ -1834,7 +1775,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
         return 0;
     }
 
-    case SYS_TCSETATTR: {
+    case SYS_DRUNIX_TCSETATTR: {
         /* ebx = fd, ecx = action (TCSANOW=0 / TCSAFLUSH=2), edx = termios_t* */
         process_t *cur = sched_current();
         tty_t *tty = syscall_tty_from_fd(cur, ebx, 0);
@@ -1947,18 +1888,27 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
     case SYS_GETPPID:
         return sched_current_ppid();
 
-    case SYS_WAITPID:
+    case SYS_WAITPID: {
         /*
-         * ebx = pid to wait for, ecx = option flags (WNOHANG | WUNTRACED).
-         * Returns Linux-style encoded status:
+         * ebx = pid, ecx = int *status, edx = options.
+         * Writes Linux-style encoded status:
          *   Exited:  (exit_code << 8)          — low 7 bits == 0
          *   Stopped: (stop_signal << 8) | 0x7F — low 7 bits == 0x7F
-         *   0 with WNOHANG: child exists but has not changed state
-         *  -1: no such process
+         * Returns pid, 0 with WNOHANG, or -1 for no such process / bad status.
          */
-        return (uint32_t)sched_waitpid(ebx, (int)ecx);
+        process_t *cur = sched_current();
+        int status = sched_waitpid(ebx, (int)edx);
+        if (status < 0)
+            return (uint32_t)-1;
+        if (status == 0)
+            return 0;
+        if (ecx != 0 && (!cur ||
+            uaccess_copy_to_user(cur, ecx, &status, sizeof(status)) != 0))
+            return (uint32_t)-1;
+        return ebx;
+    }
 
-    case SYS_TCSETPGRP: {
+    case SYS_DRUNIX_TCSETPGRP: {
         /* ebx = fd, ecx = pgid → 0 or -1 */
         process_t *cur = sched_current();
         uint32_t tty_idx;
@@ -1974,7 +1924,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
         return 0;
     }
 
-    case SYS_TCGETPGRP: {
+    case SYS_DRUNIX_TCGETPGRP: {
         /* ebx = fd → fg_pgid or -1 */
         process_t *cur = sched_current();
         tty_t *tty = syscall_tty_from_fd(cur, ebx, 0);

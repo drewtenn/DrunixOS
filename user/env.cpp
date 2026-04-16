@@ -243,7 +243,9 @@ int main(int argc, char **argv)
         return 127;
     }
 
-    sys_execve(path, &argv[first], argc - first, envp, envc);
+    (void)argc;
+    (void)envc;
+    sys_execve(path, &argv[first], envp);
     fprintf(stderr, "env: cannot execute: %s\n", argv[first]);
     return 126;
 }

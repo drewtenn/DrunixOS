@@ -1700,6 +1700,7 @@ static int desktop_render_framebuffer_scroll_dirty(desktop_state_t *desktop,
     int ansi_val;
     int scroll_rows;
     int scroll_pixels;
+    int wrote_cells;
     int wrap;
     int x;
     int y;
@@ -1722,6 +1723,7 @@ static int desktop_render_framebuffer_scroll_dirty(desktop_state_t *desktop,
     ansi_state = 0;
     ansi_val = 0;
     scroll_rows = 0;
+    wrote_cells = 0;
 
     for (uint32_t i = 0; i < len; i++) {
         ch = (unsigned char)buf[i];
@@ -1803,6 +1805,7 @@ static int desktop_render_framebuffer_scroll_dirty(desktop_state_t *desktop,
             x >= desktop->shell_terminal.cols ||
             y >= desktop->shell_terminal.rows)
             return 0;
+        wrote_cells = 1;
         if (x == desktop->shell_terminal.cols - 1) {
             wrap = 1;
         } else {
@@ -1812,6 +1815,8 @@ static int desktop_render_framebuffer_scroll_dirty(desktop_state_t *desktop,
     }
 
     if (scroll_rows <= 0 || scroll_rows > desktop->shell_terminal.rows)
+        return 0;
+    if (wrote_cells)
         return 0;
     if (ansi_state != 0 || desktop->shell_terminal.ansi_state != 0)
         return 0;

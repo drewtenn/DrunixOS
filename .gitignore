@@ -36,6 +36,7 @@ user/which
 user/yes
 user/crash
 user/dmesg
+user/linuxhello
 
 core.*
 

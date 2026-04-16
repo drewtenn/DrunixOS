@@ -18,7 +18,7 @@
  *   stdout → fd 1 (FD_TYPE_STDOUT, VGA — but follows dup2 into a pipe)
  *   stderr → fd 2 (FD_TYPE_STDOUT, same as stdout initially)
  *
- * Because the kernel SYS_FWRITE path already dispatches on fd type (VGA,
+ * Because the kernel SYS_WRITE path already dispatches on fd type (VGA,
  * pipe buffer, or filesystem write), a printf built on sys_fwrite(1, ...)
  * transparently flows through a shell pipeline with zero special cases.
  */

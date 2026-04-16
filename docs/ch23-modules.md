@@ -40,7 +40,7 @@ There is no unload path. Once `module_init` succeeds, the heap allocation remain
 
 ### How User Space Requests a Load
 
-User space reaches the loader through the `SYS_MODLOAD` syscall (number 170). The shell's built-in `modload` command names a file that already exists on disk; the kernel validates that file, loads it into memory, resolves its symbols, applies relocations, and finally runs its initialisation entry point:
+User space reaches the loader through the private `SYS_DRUNIX_MODLOAD` syscall. The shell's built-in `modload` command names a file that already exists on disk; the kernel validates that file, loads it into memory, resolves its symbols, applies relocations, and finally runs its initialisation entry point:
 
 ![](diagrams/ch23-diag01.svg)
 
@@ -52,4 +52,4 @@ A successfully loaded module can call any function in the export table and regis
 
 ### Where the Machine Is by the End of Chapter 23
 
-We are no longer limited to code that was linked at build time. A user process can ask us to load a relocatable ELF object from DUFS, parse its section and symbol tables, resolve its external references against the exported-symbol table, apply the two relocation types that 32-bit x86 C code generates, and call its entry point — all inside a single `SYS_MODLOAD` call. The module lands in a single heap allocation, its text sections are immediately executable, and it becomes a permanent part of the running kernel for as long as the machine stays up.
+We are no longer limited to code that was linked at build time. A user process can ask us to load a relocatable ELF object from DUFS, parse its section and symbol tables, resolve its external references against the exported-symbol table, apply the two relocation types that 32-bit x86 C code generates, and call its entry point — all inside a single `SYS_DRUNIX_MODLOAD` call. The module lands in a single heap allocation, its text sections are immediately executable, and it becomes a permanent part of the running kernel for as long as the machine stays up.

@@ -67,7 +67,7 @@
 /*
  * Per-process open-file table.  Every fd — including 0 (stdin), 1 (stdout),
  * and 2 (stderr) — is stored as a typed entry in this array.  The type field
- * determines how SYS_READ / SYS_FWRITE dispatch the I/O.
+ * determines how SYS_READ / SYS_WRITE dispatch the I/O.
  */
 #define MAX_FDS  16u
 
@@ -240,7 +240,7 @@ typedef struct process {
 
 /*
  * Upper bounds on the argv passed to process_create.  These keep the kernel
- * copy path simple (a fixed-size scratch buffer in SYS_EXEC) and guarantee
+ * copy path simple (a fixed-size scratch buffer in SYS_EXECVE) and guarantee
  * the assembled stack frame fits inside the top user stack page.
  */
 #define PROCESS_ARGV_MAX_COUNT  32u

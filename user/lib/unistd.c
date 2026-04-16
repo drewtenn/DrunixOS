@@ -37,13 +37,7 @@ int execv(const char *path, char *const argv[])
 
 int execve(const char *path, char *const argv[], char *const envp[])
 {
-    int argc = 0;
-    int envc = 0;
-    if (argv)
-        while (argv[argc]) argc++;
-    if (envp)
-        while (envp[envc]) envc++;
-    return sys_execve(path, (char **)argv, argc, (char **)envp, envc);
+    return sys_execve(path, (char **)argv, (char **)envp);
 }
 
 void _exit(int status)
@@ -71,9 +65,6 @@ int read(int fd, void *buf, size_t count)
 
 int write(int fd, const void *buf, size_t count)
 {
-    /* POSIX write() routes through the per-process fd table, which on
-     * this project is exactly what sys_fwrite() does — sys_write() is
-     * the legacy raw-VGA path and does not respect fd redirection. */
     return sys_fwrite(fd, (const char *)buf, (int)count);
 }
 
