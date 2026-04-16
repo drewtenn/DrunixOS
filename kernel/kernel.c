@@ -54,6 +54,16 @@ static int shadow_cursor = 0;                /* "true" cursor byte-offset */
 static gui_cell_t boot_vga_cells[MAX_ROWS * MAX_COLS];
 static gui_cell_t boot_fb_cells[FB_CELL_COLS * FB_CELL_ROWS];
 static framebuffer_info_t boot_framebuffer;
+/*
+ * Off-screen back buffer used to double-buffer the framebuffer-mode
+ * desktop. Sized for the requested boot resolution so we can composite the
+ * desktop, windows, taskbar, and cursor overlay off-screen and flush only
+ * dirty rects to video memory. Living in .bss costs no ELF bytes — just the
+ * runtime .bss allocation — and is marked reserved by the PMM via the
+ * _kernel_end bump, so other code won't step on it.
+ */
+static uint32_t boot_fb_back_buffer[FB_REQUEST_WIDTH * FB_REQUEST_HEIGHT]
+    __attribute__((aligned(16)));
 static gui_display_t boot_display;
 static desktop_state_t boot_desktop;
 
@@ -113,9 +123,24 @@ static int boot_map_framebuffer(const framebuffer_info_t *fb)
     if (byte_len == 0 || byte_len > UINT32_MAX)
         return -1;
 
-    return paging_identity_map_kernel_range((uint32_t)fb->address,
-                                            (uint32_t)byte_len,
-                                            PG_PRESENT | PG_WRITABLE);
+    if (paging_identity_map_kernel_range((uint32_t)fb->address,
+                                         (uint32_t)byte_len,
+                                         PG_PRESENT | PG_WRITABLE) != 0)
+        return -1;
+
+    /*
+     * Mark the visible framebuffer as write-combining so back→front
+     * flushes coalesce stores into burst transactions. On CPUs without
+     * PAT support we silently keep whatever cacheability the BIOS set —
+     * drawing still works, just more slowly. We don't treat that as a
+     * fatal error.
+     */
+    if (paging_mark_range_write_combining((uint32_t)fb->address,
+                                          (uint32_t)byte_len) == 0)
+        klog("BOOT", "framebuffer mapped write-combining");
+    else
+        klog("BOOT", "framebuffer WC mapping unavailable");
+    return 0;
 }
 
 #ifdef KTEST_ENABLED
@@ -267,6 +292,25 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
             klog("BOOT", "desktop VGA fallback enabled");
         } else {
             desktop_set_framebuffer_target(&boot_desktop, &boot_framebuffer);
+            /*
+             * Attach the off-screen back buffer. The framebuffer primitives
+             * will transparently draw into it and we'll flush dirty rects
+             * to the visible framebuffer via framebuffer_present_rect().
+             * If the firmware gave us a framebuffer larger than we reserved
+             * space for, attach fails and we fall back to direct drawing —
+             * which still works but without the flicker-free guarantees.
+             */
+            if (framebuffer_attach_back_buffer(&boot_framebuffer,
+                                               boot_fb_back_buffer,
+                                               FB_REQUEST_WIDTH * 4u,
+                                               sizeof(boot_fb_back_buffer))
+                == 0) {
+                klog("BOOT", "desktop framebuffer back buffer attached");
+            } else {
+                klog("BOOT",
+                     "desktop framebuffer back buffer unavailable, "
+                     "drawing direct");
+            }
             klog("BOOT", "desktop framebuffer enabled");
             klog_uint("BOOT", "framebuffer desktop cols",
                       (uint32_t)cols);

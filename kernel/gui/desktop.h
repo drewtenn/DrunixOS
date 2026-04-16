@@ -55,7 +55,7 @@ typedef struct {
     gui_pixel_rect_t shell_pixel_rect;
     gui_display_t *display;
     uintptr_t video_address;
-    const framebuffer_info_t *framebuffer;
+    framebuffer_info_t *framebuffer;
     int framebuffer_enabled;
     uint32_t shell_pid;
     uint32_t shell_pgid;
@@ -94,7 +94,7 @@ void desktop_render(desktop_state_t *desktop);
 void desktop_set_presentation_target(desktop_state_t *desktop,
                                       uintptr_t video_address);
 void desktop_set_framebuffer_target(desktop_state_t *desktop,
-                                    const framebuffer_info_t *framebuffer);
+                                    framebuffer_info_t *framebuffer);
 void desktop_open_shell_window(desktop_state_t *desktop);
 int desktop_open_app_window(desktop_state_t *desktop, desktop_app_kind_t app);
 int desktop_close_window(desktop_state_t *desktop, int window_id);

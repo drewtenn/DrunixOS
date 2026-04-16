@@ -22,6 +22,46 @@
 static desktop_state_t *g_desktop = 0;
 static int g_framebuffer_present_depth = 0;
 
+/*
+ * Framebuffer present critical section.
+ *
+ * begin() saves EFLAGS and disables interrupts; end() restores the prior
+ * IF state. Calls nest safely via g_framebuffer_present_depth, which the
+ * KTEST scroll-interleave hook also uses to detect re-entry.
+ *
+ * Why we mask interrupts:
+ *
+ * Historically this existed so a mouse IRQ firing mid-render couldn't
+ * blit its cursor sprite into the visible framebuffer on top of a
+ * partially-drawn window, leaving a cursor ghost. That specific problem
+ * is now impossible — the cursor is a hardware-style overlay that's
+ * composited during framebuffer_present_rect(), never written into any
+ * buffer by the IRQ path — but three other races still need this guard:
+ *
+ *  1. Back-buffer write races. Rasterisation (fill/blit/glyph) and the
+ *     back→front memcpy in framebuffer_present_rect() both touch the
+ *     back buffer with non-atomic memmoves. A mouse or keyboard IRQ
+ *     that re-entered the present path would interleave its back-buffer
+ *     writes and reads with the main path's, producing torn pixels in
+ *     the flushed output.
+ *
+ *  2. Flush-vs-write ordering. The flush reads the back buffer while
+ *     the main path may still be in the middle of composing the frame.
+ *     Without this guard a cursor-motion flush could copy a half-
+ *     composed region to the visible framebuffer.
+ *
+ *  3. Desktop-state mutation mid-render. desktop_handle_pointer() (from
+ *     the mouse IRQ) and desktop_handle_key() mutate dragging_window_id,
+ *     focused_window_id, per-window rects, and pointer coordinates. If
+ *     those changed mid-walk inside desktop_render_framebuffer_region()
+ *     the z-order traversal would see inconsistent state and emit a
+ *     frame with half-old, half-new window geometry.
+ *
+ * Finer-grained locks would let the timer and keyboard IRQs continue to
+ * fire, but with only a handful of windows and no real preemption the
+ * blanket cli/sti is simpler and cheap enough — the critical section is
+ * at most a small dirty-rect union of rasterise + memcpy.
+ */
 static uint32_t desktop_framebuffer_present_begin(void)
 {
     uint32_t flags;
@@ -97,6 +137,67 @@ static int desktop_pixel_rect_intersect(gui_pixel_rect_t a,
     out->w = (int)(right - left);
     out->h = (int)(bottom - top);
     return 1;
+}
+
+static int desktop_pixel_rect_empty(const gui_pixel_rect_t *r)
+{
+    return !r || r->w <= 0 || r->h <= 0;
+}
+
+/*
+ * Compute the bounding box of two rects. Returns the union rect. If either
+ * input is empty, returns the other. If both are empty, returns an empty
+ * rect. The union is always a superset of both inputs but may also cover
+ * pixels that are in neither when the rects are disjoint — this is fine for
+ * presenting dirty pixels via a single memcpy sweep.
+ */
+static gui_pixel_rect_t desktop_pixel_rect_union(gui_pixel_rect_t a,
+                                                 gui_pixel_rect_t b)
+{
+    gui_pixel_rect_t out = { 0, 0, 0, 0 };
+    int64_t left;
+    int64_t top;
+    int64_t right;
+    int64_t bottom;
+
+    if (desktop_pixel_rect_empty(&a))
+        return b;
+    if (desktop_pixel_rect_empty(&b))
+        return a;
+
+    left = a.x < b.x ? a.x : b.x;
+    top = a.y < b.y ? a.y : b.y;
+    right = (int64_t)a.x + a.w;
+    if ((int64_t)b.x + b.w > right)
+        right = (int64_t)b.x + b.w;
+    bottom = (int64_t)a.y + a.h;
+    if ((int64_t)b.y + b.h > bottom)
+        bottom = (int64_t)b.y + b.h;
+    if (left < INT_MIN || top < INT_MIN ||
+        right > INT_MAX || bottom > INT_MAX)
+        return out;
+    out.x = (int)left;
+    out.y = (int)top;
+    out.w = (int)(right - left);
+    out.h = (int)(bottom - top);
+    return out;
+}
+
+/*
+ * Flush a rect from the back buffer to the visible framebuffer. No-op when
+ * direct-draw mode is active (no back buffer attached). Callers must hold
+ * the framebuffer present critical section when coordinating multiple
+ * flushes into a single visually-atomic update.
+ */
+static void desktop_framebuffer_flush_rect(const desktop_state_t *desktop,
+                                           gui_pixel_rect_t rect)
+{
+    if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
+        return;
+    if (rect.w <= 0 || rect.h <= 0)
+        return;
+    framebuffer_present_rect(desktop->framebuffer,
+                             rect.x, rect.y, rect.w, rect.h);
 }
 
 static void desktop_pixel_fill_rect(const framebuffer_info_t *fb,
@@ -406,6 +507,36 @@ static desktop_window_t *desktop_next_window_by_z(desktop_state_t *desktop,
             best = win;
     }
     return best;
+}
+
+/*
+ * Return 1 if any open, opaque window fully contains the clip. When true,
+ * the desktop background and anything underneath the window are invisible
+ * inside the clip and the caller can skip filling them entirely. This is
+ * safe because all desktop windows are opaque — no alpha blending.
+ */
+static int desktop_clip_fully_covered_by_window(const desktop_state_t *desktop,
+                                                const gui_pixel_rect_t *clip)
+{
+    int clip_right;
+    int clip_bottom;
+
+    if (!desktop || !clip || clip->w <= 0 || clip->h <= 0)
+        return 0;
+    clip_right = clip->x + clip->w;
+    clip_bottom = clip->y + clip->h;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        const desktop_window_t *win = &desktop->windows[i];
+
+        if (!win->open || win->rect.w <= 0 || win->rect.h <= 0)
+            continue;
+        if (win->rect.x <= clip->x &&
+            win->rect.y <= clip->y &&
+            win->rect.x + win->rect.w >= clip_right &&
+            win->rect.y + win->rect.h >= clip_bottom)
+            return 1;
+    }
+    return 0;
 }
 
 static int desktop_shell_content_has_overlap_above(desktop_state_t *desktop,
@@ -990,12 +1121,48 @@ static void desktop_present_cursor_region(desktop_state_t *desktop,
                                             cell_bottom - cell_y + 1);
 }
 
+/*
+ * Sync the virtual hardware cursor overlay stored on the framebuffer with
+ * the desktop's current pointer position and visibility. When a back
+ * buffer is attached the overlay is composited on top of the visible
+ * framebuffer during framebuffer_present_rect() — it never touches the
+ * back buffer, so cursor motion never causes back-buffer repaints.
+ */
+static void desktop_set_overlay_cursor(desktop_state_t *desktop)
+{
+    uint32_t fg;
+    uint32_t shadow;
+
+    if (!desktop || !desktop->framebuffer)
+        return;
+
+    fg = framebuffer_pack_rgb(desktop->framebuffer, 255, 255, 255);
+    shadow = framebuffer_pack_rgb(desktop->framebuffer, 0, 0, 0);
+    framebuffer_set_cursor(desktop->framebuffer,
+                           desktop->pointer_pixel_x,
+                           desktop->pointer_pixel_y,
+                           fg,
+                           shadow,
+                           desktop->pointer_visible);
+}
+
+/*
+ * Make the cursor visible at its current position. With a back buffer we
+ * simply keep the overlay sprite in sync — it will be composited onto the
+ * visible framebuffer during the next framebuffer_present_rect() call. In
+ * direct-draw mode (no back buffer) we fall back to drawing the cursor
+ * straight into the visible framebuffer, preserving legacy behaviour.
+ */
 static void desktop_draw_framebuffer_pointer(desktop_state_t *desktop)
 {
     uint32_t fg;
     uint32_t shadow;
 
+    desktop_set_overlay_cursor(desktop);
+
     if (!desktop || !desktop->framebuffer || !desktop->pointer_visible)
+        return;
+    if (framebuffer_has_back_buffer(desktop->framebuffer))
         return;
 
     fg = framebuffer_pack_rgb(desktop->framebuffer, 255, 255, 255);
@@ -1087,8 +1254,16 @@ static void desktop_render_framebuffer_region(desktop_state_t *desktop,
 
     fb = desktop->framebuffer;
     theme = desktop_pixel_theme(fb);
-    desktop_pixel_fill_rect(fb, clip, 0, 0, (int)fb->width, (int)fb->height,
-                            theme.desktop_bg);
+    /*
+     * Skip the desktop-wide background fill when an opaque window already
+     * covers every pixel of the clip. The window will repaint itself a few
+     * lines down and would have overwritten every pixel we just wrote.
+     * This is the single largest fill in the region path, so dropping it
+     * for occluded clips removes most of the per-drag pixel churn.
+     */
+    if (!desktop_clip_fully_covered_by_window(desktop, clip))
+        desktop_pixel_fill_rect(fb, clip, 0, 0, (int)fb->width,
+                                (int)fb->height, theme.desktop_bg);
     desktop_pixel_fill_rect(fb, clip,
                             desktop->taskbar_pixel_rect.x,
                             desktop->taskbar_pixel_rect.y,
@@ -1157,6 +1332,7 @@ static void desktop_render_framebuffer(desktop_state_t *desktop)
     clip.h = (int)desktop->framebuffer->height;
     desktop_render_framebuffer_region(desktop, &clip);
     desktop_draw_framebuffer_pointer(desktop);
+    desktop_framebuffer_flush_rect(desktop, clip);
 }
 
 static void desktop_render_framebuffer_terminal(desktop_state_t *desktop)
@@ -1176,6 +1352,7 @@ static void desktop_render_framebuffer_terminal(desktop_state_t *desktop)
 
     desktop_render_framebuffer_region(desktop, &desktop->shell_pixel_rect);
     desktop_draw_framebuffer_pointer(desktop);
+    desktop_framebuffer_flush_rect(desktop, desktop->shell_pixel_rect);
 }
 
 static void desktop_terminal_dirty_include_cell(desktop_state_t *desktop,
@@ -1360,6 +1537,7 @@ static int desktop_render_framebuffer_write_dirty(desktop_state_t *desktop,
     clip.h = dirty.h;
     desktop_render_framebuffer_region(desktop, &clip);
     desktop_draw_framebuffer_pointer(desktop);
+    desktop_framebuffer_flush_rect(desktop, clip);
     return 1;
 }
 
@@ -1401,10 +1579,16 @@ static int desktop_framebuffer_scroll_rect_up(const framebuffer_info_t *fb,
                                               int pixels,
                                               uint32_t fill)
 {
+    uintptr_t base;
+    uint32_t row_pitch;
     uint32_t row_bytes;
 
-    if (!fb || !rect || fb->address == 0 || pixels <= 0 ||
+    if (!fb || !rect || pixels <= 0 ||
         rect->w <= 0 || rect->h <= 0)
+        return 0;
+    base = framebuffer_draw_address(fb);
+    row_pitch = framebuffer_draw_pitch(fb);
+    if (base == 0 || row_pitch == 0)
         return 0;
     if (rect->x < 0 || rect->y < 0 ||
         rect->x > (int)fb->width || rect->y > (int)fb->height ||
@@ -1421,11 +1605,11 @@ static int desktop_framebuffer_scroll_rect_up(const framebuffer_info_t *fb,
 
     row_bytes = (uint32_t)rect->w * (uint32_t)sizeof(uint32_t);
     for (int row = 0; row < rect->h - pixels; row++) {
-        uintptr_t dst = fb->address +
-                        (uintptr_t)(rect->y + row) * fb->pitch +
+        uintptr_t dst = base +
+                        (uintptr_t)(rect->y + row) * row_pitch +
                         (uintptr_t)rect->x * sizeof(uint32_t);
-        uintptr_t src = fb->address +
-                        (uintptr_t)(rect->y + row + pixels) * fb->pitch +
+        uintptr_t src = base +
+                        (uintptr_t)(rect->y + row + pixels) * row_pitch +
                         (uintptr_t)rect->x * sizeof(uint32_t);
 
         k_memmove((void *)dst, (const void *)src, row_bytes);
@@ -1652,6 +1836,22 @@ static int desktop_render_framebuffer_scroll_dirty(desktop_state_t *desktop,
         desktop_render_framebuffer_region(desktop, &clip);
 
     desktop_draw_framebuffer_pointer(desktop);
+    /*
+     * The scroll path updates the content rect, the pointer rect (if the
+     * cursor overlaps the shell), and the cursor cells. Flushing the full
+     * content rect captures all of them with a single memcpy sweep, which
+     * is cheaper than flushing individual sub-rects separately.
+     */
+    desktop_framebuffer_flush_rect(desktop, content);
+    if (desktop->pointer_visible) {
+        gui_pixel_rect_t pointer_rect;
+
+        pointer_rect.x = desktop->pointer_pixel_x;
+        pointer_rect.y = desktop->pointer_pixel_y;
+        pointer_rect.w = DESKTOP_CURSOR_W;
+        pointer_rect.h = DESKTOP_CURSOR_H;
+        desktop_framebuffer_flush_rect(desktop, pointer_rect);
+    }
     return 1;
 }
 
@@ -1661,6 +1861,7 @@ static void desktop_present_framebuffer_pointer_motion(desktop_state_t *desktop,
 {
     gui_pixel_rect_t old_clip;
     gui_pixel_rect_t new_clip;
+    gui_pixel_rect_t pointer_union;
 
     if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
         return;
@@ -1674,9 +1875,120 @@ static void desktop_present_framebuffer_pointer_motion(desktop_state_t *desktop,
     new_clip.w = DESKTOP_CURSOR_W;
     new_clip.h = DESKTOP_CURSOR_H;
 
-    desktop_render_framebuffer_region(desktop, &old_clip);
-    desktop_render_framebuffer_region(desktop, &new_clip);
-    desktop_draw_framebuffer_pointer(desktop);
+    if (framebuffer_has_back_buffer(desktop->framebuffer)) {
+        /*
+         * Back-buffer + overlay-cursor fast path: moving the pointer does
+         * NOT dirty the back buffer — the sprite is composited during the
+         * back→front flush. We only need to re-present the union of the
+         * old and new cursor rects so the old position reveals clean
+         * background (no ghost) and the new position shows the freshly
+         * composited cursor.
+         */
+        desktop_set_overlay_cursor(desktop);
+        pointer_union = desktop_pixel_rect_union(old_clip, new_clip);
+        desktop_framebuffer_flush_rect(desktop, pointer_union);
+    } else {
+        /*
+         * Direct-draw fallback: repaint the old cursor region (erasing
+         * the cursor) and the new cursor region (restoring whatever sits
+         * under it), then draw the cursor on top of the new region.
+         */
+        desktop_render_framebuffer_region(desktop, &old_clip);
+        desktop_render_framebuffer_region(desktop, &new_clip);
+        desktop_draw_framebuffer_pointer(desktop);
+    }
+}
+
+static int desktop_present_framebuffer_window_move_blit(
+    desktop_state_t *desktop,
+    gui_pixel_rect_t old_rect,
+    gui_pixel_rect_t new_rect)
+{
+    gui_pixel_rect_t overlap;
+    gui_pixel_rect_t exposed_horizontal;
+    gui_pixel_rect_t exposed_vertical;
+    gui_pixel_rect_t window_union;
+    const framebuffer_info_t *fb;
+
+    if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
+        return 0;
+    if (old_rect.w <= 0 || old_rect.h <= 0 ||
+        new_rect.w != old_rect.w || new_rect.h != old_rect.h)
+        return 0;
+
+    fb = desktop->framebuffer;
+    /*
+     * Blit-move only pays off when we have a back buffer, because the
+     * intermediate memmove would be visible during scan-out otherwise. It
+     * also only makes sense when the window content hasn't changed (same
+     * w/h, same contents) — we enforce same-size here and trust that drag
+     * steps don't reflow text between frames.
+     */
+    if (!framebuffer_has_back_buffer(fb))
+        return 0;
+
+    /*
+     * Shift the window pixels from the old position to the new one inside
+     * the back buffer. This is one memmove per row — far cheaper than
+     * re-rasterising the window chrome, title text, and contents. The
+     * handful of overlap pixels (when new_rect overlaps old_rect) are
+     * already correct because they came from the same window.
+     */
+    framebuffer_blit_rect(fb,
+                          old_rect.x, old_rect.y,
+                          new_rect.x, new_rect.y,
+                          old_rect.w, old_rect.h);
+
+    if (desktop_pixel_rect_intersect(old_rect, new_rect, &overlap)) {
+        /*
+         * Split the "exposed L" behind the old position into two axis-
+         * aligned rects so neither touches the window's new position:
+         *   horizontal = the old rect above or below the overlap
+         *   vertical   = the old rect to the left or right of the overlap
+         * We render those regions; desktop_render_framebuffer_region walks
+         * all windows, but since the dragged window is at new_rect — which
+         * by construction is disjoint from both rects — it won't repaint
+         * into the exposed area.
+         */
+        k_memset(&exposed_horizontal, 0, sizeof(exposed_horizontal));
+        k_memset(&exposed_vertical, 0, sizeof(exposed_vertical));
+        if (old_rect.y < overlap.y) {
+            exposed_horizontal.x = old_rect.x;
+            exposed_horizontal.y = old_rect.y;
+            exposed_horizontal.w = old_rect.w;
+            exposed_horizontal.h = overlap.y - old_rect.y;
+        } else if (old_rect.y + old_rect.h > overlap.y + overlap.h) {
+            exposed_horizontal.x = old_rect.x;
+            exposed_horizontal.y = overlap.y + overlap.h;
+            exposed_horizontal.w = old_rect.w;
+            exposed_horizontal.h = (old_rect.y + old_rect.h) -
+                                   (overlap.y + overlap.h);
+        }
+        if (old_rect.x < overlap.x) {
+            exposed_vertical.x = old_rect.x;
+            exposed_vertical.y = overlap.y;
+            exposed_vertical.w = overlap.x - old_rect.x;
+            exposed_vertical.h = overlap.h;
+        } else if (old_rect.x + old_rect.w > overlap.x + overlap.w) {
+            exposed_vertical.x = overlap.x + overlap.w;
+            exposed_vertical.y = overlap.y;
+            exposed_vertical.w = (old_rect.x + old_rect.w) -
+                                 (overlap.x + overlap.w);
+            exposed_vertical.h = overlap.h;
+        }
+        if (exposed_horizontal.w > 0 && exposed_horizontal.h > 0)
+            desktop_render_framebuffer_region(desktop, &exposed_horizontal);
+        if (exposed_vertical.w > 0 && exposed_vertical.h > 0)
+            desktop_render_framebuffer_region(desktop, &exposed_vertical);
+    } else {
+        /* Disjoint move: the whole old rect needs a full repaint. */
+        desktop_render_framebuffer_region(desktop, &old_rect);
+    }
+
+    /* Flush the bounding box covering both positions in one memcpy sweep. */
+    window_union = desktop_pixel_rect_union(old_rect, new_rect);
+    desktop_framebuffer_flush_rect(desktop, window_union);
+    return 1;
 }
 
 static void desktop_present_framebuffer_window_move(desktop_state_t *desktop,
@@ -1687,6 +1999,8 @@ static void desktop_present_framebuffer_window_move(desktop_state_t *desktop,
 {
     gui_pixel_rect_t old_pointer;
     gui_pixel_rect_t new_pointer;
+    gui_pixel_rect_t window_union;
+    gui_pixel_rect_t pointer_union;
     uint32_t flags;
 
     if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
@@ -1702,11 +2016,47 @@ static void desktop_present_framebuffer_window_move(desktop_state_t *desktop,
     new_pointer.h = DESKTOP_CURSOR_H;
 
     flags = desktop_framebuffer_present_begin();
-    desktop_render_framebuffer_region(desktop, &old_rect);
-    desktop_render_framebuffer_region(desktop, &new_rect);
-    desktop_render_framebuffer_region(desktop, &old_pointer);
-    desktop_render_framebuffer_region(desktop, &new_pointer);
-    desktop_draw_framebuffer_pointer(desktop);
+
+    if (framebuffer_has_back_buffer(desktop->framebuffer)) {
+        /*
+         * Fast path: blit the window pixels into the new position and
+         * redraw only the exposed L-shape behind the old one. If the blit
+         * path bails (e.g. mismatched rect sizes) we fall back to a
+         * single unioned region render — still better than the four
+         * per-frame region renders we used to do.
+         */
+        if (!desktop_present_framebuffer_window_move_blit(desktop,
+                                                          old_rect,
+                                                          new_rect)) {
+            window_union = desktop_pixel_rect_union(old_rect, new_rect);
+            desktop_render_framebuffer_region(desktop, &window_union);
+            desktop_framebuffer_flush_rect(desktop, window_union);
+        }
+
+        /*
+         * Cursor handling: with the overlay sprite the cursor isn't drawn
+         * into the back buffer, so we don't need a region render for the
+         * old or new cursor rect — flushing the union presents clean
+         * background at the old spot and composites the cursor at its new
+         * position.
+         */
+        desktop_set_overlay_cursor(desktop);
+        pointer_union = desktop_pixel_rect_union(old_pointer, new_pointer);
+        desktop_framebuffer_flush_rect(desktop, pointer_union);
+    } else {
+        /*
+         * Direct-draw fallback: preserve the original four-region repaint
+         * path exactly so behaviour (and existing tests) remain stable for
+         * firmware that gives us a framebuffer too large for our back
+         * buffer reservation.
+         */
+        desktop_render_framebuffer_region(desktop, &old_rect);
+        desktop_render_framebuffer_region(desktop, &new_rect);
+        desktop_render_framebuffer_region(desktop, &old_pointer);
+        desktop_render_framebuffer_region(desktop, &new_pointer);
+        desktop_draw_framebuffer_pointer(desktop);
+    }
+
     desktop_framebuffer_present_end(flags);
 }
 
@@ -1794,7 +2144,7 @@ void desktop_set_presentation_target(desktop_state_t *desktop,
 }
 
 void desktop_set_framebuffer_target(desktop_state_t *desktop,
-                                    const framebuffer_info_t *framebuffer)
+                                    framebuffer_info_t *framebuffer)
 {
     if (!desktop)
         return;

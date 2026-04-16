@@ -154,6 +154,60 @@ uint32_t framebuffer_pack_rgb(const framebuffer_info_t *fb,
            (scale_color(b, fb->blue_size) << fb->blue_pos);
 }
 
+int framebuffer_has_back_buffer(const framebuffer_info_t *fb)
+{
+    return fb && fb->back_address != 0 && fb->back_pitch != 0;
+}
+
+uintptr_t framebuffer_draw_address(const framebuffer_info_t *fb)
+{
+    if (!fb)
+        return 0;
+    if (framebuffer_has_back_buffer(fb))
+        return fb->back_address;
+    return fb->address;
+}
+
+uint32_t framebuffer_draw_pitch(const framebuffer_info_t *fb)
+{
+    if (!fb)
+        return 0;
+    if (framebuffer_has_back_buffer(fb))
+        return fb->back_pitch;
+    return fb->pitch;
+}
+
+int framebuffer_attach_back_buffer(framebuffer_info_t *fb,
+                                   void *buffer,
+                                   uint32_t pitch,
+                                   uint32_t capacity_bytes)
+{
+    uint64_t min_row_bytes;
+    uint64_t min_total_bytes;
+
+    if (!fb)
+        return -1;
+    if (!buffer || pitch == 0) {
+        fb->back_address = 0;
+        fb->back_pitch = 0;
+        return 0;
+    }
+    if (fb->width == 0 || fb->height == 0)
+        return -1;
+
+    /* Refuse to attach a buffer that can't hold the whole framebuffer. */
+    min_row_bytes = (uint64_t)fb->width * 4u;
+    if (pitch < min_row_bytes)
+        return -2;
+    min_total_bytes = (uint64_t)(fb->height - 1u) * pitch + min_row_bytes;
+    if (capacity_bytes < min_total_bytes)
+        return -3;
+
+    fb->back_address = (uintptr_t)buffer;
+    fb->back_pitch = pitch;
+    return 0;
+}
+
 void framebuffer_fill_rect(const framebuffer_info_t *fb,
                            int x, int y, int w, int h,
                            uint32_t color)
@@ -162,9 +216,15 @@ void framebuffer_fill_rect(const framebuffer_info_t *fb,
     int64_t top;
     int64_t right;
     int64_t bottom;
+    uintptr_t base;
+    uint32_t row_pitch;
     uint32_t *row_ptr;
 
-    if (!fb || fb->address == 0 || w <= 0 || h <= 0)
+    if (!fb || w <= 0 || h <= 0)
+        return;
+    base = framebuffer_draw_address(fb);
+    row_pitch = framebuffer_draw_pitch(fb);
+    if (base == 0 || row_pitch == 0)
         return;
     left = x;
     top = y;
@@ -184,11 +244,227 @@ void framebuffer_fill_rect(const framebuffer_info_t *fb,
         return;
 
     for (int64_t row = top; row < bottom; row++) {
-        row_ptr = (uint32_t *)(fb->address +
-                               (uintptr_t)row * fb->pitch);
+        row_ptr = (uint32_t *)(base + (uintptr_t)row * row_pitch);
         row_ptr += (uintptr_t)left;
         for (int64_t col = left; col < right; col++)
             row_ptr[col - left] = color;
+    }
+}
+
+/*
+ * Cursor sprite shape. Matches framebuffer_draw_cursor() so the overlay
+ * looks identical to the legacy drawn cursor — we're just compositing it
+ * later in the pipeline.
+ */
+static const uint16_t k_cursor_sprite_rows[FRAMEBUFFER_CURSOR_H] = {
+    0x8000, 0xC000, 0xE000, 0xF000,
+    0xF800, 0xFC00, 0xFE00, 0xFF00,
+    0xF000, 0xD800, 0x8800, 0x0400,
+};
+
+static void framebuffer_composite_cursor_row(const framebuffer_info_t *fb,
+                                             uintptr_t dst_row_base,
+                                             int64_t row,
+                                             int64_t row_left,
+                                             int64_t row_right)
+{
+    const framebuffer_cursor_t *cursor;
+    int64_t cursor_row;
+    int64_t cursor_left;
+    int64_t cursor_right;
+    uint16_t sprite_bits;
+    uint32_t *pixels;
+
+    if (!fb)
+        return;
+    cursor = &fb->cursor;
+    if (!cursor->visible)
+        return;
+
+    cursor_row = row - cursor->y;
+    if (cursor_row < 0 || cursor_row >= FRAMEBUFFER_CURSOR_H)
+        return;
+
+    cursor_left = cursor->x;
+    cursor_right = cursor_left + FRAMEBUFFER_CURSOR_W;
+    if (cursor_left < row_left)
+        cursor_left = row_left;
+    if (cursor_right > row_right)
+        cursor_right = row_right;
+    if (cursor_left >= cursor_right)
+        return;
+
+    sprite_bits = k_cursor_sprite_rows[cursor_row];
+    pixels = (uint32_t *)dst_row_base;
+    for (int64_t px = cursor_left; px < cursor_right; px++) {
+        int bit_index = (int)(px - cursor->x);
+        uint32_t mask;
+
+        if (bit_index < 0 || bit_index >= FRAMEBUFFER_CURSOR_W)
+            continue;
+        mask = 0x8000u >> bit_index;
+        if ((sprite_bits & mask) == 0)
+            continue;
+        pixels[px - row_left] = cursor->fg;
+    }
+
+    /*
+     * Inner shadow pixel — preserved from the legacy cursor shape. Placed
+     * after the main sprite so it sits on top of the fg pixel underneath.
+     */
+    if (cursor_row == 2) {
+        int64_t shadow_x = (int64_t)cursor->x + 2;
+        if (shadow_x >= row_left && shadow_x < row_right)
+            pixels[shadow_x - row_left] = cursor->shadow;
+    }
+}
+
+void framebuffer_present_rect(const framebuffer_info_t *fb,
+                              int x, int y, int w, int h)
+{
+    int64_t left;
+    int64_t top;
+    int64_t right;
+    int64_t bottom;
+    uint32_t row_bytes;
+
+    if (!framebuffer_has_back_buffer(fb) || w <= 0 || h <= 0)
+        return;
+    if (fb->address == 0 || fb->pitch == 0)
+        return;
+
+    left = x;
+    top = y;
+    right = left + (int64_t)w;
+    bottom = top + (int64_t)h;
+    if (right <= 0 || bottom <= 0)
+        return;
+    if (left < 0)
+        left = 0;
+    if (top < 0)
+        top = 0;
+    if (right > (int64_t)fb->width)
+        right = (int64_t)fb->width;
+    if (bottom > (int64_t)fb->height)
+        bottom = (int64_t)fb->height;
+    if (left >= right || top >= bottom)
+        return;
+
+    row_bytes = (uint32_t)(right - left) * 4u;
+    for (int64_t row = top; row < bottom; row++) {
+        uintptr_t src = fb->back_address +
+                        (uintptr_t)row * fb->back_pitch +
+                        (uintptr_t)left * 4u;
+        uintptr_t dst = fb->address +
+                        (uintptr_t)row * fb->pitch +
+                        (uintptr_t)left * 4u;
+
+        k_memcpy((void *)dst, (const void *)src, row_bytes);
+
+        /*
+         * Composite the cursor overlay on top of the just-copied row. The
+         * overlay never touches the back buffer, so moving the cursor is
+         * just a matter of re-presenting the old and new cursor rects.
+         */
+        framebuffer_composite_cursor_row(fb, dst, row, left, right);
+    }
+}
+
+void framebuffer_set_cursor(framebuffer_info_t *fb, int x, int y,
+                            uint32_t fg, uint32_t shadow, int visible)
+{
+    if (!fb)
+        return;
+    fb->cursor.x = x;
+    fb->cursor.y = y;
+    fb->cursor.fg = fg;
+    fb->cursor.shadow = shadow;
+    fb->cursor.visible = visible ? 1 : 0;
+}
+
+void framebuffer_blit_rect(const framebuffer_info_t *fb,
+                           int src_x, int src_y,
+                           int dst_x, int dst_y,
+                           int w, int h)
+{
+    int64_t sx0;
+    int64_t sy0;
+    int64_t dx0;
+    int64_t dy0;
+    int64_t width;
+    int64_t height;
+    uintptr_t base;
+    uint32_t row_pitch;
+    uint32_t row_bytes;
+    int reverse;
+
+    if (!fb || w <= 0 || h <= 0)
+        return;
+    base = framebuffer_draw_address(fb);
+    row_pitch = framebuffer_draw_pitch(fb);
+    if (base == 0 || row_pitch == 0)
+        return;
+
+    sx0 = src_x;
+    sy0 = src_y;
+    dx0 = dst_x;
+    dy0 = dst_y;
+    width = w;
+    height = h;
+
+    /*
+     * Clip the blit so both the source and destination rectangles land
+     * inside the framebuffer. We trim equal amounts off matching edges so
+     * the source and destination pixels stay aligned.
+     */
+    if (sx0 < 0) {
+        width += sx0;
+        dx0 -= sx0;
+        sx0 = 0;
+    }
+    if (sy0 < 0) {
+        height += sy0;
+        dy0 -= sy0;
+        sy0 = 0;
+    }
+    if (dx0 < 0) {
+        width += dx0;
+        sx0 -= dx0;
+        dx0 = 0;
+    }
+    if (dy0 < 0) {
+        height += dy0;
+        sy0 -= dy0;
+        dy0 = 0;
+    }
+    if (sx0 + width > (int64_t)fb->width)
+        width = (int64_t)fb->width - sx0;
+    if (sy0 + height > (int64_t)fb->height)
+        height = (int64_t)fb->height - sy0;
+    if (dx0 + width > (int64_t)fb->width)
+        width = (int64_t)fb->width - dx0;
+    if (dy0 + height > (int64_t)fb->height)
+        height = (int64_t)fb->height - dy0;
+    if (width <= 0 || height <= 0)
+        return;
+
+    row_bytes = (uint32_t)width * 4u;
+    /*
+     * Overlap handling: when the destination is below the source, we must
+     * copy rows from bottom to top so earlier rows are read before being
+     * overwritten. k_memmove handles horizontal overlap within a row.
+     */
+    reverse = dy0 > sy0;
+    for (int64_t i = 0; i < height; i++) {
+        int64_t row = reverse ? (height - 1 - i) : i;
+        uintptr_t src = base +
+                        (uintptr_t)(sy0 + row) * row_pitch +
+                        (uintptr_t)sx0 * 4u;
+        uintptr_t dst = base +
+                        (uintptr_t)(dy0 + row) * row_pitch +
+                        (uintptr_t)dx0 * 4u;
+
+        k_memmove((void *)dst, (const void *)src, row_bytes);
     }
 }
 
@@ -242,7 +518,7 @@ static void framebuffer_fill_rect_clipped64(const framebuffer_info_t *fb,
     int64_t right;
     int64_t bottom;
 
-    if (!fb || fb->address == 0 || w <= 0 || h <= 0)
+    if (!fb || framebuffer_draw_address(fb) == 0 || w <= 0 || h <= 0)
         return;
     left = x;
     top = y;
@@ -301,26 +577,78 @@ static void framebuffer_draw_glyph_clipped(const framebuffer_info_t *fb,
                                            uint32_t bg)
 {
     const uint8_t *glyph;
+    uintptr_t base;
+    uint32_t row_pitch;
+    int64_t fb_w;
+    int64_t fb_h;
+    int64_t clip_x0;
+    int64_t clip_y0;
+    int64_t clip_x1;
+    int64_t clip_y1;
+    int row_start;
+    int row_end;
+    int col_start;
+    int col_end;
 
-    if (!fb || !clip || fb->address == 0)
+    /*
+     * Compute the glyph's visible column/row range once, then run a tight
+     * inner loop that writes pixels directly into the draw target. The old
+     * implementation called framebuffer_fill_rect_clipped64() for every
+     * one of the glyph's 128 pixels, which dominated CPU time for every
+     * text-heavy repaint.
+     */
+    if (!fb || !clip)
+        return;
+    base = framebuffer_draw_address(fb);
+    row_pitch = framebuffer_draw_pitch(fb);
+    if (base == 0 || row_pitch == 0)
+        return;
+
+    fb_w = (int64_t)fb->width;
+    fb_h = (int64_t)fb->height;
+
+    clip_x0 = clip->x > 0 ? clip->x : 0;
+    clip_y0 = clip->y > 0 ? clip->y : 0;
+    clip_x1 = (int64_t)clip->x + clip->w;
+    if (clip_x1 > fb_w)
+        clip_x1 = fb_w;
+    clip_y1 = (int64_t)clip->y + clip->h;
+    if (clip_y1 > fb_h)
+        clip_y1 = fb_h;
+    if (clip_x0 >= clip_x1 || clip_y0 >= clip_y1)
+        return;
+
+    if (y >= clip_y1 || y + 16 <= clip_y0)
+        return;
+    if (x >= clip_x1 || x + 8 <= clip_x0)
+        return;
+
+    row_start = (int)(clip_y0 - y);
+    if (row_start < 0)
+        row_start = 0;
+    row_end = (int)(clip_y1 - y);
+    if (row_end > 16)
+        row_end = 16;
+
+    col_start = (int)(clip_x0 - x);
+    if (col_start < 0)
+        col_start = 0;
+    col_end = (int)(clip_x1 - x);
+    if (col_end > 8)
+        col_end = 8;
+    if (col_start >= col_end || row_start >= row_end)
         return;
 
     glyph = font8x16_glyph(ch);
-    for (int row = 0; row < 16; row++) {
+    for (int row = row_start; row < row_end; row++) {
         uint8_t bits = glyph[row];
         int64_t py = y + row;
+        uint32_t *pixels;
 
-        if (py < clip->y || py >= (int64_t)clip->y + clip->h)
-            continue;
-        for (int col = 0; col < 8; col++) {
-            int64_t px = x + col;
-            uint32_t color;
-
-            if (px < clip->x || px >= (int64_t)clip->x + clip->w)
-                continue;
-            color = (bits & (1u << col)) ? fg : bg;
-            framebuffer_fill_rect_clipped64(fb, px, py, 1, 1, color);
-        }
+        pixels = (uint32_t *)(base + (uintptr_t)py * row_pitch);
+        pixels += (uintptr_t)(x + col_start);
+        for (int col = col_start; col < col_end; col++)
+            pixels[col - col_start] = (bits & (1u << col)) ? fg : bg;
     }
 }
 
@@ -406,21 +734,24 @@ void framebuffer_draw_glyph(const framebuffer_info_t *fb,
                             int x, int y, unsigned char ch,
                             uint32_t fg, uint32_t bg)
 {
-    const uint8_t *glyph;
+    gui_pixel_rect_t clip;
 
-    if (!fb || fb->address == 0)
+    if (!fb)
         return;
     if (x > INT_MAX - 7 || y > INT_MAX - 15)
         return;
 
-    glyph = font8x16_glyph(ch);
-    for (int row = 0; row < 16; row++) {
-        uint8_t bits = glyph[row];
-        for (int col = 0; col < 8; col++) {
-            uint32_t color = (bits & (1u << col)) ? fg : bg;
-            framebuffer_fill_rect(fb, x + col, y + row, 1, 1, color);
-        }
-    }
+    /*
+     * Delegate to the clipped variant so the fast-path inner loop stays in
+     * one place. The clip is set to the whole framebuffer so nothing is
+     * actually excluded, but the visible-range precomputation still lets
+     * us run one uint32_t store per pixel with no function-call overhead.
+     */
+    clip.x = 0;
+    clip.y = 0;
+    clip.w = (int)fb->width;
+    clip.h = (int)fb->height;
+    framebuffer_draw_glyph_clipped(fb, &clip, x, y, ch, fg, bg);
 }
 
 void framebuffer_draw_cursor(const framebuffer_info_t *fb,

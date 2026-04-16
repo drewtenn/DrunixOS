@@ -8,9 +8,124 @@
 #include "kstring.h"
 #include <stdint.h>
 
+/* IA32 Page Attribute Table MSR. */
+#define PAGING_IA32_PAT_MSR 0x277u
+
+/* PAT memory types (3-bit fields inside the IA32_PAT MSR). */
+#define PAGING_PAT_TYPE_UC 0x00u
+#define PAGING_PAT_TYPE_WC 0x01u
+#define PAGING_PAT_TYPE_WT 0x04u
+#define PAGING_PAT_TYPE_WB 0x06u
+
+/* Which PAT slot we reserve for write-combining. Index 4 is selected by
+ * PAT=1, PCD=0, PWT=0 in a 4 KB PTE; by default it holds WB like PA0, so
+ * we're free to repurpose it without disturbing the more commonly used
+ * entries 0-3. */
+#define PAGING_PAT_WC_SLOT 4
+
+static int g_pat_wc_slot_ready;
+
 static void paging_invlpg(uint32_t virt)
 {
     __asm__ volatile("invlpg (%0)" :: "r"(virt) : "memory");
+}
+
+static int paging_cpu_supports_pat(void)
+{
+    uint32_t eax;
+    uint32_t ebx;
+    uint32_t ecx;
+    uint32_t edx;
+
+    __asm__ volatile("cpuid"
+                     : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                     : "a"(1u), "c"(0u));
+    /* CPUID.01H:EDX bit 16 = PAT supported. */
+    return (edx & (1u << 16)) != 0;
+}
+
+static uint64_t paging_read_msr(uint32_t msr)
+{
+    uint32_t lo;
+    uint32_t hi;
+
+    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+    return ((uint64_t)hi << 32) | lo;
+}
+
+static void paging_write_msr(uint32_t msr, uint64_t value)
+{
+    uint32_t lo = (uint32_t)value;
+    uint32_t hi = (uint32_t)(value >> 32);
+
+    __asm__ volatile("wrmsr" :: "c"(msr), "a"(lo), "d"(hi));
+}
+
+static int paging_prepare_wc_slot(void)
+{
+    uint64_t pat;
+    unsigned int shift;
+    uint64_t mask;
+
+    if (g_pat_wc_slot_ready)
+        return 0;
+    if (!paging_cpu_supports_pat())
+        return -1;
+
+    pat = paging_read_msr(PAGING_IA32_PAT_MSR);
+    shift = PAGING_PAT_WC_SLOT * 8u;
+    mask = 0x7ull << shift;
+    pat = (pat & ~mask) | ((uint64_t)PAGING_PAT_TYPE_WC << shift);
+    paging_write_msr(PAGING_IA32_PAT_MSR, pat);
+
+    g_pat_wc_slot_ready = 1;
+    return 0;
+}
+
+int paging_mark_range_write_combining(uint32_t phys_start, uint32_t byte_len)
+{
+    uint32_t *pd = (uint32_t *)PAGE_DIR_ADDR;
+    uint32_t start;
+    uint64_t end64;
+    uint32_t end;
+
+    if (byte_len == 0)
+        return 0;
+    if (paging_prepare_wc_slot() != 0)
+        return -1;
+    if (phys_start > UINT32_MAX - (byte_len - 1u))
+        return -1;
+
+    start = phys_start & ~0xFFFu;
+    end64 = ((uint64_t)phys_start + byte_len + 0xFFFu) & ~0xFFFull;
+    if (end64 > UINT32_MAX)
+        return -1;
+    end = (uint32_t)end64;
+
+    for (uint32_t virt = start; virt < end; virt += 0x1000u) {
+        uint32_t pdi = virt >> 22;
+        uint32_t pti = (virt >> 12) & 0x3FFu;
+        uint32_t *pt;
+        uint32_t pte;
+        uint32_t flags;
+
+        if (!(pd[pdi] & PG_PRESENT))
+            return -2;
+        pt = (uint32_t *)paging_entry_addr(pd[pdi]);
+        pte = pt[pti];
+        if (!(pte & PG_PRESENT))
+            return -2;
+        /*
+         * PAT=1, PCD=0, PWT=0 selects PA4, which we just programmed to
+         * WC. Clear PCD/PWT explicitly in case the BIOS set them for the
+         * framebuffer range (common for UC defaults).
+         */
+        flags = paging_entry_flags(pte);
+        flags = (flags & ~(PG_PCD | PG_PWT)) | PG_PAT_4K;
+        pt[pti] = paging_entry_build(pte, flags);
+        paging_invlpg(virt);
+    }
+    return 0;
 }
 
 void paging_init(void) {

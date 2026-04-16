@@ -654,36 +654,84 @@ static void terminal_render_cell(const framebuffer_info_t *fb,
 {
     const uint8_t *glyph;
     uint32_t fg;
-    int64_t clip_right;
-    int64_t clip_bottom;
+    uintptr_t base;
+    uint32_t row_pitch;
+    int64_t fb_w;
+    int64_t fb_h;
+    int64_t clip_x0;
+    int64_t clip_y0;
+    int64_t clip_x1;
+    int64_t clip_y1;
+    int row_start;
+    int row_end;
+    int col_start;
+    int col_end;
 
+    /*
+     * Terminal cells assume the background has already been filled, so we
+     * only write foreground pixels where the glyph bit is set. Compute the
+     * clipped column/row range once up front, then run a tight inner loop
+     * that writes one uint32_t per lit pixel directly — the per-pixel
+     * framebuffer_fill_rect() calls that used to live here were the
+     * dominant CPU cost of every terminal repaint.
+     */
     if (!fb || !clip || !cell || !term || !theme)
         return;
-    if (cell_x >= (int64_t)clip->x + (int64_t)clip->w ||
-        cell_y >= (int64_t)clip->y + (int64_t)clip->h ||
-        cell_x + (int64_t)GUI_FONT_W <= clip->x ||
-        cell_y + (int64_t)GUI_FONT_H <= clip->y)
+
+    base = framebuffer_draw_address(fb);
+    row_pitch = framebuffer_draw_pitch(fb);
+    if (base == 0 || row_pitch == 0)
+        return;
+
+    fb_w = (int64_t)fb->width;
+    fb_h = (int64_t)fb->height;
+
+    clip_x0 = clip->x > 0 ? clip->x : 0;
+    clip_y0 = clip->y > 0 ? clip->y : 0;
+    clip_x1 = (int64_t)clip->x + (int64_t)clip->w;
+    if (clip_x1 > fb_w)
+        clip_x1 = fb_w;
+    clip_y1 = (int64_t)clip->y + (int64_t)clip->h;
+    if (clip_y1 > fb_h)
+        clip_y1 = fb_h;
+    if (clip_x0 >= clip_x1 || clip_y0 >= clip_y1)
+        return;
+
+    if (cell_y >= clip_y1 || cell_y + (int64_t)GUI_FONT_H <= clip_y0)
+        return;
+    if (cell_x >= clip_x1 || cell_x + (int64_t)GUI_FONT_W <= clip_x0)
+        return;
+
+    row_start = (int)(clip_y0 - cell_y);
+    if (row_start < 0)
+        row_start = 0;
+    row_end = (int)(clip_y1 - cell_y);
+    if (row_end > (int)GUI_FONT_H)
+        row_end = (int)GUI_FONT_H;
+
+    col_start = (int)(clip_x0 - cell_x);
+    if (col_start < 0)
+        col_start = 0;
+    col_end = (int)(clip_x1 - cell_x);
+    if (col_end > (int)GUI_FONT_W)
+        col_end = (int)GUI_FONT_W;
+    if (col_start >= col_end || row_start >= row_end)
         return;
 
     fg = terminal_cell_fg_color(term, theme, cell, fb);
     glyph = font8x16_glyph((unsigned char)cell->ch);
-    clip_right = (int64_t)clip->x + (int64_t)clip->w;
-    clip_bottom = (int64_t)clip->y + (int64_t)clip->h;
-    for (int row = 0; row < 16; row++) {
+    for (int row = row_start; row < row_end; row++) {
+        uint8_t bits = glyph[row];
         int64_t py = cell_y + row;
-        uint8_t bits;
+        uint32_t *pixels;
 
-        if (py < clip->y || py >= clip_bottom)
+        if (bits == 0)
             continue;
-        bits = glyph[row];
-        for (int col = 0; col < 8; col++) {
-            int64_t px = cell_x + col;
-
-            if ((bits & (1u << col)) == 0)
-                continue;
-            if (px < clip->x || px >= clip_right)
-                continue;
-            framebuffer_fill_rect(fb, (int)px, (int)py, 1, 1, fg);
+        pixels = (uint32_t *)(base + (uintptr_t)py * row_pitch);
+        pixels += (uintptr_t)cell_x;
+        for (int col = col_start; col < col_end; col++) {
+            if (bits & (1u << col))
+                pixels[col] = fg;
         }
     }
 }

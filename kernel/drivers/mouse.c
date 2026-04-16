@@ -227,24 +227,73 @@ int mouse_motion_scale_for_test(desktop_state_t *desktop)
 }
 #endif
 
+/*
+ * Mouse IRQ status bits. PS2_STATUS_AUX_BUFFER is the 8042 controller's
+ * "auxiliary output buffer full" flag; when set together with
+ * PS2_STATUS_OUT_FULL the byte sitting at PS2_DATA_PORT came from the
+ * mouse and we can safely consume it from a mouse-IRQ context.
+ */
+#define PS2_STATUS_AUX_BUFFER 0x20
+
 static void mouse_handler(void)
 {
     desktop_pointer_event_t ev;
+    desktop_pointer_event_t pending_ev;
     mouse_packet_t packet;
     desktop_state_t *desktop;
     uint8_t data;
-
-    data = port_byte_in(PS2_DATA_PORT);
-    if (mouse_stream_consume(&g_stream, data, &packet) <= 0)
-        return;
-    if (mouse_decode_packet(&packet, &ev) != 0)
-        return;
+    uint8_t status;
+    int have_pending = 0;
+    int prev_left_down = -1;
 
     desktop = desktop_global();
-    mouse_update_pointer(desktop, &ev);
 
-    if (desktop_is_active())
-        desktop_handle_pointer(desktop, &ev);
+    /*
+     * Drain every already-arrived mouse packet inside this IRQ, coalescing
+     * pure-motion packets into a single desktop_handle_pointer() call. On
+     * fast mouse motion the 8042 can queue several packets between IRQs;
+     * the original one-packet-per-IRQ path ran the full render pipeline
+     * for each, multiplying drag/flush cost by the packet count.
+     *
+     * Button-state transitions (click / release) are dispatched
+     * immediately so the drag state machine in desktop_handle_pointer()
+     * never misses an edge — only the purely-motion intermediate packets
+     * are coalesced.
+     */
+    for (;;) {
+        status = port_byte_in(PS2_STATUS_PORT);
+        if ((status & (PS2_STATUS_OUT_FULL | PS2_STATUS_AUX_BUFFER)) !=
+            (PS2_STATUS_OUT_FULL | PS2_STATUS_AUX_BUFFER))
+            break;
+
+        data = port_byte_in(PS2_DATA_PORT);
+        if (mouse_stream_consume(&g_stream, data, &packet) <= 0)
+            continue;
+        if (mouse_decode_packet(&packet, &ev) != 0)
+            continue;
+
+        /* Advance the global pointer so cumulative motion still clamps
+         * against the screen bounds exactly like the per-packet path. */
+        mouse_update_pointer(desktop, &ev);
+
+        if (prev_left_down != -1 && ev.left_down != prev_left_down) {
+            /* Button edge: flush any pending pure-motion event first so
+             * the transition isn't reordered past it, then dispatch the
+             * edge event unmerged. */
+            if (have_pending && desktop_is_active())
+                desktop_handle_pointer(desktop, &pending_ev);
+            have_pending = 0;
+            if (desktop_is_active())
+                desktop_handle_pointer(desktop, &ev);
+        } else {
+            pending_ev = ev;
+            have_pending = 1;
+        }
+        prev_left_down = ev.left_down;
+    }
+
+    if (have_pending && desktop_is_active())
+        desktop_handle_pointer(desktop, &pending_ev);
 }
 
 int mouse_init(void)

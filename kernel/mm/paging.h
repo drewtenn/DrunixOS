@@ -13,6 +13,9 @@
 #define PG_PRESENT  0x1
 #define PG_WRITABLE 0x2
 #define PG_USER     0x4
+#define PG_PWT      0x8
+#define PG_PCD      0x10
+#define PG_PAT_4K   0x80   /* Bit 7 on a 4 KB PTE selects the upper PAT half */
 #define PG_COW      (1u << 9)
 
 #define PG_ENTRY_ADDR_MASK  0xFFFFF000u
@@ -56,6 +59,24 @@ void paging_init(void);
 int paging_identity_map_kernel_range(uint32_t phys_start,
                                      uint32_t byte_len,
                                      uint32_t flags);
+
+/*
+ * paging_mark_range_write_combining: switch an identity-mapped physical
+ * range's cacheability to write-combining (WC) so successive writes — such
+ * as every memcpy that flushes the back buffer to the visible
+ * framebuffer — coalesce into burst transactions instead of paying a full
+ * bus cycle per store.
+ *
+ * On first call this programs the IA32_PAT MSR's PA4 slot to WC if the
+ * CPU supports PAT; subsequent calls reuse the same slot. Pages in the
+ * range are rewritten with PAT=1, PCD=0, PWT=0 (which selects PA4) and
+ * each page's TLB entry is invalidated.
+ *
+ * Returns 0 on success, -1 if the CPU doesn't support PAT, -2 if the PTE
+ * for any page in the range is not present.
+ */
+int paging_mark_range_write_combining(uint32_t phys_start,
+                                      uint32_t byte_len);
 
 /* Implemented in paging.asm — CR3/CR0 cannot be written from plain C */
 extern void paging_load_cr3(uint32_t pd_phys);
