@@ -102,7 +102,7 @@ All of this happens entirely inside the shell's line editor — no new syscalls 
 
 ### Running Inside the Desktop
 
-The boot shell is still an ordinary ring-3 process, but the kernel now opens it as the main app inside the desktop shell window. Standard output from the shell, its foreground children, and foreground process groups is routed into that window when the desktop is active. If the framebuffer path is available, the shell terminal surface renders its padded `8x16` glyph grid, underline cursor, and scrollback view directly into the linear framebuffer; otherwise the same terminal state is mirrored into cells for the VGA text fallback.
+The boot shell is still an ordinary ring-3 process, but the kernel now opens it as one window inside the desktop rather than as the only desktop surface. The launcher can open built-in Files, Processes, and Help windows. Standard output from the shell, its foreground children, and foreground process groups continues to route to the shell terminal window even while other built-in mini apps are open. If the framebuffer path is available, the shell terminal surface renders its padded `8x16` glyph grid, underline cursor, and scrollback view directly into the linear framebuffer; otherwise the same terminal state is mirrored into cells for the VGA text fallback.
 
 The mouse pointer is desktop state rather than shell state. PS/2 mouse packets move a pixel-positioned cursor, and clicking the shell window focuses it. Clicking the taskbar's menu region toggles the small launcher menu, which can open the shell window again if it has been hidden in a later extension. The shell does not need to know any of this happened: it continues to read fd 0, write fd 1, and manage jobs through the same syscalls as before.
 

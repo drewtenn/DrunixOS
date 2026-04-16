@@ -938,6 +938,25 @@ static void test_desktop_shell_open_matches_rendered_window_rect(ktest_case_t *t
     desktop_test_destroy(&desktop);
 }
 
+static void test_desktop_shell_output_still_routes_after_mini_apps_open(
+    ktest_case_t *tc)
+{
+    desktop_state_t desktop;
+    gui_display_t display;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+    desktop_open_app_window(&desktop, DESKTOP_APP_FILES);
+    desktop_open_app_window(&desktop, DESKTOP_APP_HELP);
+
+    KTEST_EXPECT_EQ(tc, desktop_write_console_output(&desktop, "A", 1), 1);
+    KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&desktop.shell_terminal, 0, 0).ch,
+                    'A');
+
+    desktop_test_destroy(&desktop);
+}
+
 static void test_desktop_close_button_closes_files_window(ktest_case_t *tc)
 {
     desktop_state_t desktop;
@@ -3291,6 +3310,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_taskbar_click_focuses_processes_window),
     KTEST_CASE(test_desktop_text_taskbar_renders_open_window_labels),
     KTEST_CASE(test_desktop_shell_open_matches_rendered_window_rect),
+    KTEST_CASE(test_desktop_shell_output_still_routes_after_mini_apps_open),
     KTEST_CASE(test_desktop_close_button_closes_files_window),
     KTEST_CASE(test_desktop_shell_close_button_closes_visible_shell_window),
     KTEST_CASE(test_desktop_title_drag_moves_window_and_clamps_top_left),
