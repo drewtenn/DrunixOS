@@ -216,9 +216,13 @@ DIAGRAM_BUCKETS = {
     # Chapter 26
     'ch26-diag01.svg': 'handoff_path',
     'ch26-diag02.svg': 'state_machine',
-    # Chapter 27
-    'ch27-diag01.svg': 'handoff_path',
-    'ch27-diag02.svg': 'decision_tree',
+    # Chapter 28
+    'ch28-diag01.svg': 'comparison',
+    'ch28-diag02.svg': 'handoff_path',
+    'ch28-diag03.svg': 'layer_stack',
+    # Chapter 29
+    'ch29-diag01.svg': 'handoff_path',
+    'ch29-diag02.svg': 'decision_tree',
 }
 
 def wrap_chars_for_width(px, avg_char_px=6.2):
@@ -1825,15 +1829,38 @@ state_machine(Path('ch26-diag02.svg'),'PTE state machine','Writable pages become
  ('writable','s','cow','n',[],'after fork',(0.07,0.70),'start'),
  ('readonly','s','roshare','n',[],'after fork',(0.83,0.70),'start')
 ],w=860,h=560,panel_w=792, relative=True)
-# Chapter 27
-flow(Path('ch27-diag01.svg'),'How `make debug` sets up GDB','QEMU opens the remote stub, GDB loads local symbols, then the two exchange state until you tell the CPU to run.',[
+# Chapter 28
+compare_segments(Path('ch28-diag01.svg'),'Two display modes share one compositor','Above the display layer the desktop is mode-oblivious; only the bottom-most present step knows whether it is writing to VGA text memory or rasterising into a pixel back buffer.',
+                 'VGA text',
+                 [('Cell grid', 'character + attribute', 'blue', 4),
+                  ('Direct write to 0xB8000', 'one cell per 16 bits', 'green', 5)],
+                 'Framebuffer',
+                 [('Cell grid', 'character + attribute', 'blue', 4),
+                  ('Glyph rasterisation', '8x16 bitmap per cell', 'amber', 4),
+                  ('Back buffer + present', 'dirty rect to visible framebuffer', 'green', 5)],
+                 h=360)
+flow(Path('ch28-diag02.svg'),'Cursor overlay during present','The cursor is never written to either buffer. Each present copies back-buffer pixels to the front, then overlays the cursor sprite where the cursor rect intersects the presented rectangle.',[
+ ('Compositor draws windows','into back buffer only','blue'),
+ ('framebuffer_present_rect','copy dirty rect to front','green'),
+ ('Overlay cursor sprite','for pixels inside cursor rect','amber'),
+ ('Visible framebuffer','what the user sees','blue')
+],h=380)
+stack(Path('ch28-diag03.svg'),'Window z-order at present time','The compositor walks the stack from bottom to top; whichever window has the highest z value paints last and ends up on top.',[
+ ('Launcher overlay (when open)','absorbs input above all else','amber'),
+ ('Taskbar strip','top-of-screen chrome','blue'),
+ ('Focused window','highest z, painted last','green'),
+ ('Other windows','painted in z order','blue'),
+ ('Desktop background','painted first','gray')
+],h=420)
+# Chapter 29
+flow(Path('ch29-diag01.svg'),'How `make debug` sets up GDB','QEMU opens the remote stub, GDB loads local symbols, then the two exchange state until you tell the CPU to run.',[
  ('QEMU `-s -S`','open port, keep CPU paused','gray'),
  ('GDB `file kernel.elf`','load symbols locally','blue'),
  ('`target remote`','connect to QEMU stub','blue'),
  ('Inspect State','read regs and memory','blue'),
  ('Type `continue`','CPU starts running','amber')
 ],h=430)
-tree(Path('ch27-diag02.svg'),'Where GDB and interrupts meet','A breakpoint can stop early, but `next` succeeds only if the guest already has a valid trap path.',[
+tree(Path('ch29-diag02.svg'),'Where GDB and interrupts meet','A breakpoint can stop early, but `next` succeeds only if the guest already has a valid trap path.',[
  ('cont',0.35,0.01,0.30,0.07,'GDB says continue','resume the CPU','blue'),
  ('bp',0.35,0.16,0.30,0.07,'Hardware breakpoint','CPU stops here','amber'),
  ('inspect',0.35,0.31,0.30,0.07,'Inspect state','source and registers are visible','blue'),

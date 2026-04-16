@@ -153,9 +153,16 @@ DOCS_SRC := docs/partI-firmware-to-kernel.md \
             docs/partVIII-fault-driven-memory.md \
             docs/ch25-demand-paging.md \
             docs/ch26-copy-on-write-fork.md \
-            docs/ch27-debugging.md
+            docs/partIX-graphical-environment.md \
+            docs/ch27-mouse.md \
+            docs/ch28-desktop.md \
+            docs/ch29-debugging.md
 
 EPUB_FRONTMATTER := docs/epub-copyright.md
+PDF_FRONTMATTER := docs/epub-copyright.md
+PDF_METADATA := docs/pdf-metadata.yaml
+PDF_FILTER := docs/pdf.lua
+PDF_TEMPLATE := docs/pdf-template.typ
 
 PDF  := docs/Drunix OS.pdf
 EPUB := docs/Drunix OS.epub
@@ -167,8 +174,8 @@ EPUB := docs/Drunix OS.epub
 #
 # epub build: SVGs are converted to PNG (2× scale) so Apple Books can
 #             tap-to-zoom. The Lua filter rewrites .svg paths to .png.
-# PDF build:  Calibre's ebook-convert turns the built EPUB into the PDF so
-#             both editions share the same content, styling, and diagrams.
+# PDF build:  Pandoc renders the markdown sources through Typst for stable
+#             book typography while keeping SVG diagrams vector-sharp.
 
 DIAGRAMS_SVG := $(wildcard docs/diagrams/*.svg)
 DIAGRAMS_PNG := $(DIAGRAMS_SVG:.svg=.png)
@@ -186,8 +193,18 @@ docs/diagrams/%.png: docs/diagrams/%.svg
 		exit 1; \
 	fi
 
-docs/Drunix\ OS.pdf: docs/Drunix\ OS.epub
-	ebook-convert "$(EPUB)" "$(PDF)"
+docs/Drunix\ OS.pdf: $(PDF_FRONTMATTER) $(DOCS_SRC) $(DIAGRAMS_SVG) docs/cover-art.png docs/epub-metadata.yaml $(PDF_METADATA) $(PDF_FILTER) $(PDF_TEMPLATE)
+	pandoc $(PDF_FRONTMATTER) $(DOCS_SRC) \
+	    --to typst \
+	    --standalone \
+	    --template "$(PDF_TEMPLATE)" \
+	    --metadata-file docs/epub-metadata.yaml \
+	    --metadata-file "$(PDF_METADATA)" \
+	    --lua-filter "$(PDF_FILTER)" \
+	    --syntax-highlighting=monochrome \
+	    --resource-path=docs \
+	    --pdf-engine=typst \
+	    -o "$(PDF)"
 
 # ─── epub ─────────────────────────────────────────────────────────────────────
 # Use the generated PNG as the actual EPUB cover image.

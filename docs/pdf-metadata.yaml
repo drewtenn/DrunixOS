@@ -1,0 +1,15 @@
+---
+papersize: us-letter
+fontsize: 10.5pt
+linestretch: 1.08
+margin:
+  top: 0.75in
+  bottom: 0.85in
+  left: 0.9in
+  right: 0.9in
+page-numbering: "1"
+# The PDF emits its own cover page and TOC via docs/pdf-cover.md, so suppress
+# pandoc's default title block and outline (which would otherwise land on page 1
+# before our cover image).
+title: ~
+author: ~

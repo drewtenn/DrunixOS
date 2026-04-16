@@ -1,10 +1,10 @@
 \newpage
 
-## Chapter 27 — Debugging
+## Chapter 29 — Debugging
 
 ### Why Kernel Debugging Feels Different
 
-Chapter 26 completed the copy-on-write fork implementation. Throughout all of that work, debugging the kernel required a different mindset from debugging a user program. A user program is comfortable to debug because the operating system is already alive around it — the debugger can stop the process, inspect registers, read memory, and resume execution while the kernel keeps the rest of the machine stable. Kernel debugging removes that safety net. When the kernel itself is the thing being debugged, there is no deeper layer to catch mistakes. A bad stack pointer, an invalid descriptor-table entry, or an interrupt delivered too early can tear control away from the debugger and leave the CPU executing nonsense.
+Chapter 28 brought up a windowed desktop on top of everything the previous chapters built. With that final piece in place, the machine is a small but complete operating system — and a complete operating system is something that will eventually misbehave. Throughout all of the work in the previous chapters, debugging the kernel required a different mindset from debugging a user program. A user program is comfortable to debug because the operating system is already alive around it — the debugger can stop the process, inspect registers, read memory, and resume execution while the kernel keeps the rest of the machine stable. Kernel debugging removes that safety net. When the kernel itself is the thing being debugged, there is no deeper layer to catch mistakes. A bad stack pointer, an invalid descriptor-table entry, or an interrupt delivered too early can tear control away from the debugger and leave the CPU executing nonsense.
 
 That is why early-boot debugging is mostly about establishing a valid exception path before doing anything ambitious. The debugger does not only need symbols. It needs the target CPU to be able to enter a trap handler and return from it cleanly.
 
@@ -16,7 +16,7 @@ GDB is then started with a short command script. `file kernel.elf` loads symbols
 
 At this stage the guest is still paused. Attaching does not automatically run the kernel. That is why the Makefile ends with an explicit `continue`. Up to that moment, the kernel does not need to do anything special. No exception has to be delivered inside the guest, no IDT entry has to run, and no interrupt handler has to exist yet. The CPU is simply being held still from the outside while GDB learns how to interpret the machine state.
 
-![](diagrams/ch27-diag01.svg)
+![](diagrams/ch29-diag01.svg)
 
 ### What Happens When a Breakpoint Hits
 
@@ -41,7 +41,7 @@ This is the moment where interrupts and debugging meet. GDB asks the machine to 
 
 The practical consequence is simple: stopping at the opening brace of `start_kernel` is too early for reliable source-level stepping. Stopping at `idt_init_early`, or after it has returned, is usually early enough.
 
-![](diagrams/ch27-diag02.svg)
+![](diagrams/ch29-diag02.svg)
 
 ### A Practical Early-Boot GDB Workflow
 
@@ -98,6 +98,6 @@ The process-memory forensics path now gives an explicit end-to-end check:
 
 In other words, `/proc/<pid>/maps` remains the detailed live layout view, while `vmstat` and `fault` provide condensed status; after a crash, all three survive as text notes in the core file for post-mortem inspection.
 
-### Where the Machine Is by the End of Chapter 27
+### Where the Machine Is by the End of Chapter 29
 
 Debugging the kernel is no longer just "attach GDB and hope". The boot sequence now exposes an explicit early-debugging boundary: once `idt_init_early()` has loaded the IDT, traps and exceptions have a valid entry path even though hardware interrupts are still disabled. The later `interrupts_enable()` step turns the machine from a mostly linear boot path into a fully asynchronous system. Alongside serial logs, debugcon output, and ELF core dumps with `DRUNIX` memory-forensics notes aligned to `/proc/<pid>/vmstat`, `/proc/<pid>/fault`, and `/proc/<pid>/maps`, that split gives the kernel both live and post-mortem debugging tools that are predictable enough to rely on.
