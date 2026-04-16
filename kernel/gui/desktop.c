@@ -340,6 +340,23 @@ static desktop_window_t *desktop_find_topmost_open_window(desktop_state_t *deskt
     return best;
 }
 
+static desktop_window_t *desktop_next_window_by_z(desktop_state_t *desktop,
+                                                  int min_z)
+{
+    desktop_window_t *best = 0;
+
+    if (!desktop)
+        return 0;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        desktop_window_t *win = &desktop->windows[i];
+        if (!win->open || win->z <= min_z)
+            continue;
+        if (!best || win->z < best->z)
+            best = win;
+    }
+    return best;
+}
+
 static desktop_window_t *desktop_top_window_at(desktop_state_t *desktop,
                                                int x,
                                                int y)
@@ -915,17 +932,29 @@ static void desktop_draw_framebuffer_pointer(desktop_state_t *desktop)
                             shadow);
 }
 
-static void desktop_render_framebuffer_app_window(desktop_state_t *desktop,
-                                                  const gui_pixel_rect_t *clip,
-                                                  const gui_pixel_theme_t *theme,
-                                                  const desktop_window_t *win)
+static void desktop_sync_shell_framebuffer_rect(desktop_state_t *desktop,
+                                                const desktop_window_t *win)
+{
+    if (!desktop || !win || win->app != DESKTOP_APP_SHELL)
+        return;
+
+    desktop->shell_pixel_rect = win->content_rect;
+    gui_terminal_set_pixel_rect(&desktop->shell_terminal,
+                                desktop->shell_pixel_rect,
+                                DESKTOP_TERMINAL_PADDING_X,
+                                DESKTOP_TERMINAL_PADDING_Y);
+}
+
+static void desktop_render_framebuffer_window(desktop_state_t *desktop,
+                                              const gui_pixel_rect_t *clip,
+                                              const gui_pixel_theme_t *theme,
+                                              const desktop_window_t *win)
 {
     const framebuffer_info_t *fb;
     gui_pixel_surface_t surface;
 
     if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer ||
-        !clip || !theme || !win || !win->open ||
-        win->app == DESKTOP_APP_SHELL)
+        !clip || !theme || !win || !win->open)
         return;
 
     fb = desktop->framebuffer;
@@ -947,8 +976,13 @@ static void desktop_render_framebuffer_app_window(desktop_state_t *desktop,
 
     surface.fb = fb;
     surface.clip = *clip;
-    desktop_app_render(&desktop->app_state, win->app, &surface, theme,
-                       &win->content_rect);
+    if (win->app == DESKTOP_APP_SHELL) {
+        desktop_sync_shell_framebuffer_rect(desktop, win);
+        gui_terminal_render(&desktop->shell_terminal, &surface, theme, 1);
+    } else {
+        desktop_app_render(&desktop->app_state, win->app, &surface, theme,
+                           &win->content_rect);
+    }
     desktop_pixel_draw_outline(fb, clip, win->rect.x, win->rect.y,
                                win->rect.w, win->rect.h, theme->window_border);
 }
@@ -958,8 +992,8 @@ static void desktop_render_framebuffer_region(desktop_state_t *desktop,
 {
     const framebuffer_info_t *fb;
     gui_pixel_theme_t theme;
-    gui_pixel_surface_t surface;
-    gui_pixel_rect_t window;
+    desktop_window_t *win;
+    int min_z;
 
     if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer ||
         !clip)
@@ -995,34 +1029,11 @@ static void desktop_render_framebuffer_region(desktop_state_t *desktop,
         }
     }
 
-    if (desktop->shell_window_open) {
-        window = desktop->window_pixel_rect;
-        desktop_pixel_fill_rect(fb, clip, window.x, window.y, window.w,
-                                window.h, theme.window_bg);
-        desktop_pixel_fill_rect(fb, clip, window.x, window.y, window.w, 20,
-                                theme.title_bg);
-        framebuffer_draw_text_clipped(fb, clip, window.x + 16, window.y + 2,
-                                      "Shell", theme.title_fg,
-                                      theme.title_bg);
-        framebuffer_draw_text_clipped(fb, clip,
-                                      window.x + window.w -
-                                          DESKTOP_WINDOW_CLOSE_BUTTON_W -
-                                          DESKTOP_WINDOW_CLOSE_BUTTON_MARGIN,
-                                      window.y + DESKTOP_WINDOW_CLOSE_BUTTON_MARGIN,
-                                      "x",
-                                      theme.title_fg,
-                                      theme.title_bg);
-
-        surface.fb = fb;
-        surface.clip = *clip;
-        gui_terminal_render(&desktop->shell_terminal, &surface, &theme, 1);
-        desktop_pixel_draw_outline(fb, clip, window.x, window.y, window.w,
-                                   window.h, theme.window_border);
+    min_z = INT_MIN;
+    while ((win = desktop_next_window_by_z(desktop, min_z)) != 0) {
+        desktop_render_framebuffer_window(desktop, clip, &theme, win);
+        min_z = win->z;
     }
-
-    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++)
-        desktop_render_framebuffer_app_window(desktop, clip, &theme,
-                                              &desktop->windows[i]);
 
     if (desktop->launcher_open) {
         gui_pixel_rect_t launcher = desktop->launcher_pixel_rect;
@@ -1064,8 +1075,16 @@ static void desktop_render_framebuffer(desktop_state_t *desktop)
 
 static void desktop_render_framebuffer_terminal(desktop_state_t *desktop)
 {
+    desktop_window_t *shell_win;
+
     if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
         return;
+
+    shell_win = desktop_find_app_window(desktop, DESKTOP_APP_SHELL);
+    if (!shell_win || !shell_win->open)
+        return;
+
+    desktop_sync_shell_framebuffer_rect(desktop, shell_win);
     if (desktop->shell_pixel_rect.w <= 0 || desktop->shell_pixel_rect.h <= 0)
         return;
 
