@@ -227,6 +227,102 @@ static void desktop_layout(desktop_state_t *desktop)
         desktop->shell_pixel_rect.h = 0;
 }
 
+static const char *desktop_app_title(desktop_app_kind_t app)
+{
+    switch (app) {
+    case DESKTOP_APP_SHELL:
+        return "Shell";
+    case DESKTOP_APP_FILES:
+        return "Files";
+    case DESKTOP_APP_PROCESSES:
+        return "Processes";
+    case DESKTOP_APP_HELP:
+        return "Help";
+    default:
+        return "Window";
+    }
+}
+
+static desktop_window_t *desktop_find_window(desktop_state_t *desktop,
+                                             int window_id)
+{
+    if (!desktop)
+        return 0;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        if (desktop->windows[i].open && desktop->windows[i].id == window_id)
+            return &desktop->windows[i];
+    }
+    return 0;
+}
+
+static desktop_window_t *desktop_find_app_window(desktop_state_t *desktop,
+                                                 desktop_app_kind_t app)
+{
+    if (!desktop)
+        return 0;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        if (desktop->windows[i].open && desktop->windows[i].app == app)
+            return &desktop->windows[i];
+    }
+    return 0;
+}
+
+static void desktop_default_window_rect(desktop_state_t *desktop,
+                                        desktop_app_kind_t app,
+                                        gui_pixel_rect_t *out)
+{
+    int desktop_w = desktop && desktop->framebuffer
+        ? (int)desktop->framebuffer->width
+        : desktop->display->cols * (int)GUI_FONT_W;
+    int desktop_h = desktop && desktop->framebuffer
+        ? (int)desktop->framebuffer->height
+        : desktop->display->rows * (int)GUI_FONT_H;
+    int taskbar_h = (int)GUI_FONT_H;
+
+    if (!out)
+        return;
+
+    out->w = desktop_w - 160;
+    out->h = desktop_h - taskbar_h - 96;
+    if (out->w < 280)
+        out->w = 280;
+    if (out->h < 180)
+        out->h = 180;
+    if (app == DESKTOP_APP_SHELL) {
+        out->x = 48;
+        out->y = 48;
+    } else if (app == DESKTOP_APP_FILES) {
+        out->x = 72;
+        out->y = 64;
+        out->w = 360;
+        out->h = 260;
+    } else if (app == DESKTOP_APP_PROCESSES) {
+        out->x = 160;
+        out->y = 96;
+        out->w = 420;
+        out->h = 240;
+    } else {
+        out->x = 220;
+        out->y = 128;
+        out->w = 360;
+        out->h = 240;
+    }
+}
+
+static void desktop_update_window_content_rect(desktop_window_t *win)
+{
+    if (!win)
+        return;
+    win->content_rect.x = win->rect.x + 8;
+    win->content_rect.y = win->rect.y + 24;
+    win->content_rect.w = win->rect.w - 16;
+    win->content_rect.h = win->rect.h - 32;
+    if (win->content_rect.w < 0)
+        win->content_rect.w = 0;
+    if (win->content_rect.h < 0)
+        win->content_rect.h = 0;
+}
+
 static void desktop_dirty_include(gui_rect_t *dirty, int x, int y, int w, int h)
 {
     int right;
@@ -1264,6 +1360,10 @@ void desktop_init(desktop_state_t *desktop, gui_display_t *display)
     desktop->shell_attr = display->default_attr;
     for (int row = 0; row < desktop->shell_cells_h; row++)
         desktop_shell_clear_line(desktop, row, 0);
+    desktop->next_window_id = 0;
+    desktop->focused_window_id = 0;
+    desktop->next_z = 0;
+    desktop->dragging_window_id = 0;
 }
 
 void desktop_set_presentation_target(desktop_state_t *desktop,
@@ -1471,8 +1571,78 @@ desktop_key_result_t desktop_handle_key(desktop_state_t *desktop, char c)
 
 void desktop_open_shell_window(desktop_state_t *desktop)
 {
+    if (!desktop)
+        return;
     desktop->shell_window_open = 1;
+    desktop_open_app_window(desktop, DESKTOP_APP_SHELL);
+}
+
+void desktop_focus_window(desktop_state_t *desktop, int window_id)
+{
+    desktop_window_t *target;
+
+    if (!desktop)
+        return;
+    target = desktop_find_window(desktop, window_id);
+    if (!target)
+        return;
+    desktop->focused_window_id = window_id;
     desktop->focus = DESKTOP_FOCUS_SHELL;
+    target->z = ++desktop->next_z;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++)
+        desktop->windows[i].focused = desktop->windows[i].id == window_id;
+}
+
+int desktop_open_app_window(desktop_state_t *desktop, desktop_app_kind_t app)
+{
+    desktop_window_t *existing;
+    desktop_window_t *slot = 0;
+
+    if (!desktop || app == DESKTOP_APP_NONE)
+        return -1;
+    existing = desktop_find_app_window(desktop, app);
+    if (existing) {
+        if (app == DESKTOP_APP_SHELL)
+            desktop->shell_window_open = 1;
+        desktop_focus_window(desktop, existing->id);
+        return existing->id;
+    }
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        if (!desktop->windows[i].open) {
+            slot = &desktop->windows[i];
+            break;
+        }
+    }
+    if (!slot)
+        return -1;
+
+    k_memset(slot, 0, sizeof(*slot));
+    slot->id = ++desktop->next_window_id;
+    slot->open = 1;
+    slot->app = app;
+    k_strncpy(slot->title, desktop_app_title(app),
+              DESKTOP_WINDOW_TITLE_MAX - 1);
+    desktop_default_window_rect(desktop, app, &slot->rect);
+    desktop_update_window_content_rect(slot);
+    if (app == DESKTOP_APP_SHELL) {
+        desktop->shell_window_open = 1;
+    }
+    desktop_focus_window(desktop, slot->id);
+    return slot->id;
+}
+
+int desktop_close_window(desktop_state_t *desktop, int window_id)
+{
+    desktop_window_t *win = desktop_find_window(desktop, window_id);
+
+    if (!win)
+        return 0;
+    if (win->app == DESKTOP_APP_SHELL)
+        desktop->shell_window_open = 0;
+    k_memset(win, 0, sizeof(*win));
+    if (desktop->focused_window_id == window_id)
+        desktop->focused_window_id = 0;
+    return 1;
 }
 
 void desktop_handle_pointer(desktop_state_t *desktop,
@@ -1586,3 +1756,46 @@ void desktop_render(desktop_state_t *desktop)
         desktop_draw_pointer(desktop);
     }
 }
+
+#ifdef KTEST_ENABLED
+int desktop_window_count_for_test(const desktop_state_t *desktop)
+{
+    int count = 0;
+
+    if (!desktop)
+        return 0;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        if (desktop->windows[i].open)
+            count++;
+    }
+    return count;
+}
+
+desktop_app_kind_t desktop_focused_app_for_test(const desktop_state_t *desktop)
+{
+    if (!desktop)
+        return DESKTOP_APP_NONE;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        if (desktop->windows[i].open &&
+            desktop->windows[i].id == desktop->focused_window_id)
+            return desktop->windows[i].app;
+    }
+    return DESKTOP_APP_NONE;
+}
+
+int desktop_window_z_for_test(const desktop_state_t *desktop, int window_id)
+{
+    if (!desktop)
+        return 0;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        if (desktop->windows[i].open && desktop->windows[i].id == window_id)
+            return desktop->windows[i].z;
+    }
+    return 0;
+}
+
+void desktop_focus_window_for_test(desktop_state_t *desktop, int window_id)
+{
+    desktop_focus_window(desktop, window_id);
+}
+#endif

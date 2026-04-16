@@ -1207,6 +1207,52 @@ static void test_desktop_pointer_click_ignores_hidden_shell_window(ktest_case_t 
     desktop_test_destroy(&desktop);
 }
 
+static void test_desktop_open_builtin_window_focuses_and_reuses_instance(
+    ktest_case_t *tc)
+{
+    desktop_state_t desktop;
+    gui_display_t display;
+    int first_id;
+    int second_id;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+
+    first_id = desktop_open_app_window(&desktop, DESKTOP_APP_FILES);
+    second_id = desktop_open_app_window(&desktop, DESKTOP_APP_FILES);
+
+    KTEST_EXPECT_TRUE(tc, first_id >= 0);
+    KTEST_EXPECT_EQ(tc, second_id, first_id);
+    KTEST_EXPECT_EQ(tc, desktop_focused_app_for_test(&desktop),
+                    DESKTOP_APP_FILES);
+    KTEST_EXPECT_EQ(tc, desktop_window_count_for_test(&desktop), 1);
+
+    desktop_test_destroy(&desktop);
+}
+
+static void test_desktop_window_focus_raise_updates_z_order(ktest_case_t *tc)
+{
+    desktop_state_t desktop;
+    gui_display_t display;
+    int files_id;
+    int help_id;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    files_id = desktop_open_app_window(&desktop, DESKTOP_APP_FILES);
+    help_id = desktop_open_app_window(&desktop, DESKTOP_APP_HELP);
+
+    desktop_focus_window_for_test(&desktop, files_id);
+
+    KTEST_EXPECT_EQ(tc, desktop_focused_app_for_test(&desktop),
+                    DESKTOP_APP_FILES);
+    KTEST_EXPECT_TRUE(tc,
+                      desktop_window_z_for_test(&desktop, files_id) >
+                      desktop_window_z_for_test(&desktop, help_id));
+
+    desktop_test_destroy(&desktop);
+}
+
 static void test_desktop_render_draws_visible_mouse_pointer(ktest_case_t *tc)
 {
     gui_display_t display;
@@ -2420,6 +2466,8 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_mouse_overflow_packet_keeps_framebuffer_cursor_visible),
     KTEST_CASE(test_desktop_pointer_click_focuses_shell_window),
     KTEST_CASE(test_desktop_pointer_click_ignores_hidden_shell_window),
+    KTEST_CASE(test_desktop_open_builtin_window_focuses_and_reuses_instance),
+    KTEST_CASE(test_desktop_window_focus_raise_updates_z_order),
     KTEST_CASE(test_desktop_render_draws_visible_mouse_pointer),
     KTEST_CASE(test_desktop_pointer_event_moves_visible_mouse_pointer),
     KTEST_CASE(test_framebuffer_pointer_motion_does_not_repaint_unrelated_pixels),

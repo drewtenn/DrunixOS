@@ -12,6 +12,28 @@ typedef enum {
     DESKTOP_FOCUS_LAUNCHER = 2,
 } desktop_focus_t;
 
+#define DESKTOP_MAX_WINDOWS 4
+#define DESKTOP_WINDOW_TITLE_MAX 16
+
+typedef enum {
+    DESKTOP_APP_NONE = 0,
+    DESKTOP_APP_SHELL = 1,
+    DESKTOP_APP_FILES = 2,
+    DESKTOP_APP_PROCESSES = 3,
+    DESKTOP_APP_HELP = 4,
+} desktop_app_kind_t;
+
+typedef struct {
+    int id;
+    int open;
+    int focused;
+    int z;
+    desktop_app_kind_t app;
+    char title[DESKTOP_WINDOW_TITLE_MAX];
+    gui_pixel_rect_t rect;
+    gui_pixel_rect_t content_rect;
+} desktop_window_t;
+
 typedef struct {
     int x;
     int y;
@@ -43,6 +65,13 @@ typedef struct {
     uint32_t shell_pid;
     uint32_t shell_pgid;
     gui_terminal_t shell_terminal;
+    desktop_window_t windows[DESKTOP_MAX_WINDOWS];
+    int next_window_id;
+    int focused_window_id;
+    int next_z;
+    int dragging_window_id;
+    int drag_offset_x;
+    int drag_offset_y;
     gui_cell_t *shell_cells;
     int shell_cells_w;
     int shell_cells_h;
@@ -71,6 +100,9 @@ void desktop_set_presentation_target(desktop_state_t *desktop,
 void desktop_set_framebuffer_target(desktop_state_t *desktop,
                                     const framebuffer_info_t *framebuffer);
 void desktop_open_shell_window(desktop_state_t *desktop);
+int desktop_open_app_window(desktop_state_t *desktop, desktop_app_kind_t app);
+int desktop_close_window(desktop_state_t *desktop, int window_id);
+void desktop_focus_window(desktop_state_t *desktop, int window_id);
 void desktop_attach_shell_pid(desktop_state_t *desktop, uint32_t pid);
 void desktop_attach_shell_process(desktop_state_t *desktop, uint32_t pid,
                                   uint32_t pgid);
@@ -99,6 +131,10 @@ desktop_state_t *desktop_global(void);
 typedef void (*desktop_scroll_interleave_hook_t)(desktop_state_t *desktop);
 void desktop_set_scroll_interleave_hook_for_test(
     desktop_scroll_interleave_hook_t hook);
+int desktop_window_count_for_test(const desktop_state_t *desktop);
+desktop_app_kind_t desktop_focused_app_for_test(const desktop_state_t *desktop);
+int desktop_window_z_for_test(const desktop_state_t *desktop, int window_id);
+void desktop_focus_window_for_test(desktop_state_t *desktop, int window_id);
 #endif
 
 #endif /* GUI_DESKTOP_H */
