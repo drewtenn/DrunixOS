@@ -1967,6 +1967,67 @@ static void test_desktop_shell_click_focuses_shell_window_table_entry(
     desktop_test_destroy(&desktop);
 }
 
+static void test_desktop_overlapped_pointer_hits_visible_top_window(ktest_case_t *tc)
+{
+    desktop_state_t desktop;
+    gui_display_t display;
+    desktop_pointer_event_t ev;
+    const desktop_window_t *help_win;
+    int shell_id;
+    int help_id;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    shell_id = desktop_open_app_window(&desktop, DESKTOP_APP_SHELL);
+    help_id = desktop_open_app_window(&desktop, DESKTOP_APP_HELP);
+    KTEST_ASSERT_TRUE(tc, shell_id > 0);
+    KTEST_ASSERT_TRUE(tc, help_id > 0);
+
+    help_win = desktop_window_for_test(&desktop, help_id);
+    KTEST_ASSERT_NOT_NULL(tc, help_win);
+
+    k_memset(&ev, 0, sizeof(ev));
+    ev.left_down = 1;
+    ev.pixel_x = help_win->rect.x + 24;
+    ev.pixel_y = help_win->rect.y + 8;
+    ev.x = ev.pixel_x / (int)GUI_FONT_W;
+    ev.y = ev.pixel_y / (int)GUI_FONT_H;
+    desktop_handle_pointer(&desktop, &ev);
+
+    KTEST_EXPECT_EQ(tc, desktop_focused_app_for_test(&desktop),
+                    DESKTOP_APP_HELP);
+    KTEST_EXPECT_EQ(tc, desktop_dragging_window_for_test(&desktop), help_id);
+
+    ev.pixel_x = -64;
+    ev.pixel_y = help_win->rect.y + 8;
+    ev.x = 0;
+    ev.y = ev.pixel_y / (int)GUI_FONT_H;
+    desktop_handle_pointer(&desktop, &ev);
+
+    ev.left_down = 0;
+    desktop_handle_pointer(&desktop, &ev);
+
+    help_win = desktop_window_for_test(&desktop, help_id);
+    KTEST_ASSERT_NOT_NULL(tc, help_win);
+    KTEST_EXPECT_EQ(tc, help_win->rect.x, 0);
+
+    k_memset(&ev, 0, sizeof(ev));
+    ev.left_down = 1;
+    ev.pixel_x = help_win->rect.x + help_win->rect.w - 8;
+    ev.pixel_y = help_win->rect.y + 8;
+    ev.x = ev.pixel_x / (int)GUI_FONT_W;
+    ev.y = ev.pixel_y / (int)GUI_FONT_H;
+    desktop_handle_pointer(&desktop, &ev);
+
+    KTEST_EXPECT_EQ(tc, desktop_focused_app_for_test(&desktop),
+                    DESKTOP_APP_SHELL);
+    KTEST_EXPECT_EQ(tc, desktop_window_count_for_test(&desktop), 1);
+    KTEST_EXPECT_NULL(tc, desktop_window_for_test(&desktop, help_id));
+    KTEST_ASSERT_NOT_NULL(tc, desktop_window_for_test(&desktop, shell_id));
+
+    desktop_test_destroy(&desktop);
+}
+
 static void test_desktop_render_draws_visible_mouse_pointer(ktest_case_t *tc)
 {
     gui_display_t display;
@@ -2441,6 +2502,67 @@ static void test_framebuffer_terminal_scroll_does_not_copy_mouse_pointer(
     KTEST_EXPECT_EQ(tc, desktop_write_console_output(&desktop, "\n", 1), 1);
     KTEST_EXPECT_NE(tc, pointer_motion_pixels[copied_pointer_index], white);
     KTEST_EXPECT_EQ(tc, pointer_motion_pixels[current_pointer_index], white);
+    desktop_test_destroy(&desktop);
+}
+
+static void test_framebuffer_shell_scroll_keeps_overlapped_window_pixels(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+    const desktop_window_t *help_win;
+    uint32_t help_fg;
+    uint32_t before;
+    uint32_t after;
+    char scroll_buf[64];
+    int scroll_len;
+    int help_id;
+    int sample_x;
+    int sample_y;
+
+    k_memset(pointer_motion_pixels, 0, sizeof(pointer_motion_pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pointer_motion_pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    desktop_open_shell_window(&desktop);
+    help_id = desktop_open_app_window(&desktop, DESKTOP_APP_HELP);
+    KTEST_ASSERT_TRUE(tc, help_id > 0);
+    desktop_render(&desktop);
+
+    help_win = desktop_window_for_test(&desktop, help_id);
+    KTEST_ASSERT_NOT_NULL(tc, help_win);
+
+    help_fg = framebuffer_pack_rgb(&fb, 0xf6, 0xf1, 0xde);
+    sample_x = help_win->content_rect.x + 6 + 3;
+    sample_y = help_win->content_rect.y + 6 + 2 * (int)GUI_FONT_H + 6;
+    before = pointer_motion_pixels[sample_y * 480 + sample_x];
+    KTEST_EXPECT_EQ(tc, before, help_fg);
+
+    scroll_len = desktop.shell_terminal.rows + 1;
+    if (scroll_len > (int)sizeof(scroll_buf))
+        scroll_len = (int)sizeof(scroll_buf);
+    k_memset(scroll_buf, '\n', (uint32_t)scroll_len);
+
+    KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, scroll_buf,
+                                                     (uint32_t)scroll_len),
+                    scroll_len);
+    after = pointer_motion_pixels[sample_y * 480 + sample_x];
+    KTEST_EXPECT_EQ(tc, after, help_fg);
+
     desktop_test_destroy(&desktop);
 }
 
@@ -3206,6 +3328,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_close_focused_non_shell_window_returns_shell_focus),
     KTEST_CASE(test_desktop_close_shell_window_stops_key_forwarding),
     KTEST_CASE(test_desktop_shell_click_focuses_shell_window_table_entry),
+    KTEST_CASE(test_desktop_overlapped_pointer_hits_visible_top_window),
     KTEST_CASE(test_desktop_render_draws_visible_mouse_pointer),
     KTEST_CASE(test_desktop_pointer_event_moves_visible_mouse_pointer),
     KTEST_CASE(test_framebuffer_pointer_motion_does_not_repaint_unrelated_pixels),
@@ -3218,6 +3341,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_framebuffer_shell_return_prompt_keeps_unrelated_pixels),
     KTEST_CASE(test_framebuffer_terminal_scroll_keeps_padding_pixels),
     KTEST_CASE(test_framebuffer_terminal_scroll_does_not_copy_mouse_pointer),
+    KTEST_CASE(test_framebuffer_shell_scroll_keeps_overlapped_window_pixels),
     KTEST_CASE(test_framebuffer_terminal_scroll_blocks_mouse_pointer_interleave),
     KTEST_CASE(test_framebuffer_desktop_renders_shell_terminal_background),
     KTEST_CASE(test_framebuffer_shell_window_keeps_right_border_visible),

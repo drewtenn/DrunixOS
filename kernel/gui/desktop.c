@@ -357,6 +357,30 @@ static desktop_window_t *desktop_next_window_by_z(desktop_state_t *desktop,
     return best;
 }
 
+static int desktop_shell_content_has_overlap_above(desktop_state_t *desktop,
+                                                   const gui_pixel_rect_t *rect)
+{
+    desktop_window_t *shell_win;
+
+    if (!desktop || !rect)
+        return 0;
+
+    shell_win = desktop_find_app_window(desktop, DESKTOP_APP_SHELL);
+    if (!shell_win || !shell_win->open)
+        return 0;
+
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        desktop_window_t *win = &desktop->windows[i];
+        gui_pixel_rect_t overlap;
+
+        if (!win->open || win->id == shell_win->id || win->z <= shell_win->z)
+            continue;
+        if (desktop_pixel_rect_intersect(win->rect, *rect, &overlap))
+            return 1;
+    }
+    return 0;
+}
+
 static desktop_window_t *desktop_top_window_at(desktop_state_t *desktop,
                                                int x,
                                                int y)
@@ -1527,6 +1551,8 @@ static int desktop_render_framebuffer_scroll_dirty(desktop_state_t *desktop,
         return 0;
     if (scroll_rows > INT_MAX / (int)GUI_FONT_H)
         return 0;
+    if (desktop_shell_content_has_overlap_above(desktop, &content))
+        return 0;
 
     theme = desktop_pixel_theme(desktop->framebuffer);
     scroll_pixels = scroll_rows * (int)GUI_FONT_H;
@@ -2054,19 +2080,6 @@ void desktop_handle_pointer(desktop_state_t *desktop,
             return;
         }
         desktop->dragging_window_id = 0;
-    }
-
-    if (desktop->shell_window_open &&
-        ev->left_down &&
-        ev->x >= desktop->shell_rect.x &&
-        ev->x < desktop->shell_rect.x + desktop->shell_rect.w &&
-        ev->y >= desktop->shell_rect.y &&
-        ev->y < desktop->shell_rect.y + desktop->shell_rect.h) {
-        desktop_window_t *shell_win =
-            desktop_find_app_window(desktop, DESKTOP_APP_SHELL);
-
-        if (shell_win)
-            desktop_focus_window(desktop, shell_win->id);
     }
 
     top = desktop_top_window_at(desktop, pointer_pixel_x, pointer_pixel_y);
