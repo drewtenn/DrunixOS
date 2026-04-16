@@ -42,6 +42,14 @@ static int desktop_app_rect_intersect(gui_pixel_rect_t a,
     return 1;
 }
 
+static int desktop_app_safe_int64_to_int(int64_t value, int *out)
+{
+    if (!out || value < INT_MIN || value > INT_MAX)
+        return 0;
+    *out = (int)value;
+    return 1;
+}
+
 static void desktop_app_clear_view(desktop_app_view_t *view)
 {
     if (!view)
@@ -223,8 +231,13 @@ void desktop_app_render(const desktop_app_state_t *state,
     const desktop_app_view_t *view = 0;
     gui_pixel_rect_t clip;
     int start_line;
-    int visible_y;
     int line;
+    int64_t content_left;
+    int64_t content_top;
+    int64_t content_bottom;
+    int64_t line_y;
+    int safe_x;
+    int safe_y;
 
     if (!state || !surface || !surface->fb || !theme || !rect)
         return;
@@ -245,17 +258,25 @@ void desktop_app_render(const desktop_app_state_t *state,
                           theme->window_bg);
 
     start_line = view->scroll < 0 ? 0 : view->scroll;
-    visible_y = rect->y + 6;
+    content_left = (int64_t)rect->x + 6;
+    content_top = (int64_t)rect->y + 6;
+    content_bottom = (int64_t)rect->y + (int64_t)rect->h;
+    line_y = content_top;
+    if (!desktop_app_safe_int64_to_int(content_left, &safe_x) ||
+        !desktop_app_safe_int64_to_int(line_y, &safe_y))
+        return;
     for (line = start_line; line < view->line_count; line++) {
-        if (visible_y + (int)GUI_FONT_H > rect->y + rect->h)
+        if (line_y + (int64_t)GUI_FONT_H > content_bottom)
             break;
+        if (!desktop_app_safe_int64_to_int(line_y, &safe_y))
+            return;
         framebuffer_draw_text_clipped(surface->fb, &clip,
-                                      rect->x + 6,
-                                      visible_y,
+                                      safe_x,
+                                      safe_y,
                                       view->lines[line],
                                       theme->title_fg,
                                       theme->window_bg);
-        visible_y += (int)GUI_FONT_H;
+        line_y += (int64_t)GUI_FONT_H;
     }
 }
 

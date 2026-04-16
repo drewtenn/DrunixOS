@@ -285,6 +285,20 @@ static const char *desktop_app_title(desktop_app_kind_t app)
     }
 }
 
+static int desktop_app_kind_is_valid(desktop_app_kind_t app)
+{
+    switch (app) {
+    case DESKTOP_APP_SHELL:
+    case DESKTOP_APP_FILES:
+    case DESKTOP_APP_PROCESSES:
+    case DESKTOP_APP_HELP:
+        return 1;
+    case DESKTOP_APP_NONE:
+    default:
+        return 0;
+    }
+}
+
 static desktop_window_t *desktop_find_window(desktop_state_t *desktop,
                                              int window_id)
 {
@@ -901,6 +915,44 @@ static void desktop_draw_framebuffer_pointer(desktop_state_t *desktop)
                             shadow);
 }
 
+static void desktop_render_framebuffer_app_window(desktop_state_t *desktop,
+                                                  const gui_pixel_rect_t *clip,
+                                                  const gui_pixel_theme_t *theme,
+                                                  const desktop_window_t *win)
+{
+    const framebuffer_info_t *fb;
+    gui_pixel_surface_t surface;
+
+    if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer ||
+        !clip || !theme || !win || !win->open ||
+        win->app == DESKTOP_APP_SHELL)
+        return;
+
+    fb = desktop->framebuffer;
+    desktop_pixel_fill_rect(fb, clip, win->rect.x, win->rect.y, win->rect.w,
+                            win->rect.h, theme->window_bg);
+    desktop_pixel_fill_rect(fb, clip, win->rect.x, win->rect.y, win->rect.w,
+                            DESKTOP_WINDOW_CHROME_H, theme->title_bg);
+    framebuffer_draw_text_clipped(fb, clip, win->rect.x + 16, win->rect.y + 2,
+                                  desktop_app_title(win->app),
+                                  theme->title_fg, theme->title_bg);
+    framebuffer_draw_text_clipped(fb, clip,
+                                  win->rect.x + win->rect.w -
+                                      DESKTOP_WINDOW_CLOSE_BUTTON_W -
+                                      DESKTOP_WINDOW_CLOSE_BUTTON_MARGIN,
+                                  win->rect.y + DESKTOP_WINDOW_CLOSE_BUTTON_MARGIN,
+                                  "x",
+                                  theme->title_fg,
+                                  theme->title_bg);
+
+    surface.fb = fb;
+    surface.clip = *clip;
+    desktop_app_render(&desktop->app_state, win->app, &surface, theme,
+                       &win->content_rect);
+    desktop_pixel_draw_outline(fb, clip, win->rect.x, win->rect.y,
+                               win->rect.w, win->rect.h, theme->window_border);
+}
+
 static void desktop_render_framebuffer_region(desktop_state_t *desktop,
                                               const gui_pixel_rect_t *clip)
 {
@@ -967,6 +1019,10 @@ static void desktop_render_framebuffer_region(desktop_state_t *desktop,
         desktop_pixel_draw_outline(fb, clip, window.x, window.y, window.w,
                                    window.h, theme.window_border);
     }
+
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++)
+        desktop_render_framebuffer_app_window(desktop, clip, &theme,
+                                              &desktop->windows[i]);
 
     if (desktop->launcher_open) {
         gui_pixel_rect_t launcher = desktop->launcher_pixel_rect;
@@ -1799,7 +1855,9 @@ desktop_key_result_t desktop_handle_key(desktop_state_t *desktop, char c)
     }
 
     focused_window = desktop_find_window(desktop, desktop->focused_window_id);
-    if (focused_window && focused_window->app != DESKTOP_APP_SHELL) {
+    if (desktop->focus == DESKTOP_FOCUS_WINDOW &&
+        focused_window &&
+        focused_window->app != DESKTOP_APP_SHELL) {
         app_key_result = desktop_app_handle_key(&desktop->app_state,
                                                 focused_window->app,
                                                 (uint32_t)c);
@@ -1848,7 +1906,7 @@ int desktop_open_app_window(desktop_state_t *desktop, desktop_app_kind_t app)
     desktop_window_t *existing;
     desktop_window_t *slot = 0;
 
-    if (!desktop || app == DESKTOP_APP_NONE)
+    if (!desktop || !desktop_app_kind_is_valid(app))
         return -1;
     existing = desktop_find_app_window(desktop, app);
     if (existing) {

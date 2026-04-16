@@ -152,6 +152,89 @@ static void test_desktop_app_render_clips_to_content_rect(ktest_case_t *tc)
     KTEST_EXPECT_NE(tc, inside, 0u);
 }
 
+static void test_desktop_help_app_render_is_visible_in_framebuffer(
+    ktest_case_t *tc)
+{
+    static uint32_t pixels[480 * 400];
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+    const desktop_window_t *win;
+    uint32_t bg;
+    int sample_x;
+    int sample_y;
+    int help_id;
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    help_id = desktop_open_app_window(&desktop, DESKTOP_APP_HELP);
+    KTEST_ASSERT_TRUE(tc, help_id > 0);
+    desktop_render(&desktop);
+
+    win = desktop_window_for_test(&desktop, help_id);
+    KTEST_ASSERT_NOT_NULL(tc, win);
+    bg = framebuffer_pack_rgb(&fb, 0x2f, 0x49, 0x50);
+    sample_x = win->content_rect.x + 2;
+    sample_y = win->content_rect.y + 2;
+
+    KTEST_EXPECT_EQ(tc, pixels[sample_y * 480 + sample_x], bg);
+    desktop_test_destroy(&desktop);
+}
+
+static void test_desktop_help_app_key_input_is_ignored_while_launcher_open(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    int help_id;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    help_id = desktop_open_app_window(&desktop, DESKTOP_APP_HELP);
+    KTEST_ASSERT_TRUE(tc, help_id > 0);
+
+    KTEST_EXPECT_EQ(tc, desktop_handle_key(&desktop, 27), DESKTOP_KEY_CONSUMED);
+    KTEST_EXPECT_EQ(tc, desktop_handle_key(&desktop, 'q'), DESKTOP_KEY_CONSUMED);
+    KTEST_EXPECT_EQ(tc, desktop_window_count_for_test(&desktop), 1);
+    KTEST_EXPECT_EQ(tc, desktop_focused_app_for_test(&desktop),
+                    DESKTOP_APP_HELP);
+    KTEST_EXPECT_TRUE(tc, desktop.launcher_open);
+    KTEST_EXPECT_EQ(tc, desktop.focus, DESKTOP_FOCUS_LAUNCHER);
+
+    desktop_test_destroy(&desktop);
+}
+
+static void test_desktop_open_invalid_app_kind_is_rejected(ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+
+    KTEST_EXPECT_EQ(tc,
+                    desktop_open_app_window(&desktop, (desktop_app_kind_t)99),
+                    -1);
+    KTEST_EXPECT_EQ(tc, desktop_window_count_for_test(&desktop), 0);
+
+    desktop_test_destroy(&desktop);
+}
+
 static void test_desktop_processes_app_handles_empty_snapshot(ktest_case_t *tc)
 {
     static desktop_app_state_t apps;
@@ -3007,6 +3090,9 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_help_app_has_keyboard_page),
     KTEST_CASE(test_desktop_help_app_q_requests_close),
     KTEST_CASE(test_desktop_app_render_clips_to_content_rect),
+    KTEST_CASE(test_desktop_help_app_render_is_visible_in_framebuffer),
+    KTEST_CASE(test_desktop_help_app_key_input_is_ignored_while_launcher_open),
+    KTEST_CASE(test_desktop_open_invalid_app_kind_is_rejected),
     KTEST_CASE(test_desktop_processes_app_handles_empty_snapshot),
     KTEST_CASE(test_desktop_boot_layout_opens_shell_window),
     KTEST_CASE(test_desktop_layout_scales_to_framebuffer_grid),
