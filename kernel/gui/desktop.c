@@ -466,35 +466,40 @@ static void desktop_clamp_window_rect(desktop_state_t *desktop,
 static void desktop_sync_shell_geometry(desktop_state_t *desktop,
                                         const desktop_window_t *win)
 {
+    int shell_w;
+    int shell_h;
+    int content_w;
+    int content_h;
+
     if (!desktop || !win || win->app != DESKTOP_APP_SHELL)
         return;
 
+    shell_w = desktop->shell_rect.w;
+    shell_h = desktop->shell_rect.h;
+    content_w = desktop->shell_content.w;
+    content_h = desktop->shell_content.h;
     desktop->shell_rect.x = win->rect.x / (int)GUI_FONT_W;
     desktop->shell_rect.y = win->rect.y / (int)GUI_FONT_H;
-    desktop->shell_rect.w = win->rect.w / (int)GUI_FONT_W;
-    desktop->shell_rect.h = win->rect.h / (int)GUI_FONT_H;
-    if (desktop->shell_rect.w < 1)
-        desktop->shell_rect.w = 1;
-    if (desktop->shell_rect.h < 1)
-        desktop->shell_rect.h = 1;
+    if (shell_w > 0)
+        desktop->shell_rect.w = shell_w;
+    if (shell_h > 0)
+        desktop->shell_rect.h = shell_h;
 
     desktop->shell_content.x = desktop->shell_rect.x + 1;
     desktop->shell_content.y = desktop->shell_rect.y + 1;
-    desktop->shell_content.w = desktop->shell_rect.w - 2;
-    desktop->shell_content.h = desktop->shell_rect.h - 2;
-    if (desktop->shell_content.w < 0)
-        desktop->shell_content.w = 0;
-    if (desktop->shell_content.h < 0)
-        desktop->shell_content.h = 0;
+    if (content_w > 0)
+        desktop->shell_content.w = content_w;
+    if (content_h > 0)
+        desktop->shell_content.h = content_h;
 
     desktop->window_pixel_rect = win->rect;
     desktop->shell_pixel_rect.x = win->rect.x + 8;
     desktop->shell_pixel_rect.y = win->rect.y + DESKTOP_WINDOW_CHROME_H + 4;
     desktop->shell_pixel_rect.w = DESKTOP_TERMINAL_PADDING_X +
-                                  desktop->shell_content.w *
+                                  content_w *
                                       (int)GUI_FONT_W;
     desktop->shell_pixel_rect.h = DESKTOP_TERMINAL_PADDING_Y +
-                                  desktop->shell_content.h *
+                                  content_h *
                                       (int)GUI_FONT_H;
     if (desktop->shell_pixel_rect.w < 0)
         desktop->shell_pixel_rect.w = 0;
