@@ -962,7 +962,18 @@ static void desktop_sync_shell_framebuffer_rect(desktop_state_t *desktop,
     if (!desktop || !win || win->app != DESKTOP_APP_SHELL)
         return;
 
-    desktop->shell_pixel_rect = win->content_rect;
+    desktop->shell_pixel_rect.x = win->content_rect.x;
+    desktop->shell_pixel_rect.y = win->content_rect.y;
+    desktop->shell_pixel_rect.w = DESKTOP_TERMINAL_PADDING_X +
+                                  desktop->shell_terminal.cols *
+                                      (int)GUI_FONT_W;
+    desktop->shell_pixel_rect.h = DESKTOP_TERMINAL_PADDING_Y +
+                                  desktop->shell_terminal.rows *
+                                      (int)GUI_FONT_H;
+    if (desktop->shell_pixel_rect.w < 0)
+        desktop->shell_pixel_rect.w = 0;
+    if (desktop->shell_pixel_rect.h < 0)
+        desktop->shell_pixel_rect.h = 0;
     gui_terminal_set_pixel_rect(&desktop->shell_terminal,
                                 desktop->shell_pixel_rect,
                                 DESKTOP_TERMINAL_PADDING_X,
@@ -1680,6 +1691,7 @@ void desktop_init(desktop_state_t *desktop, gui_display_t *display)
     desktop->shell_ansi_val = 0;
     desktop->shell_attr = display->default_attr;
     desktop_apps_init(&desktop->app_state);
+    desktop_app_refresh(&desktop->app_state);
     for (int row = 0; row < desktop->shell_cells_h; row++)
         desktop_shell_clear_line(desktop, row, 0);
     desktop->next_window_id = 0;
@@ -1957,13 +1969,12 @@ int desktop_open_app_window(desktop_state_t *desktop, desktop_app_kind_t app)
     if (existing) {
         if (app == DESKTOP_APP_SHELL) {
             existing->rect = desktop->window_pixel_rect;
+            desktop_clamp_window_rect(desktop, &existing->rect);
             desktop_update_window_content_rect(existing);
             desktop_sync_shell_geometry(desktop, existing);
             desktop->shell_window_open = 1;
         }
         desktop_focus_window(desktop, existing->id);
-        if (app != DESKTOP_APP_SHELL)
-            desktop_app_refresh(&desktop->app_state);
         return existing->id;
     }
     for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
@@ -1985,14 +1996,13 @@ int desktop_open_app_window(desktop_state_t *desktop, desktop_app_kind_t app)
     if (app == DESKTOP_APP_SHELL) {
         slot->rect = desktop->window_pixel_rect;
     }
+    desktop_clamp_window_rect(desktop, &slot->rect);
     desktop_update_window_content_rect(slot);
     if (app == DESKTOP_APP_SHELL) {
         desktop_sync_shell_geometry(desktop, slot);
         desktop->shell_window_open = 1;
     }
     desktop_focus_window(desktop, slot->id);
-    if (app != DESKTOP_APP_SHELL)
-        desktop_app_refresh(&desktop->app_state);
     return slot->id;
 }
 

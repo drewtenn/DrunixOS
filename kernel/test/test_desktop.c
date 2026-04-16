@@ -840,6 +840,32 @@ static void test_desktop_launcher_enter_opens_files_window(ktest_case_t *tc)
     desktop_test_destroy(&desktop);
 }
 
+static void test_desktop_launcher_enter_does_not_refresh_files_view(
+    ktest_case_t *tc)
+{
+    desktop_state_t desktop;
+    gui_display_t display;
+    const char *sentinel = "sentinel files snapshot";
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    k_memset(desktop.app_state.files.lines[0], 0, DESKTOP_APP_LINE_MAX);
+    k_strncpy(desktop.app_state.files.lines[0], sentinel,
+              DESKTOP_APP_LINE_MAX - 1);
+    desktop.app_state.files.line_count = 1;
+    desktop.launcher_open = 1;
+    desktop.launcher_selection = DESKTOP_APP_FILES;
+
+    KTEST_EXPECT_EQ(tc, desktop_handle_key(&desktop, '\n'),
+                    DESKTOP_KEY_CONSUMED);
+    KTEST_EXPECT_EQ(tc, desktop_focused_app_for_test(&desktop),
+                    DESKTOP_APP_FILES);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(desktop.app_state.files.lines[0],
+                                   sentinel) == 0);
+
+    desktop_test_destroy(&desktop);
+}
+
 static void test_desktop_text_launcher_keeps_bottom_border_visible(ktest_case_t *tc)
 {
     gui_display_t display;
@@ -1156,8 +1182,20 @@ static void test_desktop_shell_drag_syncs_terminal_pixel_rect_in_framebuffer_mod
     int original_content_w;
     int original_content_h;
 
-    terminal_test_fb(&fb);
-    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    k_memset(pointer_motion_pixels, 0, sizeof(pointer_motion_pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pointer_motion_pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
     desktop_init(&desktop, &display);
     desktop_set_framebuffer_target(&desktop, &fb);
     shell_id = desktop_open_app_window(&desktop, DESKTOP_APP_SHELL);
@@ -1208,6 +1246,46 @@ static void test_desktop_shell_drag_syncs_terminal_pixel_rect_in_framebuffer_mod
                     original_shell_pixel_rect.w);
     KTEST_EXPECT_EQ(tc, desktop.shell_pixel_rect.h,
                     original_shell_pixel_rect.h);
+
+    desktop_test_destroy(&desktop);
+}
+
+static void test_desktop_open_clamps_help_window_to_framebuffer(
+    ktest_case_t *tc)
+{
+    static uint32_t pixels[480 * 400];
+    desktop_state_t desktop;
+    gui_display_t display;
+    framebuffer_info_t fb;
+    const desktop_window_t *win;
+    int help_id;
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    help_id = desktop_open_app_window(&desktop, DESKTOP_APP_HELP);
+    KTEST_ASSERT_TRUE(tc, help_id > 0);
+    win = desktop_window_for_test(&desktop, help_id);
+    KTEST_ASSERT_NOT_NULL(tc, win);
+
+    KTEST_EXPECT_GE(tc, win->rect.x, 0);
+    KTEST_EXPECT_GE(tc, win->rect.y, 0);
+    KTEST_EXPECT_LE(tc, win->rect.x + win->rect.w, (int)fb.width);
+    KTEST_EXPECT_LE(tc, win->rect.y + win->rect.h, (int)fb.height);
 
     desktop_test_destroy(&desktop);
 }
@@ -2591,7 +2669,7 @@ static void test_framebuffer_shell_scroll_keeps_overlapped_window_pixels(
     help_win = desktop_window_for_test(&desktop, help_id);
     KTEST_ASSERT_NOT_NULL(tc, help_win);
 
-    help_fg = framebuffer_pack_rgb(&fb, 0xf6, 0xf1, 0xde);
+    help_fg = framebuffer_pack_rgb(&fb, 0xff, 0xf7, 0xe8);
     sample_x = help_win->content_rect.x + 6 + 3;
     sample_y = help_win->content_rect.y + 6 + 2 * (int)GUI_FONT_H + 6;
     before = pointer_motion_pixels[sample_y * 480 + sample_x];
@@ -2725,6 +2803,43 @@ static void test_framebuffer_desktop_renders_shell_terminal_background(
     desktop_test_destroy(&desktop);
 }
 
+static void test_framebuffer_shell_terminal_rect_includes_padding_and_cells(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+
+    k_memset(pointer_motion_pixels, 0, sizeof(pointer_motion_pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pointer_motion_pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    desktop_open_shell_window(&desktop);
+    desktop_render(&desktop);
+
+    KTEST_EXPECT_EQ(tc, desktop.shell_terminal.pixel_rect.w,
+                    desktop.shell_terminal.padding_x +
+                        desktop.shell_terminal.cols * (int)GUI_FONT_W);
+    KTEST_EXPECT_EQ(tc, desktop.shell_terminal.pixel_rect.h,
+                    desktop.shell_terminal.padding_y +
+                        desktop.shell_terminal.rows * (int)GUI_FONT_H);
+
+    desktop_test_destroy(&desktop);
+}
+
 static void test_framebuffer_shell_window_keeps_right_border_visible(
     ktest_case_t *tc)
 {
@@ -2832,6 +2947,7 @@ static void test_framebuffer_desktop_terminal_edges_render_inside_window(
     desktop_init(&desktop, &display);
     desktop_set_framebuffer_target(&desktop, &fb);
     desktop_open_shell_window(&desktop);
+    desktop_render(&desktop);
 
     for (int row = 0; row < desktop.shell_terminal.rows - 1; row++)
         KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, "\n", 1),
@@ -3332,6 +3448,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_layout_scales_to_framebuffer_grid),
     KTEST_CASE(test_desktop_render_draws_taskbar_and_launcher_label),
     KTEST_CASE(test_desktop_launcher_enter_opens_files_window),
+    KTEST_CASE(test_desktop_launcher_enter_does_not_refresh_files_view),
     KTEST_CASE(test_desktop_text_launcher_keeps_bottom_border_visible),
     KTEST_CASE(test_desktop_taskbar_click_focuses_processes_window),
     KTEST_CASE(test_desktop_text_taskbar_renders_open_window_labels),
@@ -3342,6 +3459,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_title_drag_moves_window_and_clamps_top_left),
     KTEST_CASE(test_desktop_shell_drag_preserves_window_size),
     KTEST_CASE(test_desktop_shell_drag_syncs_terminal_pixel_rect_in_framebuffer_mode),
+    KTEST_CASE(test_desktop_open_clamps_help_window_to_framebuffer),
     KTEST_CASE(test_framebuffer_windows_render_in_z_order),
     KTEST_CASE(test_framebuffer_grid_desktop_renders_taskbar_and_shell_title),
     KTEST_CASE(test_desktop_init_binds_global_keyboard_target),
@@ -3390,6 +3508,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_framebuffer_shell_scroll_keeps_overlapped_window_pixels),
     KTEST_CASE(test_framebuffer_terminal_scroll_blocks_mouse_pointer_interleave),
     KTEST_CASE(test_framebuffer_desktop_renders_shell_terminal_background),
+    KTEST_CASE(test_framebuffer_shell_terminal_rect_includes_padding_and_cells),
     KTEST_CASE(test_framebuffer_shell_window_keeps_right_border_visible),
     KTEST_CASE(test_framebuffer_desktop_console_output_renders_terminal_glyph),
     KTEST_CASE(test_framebuffer_desktop_terminal_edges_render_inside_window),
