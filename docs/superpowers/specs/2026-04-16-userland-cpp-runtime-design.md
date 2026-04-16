@@ -258,4 +258,3 @@ The design is implemented when:
 - `new` and `delete` use the existing user allocator
 - the build has no dependency on `libstdc++` or `libsupc++`
 - `make test-halt` passes
-
