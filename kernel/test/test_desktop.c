@@ -1253,6 +1253,58 @@ static void test_desktop_window_focus_raise_updates_z_order(ktest_case_t *tc)
     desktop_test_destroy(&desktop);
 }
 
+static void test_desktop_focused_builtin_window_consumes_keys(ktest_case_t *tc)
+{
+    desktop_state_t desktop;
+    gui_display_t display;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_app_window(&desktop, DESKTOP_APP_FILES);
+
+    KTEST_EXPECT_EQ(tc, desktop_handle_key(&desktop, 'a'),
+                    DESKTOP_KEY_CONSUMED);
+
+    desktop_test_destroy(&desktop);
+}
+
+static void test_desktop_close_focused_non_shell_window_returns_shell_focus(
+    ktest_case_t *tc)
+{
+    desktop_state_t desktop;
+    gui_display_t display;
+    int files_id;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+    files_id = desktop_open_app_window(&desktop, DESKTOP_APP_FILES);
+
+    KTEST_EXPECT_EQ(tc, desktop_close_window(&desktop, files_id), 1);
+    KTEST_EXPECT_EQ(tc, desktop_handle_key(&desktop, 'a'),
+                    DESKTOP_KEY_FORWARD);
+
+    desktop_test_destroy(&desktop);
+}
+
+static void test_desktop_close_shell_window_stops_key_forwarding(ktest_case_t *tc)
+{
+    desktop_state_t desktop;
+    gui_display_t display;
+    int shell_id;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    shell_id = desktop_open_app_window(&desktop, DESKTOP_APP_SHELL);
+
+    KTEST_EXPECT_TRUE(tc, shell_id >= 0);
+    KTEST_EXPECT_EQ(tc, desktop_close_window(&desktop, shell_id), 1);
+    KTEST_EXPECT_EQ(tc, desktop_handle_key(&desktop, 'a'),
+                    DESKTOP_KEY_CONSUMED);
+
+    desktop_test_destroy(&desktop);
+}
+
 static void test_desktop_render_draws_visible_mouse_pointer(ktest_case_t *tc)
 {
     gui_display_t display;
@@ -2468,6 +2520,9 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_pointer_click_ignores_hidden_shell_window),
     KTEST_CASE(test_desktop_open_builtin_window_focuses_and_reuses_instance),
     KTEST_CASE(test_desktop_window_focus_raise_updates_z_order),
+    KTEST_CASE(test_desktop_focused_builtin_window_consumes_keys),
+    KTEST_CASE(test_desktop_close_focused_non_shell_window_returns_shell_focus),
+    KTEST_CASE(test_desktop_close_shell_window_stops_key_forwarding),
     KTEST_CASE(test_desktop_render_draws_visible_mouse_pointer),
     KTEST_CASE(test_desktop_pointer_event_moves_visible_mouse_pointer),
     KTEST_CASE(test_framebuffer_pointer_motion_does_not_repaint_unrelated_pixels),

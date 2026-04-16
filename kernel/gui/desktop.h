@@ -10,6 +10,7 @@ typedef enum {
     DESKTOP_FOCUS_SHELL = 0,
     DESKTOP_FOCUS_TASKBAR = 1,
     DESKTOP_FOCUS_LAUNCHER = 2,
+    DESKTOP_FOCUS_WINDOW = 3,
 } desktop_focus_t;
 
 #define DESKTOP_MAX_WINDOWS 4

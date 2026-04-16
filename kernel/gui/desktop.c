@@ -267,6 +267,23 @@ static desktop_window_t *desktop_find_app_window(desktop_state_t *desktop,
     return 0;
 }
 
+static desktop_window_t *desktop_find_topmost_open_window(desktop_state_t *desktop)
+{
+    desktop_window_t *best = 0;
+
+    if (!desktop)
+        return 0;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        desktop_window_t *win = &desktop->windows[i];
+
+        if (!win->open)
+            continue;
+        if (!best || win->z > best->z)
+            best = win;
+    }
+    return best;
+}
+
 static void desktop_default_window_rect(desktop_state_t *desktop,
                                         desktop_app_kind_t app,
                                         gui_pixel_rect_t *out)
@@ -1587,7 +1604,9 @@ void desktop_focus_window(desktop_state_t *desktop, int window_id)
     if (!target)
         return;
     desktop->focused_window_id = window_id;
-    desktop->focus = DESKTOP_FOCUS_SHELL;
+    desktop->focus = target->app == DESKTOP_APP_SHELL
+        ? DESKTOP_FOCUS_SHELL
+        : DESKTOP_FOCUS_WINDOW;
     target->z = ++desktop->next_z;
     for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++)
         desktop->windows[i].focused = desktop->windows[i].id == window_id;
@@ -1634,14 +1653,32 @@ int desktop_open_app_window(desktop_state_t *desktop, desktop_app_kind_t app)
 int desktop_close_window(desktop_state_t *desktop, int window_id)
 {
     desktop_window_t *win = desktop_find_window(desktop, window_id);
+    desktop_window_t *next;
 
     if (!win)
         return 0;
     if (win->app == DESKTOP_APP_SHELL)
         desktop->shell_window_open = 0;
     k_memset(win, 0, sizeof(*win));
-    if (desktop->focused_window_id == window_id)
-        desktop->focused_window_id = 0;
+    if (desktop->focused_window_id != window_id)
+        return 1;
+
+    desktop->focused_window_id = 0;
+    next = 0;
+    if (desktop->shell_window_open)
+        next = desktop_find_app_window(desktop, DESKTOP_APP_SHELL);
+    if (!next)
+        next = desktop_find_topmost_open_window(desktop);
+    if (next) {
+        desktop->focused_window_id = next->id;
+        desktop->focus = next->app == DESKTOP_APP_SHELL
+            ? DESKTOP_FOCUS_SHELL
+            : DESKTOP_FOCUS_WINDOW;
+        next->focused = 1;
+        next->z = ++desktop->next_z;
+    } else {
+        desktop->focus = DESKTOP_FOCUS_TASKBAR;
+    }
     return 1;
 }
 
