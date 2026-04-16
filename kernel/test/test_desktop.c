@@ -1,6 +1,7 @@
 #include "ktest.h"
 #include "display.h"
 #include "desktop.h"
+#include "desktop_apps.h"
 #include "font8x16.h"
 #include "framebuffer.h"
 #include "kheap.h"
@@ -9,6 +10,8 @@
 #include "mouse.h"
 #include "paging.h"
 #include "process.h"
+#include "sched.h"
+#include "vfs.h"
 #include "syscall.h"
 #include "tty.h"
 #include <limits.h>
@@ -44,6 +47,45 @@ extern int boot_framebuffer_grid_for_test(const framebuffer_info_t *fb,
                                           int *cols,
                                           int *rows);
 
+static int desktop_apps_test_root_getdents(const char *path, char *buf,
+                                           uint32_t bufsz)
+{
+    static const char entries[] = "alpha\0beta/\0gamma\0";
+    uint32_t n = (uint32_t)sizeof(entries);
+
+    if (!buf)
+        return -1;
+    if (!path || path[0] != '\0')
+        return -1;
+
+    if (n > bufsz)
+        n = bufsz;
+    k_memcpy(buf, entries, n);
+    return (int)n;
+}
+
+static const fs_ops_t desktop_apps_test_root_ops = {
+    .init     = 0,
+    .open     = 0,
+    .getdents = desktop_apps_test_root_getdents,
+    .create   = 0,
+    .unlink   = 0,
+    .mkdir    = 0,
+    .rmdir    = 0,
+    .rename   = 0,
+    .stat     = 0,
+};
+
+static int desktop_apps_test_prepare_vfs(void)
+{
+    vfs_reset();
+    if (vfs_register("root", &desktop_apps_test_root_ops) != 0)
+        return -1;
+    if (vfs_mount("/", "root") != 0)
+        return -1;
+    return 0;
+}
+
 static void desktop_test_destroy(desktop_state_t *desktop)
 {
     if (!desktop)
@@ -53,6 +95,64 @@ static void desktop_test_destroy(desktop_state_t *desktop)
         kfree(desktop->shell_cells);
         desktop->shell_cells = 0;
     }
+}
+
+static void test_desktop_files_app_lists_root_entries(ktest_case_t *tc)
+{
+    static desktop_app_state_t apps;
+
+    sched_init();
+    KTEST_ASSERT_EQ(tc, desktop_apps_test_prepare_vfs(), 0);
+
+    desktop_apps_init(&apps);
+    desktop_app_refresh(&apps);
+
+    KTEST_EXPECT_TRUE(tc, k_strcmp(desktop_app_line_for_test(&apps.files, 0),
+                                   "Files: /") == 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(desktop_app_line_for_test(&apps.files, 1),
+                                   "alpha") == 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(desktop_app_line_for_test(&apps.files, 2),
+                                   "beta/") == 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(desktop_app_line_for_test(&apps.files, 3),
+                                   "gamma") == 0);
+    KTEST_EXPECT_EQ(tc, apps.files.line_count, 4);
+}
+
+static void test_desktop_help_app_has_keyboard_page(ktest_case_t *tc)
+{
+    static desktop_app_state_t apps;
+
+    sched_init();
+    KTEST_ASSERT_EQ(tc, desktop_apps_test_prepare_vfs(), 0);
+
+    desktop_apps_init(&apps);
+    desktop_app_refresh(&apps);
+
+    KTEST_EXPECT_TRUE(tc, k_strcmp(desktop_app_line_for_test(&apps.help, 0),
+                                   "Drunix Help") == 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(desktop_app_line_for_test(&apps.help, 1),
+                                   "Keyboard") == 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(desktop_app_line_for_test(&apps.help, 2),
+                                   "Esc launcher") == 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(desktop_app_line_for_test(&apps.help, 7),
+                                   "Shell keeps running") == 0);
+    KTEST_EXPECT_GE(tc, apps.help.line_count, 8);
+}
+
+static void test_desktop_processes_app_handles_empty_snapshot(ktest_case_t *tc)
+{
+    static desktop_app_state_t apps;
+
+    sched_init();
+    KTEST_ASSERT_EQ(tc, desktop_apps_test_prepare_vfs(), 0);
+
+    desktop_apps_init(&apps);
+    desktop_app_refresh(&apps);
+
+    KTEST_EXPECT_TRUE(tc, k_strcmp(desktop_app_line_for_test(&apps.processes, 0),
+                                   "PID  STATE  NAME") == 0);
+    KTEST_EXPECT_NULL(tc, desktop_app_line_for_test(&apps.processes, 1));
+    KTEST_EXPECT_EQ(tc, apps.processes.line_count, 1);
 }
 
 static void test_terminal_write_wraps_and_retains_history(ktest_case_t *tc)
@@ -2869,6 +2969,9 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_gui_display_fill_rect_clips_to_bounds),
     KTEST_CASE(test_gui_display_draw_text_stops_at_region_edge),
     KTEST_CASE(test_gui_display_presents_cells_to_framebuffer),
+    KTEST_CASE(test_desktop_files_app_lists_root_entries),
+    KTEST_CASE(test_desktop_help_app_has_keyboard_page),
+    KTEST_CASE(test_desktop_processes_app_handles_empty_snapshot),
     KTEST_CASE(test_desktop_boot_layout_opens_shell_window),
     KTEST_CASE(test_desktop_layout_scales_to_framebuffer_grid),
     KTEST_CASE(test_desktop_render_draws_taskbar_and_launcher_label),
