@@ -141,6 +141,57 @@ static int desktop_point_in_pixel_rect(int x, int y,
            y >= rect->y && y < rect->y + rect->h;
 }
 
+static desktop_app_kind_t desktop_launcher_app_from_index(int index)
+{
+    switch (index) {
+    case 0: return DESKTOP_APP_SHELL;
+    case 1: return DESKTOP_APP_FILES;
+    case 2: return DESKTOP_APP_PROCESSES;
+    case 3: return DESKTOP_APP_HELP;
+    default: return DESKTOP_APP_NONE;
+    }
+}
+
+static int desktop_point_in_launcher(desktop_state_t *desktop,
+                                     int cell_x,
+                                     int cell_y,
+                                     int pixel_x,
+                                     int pixel_y)
+{
+    if (!desktop || !desktop->launcher_open)
+        return 0;
+
+    if (desktop->framebuffer_enabled && desktop->framebuffer)
+        return desktop_point_in_pixel_rect(pixel_x, pixel_y,
+                                           &desktop->launcher_pixel_rect);
+
+    return cell_x >= desktop->launcher_rect.x &&
+           cell_x < desktop->launcher_rect.x + desktop->launcher_rect.w &&
+           cell_y >= desktop->launcher_rect.y &&
+           cell_y < desktop->launcher_rect.y + desktop->launcher_rect.h;
+}
+
+static desktop_app_kind_t desktop_launcher_app_at(desktop_state_t *desktop,
+                                                  int cell_x,
+                                                  int cell_y,
+                                                  int pixel_x,
+                                                  int pixel_y)
+{
+    int index;
+
+    if (!desktop_point_in_launcher(desktop, cell_x, cell_y, pixel_x, pixel_y))
+        return DESKTOP_APP_NONE;
+
+    if (desktop->framebuffer_enabled && desktop->framebuffer) {
+        index = (pixel_y - (desktop->launcher_pixel_rect.y + 12)) /
+                (int)GUI_FONT_H;
+    } else {
+        index = cell_y - desktop->launcher_rect.y - 1;
+    }
+
+    return desktop_launcher_app_from_index(index);
+}
+
 static int desktop_point_in_titlebar(const desktop_window_t *win,
                                      int x, int y)
 {
@@ -1628,6 +1679,37 @@ static void desktop_present_framebuffer_pointer_motion(desktop_state_t *desktop,
     desktop_draw_framebuffer_pointer(desktop);
 }
 
+static void desktop_present_framebuffer_window_move(desktop_state_t *desktop,
+                                                    gui_pixel_rect_t old_rect,
+                                                    gui_pixel_rect_t new_rect,
+                                                    int old_pixel_x,
+                                                    int old_pixel_y)
+{
+    gui_pixel_rect_t old_pointer;
+    gui_pixel_rect_t new_pointer;
+    uint32_t flags;
+
+    if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
+        return;
+
+    old_pointer.x = old_pixel_x;
+    old_pointer.y = old_pixel_y;
+    old_pointer.w = DESKTOP_CURSOR_W;
+    old_pointer.h = DESKTOP_CURSOR_H;
+    new_pointer.x = desktop->pointer_pixel_x;
+    new_pointer.y = desktop->pointer_pixel_y;
+    new_pointer.w = DESKTOP_CURSOR_W;
+    new_pointer.h = DESKTOP_CURSOR_H;
+
+    flags = desktop_framebuffer_present_begin();
+    desktop_render_framebuffer_region(desktop, &old_rect);
+    desktop_render_framebuffer_region(desktop, &new_rect);
+    desktop_render_framebuffer_region(desktop, &old_pointer);
+    desktop_render_framebuffer_region(desktop, &new_pointer);
+    desktop_draw_framebuffer_pointer(desktop);
+    desktop_framebuffer_present_end(flags);
+}
+
 desktop_state_t *desktop_global(void)
 {
     return g_desktop;
@@ -2052,6 +2134,7 @@ void desktop_handle_pointer(desktop_state_t *desktop,
     int pointer_pixel_y;
     desktop_window_t *top;
     desktop_window_t *drag;
+    desktop_app_kind_t launcher_app;
 
     if (!desktop || !ev)
         return;
@@ -2081,16 +2164,47 @@ void desktop_handle_pointer(desktop_state_t *desktop,
     } else if (desktop->dragging_window_id != 0) {
         drag = desktop_find_window(desktop, desktop->dragging_window_id);
         if (drag) {
+            gui_pixel_rect_t old_rect = drag->rect;
+
             drag->rect.x = pointer_pixel_x - desktop->drag_offset_x;
             drag->rect.y = pointer_pixel_y - desktop->drag_offset_y;
             desktop_clamp_window_rect(desktop, &drag->rect);
             desktop_update_window_content_rect(drag);
             if (drag->app == DESKTOP_APP_SHELL)
                 desktop_sync_shell_geometry(desktop, drag);
-            desktop_render(desktop);
+            if (desktop->framebuffer_enabled && desktop->framebuffer)
+                desktop_present_framebuffer_window_move(desktop,
+                                                        old_rect,
+                                                        drag->rect,
+                                                        old_pixel_x,
+                                                        old_pixel_y);
+            else
+                desktop_render(desktop);
             return;
         }
         desktop->dragging_window_id = 0;
+    }
+
+    if (ev->left_down && desktop->launcher_open) {
+        launcher_app = desktop_launcher_app_at(desktop,
+                                               ev->x,
+                                               ev->y,
+                                               pointer_pixel_x,
+                                               pointer_pixel_y);
+        if (launcher_app != DESKTOP_APP_NONE) {
+            desktop->launcher_open = 0;
+            desktop_open_app_window(desktop, launcher_app);
+            desktop_render(desktop);
+            return;
+        }
+        if (desktop_point_in_launcher(desktop,
+                                      ev->x,
+                                      ev->y,
+                                      pointer_pixel_x,
+                                      pointer_pixel_y)) {
+            desktop_render(desktop);
+            return;
+        }
     }
 
     top = desktop_top_window_at(desktop, pointer_pixel_x, pointer_pixel_y);
