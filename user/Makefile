@@ -1,4 +1,4 @@
-PROGS = hello shell writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg
+PROGS = hello shell writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello
 
 all: $(PROGS)
 
@@ -143,6 +143,9 @@ crash: crash.o $(LIB_OBJS) user.ld
 
 dmesg: dmesg.o $(LIB_OBJS) user.ld
 	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) dmesg.o
+
+cpphello: cpphello.o $(LIB_OBJS) $(CXX_RUNTIME_OBJS) user.ld
+	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) $(CXX_RUNTIME_OBJS) cpphello.o $(CXXLIBS)
 
 clean:
 	find . -name '*.o' -delete

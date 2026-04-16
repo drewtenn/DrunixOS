@@ -21,6 +21,7 @@ user/hello
 user/kill
 user/printenv
 user/reader
+user/cpphello
 user/shell
 user/sleeper
 user/sleep
