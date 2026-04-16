@@ -505,6 +505,10 @@ static void desktop_sync_shell_geometry(desktop_state_t *desktop,
         desktop->shell_pixel_rect.w = 0;
     if (desktop->shell_pixel_rect.h < 0)
         desktop->shell_pixel_rect.h = 0;
+    gui_terminal_set_pixel_rect(&desktop->shell_terminal,
+                                desktop->shell_pixel_rect,
+                                DESKTOP_TERMINAL_PADDING_X,
+                                DESKTOP_TERMINAL_PADDING_Y);
 }
 
 static void desktop_dirty_include(gui_rect_t *dirty, int x, int y, int w, int h)

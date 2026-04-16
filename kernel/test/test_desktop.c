@@ -820,6 +820,78 @@ static void test_desktop_shell_drag_preserves_window_size(ktest_case_t *tc)
     desktop_test_destroy(&desktop);
 }
 
+static void test_desktop_shell_drag_syncs_terminal_pixel_rect_in_framebuffer_mode(
+    ktest_case_t *tc)
+{
+    desktop_state_t desktop;
+    gui_display_t display;
+    framebuffer_info_t fb;
+    desktop_pointer_event_t ev;
+    int shell_id;
+    const desktop_window_t *win;
+    gui_pixel_rect_t original_terminal_rect;
+    gui_pixel_rect_t original_shell_pixel_rect;
+    int original_shell_w;
+    int original_shell_h;
+    int original_content_w;
+    int original_content_h;
+
+    terminal_test_fb(&fb);
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    shell_id = desktop_open_app_window(&desktop, DESKTOP_APP_SHELL);
+    desktop_render(&desktop);
+    win = desktop_window_for_test(&desktop, shell_id);
+    KTEST_ASSERT_NOT_NULL(tc, win);
+    original_terminal_rect = desktop.shell_terminal.pixel_rect;
+    original_shell_pixel_rect = desktop.shell_pixel_rect;
+    original_shell_w = desktop.shell_rect.w;
+    original_shell_h = desktop.shell_rect.h;
+    original_content_w = desktop.shell_content.w;
+    original_content_h = desktop.shell_content.h;
+
+    k_memset(&ev, 0, sizeof(ev));
+    ev.left_down = 1;
+    ev.pixel_x = win->rect.x + 24;
+    ev.pixel_y = win->rect.y + 8;
+    ev.x = ev.pixel_x / (int)GUI_FONT_W;
+    ev.y = ev.pixel_y / (int)GUI_FONT_H;
+    desktop_handle_pointer(&desktop, &ev);
+
+    ev.pixel_x = -64;
+    ev.pixel_y = -48;
+    ev.x = 0;
+    ev.y = 0;
+    desktop_handle_pointer(&desktop, &ev);
+
+    ev.left_down = 0;
+    desktop_handle_pointer(&desktop, &ev);
+
+    KTEST_EXPECT_EQ(tc, desktop.shell_terminal.pixel_rect.x,
+                    desktop.shell_pixel_rect.x);
+    KTEST_EXPECT_EQ(tc, desktop.shell_terminal.pixel_rect.y,
+                    desktop.shell_pixel_rect.y);
+    KTEST_EXPECT_NE(tc, desktop.shell_terminal.pixel_rect.x,
+                    original_terminal_rect.x);
+    KTEST_EXPECT_NE(tc, desktop.shell_terminal.pixel_rect.y,
+                    original_terminal_rect.y);
+    KTEST_EXPECT_EQ(tc, desktop.shell_terminal.pixel_rect.w,
+                    original_terminal_rect.w);
+    KTEST_EXPECT_EQ(tc, desktop.shell_terminal.pixel_rect.h,
+                    original_terminal_rect.h);
+    KTEST_EXPECT_EQ(tc, desktop.shell_rect.w, original_shell_w);
+    KTEST_EXPECT_EQ(tc, desktop.shell_rect.h, original_shell_h);
+    KTEST_EXPECT_EQ(tc, desktop.shell_content.w, original_content_w);
+    KTEST_EXPECT_EQ(tc, desktop.shell_content.h, original_content_h);
+    KTEST_EXPECT_EQ(tc, desktop.shell_pixel_rect.w,
+                    original_shell_pixel_rect.w);
+    KTEST_EXPECT_EQ(tc, desktop.shell_pixel_rect.h,
+                    original_shell_pixel_rect.h);
+
+    desktop_test_destroy(&desktop);
+}
+
 static void test_framebuffer_grid_desktop_renders_taskbar_and_shell_title(ktest_case_t *tc)
 {
     gui_display_t display;
@@ -2748,6 +2820,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_close_button_closes_files_window),
     KTEST_CASE(test_desktop_title_drag_moves_window_and_clamps_top_left),
     KTEST_CASE(test_desktop_shell_drag_preserves_window_size),
+    KTEST_CASE(test_desktop_shell_drag_syncs_terminal_pixel_rect_in_framebuffer_mode),
     KTEST_CASE(test_framebuffer_grid_desktop_renders_taskbar_and_shell_title),
     KTEST_CASE(test_desktop_init_binds_global_keyboard_target),
     KTEST_CASE(test_desktop_escape_opens_launcher_and_consumes_input),
