@@ -1,6 +1,8 @@
 #include "syscall.h"
 
-extern "C" void *__dso_handle = 0;
+extern "C" {
+void *__dso_handle = 0;
+}
 
 static void cxxabi_fatal(const char *message)
 {

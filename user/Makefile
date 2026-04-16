@@ -13,7 +13,7 @@ CXXFLAGS = -m32 -ffreestanding -nostdlib -fno-pie -no-pie \
            -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall \
            -fno-exceptions -fno-rtti -fno-use-cxa-atexit \
            -fno-threadsafe-statics -fdebug-prefix-map=$(abspath ..)=.
-CXXLIBS := $(shell $(CXX) -m32 -print-libgcc-file-name)
+CXXLIBS = $(shell $(CXX) -m32 -print-libgcc-file-name)
 
 LIB_OBJS = lib/crt0.o lib/cxx_init.o lib/syscall.o lib/malloc.o \
            lib/string.o lib/ctype.o lib/stdlib.o lib/stdio.o \
