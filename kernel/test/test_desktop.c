@@ -1582,6 +1582,181 @@ static void test_framebuffer_shell_return_prompt_keeps_unrelated_pixels(
     desktop_test_destroy(&desktop);
 }
 
+static void test_framebuffer_terminal_scroll_keeps_padding_pixels(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+    uint32_t sentinel = 0x0BADCAFEu;
+    int sentinel_index;
+
+    k_memset(pointer_motion_pixels, 0, sizeof(pointer_motion_pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pointer_motion_pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    desktop_open_shell_window(&desktop);
+    desktop_render(&desktop);
+
+    for (int row = 0; row < desktop.shell_terminal.rows - 1; row++)
+        KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, "\n", 1),
+                        1);
+
+    sentinel_index = (desktop.shell_pixel_rect.y + 2) * 480 +
+                     desktop.shell_pixel_rect.x + 2;
+    pointer_motion_pixels[sentinel_index] = sentinel;
+
+    KTEST_EXPECT_EQ(tc, desktop_write_console_output(&desktop, "\n", 1), 1);
+    KTEST_EXPECT_EQ(tc, pointer_motion_pixels[sentinel_index], sentinel);
+    desktop_test_destroy(&desktop);
+}
+
+static void test_framebuffer_terminal_scroll_does_not_copy_mouse_pointer(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+    desktop_pointer_event_t ev;
+    uint32_t white;
+    int pointer_x;
+    int pointer_y;
+    int copied_pointer_index;
+    int current_pointer_index;
+
+    k_memset(pointer_motion_pixels, 0, sizeof(pointer_motion_pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pointer_motion_pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    desktop_open_shell_window(&desktop);
+    desktop_render(&desktop);
+
+    for (int row = 0; row < desktop.shell_terminal.rows - 1; row++)
+        KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, "\n", 1),
+                        1);
+
+    pointer_x = desktop.shell_pixel_rect.x +
+                desktop.shell_terminal.padding_x + 24;
+    pointer_y = desktop.shell_pixel_rect.y +
+                desktop.shell_terminal.padding_y +
+                (int)GUI_FONT_H * 2 + 3;
+    k_memset(&ev, 0, sizeof(ev));
+    ev.x = pointer_x / (int)GUI_FONT_W;
+    ev.y = pointer_y / (int)GUI_FONT_H;
+    ev.pixel_x = pointer_x;
+    ev.pixel_y = pointer_y;
+    desktop_handle_pointer(&desktop, &ev);
+
+    white = framebuffer_pack_rgb(&fb, 255, 255, 255);
+    current_pointer_index = pointer_y * 480 + pointer_x;
+    copied_pointer_index = (pointer_y - (int)GUI_FONT_H) * 480 + pointer_x;
+    KTEST_ASSERT_EQ(tc, pointer_motion_pixels[current_pointer_index], white);
+
+    KTEST_EXPECT_EQ(tc, desktop_write_console_output(&desktop, "\n", 1), 1);
+    KTEST_EXPECT_NE(tc, pointer_motion_pixels[copied_pointer_index], white);
+    KTEST_EXPECT_EQ(tc, pointer_motion_pixels[current_pointer_index], white);
+    desktop_test_destroy(&desktop);
+}
+
+static void scroll_interleave_moves_pointer(desktop_state_t *desktop)
+{
+    desktop_pointer_event_t ev;
+    int pointer_x;
+    int pointer_y;
+
+    if (!desktop)
+        return;
+
+    pointer_x = desktop->shell_pixel_rect.x +
+                desktop->shell_terminal.padding_x + 32;
+    pointer_y = desktop->shell_pixel_rect.y +
+                desktop->shell_terminal.padding_y +
+                (int)GUI_FONT_H * 3 + 4;
+    k_memset(&ev, 0, sizeof(ev));
+    ev.x = pointer_x / (int)GUI_FONT_W;
+    ev.y = pointer_y / (int)GUI_FONT_H;
+    ev.pixel_x = pointer_x;
+    ev.pixel_y = pointer_y;
+    desktop_handle_pointer(desktop, &ev);
+}
+
+static void test_framebuffer_terminal_scroll_blocks_mouse_pointer_interleave(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+    uint32_t white;
+    int pointer_x;
+    int pointer_y;
+    int copied_pointer_index;
+
+    k_memset(pointer_motion_pixels, 0, sizeof(pointer_motion_pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pointer_motion_pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    desktop_open_shell_window(&desktop);
+    desktop_render(&desktop);
+
+    for (int row = 0; row < desktop.shell_terminal.rows - 1; row++)
+        KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, "\n", 1),
+                        1);
+
+    pointer_x = desktop.shell_pixel_rect.x +
+                desktop.shell_terminal.padding_x + 32;
+    pointer_y = desktop.shell_pixel_rect.y +
+                desktop.shell_terminal.padding_y +
+                (int)GUI_FONT_H * 3 + 4;
+    copied_pointer_index = (pointer_y - (int)GUI_FONT_H) * 480 + pointer_x;
+    white = framebuffer_pack_rgb(&fb, 255, 255, 255);
+
+    desktop_set_scroll_interleave_hook_for_test(scroll_interleave_moves_pointer);
+    KTEST_EXPECT_EQ(tc, desktop_write_console_output(&desktop, "\n", 1), 1);
+    desktop_set_scroll_interleave_hook_for_test(0);
+
+    KTEST_EXPECT_NE(tc, pointer_motion_pixels[copied_pointer_index], white);
+    desktop_test_destroy(&desktop);
+}
+
 static void test_framebuffer_desktop_renders_shell_terminal_background(
     ktest_case_t *tc)
 {
@@ -2255,6 +2430,9 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_framebuffer_newline_repaints_only_dirty_terminal_cells),
     KTEST_CASE(test_framebuffer_shell_backspace_prompt_redraw_keeps_unrelated_pixels),
     KTEST_CASE(test_framebuffer_shell_return_prompt_keeps_unrelated_pixels),
+    KTEST_CASE(test_framebuffer_terminal_scroll_keeps_padding_pixels),
+    KTEST_CASE(test_framebuffer_terminal_scroll_does_not_copy_mouse_pointer),
+    KTEST_CASE(test_framebuffer_terminal_scroll_blocks_mouse_pointer_interleave),
     KTEST_CASE(test_framebuffer_desktop_renders_shell_terminal_background),
     KTEST_CASE(test_framebuffer_shell_window_keeps_right_border_visible),
     KTEST_CASE(test_framebuffer_desktop_console_output_renders_terminal_glyph),

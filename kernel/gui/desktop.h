@@ -95,4 +95,10 @@ desktop_key_result_t desktop_handle_key(desktop_state_t *desktop, char c);
 int desktop_is_active(void);
 desktop_state_t *desktop_global(void);
 
+#ifdef KTEST_ENABLED
+typedef void (*desktop_scroll_interleave_hook_t)(desktop_state_t *desktop);
+void desktop_set_scroll_interleave_hook_for_test(
+    desktop_scroll_interleave_hook_t hook);
+#endif
+
 #endif /* GUI_DESKTOP_H */
