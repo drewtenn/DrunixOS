@@ -1953,6 +1953,7 @@ void desktop_focus_window(desktop_state_t *desktop, int window_id)
     desktop->focus = target->app == DESKTOP_APP_SHELL
         ? DESKTOP_FOCUS_SHELL
         : DESKTOP_FOCUS_WINDOW;
+    desktop_app_refresh_for_focus(&desktop->app_state, target->app);
     target->z = ++desktop->next_z;
     for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++)
         desktop->windows[i].focused = desktop->windows[i].id == window_id;

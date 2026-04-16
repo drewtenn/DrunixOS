@@ -14,6 +14,8 @@ typedef enum {
 
 void desktop_apps_init(desktop_app_state_t *state);
 void desktop_app_refresh(desktop_app_state_t *state);
+void desktop_app_refresh_for_focus(desktop_app_state_t *state,
+                                   desktop_app_kind_t app);
 void desktop_app_render(const desktop_app_state_t *state,
                         desktop_app_kind_t app,
                         const gui_pixel_surface_t *surface,

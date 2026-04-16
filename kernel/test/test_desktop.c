@@ -250,6 +250,35 @@ static void test_desktop_processes_app_handles_empty_snapshot(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, apps.processes.line_count, 1);
 }
 
+static void test_desktop_open_processes_refreshes_after_late_process(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    static process_t proc;
+    int pid;
+
+    sched_init();
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+
+    k_memset(&proc, 0, sizeof(proc));
+    proc.saved_esp = 1;
+    k_strncpy(proc.name, "lateproc", sizeof(proc.name) - 1);
+    pid = sched_add(&proc);
+    KTEST_ASSERT_TRUE(tc, pid > 0);
+
+    KTEST_ASSERT_TRUE(tc,
+                      desktop_open_app_window(&desktop,
+                                              DESKTOP_APP_PROCESSES) > 0);
+    KTEST_EXPECT_TRUE(tc,
+                      k_strcmp(desktop_app_line_for_test(
+                                   &desktop.app_state.processes, 1),
+                               "1  READY  lateproc") == 0);
+
+    desktop_test_destroy(&desktop);
+}
+
 static void test_desktop_files_app_replaces_last_visible_line_when_truncated(
     ktest_case_t *tc)
 {
@@ -3444,6 +3473,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_help_app_key_input_is_ignored_while_launcher_open),
     KTEST_CASE(test_desktop_open_invalid_app_kind_is_rejected),
     KTEST_CASE(test_desktop_processes_app_handles_empty_snapshot),
+    KTEST_CASE(test_desktop_open_processes_refreshes_after_late_process),
     KTEST_CASE(test_desktop_boot_layout_opens_shell_window),
     KTEST_CASE(test_desktop_layout_scales_to_framebuffer_grid),
     KTEST_CASE(test_desktop_render_draws_taskbar_and_launcher_label),

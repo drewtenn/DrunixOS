@@ -222,6 +222,18 @@ void desktop_app_refresh(desktop_app_state_t *state)
     desktop_app_refresh_help(&state->help);
 }
 
+void desktop_app_refresh_for_focus(desktop_app_state_t *state,
+                                   desktop_app_kind_t app)
+{
+    if (!state)
+        return;
+
+    if (app == DESKTOP_APP_PROCESSES)
+        desktop_app_refresh_processes(&state->processes);
+    else if (app == DESKTOP_APP_HELP)
+        desktop_app_refresh_help(&state->help);
+}
+
 void desktop_app_render(const desktop_app_state_t *state,
                         desktop_app_kind_t app,
                         const gui_pixel_surface_t *surface,
