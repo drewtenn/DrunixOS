@@ -1785,13 +1785,13 @@ static void test_desktop_scroll_syscall_moves_terminal_view(ktest_case_t *tc)
     desktop_write_history_for_scroll_test(tc, &desktop);
 
     KTEST_EXPECT_TRUE(tc, desktop.shell_terminal.live_view);
-    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_DRUNIX_SCROLL_UP, 1, 0, 0, 0, 0), 0);
+    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_DRUNIX_SCROLL_UP, 1, 0, 0, 0, 0, 0), 0);
     KTEST_EXPECT_EQ(tc,
                     gui_terminal_visible_view_top(&desktop.shell_terminal),
                     1);
     KTEST_EXPECT_FALSE(tc, desktop.shell_terminal.live_view);
 
-    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_DRUNIX_SCROLL_DOWN, 1, 0, 0, 0, 0), 0);
+    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_DRUNIX_SCROLL_DOWN, 1, 0, 0, 0, 0, 0), 0);
     KTEST_EXPECT_EQ(tc,
                     gui_terminal_visible_view_top(&desktop.shell_terminal),
                     0);
@@ -1839,7 +1839,7 @@ static void test_syscall_clear_clears_desktop_shell_buffer(ktest_case_t *tc)
                                         desktop.shell_content.y).ch,
                     'a');
 
-    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_DRUNIX_CLEAR, 0, 0, 0, 0, 0), 0);
+    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_DRUNIX_CLEAR, 0, 0, 0, 0, 0, 0), 0);
     KTEST_EXPECT_EQ(tc,
                     gui_display_cell_at(&display,
                                         desktop.shell_content.x,

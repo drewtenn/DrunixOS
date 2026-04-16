@@ -151,7 +151,7 @@ isr128:
 ;   [esp+12] ds
 ;   [esp+16] edi
 ;   [esp+20] esi
-;   [esp+24] ebp
+;   [esp+24] ebp        <- arg6 for Linux i386 mmap2
 ;   [esp+28] esp_saved  (pusha's esp value — unreliable, not used)
 ;   [esp+32] ebx        <- arg1 (syscall argument 1)
 ;   [esp+36] edx        <- arg3
@@ -191,8 +191,10 @@ syscall_common:
     mov edx, [esp+36]   ; arg3 (was EDX)
     mov esi, [esp+20]   ; arg4 (was ESI)
     mov edi, [esp+16]   ; arg5 (was EDI)
+    mov ebp, [esp+24]   ; arg6 (was EBP)
 
-    ; Call syscall_handler(eax, ebx, ecx, edx, esi, edi) — cdecl: push right to left
+    ; Call syscall_handler(eax, ebx, ecx, edx, esi, edi, ebp) — cdecl
+    push ebp
     push edi
     push esi
     push edx
@@ -200,7 +202,7 @@ syscall_common:
     push ebx
     push eax
     call syscall_handler
-    add esp, 24
+    add esp, 28
     mov [esp+44], eax   ; write return value into saved EAX slot → visible to user after iret
 
     ; Deliver any pending signal before returning to user space.

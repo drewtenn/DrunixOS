@@ -44,10 +44,12 @@
 #define SYS_DUP2       63
 #define SYS_GETPPID    64
 #define SYS_SIGACTION  67
+#define SYS_GETTIMEOFDAY 78
 #define SYS_MMAP       90
 #define SYS_MUNMAP     91
 #define SYS_STAT      106
 #define SYS_SIGRETURN 119
+#define SYS_UNAME     122
 #define SYS_MPROTECT  125
 #define SYS_SIGPROCMASK 126
 #define SYS_GETPGID   132
@@ -55,7 +57,13 @@
 #define SYS_YIELD     158
 #define SYS_NANOSLEEP 162
 #define SYS_GETCWD    183
+#define SYS_MMAP2     192
+#define SYS_FSTAT64   197
+#define SYS_SET_THREAD_AREA 243
+#define SYS_EXIT_GROUP 252
+#define SYS_SET_TID_ADDRESS 258
 #define SYS_CLOCK_GETTIME 265
+#define SYS_CLOCK_GETTIME64 403
 
 #define SYS_DRUNIX_CLEAR       4000
 #define SYS_DRUNIX_SCROLL_UP   4001
@@ -86,9 +94,11 @@
  * edx: third argument (arg3)
  * esi: fourth argument (arg4)
  * edi: fifth argument (arg5)
+ * ebp: sixth argument (arg6, used by Linux i386 mmap2)
  */
 uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
-                         uint32_t edx, uint32_t esi, uint32_t edi);
+                         uint32_t edx, uint32_t esi, uint32_t edi,
+                         uint32_t ebp);
 
 #ifdef KTEST_ENABLED
 int syscall_stdout_would_fallback(void *desktop,

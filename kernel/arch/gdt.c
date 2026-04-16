@@ -8,8 +8,8 @@
 #include "kstring.h"
 #include <stdint.h>
 
-/* 7 descriptors: null, kernel/user segments, runtime TSS, double-fault TSS */
-static gdt_entry_t  gdt[7];
+/* 8 descriptors: null, kernel/user segments, runtime TSS, #DF TSS, user TLS */
+static gdt_entry_t  gdt[8];
 static gdt_register_t gdtr;
 static tss_t        tss;
 static tss_t        df_tss;
@@ -75,6 +75,9 @@ void gdt_init(void)
     uint32_t df_tss_limit = (uint32_t)sizeof(tss_t) - 1;
     gdt_set_entry(6, df_tss_base, df_tss_limit, 0x89, 0x00);
 
+    /* 7: Linux i386 user TLS slot, installed lazily by set_thread_area. */
+    gdt_set_entry(GDT_USER_TLS_ENTRY, 0, 0, 0, 0);
+
     /* Initialize the runtime TSS — only the ring-3 stack-switch fields matter. */
     k_memset(&tss, 0, sizeof(tss));
     tss.ss0         = GDT_KERNEL_DS;   /* 0x10 */
@@ -116,4 +119,14 @@ void gdt_set_tss_esp0(uint32_t esp0)
 const tss_t *gdt_get_runtime_tss(void)
 {
     return &tss;
+}
+
+void gdt_set_user_tls(uint32_t base, uint32_t limit, int limit_in_pages)
+{
+    uint8_t flags = 0x40; /* 32-bit segment */
+
+    if (limit_in_pages)
+        flags |= 0x80; /* 4 KiB granularity */
+
+    gdt_set_entry(GDT_USER_TLS_ENTRY, base, limit, 0xF2, flags);
 }

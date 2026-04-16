@@ -14,6 +14,7 @@
 #include "mem_forensics.h"
 #include "paging.h"
 #include "pmm.h"
+#include "syscall.h"
 #include "vfs.h"
 #include "vma.h"
 
@@ -26,6 +27,7 @@ extern void process_exec_launch(void);
 #define TEST_NT_DRUNIX_VMSTAT 0x4458564du
 #define TEST_NT_DRUNIX_FAULT  0x44584654u
 #define TEST_NT_DRUNIX_MAPS   0x44584d50u
+#define TEST_LINUX_MAP_FIXED  0x10u
 
 static uint32_t test_align_up(uint32_t val, uint32_t align)
 {
@@ -97,6 +99,56 @@ static int map_test_page(process_t *proc, uint32_t vaddr, uint32_t flags)
     if (paging_map_page(proc->pd_phys, vaddr, phys, flags) != 0)
         return -1;
     return 0;
+}
+
+static int map_test_user_page(process_t *proc, uint32_t vaddr)
+{
+    uint32_t page = vaddr & ~0xFFFu;
+
+    if (!vma_find(proc, page) &&
+        vma_add(proc, page, page + PAGE_SIZE,
+                VMA_FLAG_READ | VMA_FLAG_WRITE |
+                VMA_FLAG_ANON | VMA_FLAG_PRIVATE,
+                VMA_KIND_GENERIC) != 0)
+        return -1;
+
+    return map_test_page(proc, page, PG_PRESENT | PG_WRITABLE | PG_USER);
+}
+
+static uint8_t *mapped_alias(process_t *proc, uint32_t virt)
+{
+    uint32_t *pte = 0;
+
+    if (!proc || paging_walk(proc->pd_phys, virt, &pte) != 0)
+        return 0;
+
+    return (uint8_t *)(paging_entry_addr(*pte) + (virt & 0xFFFu));
+}
+
+static process_t *start_syscall_test_process(process_t *proc)
+{
+    sched_init();
+    init_fresh_process_layout_proc(proc);
+    proc->pd_phys = paging_create_user_space();
+    if (!proc->pd_phys)
+        return 0;
+
+    proc->saved_esp = 1; /* syscall tests do not context-switch this task */
+    proc->open_files[1].type = FD_TYPE_STDOUT;
+    proc->open_files[1].writable = 1;
+
+    if (sched_add(proc) < 1) {
+        process_release_user_space(proc);
+        return 0;
+    }
+    return sched_bootstrap();
+}
+
+static void stop_syscall_test_process(process_t *proc)
+{
+    if (proc)
+        process_release_user_space(proc);
+    sched_init();
 }
 
 static void init_core_dump_proc(process_t *proc)
@@ -707,6 +759,89 @@ static void test_mem_forensics_counts_present_heap_pages(ktest_case_t *tc)
     process_release_user_space(&proc);
 }
 
+static void test_linux_syscalls_fill_uname_time_and_fstat64(ktest_case_t *tc)
+{
+    static process_t seed;
+    process_t *cur = start_syscall_test_process(&seed);
+    uint8_t *page;
+
+    KTEST_ASSERT_NOT_NULL(tc, cur);
+    KTEST_ASSERT_EQ(tc, map_test_user_page(cur, 0x00800000u), 0u);
+    page = mapped_alias(cur, 0x00800000u);
+    KTEST_ASSERT_NOT_NULL(tc, page);
+
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_UNAME, 0x00800000u, 0, 0, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc, page[0], (uint8_t)'D');
+    KTEST_EXPECT_EQ(tc, page[1], (uint8_t)'r');
+    KTEST_EXPECT_EQ(tc, page[260], (uint8_t)'i');
+    KTEST_EXPECT_EQ(tc, page[261], (uint8_t)'4');
+
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_GETTIMEOFDAY, 0x00800200u,
+                                    0x00800210u, 0, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc, page[0x210], 0u);
+    KTEST_EXPECT_EQ(tc, page[0x211], 0u);
+
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_FSTAT64, 1, 0x00800400u,
+                                    0, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc, page[0x410], 0x80u);
+    KTEST_EXPECT_EQ(tc, page[0x411], 0x21u);
+
+    stop_syscall_test_process(cur);
+}
+
+static void test_linux_syscalls_install_tls_and_map_mmap2(ktest_case_t *tc)
+{
+    static process_t seed;
+    process_t *cur = start_syscall_test_process(&seed);
+    uint8_t *page;
+    uint32_t *desc;
+    uint32_t addr;
+
+    KTEST_ASSERT_NOT_NULL(tc, cur);
+    KTEST_ASSERT_EQ(tc, map_test_user_page(cur, 0x00801000u), 0u);
+    page = mapped_alias(cur, 0x00801000u);
+    KTEST_ASSERT_NOT_NULL(tc, page);
+
+    desc = (uint32_t *)page;
+    desc[0] = 0xFFFFFFFFu;
+    desc[1] = 0x00801800u;
+    desc[2] = 0x000FFFFFu;
+    desc[3] = (1u << 0) | (1u << 4) | (1u << 6);
+
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_SET_THREAD_AREA, 0x00801000u,
+                                    0, 0, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc, desc[0], GDT_USER_TLS_ENTRY);
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_SET_TID_ADDRESS, 0x00801080u,
+                                    0, 0, 0, 0, 0),
+                    cur->pid);
+
+    addr = syscall_handler(SYS_MMAP2, 0, PAGE_SIZE,
+                           PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS,
+                           (uint32_t)-1, 0);
+    KTEST_ASSERT_NE(tc, addr, (uint32_t)-1);
+    KTEST_EXPECT_TRUE(tc, vma_find(cur, addr) != 0);
+
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_MMAP2, 0, PAGE_SIZE,
+                                    PROT_READ | PROT_WRITE,
+                                    MAP_PRIVATE | MAP_ANONYMOUS |
+                                    TEST_LINUX_MAP_FIXED,
+                                    (uint32_t)-1, 0),
+                    (uint32_t)-1);
+
+    stop_syscall_test_process(cur);
+}
+
 static ktest_case_t cases[] = {
     KTEST_CASE(test_process_build_initial_frame_layout),
     KTEST_CASE(test_process_build_exec_frame_layout),
@@ -729,6 +864,8 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_mem_forensics_classifies_unknown_fault_vector),
     KTEST_CASE(test_mem_forensics_classifies_stack_limit_fault),
     KTEST_CASE(test_mem_forensics_counts_present_heap_pages),
+    KTEST_CASE(test_linux_syscalls_fill_uname_time_and_fstat64),
+    KTEST_CASE(test_linux_syscalls_install_tls_and_map_mmap2),
 };
 
 static ktest_suite_t suite = KTEST_SUITE("process", cases);

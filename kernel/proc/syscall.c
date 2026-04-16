@@ -6,6 +6,7 @@
 #include "syscall.h"
 #include "sched.h"
 #include "process.h"
+#include "gdt.h"
 #include "pipe.h"
 #include "paging.h"
 #include "pmm.h"
@@ -158,6 +159,73 @@ typedef struct {
     uint32_t fd;
     uint32_t offset;
 } old_mmap_args_t;
+
+typedef struct {
+    uint32_t entry_number;
+    uint32_t base_addr;
+    uint32_t limit;
+    uint32_t flags;
+} linux_user_desc_t;
+
+#define LINUX_S_IFIFO 0010000u
+#define LINUX_S_IFCHR 0020000u
+#define LINUX_S_IFDIR 0040000u
+#define LINUX_S_IFREG 0100000u
+
+static void linux_put_u32(uint8_t *buf, uint32_t off, uint32_t value)
+{
+    buf[off + 0] = (uint8_t)(value & 0xFFu);
+    buf[off + 1] = (uint8_t)((value >> 8) & 0xFFu);
+    buf[off + 2] = (uint8_t)((value >> 16) & 0xFFu);
+    buf[off + 3] = (uint8_t)((value >> 24) & 0xFFu);
+}
+
+static void linux_put_u64(uint8_t *buf, uint32_t off, uint64_t value)
+{
+    linux_put_u32(buf, off, (uint32_t)value);
+    linux_put_u32(buf, off + 4u, (uint32_t)(value >> 32));
+}
+
+static void linux_copy_field(char *dst, uint32_t off, uint32_t len,
+                             const char *src)
+{
+    uint32_t i = 0;
+
+    if (!dst || len == 0)
+        return;
+    while (src && src[i] && i + 1u < len) {
+        dst[off + i] = src[i];
+        i++;
+    }
+    dst[off + i] = '\0';
+}
+
+static void linux_fill_stat64(uint8_t *st,
+                              uint32_t mode,
+                              uint32_t nlink,
+                              uint32_t size,
+                              uint32_t mtime,
+                              uint64_t ino)
+{
+    uint32_t blocks;
+
+    k_memset(st, 0, 144u);
+    blocks = (size + 511u) / 512u;
+
+    linux_put_u64(st, 0u, 1u);          /* st_dev */
+    linux_put_u32(st, 16u, mode);       /* st_mode */
+    linux_put_u32(st, 20u, nlink);      /* st_nlink */
+    linux_put_u32(st, 24u, 0u);         /* st_uid */
+    linux_put_u32(st, 28u, 0u);         /* st_gid */
+    linux_put_u64(st, 32u, 1u);         /* st_rdev */
+    linux_put_u64(st, 44u, size);       /* st_size */
+    linux_put_u32(st, 52u, 4096u);      /* st_blksize */
+    linux_put_u64(st, 56u, blocks);     /* st_blocks */
+    linux_put_u64(st, 88u, ino);        /* st_ino */
+    linux_put_u64(st, 96u, mtime);      /* st_atim.tv_sec */
+    linux_put_u64(st, 112u, mtime);     /* st_mtim.tv_sec */
+    linux_put_u64(st, 128u, mtime);     /* st_ctim.tv_sec */
+}
 
 static int prot_is_valid(uint32_t prot)
 {
@@ -445,7 +513,8 @@ static void fd_close_one(process_t *proc, unsigned fd)
  * sees it in EAX after iret.
  */
 uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
-                         uint32_t edx, uint32_t esi, uint32_t edi)
+                         uint32_t edx, uint32_t esi, uint32_t edi,
+                         uint32_t ebp)
 {
     switch (eax) {
 
@@ -1344,6 +1413,56 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
         return ret;
     }
 
+    case SYS_FSTAT64: {
+        /*
+         * ebx = fd, ecx = struct stat64 *.
+         *
+         * Linux i386 musl uses fstat64 for stdio and file metadata.  The
+         * layout here matches musl's i386 struct stat (144 bytes).
+         */
+        process_t *cur = sched_current();
+        uint8_t st64[144];
+        file_handle_t *fh;
+        uint32_t mode;
+        uint32_t nlink = 1;
+        uint32_t size = 0;
+        uint32_t mtime = clock_unix_time();
+        uint64_t ino = ebx + 1u;
+
+        if (!cur || ecx == 0 || ebx >= MAX_FDS)
+            return (uint32_t)-1;
+        fh = &cur->open_files[ebx];
+        switch (fh->type) {
+        case FD_TYPE_FILE:
+            mode = LINUX_S_IFREG | 0644u;
+            size = fh->u.file.size;
+            ino = fh->u.file.inode_num;
+            break;
+        case FD_TYPE_PROCFILE:
+            mode = LINUX_S_IFREG | 0444u;
+            size = fh->u.proc.size;
+            ino = 0x70000000ull + fh->u.proc.kind * 1024u +
+                  fh->u.proc.pid * 16u + fh->u.proc.index;
+            break;
+        case FD_TYPE_CHARDEV:
+        case FD_TYPE_TTY:
+        case FD_TYPE_STDOUT:
+            mode = LINUX_S_IFCHR | 0600u;
+            break;
+        case FD_TYPE_PIPE_READ:
+        case FD_TYPE_PIPE_WRITE:
+            mode = LINUX_S_IFIFO | 0600u;
+            break;
+        default:
+            return (uint32_t)-1;
+        }
+
+        linux_fill_stat64(st64, mode, nlink, size, mtime, ino);
+        if (uaccess_copy_to_user(cur, ecx, st64, sizeof(st64)) != 0)
+            return (uint32_t)-1;
+        return 0;
+    }
+
     case SYS_CLOCK_GETTIME: {
         /*
          * ebx = clock id (0 = CLOCK_REALTIME).
@@ -1362,6 +1481,124 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
         if (uaccess_copy_to_user(cur, ecx, ts, sizeof(ts)) != 0)
             return (uint32_t)-1;
         return 0;
+    }
+
+    case SYS_CLOCK_GETTIME64: {
+        /*
+         * ebx = clock id, ecx = struct __kernel_timespec64 *.
+         * Linux time64 ABI uses 64-bit seconds and nanoseconds on i386.
+         */
+        process_t *cur = sched_current();
+        uint32_t ts64[4];
+
+        if (!cur || ebx != 0 || ecx == 0)
+            return (uint32_t)-1;
+        ts64[0] = clock_unix_time();
+        ts64[1] = 0;
+        ts64[2] = 0;
+        ts64[3] = 0;
+        if (uaccess_copy_to_user(cur, ecx, ts64, sizeof(ts64)) != 0)
+            return (uint32_t)-1;
+        return 0;
+    }
+
+    case SYS_GETTIMEOFDAY: {
+        /*
+         * ebx = struct timeval32 *, ecx = struct timezone *.
+         * The timezone argument is obsolete; Linux still zeros it when given.
+         */
+        process_t *cur = sched_current();
+        uint32_t tv[2];
+        uint32_t tz[2] = { 0, 0 };
+
+        if (!cur)
+            return (uint32_t)-1;
+        if (ebx != 0) {
+            tv[0] = clock_unix_time();
+            tv[1] = 0;
+            if (uaccess_copy_to_user(cur, ebx, tv, sizeof(tv)) != 0)
+                return (uint32_t)-1;
+        }
+        if (ecx != 0 &&
+            uaccess_copy_to_user(cur, ecx, tz, sizeof(tz)) != 0)
+            return (uint32_t)-1;
+        return 0;
+    }
+
+    case SYS_UNAME: {
+        /*
+         * ebx = struct utsname *.
+         * Linux i386 old_utsname fields are 65-byte NUL-terminated strings.
+         */
+        process_t *cur = sched_current();
+        char uts[390];
+
+        if (!cur || ebx == 0)
+            return (uint32_t)-1;
+        k_memset(uts, 0, sizeof(uts));
+        linux_copy_field(uts, 0u, 65u, "Drunix");
+        linux_copy_field(uts, 65u, 65u, "drunix");
+        linux_copy_field(uts, 130u, 65u, "0.1");
+        linux_copy_field(uts, 195u, 65u, "Drunix Linux i386 ABI");
+        linux_copy_field(uts, 260u, 65u, "i486");
+        linux_copy_field(uts, 325u, 65u, "drunix.local");
+        if (uaccess_copy_to_user(cur, ebx, uts, sizeof(uts)) != 0)
+            return (uint32_t)-1;
+        return 0;
+    }
+
+    case SYS_SET_THREAD_AREA: {
+        /*
+         * ebx = struct user_desc *.
+         *
+         * Static i386 musl uses set_thread_area during startup to install a
+         * TLS descriptor and then loads %gs with the returned entry number.
+         * Drunix exposes one user TLS slot in the GDT for this compatibility
+         * path.
+         */
+        process_t *cur = sched_current();
+        linux_user_desc_t desc;
+        uint32_t contents;
+        int limit_in_pages;
+
+        if (!cur || ebx == 0)
+            return (uint32_t)-1;
+        if (uaccess_copy_from_user(cur, &desc, ebx, sizeof(desc)) != 0)
+            return (uint32_t)-1;
+
+        if (desc.entry_number != 0xFFFFFFFFu &&
+            desc.entry_number != GDT_USER_TLS_ENTRY)
+            return (uint32_t)-1;
+
+        contents = (desc.flags >> 1) & 0x3u;
+        if (contents != 0)
+            return (uint32_t)-1;
+        if ((desc.flags & (1u << 3)) != 0)
+            return (uint32_t)-1;
+
+        desc.entry_number = GDT_USER_TLS_ENTRY;
+        limit_in_pages = (desc.flags & (1u << 4)) != 0;
+        if ((desc.flags & (1u << 5)) != 0)
+            gdt_set_user_tls(0, 0, 0);
+        else
+            gdt_set_user_tls(desc.base_addr, desc.limit, limit_in_pages);
+
+        if (uaccess_copy_to_user(cur, ebx, &desc, sizeof(desc)) != 0)
+            return (uint32_t)-1;
+        return 0;
+    }
+
+    case SYS_SET_TID_ADDRESS: {
+        /*
+         * ebx = int *tidptr.
+         * A single-threaded runtime only needs the Linux return contract:
+         * return the caller's thread id, which is the process id in Drunix.
+         */
+        process_t *cur = sched_current();
+
+        if (!cur)
+            return (uint32_t)-1;
+        return cur->pid;
     }
 
     case SYS_DRUNIX_MODLOAD: {
@@ -1401,6 +1638,7 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
     }
 
     case SYS_EXIT:
+    case SYS_EXIT_GROUP:
         /*
          * ebx = exit status code.
          * Store the exit code, mark the process as a zombie, and switch
@@ -1495,6 +1733,31 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
             return (uint32_t)-1;
         if (vma_map_anonymous(cur, args.addr, args.length,
                               prot_to_vma_flags(args.prot),
+                              &map_addr) != 0)
+            return (uint32_t)-1;
+        return map_addr;
+    }
+
+    case SYS_MMAP2: {
+        /*
+         * Linux i386 mmap2:
+         *   ebx=addr, ecx=len, edx=prot, esi=flags, edi=fd, ebp=pgoffset.
+         *
+         * For now Drunix supports the static-runtime case: private anonymous
+         * mappings without MAP_FIXED.
+         */
+        process_t *cur = sched_current();
+        uint32_t map_addr = 0;
+        uint32_t required = MAP_PRIVATE | MAP_ANONYMOUS;
+
+        if (!cur || ecx == 0 || !prot_is_valid(edx))
+            return (uint32_t)-1;
+        if ((esi & required) != required ||
+            (esi & ~(MAP_PRIVATE | MAP_ANONYMOUS)) != 0)
+            return (uint32_t)-1;
+        if (edi != (uint32_t)-1 || ebp != 0)
+            return (uint32_t)-1;
+        if (vma_map_anonymous(cur, ebx, ecx, prot_to_vma_flags(edx),
                               &map_addr) != 0)
             return (uint32_t)-1;
         return map_addr;

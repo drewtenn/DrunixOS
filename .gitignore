@@ -37,6 +37,7 @@ user/yes
 user/crash
 user/dmesg
 user/linuxhello
+user/linuxprobe
 
 core.*
 

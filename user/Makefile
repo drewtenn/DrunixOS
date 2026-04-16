@@ -1,7 +1,9 @@
-PROGS = chello hello shell writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello linuxhello
+PROGS = chello hello shell writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello linuxhello linuxprobe
 C_PROGS = chello shell
 CXX_PROGS = hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello
-LINUX_PROGS = linuxhello
+LINUX_PROGS = linuxhello linuxprobe
+LINUX_ASM_PROGS = linuxhello
+LINUX_C_PROGS = linuxprobe
 
 all: $(PROGS)
 
@@ -9,6 +11,7 @@ CC     = x86_64-elf-gcc
 CXX    = x86_64-elf-g++
 LD     = x86_64-elf-ld
 NASM   = nasm
+LINUX_I386_CC ?= i486-linux-musl-gcc
 CFLAGS = -m32 -ffreestanding -nostdlib -fno-pie -no-pie \
          -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall \
          -fdebug-prefix-map=$(abspath ..)=.
@@ -16,6 +19,7 @@ CXXFLAGS = -m32 -ffreestanding -nostdlib -fno-pie -no-pie \
            -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall \
            -fno-exceptions -fno-rtti -fno-use-cxa-atexit \
            -fno-threadsafe-statics -fdebug-prefix-map=$(abspath ..)=.
+LINUX_CFLAGS = -static -Os -s
 CXXLIBS = $(shell $(CXX) -m32 -print-libgcc-file-name)
 
 C_RUNTIME_OBJS = lib/crt0.o lib/cxx_init.o lib/syscall.o lib/malloc.o \
@@ -77,8 +81,11 @@ $(C_PROGS): %: %.o $(C_LINK_OBJS) user.ld
 $(CXX_PROGS): %: %.o $(CXX_LINK_OBJS) user.ld
 	$(LD) -m elf_i386 -T user.ld -o $@ $(CXX_LINK_OBJS) $@.o $(CXXLIBS)
 
-$(LINUX_PROGS): %: %.o
+$(LINUX_ASM_PROGS): %: %.o
 	$(LD) -m elf_i386 -nostdlib -e _start -Ttext 0x08048000 -o $@ $@.o
+
+$(LINUX_C_PROGS): %: %.c
+	$(LINUX_I386_CC) $(LINUX_CFLAGS) -o $@ $<
 
 clean:
 	find . -name '*.o' -delete

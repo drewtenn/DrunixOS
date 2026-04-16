@@ -93,6 +93,8 @@ def main():
         add_failure(failures, "C_PROGS must include chello as the small C runtime smoke program")
     if "linuxhello" not in linux_set:
         add_failure(failures, "LINUX_PROGS must include linuxhello as the static Linux i386 smoke program")
+    if "linuxprobe" not in linux_set:
+        add_failure(failures, "LINUX_PROGS must include linuxprobe as the static Linux i386 C compatibility probe")
 
     if "$(C_RUNTIME_OBJS)" not in c_link:
         add_failure(failures, "C_LINK_OBJS must include $(C_RUNTIME_OBJS)")
@@ -111,11 +113,22 @@ def main():
         if (USER / f"{prog}.c").exists():
             add_failure(failures, f"C++ program must not also have C source: user/{prog}.c")
 
+    linux_c_progs = {"linuxprobe"}
     for prog in linux_progs:
-        if not (USER / f"{prog}.asm").exists():
-            add_failure(failures, f"Linux i386 smoke program missing assembly source: user/{prog}.asm")
-        if (USER / f"{prog}.c").exists() or (USER / f"{prog}.cpp").exists():
-            add_failure(failures, f"Linux i386 smoke program must not use Drunix C/C++ runtime sources: user/{prog}")
+        has_asm = (USER / f"{prog}.asm").exists()
+        has_c = (USER / f"{prog}.c").exists()
+        if prog in linux_c_progs:
+            if not has_c:
+                add_failure(failures, f"Linux i386 C probe missing source: user/{prog}.c")
+            if has_asm:
+                add_failure(failures, f"Linux i386 C probe must not also have assembly source: user/{prog}.asm")
+        else:
+            if not has_asm:
+                add_failure(failures, f"Linux i386 smoke program missing assembly source: user/{prog}.asm")
+            if has_c:
+                add_failure(failures, f"Linux i386 assembly smoke program must not also have C source: user/{prog}.c")
+        if (USER / f"{prog}.cpp").exists():
+            add_failure(failures, f"Linux i386 smoke program must not use Drunix C++ runtime sources: user/{prog}.cpp")
 
     if failures:
         for failure in failures:

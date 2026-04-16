@@ -17,6 +17,8 @@
 #define GDT_USER_DS     0x23    /* index 4, ring 3 (0x20 | 3) */
 #define GDT_TSS_SEG     0x28    /* index 5, ring 0 */
 #define GDT_DF_TSS_SEG  0x30    /* index 6, ring 0 */
+#define GDT_USER_TLS_ENTRY 7    /* Linux i386 set_thread_area TLS slot */
+#define GDT_USER_TLS_SEG  0x3B  /* index 7, ring 3 (0x38 | 3) */
 
 /* 8-byte GDT descriptor */
 typedef struct {
@@ -47,6 +49,13 @@ void gdt_init(void);
  * ring 3 switches to the correct kernel stack.
  */
 void gdt_set_tss_esp0(uint32_t esp0);
+
+/*
+ * gdt_set_user_tls: install a ring-3 data segment for Linux i386 TLS.
+ * set_thread_area() writes this slot and user space then loads %gs with
+ * GDT_USER_TLS_SEG.
+ */
+void gdt_set_user_tls(uint32_t base, uint32_t limit, int limit_in_pages);
 
 /*
  * gdt_get_runtime_tss: return the main TSS currently loaded in TR. During a
