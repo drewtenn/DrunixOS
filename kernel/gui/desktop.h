@@ -48,6 +48,7 @@ typedef struct {
 typedef struct {
     int active;
     int launcher_open;
+    desktop_app_kind_t launcher_selection;
     int shell_window_open;
     int desktop_enabled;
     desktop_focus_t focus;

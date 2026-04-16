@@ -284,6 +284,26 @@ static desktop_window_t *desktop_find_topmost_open_window(desktop_state_t *deskt
     return best;
 }
 
+static desktop_window_t *desktop_taskbar_window_at(desktop_state_t *desktop,
+                                                   int cell_x,
+                                                   int cell_y)
+{
+    int slot = 0;
+
+    if (!desktop || cell_y != desktop->taskbar.y)
+        return 0;
+    if (cell_x < 8)
+        return 0;
+    for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        if (!desktop->windows[i].open)
+            continue;
+        if (cell_x >= 8 + slot * 10 && cell_x < 17 + slot * 10)
+            return &desktop->windows[i];
+        slot++;
+    }
+    return 0;
+}
+
 static void desktop_default_window_rect(desktop_state_t *desktop,
                                         desktop_app_kind_t app,
                                         gui_pixel_rect_t *out)
@@ -757,6 +777,19 @@ static void desktop_render_framebuffer_region(desktop_state_t *desktop,
                                   "Menu",
                                   theme.taskbar_fg,
                                   theme.taskbar_bg);
+    {
+        int task_x = desktop->taskbar_pixel_rect.x + 72;
+
+        for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+            if (!desktop->windows[i].open)
+                continue;
+            framebuffer_draw_text_clipped(fb, clip, task_x,
+                                          desktop->taskbar_pixel_rect.y,
+                                          desktop->windows[i].title,
+                                          theme.taskbar_fg, theme.taskbar_bg);
+            task_x += 80;
+        }
+    }
 
     if (desktop->shell_window_open) {
         window = desktop->window_pixel_rect;
@@ -784,7 +817,16 @@ static void desktop_render_framebuffer_region(desktop_state_t *desktop,
                                    launcher.w, launcher.h,
                                    theme.window_border);
         framebuffer_draw_text_clipped(fb, clip, launcher.x + 16,
-                                      launcher.y + 16, "Shell",
+                                      launcher.y + 12, "1 Shell",
+                                      theme.taskbar_fg, theme.taskbar_bg);
+        framebuffer_draw_text_clipped(fb, clip, launcher.x + 16,
+                                      launcher.y + 28, "2 Files",
+                                      theme.taskbar_fg, theme.taskbar_bg);
+        framebuffer_draw_text_clipped(fb, clip, launcher.x + 16,
+                                      launcher.y + 44, "3 Processes",
+                                      theme.taskbar_fg, theme.taskbar_bg);
+        framebuffer_draw_text_clipped(fb, clip, launcher.x + 16,
+                                      launcher.y + 60, "4 Help",
                                       theme.taskbar_fg, theme.taskbar_bg);
     }
 }
@@ -1332,6 +1374,7 @@ void desktop_init(desktop_state_t *desktop, gui_display_t *display)
     desktop->active = 1;
     desktop->desktop_enabled = 1;
     desktop->focus = DESKTOP_FOCUS_TASKBAR;
+    desktop->launcher_selection = DESKTOP_APP_SHELL;
     desktop_layout(desktop);
     desktop_set_pointer(desktop, display->cols / 2, display->rows / 2);
     desktop->shell_cells_w = desktop->shell_content.w;
@@ -1570,7 +1613,17 @@ desktop_key_result_t desktop_handle_key(desktop_state_t *desktop, char c)
 
     if (desktop->launcher_open && c == '\n') {
         desktop->launcher_open = 0;
-        desktop_open_shell_window(desktop);
+        desktop_open_app_window(desktop, desktop->launcher_selection);
+        desktop_render(desktop);
+        return DESKTOP_KEY_CONSUMED;
+    }
+
+    if (desktop->launcher_open && c >= '1' && c <= '4') {
+        desktop->launcher_selection =
+            c == '1' ? DESKTOP_APP_SHELL :
+            c == '2' ? DESKTOP_APP_FILES :
+            c == '3' ? DESKTOP_APP_PROCESSES :
+                       DESKTOP_APP_HELP;
         desktop_render(desktop);
         return DESKTOP_KEY_CONSUMED;
     }
@@ -1725,6 +1778,17 @@ void desktop_handle_pointer(desktop_state_t *desktop,
             : DESKTOP_FOCUS_SHELL;
     }
 
+    if (ev->left_down) {
+        desktop_window_t *task_win =
+            desktop_taskbar_window_at(desktop, ev->x, ev->y);
+
+        if (task_win) {
+            desktop_focus_window(desktop, task_win->id);
+            desktop_render(desktop);
+            return;
+        }
+    }
+
     if (desktop->framebuffer_enabled && desktop->framebuffer &&
         launcher_open == desktop->launcher_open) {
         flags = desktop_framebuffer_present_begin();
@@ -1784,7 +1848,22 @@ void desktop_render(desktop_state_t *desktop)
                               desktop->launcher_rect.x + 2,
                               desktop->launcher_rect.y + 1,
                               desktop->launcher_rect.w - 4,
-                              "Shell", DESKTOP_ATTR_LAUNCHER);
+                              "1 Shell", DESKTOP_ATTR_LAUNCHER);
+        gui_display_draw_text(desktop->display,
+                              desktop->launcher_rect.x + 2,
+                              desktop->launcher_rect.y + 2,
+                              desktop->launcher_rect.w - 4,
+                              "2 Files", DESKTOP_ATTR_LAUNCHER);
+        gui_display_draw_text(desktop->display,
+                              desktop->launcher_rect.x + 2,
+                              desktop->launcher_rect.y + 3,
+                              desktop->launcher_rect.w - 4,
+                              "3 Processes", DESKTOP_ATTR_LAUNCHER);
+        gui_display_draw_text(desktop->display,
+                              desktop->launcher_rect.x + 2,
+                              desktop->launcher_rect.y + 4,
+                              desktop->launcher_rect.w - 4,
+                              "4 Help", DESKTOP_ATTR_LAUNCHER);
     }
 
     if (desktop->shell_window_open)

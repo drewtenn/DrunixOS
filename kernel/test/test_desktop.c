@@ -578,23 +578,23 @@ static void test_desktop_render_draws_taskbar_and_launcher_label(ktest_case_t *t
     KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display,
                                             desktop.launcher_rect.x + 2,
                                             desktop.launcher_rect.y + 1).ch,
-                    'S');
+                    '1');
     KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display,
                                             desktop.launcher_rect.x + 3,
                                             desktop.launcher_rect.y + 1).ch,
-                    'h');
+                    ' ');
     KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display,
                                             desktop.launcher_rect.x + 4,
                                             desktop.launcher_rect.y + 1).ch,
-                    'e');
+                    'S');
     KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display,
                                             desktop.launcher_rect.x + 5,
                                             desktop.launcher_rect.y + 1).ch,
-                    'l');
+                    'h');
     KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display,
                                             desktop.launcher_rect.x + 6,
                                             desktop.launcher_rect.y + 1).ch,
-                    'l');
+                    'e');
     KTEST_EXPECT_EQ(tc, gui_display_cell_at(&display,
                                             desktop.shell_rect.x + 2,
                                             desktop.shell_rect.y).ch,
@@ -603,6 +603,49 @@ static void test_desktop_render_draws_taskbar_and_launcher_label(ktest_case_t *t
                                             desktop.shell_rect.x + 3,
                                             desktop.shell_rect.y).ch,
                     'h');
+    desktop_test_destroy(&desktop);
+}
+
+static void test_desktop_launcher_enter_opens_files_window(ktest_case_t *tc)
+{
+    desktop_state_t desktop;
+    gui_display_t display;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop.launcher_open = 1;
+    desktop.launcher_selection = DESKTOP_APP_FILES;
+
+    KTEST_EXPECT_EQ(tc, desktop_handle_key(&desktop, '\n'),
+                    DESKTOP_KEY_CONSUMED);
+    KTEST_EXPECT_EQ(tc, desktop_focused_app_for_test(&desktop),
+                    DESKTOP_APP_FILES);
+
+    desktop_test_destroy(&desktop);
+}
+
+static void test_desktop_taskbar_click_focuses_processes_window(ktest_case_t *tc)
+{
+    desktop_state_t desktop;
+    gui_display_t display;
+    desktop_pointer_event_t ev;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_app_window(&desktop, DESKTOP_APP_FILES);
+    desktop_open_app_window(&desktop, DESKTOP_APP_PROCESSES);
+    k_memset(&ev, 0, sizeof(ev));
+    ev.left_down = 1;
+    ev.x = 20;
+    ev.y = desktop.taskbar.y;
+    ev.pixel_x = ev.x * (int)GUI_FONT_W;
+    ev.pixel_y = ev.y * (int)GUI_FONT_H;
+
+    desktop_handle_pointer(&desktop, &ev);
+
+    KTEST_EXPECT_EQ(tc, desktop_focused_app_for_test(&desktop),
+                    DESKTOP_APP_PROCESSES);
+
     desktop_test_destroy(&desktop);
 }
 
@@ -2527,6 +2570,8 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_boot_layout_opens_shell_window),
     KTEST_CASE(test_desktop_layout_scales_to_framebuffer_grid),
     KTEST_CASE(test_desktop_render_draws_taskbar_and_launcher_label),
+    KTEST_CASE(test_desktop_launcher_enter_opens_files_window),
+    KTEST_CASE(test_desktop_taskbar_click_focuses_processes_window),
     KTEST_CASE(test_framebuffer_grid_desktop_renders_taskbar_and_shell_title),
     KTEST_CASE(test_desktop_init_binds_global_keyboard_target),
     KTEST_CASE(test_desktop_escape_opens_launcher_and_consumes_input),
