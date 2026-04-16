@@ -78,7 +78,7 @@ void gdt_init(void)
     /* Initialize the runtime TSS — only the ring-3 stack-switch fields matter. */
     k_memset(&tss, 0, sizeof(tss));
     tss.ss0         = GDT_KERNEL_DS;   /* 0x10 */
-    tss.esp0        = 0x90000;         /* top of kernel stack; updated per-process */
+    tss.esp0        = 0x90000;         /* placeholder; replaced with per-process kstack_top before any ring-3 → ring-0 transition */
     tss.iomap_base  = (uint16_t)sizeof(tss_t); /* beyond TSS end = deny all port I/O */
 
     /*

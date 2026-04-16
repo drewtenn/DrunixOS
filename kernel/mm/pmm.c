@@ -131,8 +131,10 @@ void pmm_init(multiboot_info_t *mbi) {
     /* Page directory + 32 page tables (1 + 32 = 33 pages) */
     pmm_mark_used(0x00011000, 0x21000);
 
-    /* Kernel heap (0x32000–0x8FFFF) and kernel stack area (up to 0x90000).
-     * Kept explicit for documentation even though the first-MiB reservation
+    /* Kernel heap (0x32000–0x8FFFF); 0x90000–0xFFFFF is unused low RAM.
+     * The boot kernel stack is a 16 KB BSS region inside the kernel image
+     * and is already covered by the kernel-image reservation below.  Kept
+     * explicit for documentation even though the first-MiB reservation
      * above already pins these pages. */
     pmm_mark_used(0x00032000, 0x000CE000);  /* 0x32000 – 0xFFFFF */
 

@@ -31,10 +31,10 @@ The same layout in tabular form, which is easier to scan when you need an exact 
 | `0x00011000` | `0x00011FFF` | 4 KB | Page directory | The 1 024-entry PD loaded into CR3 |
 | `0x00012000` | `0x00031FFF` | 128 KB | Page tables | 32 page tables, identity-mapping 0–128 MB |
 | `0x00032000` | `0x0008FFFF` | ~376 KB | Kernel heap | `kmalloc` / `kfree` range |
-| `0x00090000` | — | — | Early stack top | Grows downward from here |
+| `0x00090000` | `0x0009FFFF` | 64 KB | Unused low RAM | Reserved as part of the first-MiB pin |
 | `0x000A0000` | `0x000BFFFF` | 128 KB | VGA / ROM hole | `0xB8000` is the VGA text buffer |
 | `0x000C0000` | `0x000FFFFF` | 256 KB | BIOS ROM shadow | Reserved |
-| `0x00100000` | kernel end | varies | Kernel image + BSS | Code, data, and the PMM bitmap (in `.bss`) |
+| `0x00100000` | kernel end | varies | Kernel image + BSS | Code, data, the PMM bitmap, and the 16 KB boot kernel stack (all in `.bss`) |
 | kernel end | `0x07FFFFFF` | rest | Extended RAM pool | Handed out page by page by the PMM |
 
 Everything below 1 MB is reserved or hardware-mapped. The kernel image itself starts at 1 MB, and the PMM bitmap lives inside the kernel's **BSS** (the section of an executable holding uninitialised data — it occupies no space in the file but is allocated and zeroed when the program is loaded), so it ends up just above the kernel's code and data.
@@ -63,7 +63,7 @@ The bitmap is a static 4 096-byte array, which places it in the kernel's BSS sec
 
 #### Initialisation Order
 
-The physical memory manager initializes with a conservative strategy: first mark every page as reserved, then walk the firmware memory map and open up every region the hardware reports as usable, then re-protect the regions the kernel itself occupies — the kernel image, the bitmap, the page tables, the heap, the stack, and the VGA/ROM hole.
+The physical memory manager initializes with a conservative strategy: first mark every page as reserved, then walk the firmware memory map and open up every region the hardware reports as usable, then re-protect the regions the kernel itself occupies — the kernel image (which contains the bitmap and the boot kernel stack in its `.bss`), the page tables, the heap, and the VGA/ROM hole.
 
 The "start safe, then free, then re-reserve" sequence is deliberate. If the memory map is missing, everything stays marked as used and the allocator refuses to hand out anything until the fallback region (1 MB–128 MB) is explicitly freed. This prevents the kernel from ever accidentally handing out a page that is already occupied by hardware, firmware, or itself.
 
