@@ -1,4 +1,6 @@
 PROGS = hello shell writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello
+C_PROGS = shell
+CXX_PROGS = hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello
 
 all: $(PROGS)
 
@@ -63,89 +65,11 @@ lib/cxxabi.o: lib/cxxabi.cpp lib/syscall.h
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -I . -c -o $@ $<
 
-hello: hello.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) hello.o
+$(C_PROGS): %: %.o $(LIB_OBJS) user.ld
+	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) $@.o
 
-shell: shell.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) shell.o
-
-writer: writer.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) writer.o
-
-reader: reader.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) reader.o
-
-sleeper: sleeper.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) sleeper.o
-
-date: date.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) date.o
-
-which: which.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) which.o
-
-cat: cat.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) cat.o
-
-echo: echo.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) echo.o
-
-wc: wc.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) wc.o
-
-grep: grep.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) grep.o
-
-head: head.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) head.o
-
-tail: tail.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) tail.o
-
-tee: tee.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) tee.o
-
-sleep: sleep.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) sleep.o
-
-env: env.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) env.o
-
-printenv: printenv.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) printenv.o
-
-basename: basename.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) basename.o
-
-dirname: dirname.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) dirname.o
-
-cmp: cmp.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) cmp.o
-
-yes: yes.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) yes.o
-
-sort: sort.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) sort.o
-
-uniq: uniq.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) uniq.o
-
-cut: cut.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) cut.o
-
-kill: kill.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) kill.o
-
-crash: crash.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) crash.o
-
-dmesg: dmesg.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) dmesg.o
-
-cpphello: cpphello.o $(LIB_OBJS) $(CXX_RUNTIME_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) $(CXX_RUNTIME_OBJS) cpphello.o $(CXXLIBS)
+$(CXX_PROGS): %: %.o $(LIB_OBJS) $(CXX_RUNTIME_OBJS) user.ld
+	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) $(CXX_RUNTIME_OBJS) $@.o $(CXXLIBS)
 
 clean:
 	find . -name '*.o' -delete

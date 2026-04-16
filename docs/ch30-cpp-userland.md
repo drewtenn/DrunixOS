@@ -12,7 +12,7 @@ That does not mean Drunix imports a hosted C++ environment. A hosted environment
 
 ### The Freestanding C++ Contract
 
-The first C++ milestone is deliberately narrow. User programs can be written in a freestanding subset of C++ and built as ordinary **DUFS** (Drunix's native filesystem) binaries beside the C programs. The kernel remains C and assembly. The syscall ABI remains the same `int 0x80` contract from Chapter 16. The process loader still sees an ELF executable with one entry point and a conventional user stack.
+The first C++ milestone was deliberately narrow: prove one C++ binary first, then move ordinary utilities over once the runtime behaved. User programs can now be written in a freestanding subset of C++ and built as ordinary **DUFS** (Drunix's native filesystem) binaries beside the remaining C programs. The kernel remains C and assembly. The syscall ABI remains the same `int 0x80` contract from Chapter 16. The process loader still sees an ELF executable with one entry point and a conventional user stack.
 
 The supported subset covers the parts that are useful immediately:
 
@@ -56,9 +56,9 @@ C++ support sits on top of the C user runtime rather than beside it. The same sy
 
 ![](diagrams/ch30-diag02.svg)
 
-The bottom layer is still the kernel ABI: `int 0x80`, file descriptors, `SYS_BRK`, and the same process model every user program uses. Above that sits the C runtime from Chapters 20 and 21: `_start`, syscall wrappers, `malloc`, `free`, `stdio`, strings, and POSIX-style adapters. The C++ support layer is small by comparison. It provides constructor and destructor runners, allocation operators, and ABI hooks. A C++ program such as `cpphello` links all of those pieces into a single static executable.
+The bottom layer is still the kernel ABI: `int 0x80`, file descriptors, `SYS_BRK`, and the same process model every user program uses. Above that sits the C runtime from Chapters 20 and 21: `_start`, syscall wrappers, `malloc`, `free`, `stdio`, strings, and POSIX-style adapters. The C++ support layer is small by comparison. It provides constructor and destructor runners, allocation operators, and ABI hooks. C++ programs such as `cpphello`, `cat`, `grep`, and `sort` link all of those pieces into single static executables.
 
-This layering keeps C programs boring. Every C binary now links `cxx_init.o`, but empty constructor and destructor ranges are no-ops. The extra startup hooks do not change the C calling convention, the process stack, or the syscall path. C remains the default language for the kernel and for existing user tools.
+This layering keeps C programs boring. The shell and C runtime still link through the C path. The converted utilities link through the C++ path and include the C++ runtime objects explicitly. Empty constructor and destructor ranges are no-ops for programs that do not define global C++ objects, so the extra startup hooks do not change the C calling convention, the process stack, or the syscall path.
 
 ### Allocation Without Exceptions
 
@@ -86,9 +86,11 @@ Linking is explicit. C++ programs link the normal user runtime objects, the C++ 
 
 The smoke program is `/bin/cpphello`. It is small on purpose. It proves the language boundary instead of trying to be a useful application: a global object updates state before `main`, a destructor writes a message after `main`, a derived class exercises virtual dispatch, and both scalar and array allocation go through `new` and `delete`.
 
+The rest of the non-shell command set now builds as C++ too. Most of those utilities are intentionally still plain C-style code compiled as C++; that keeps the migration behaviour-preserving while proving that real packaged programs can include the C headers, compile through `x86_64-elf-g++`, link with the owned C++ runtime, and run beside the still-C shell. The shell is left for a separate milestone because it is much larger and owns the highest-risk interactive behaviour.
+
 ### Where the Machine Is by the End of Chapter 30
 
-Drunix can now run user programs written in either C or a small freestanding C++ subset. The kernel does not know or care which language produced the ELF binary; all language-specific work happens in the user runtime.
+Drunix can now run user programs written in either C or a small freestanding C++ subset. The kernel does not know or care which language produced the ELF binary; all language-specific work happens in the user runtime. The shell remains C, while every packaged non-shell utility builds from C++ source.
 
 The startup path runs global constructors before `main`, preserves the program's return value while destructors run afterward, and exits through the same syscall path as every other user process. The linker script gives constructor and destructor sections explicit boundaries, and the runtime walks those ranges without parsing ELF at runtime.
 
