@@ -72,4 +72,10 @@ void     pmm_free_page(uint32_t phys_addr);
 uint8_t  pmm_refcount(uint32_t phys_addr);
 uint32_t pmm_free_page_count(void);
 
+#ifdef KTEST_ENABLED
+int pmm_multiboot_framebuffer_range_for_test(const multiboot_info_t *mbi,
+                                             uint32_t *base_out,
+                                             uint32_t *length_out);
+#endif
+
 #endif

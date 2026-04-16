@@ -2,6 +2,7 @@
 #include "desktop_apps.h"
 #include "kheap.h"
 #include "kstring.h"
+#include "paging.h"
 #include <limits.h>
 
 #define DESKTOP_ATTR_BACKGROUND 0x1f
@@ -21,6 +22,20 @@
 
 static desktop_state_t *g_desktop = 0;
 static int g_framebuffer_present_depth = 0;
+static uint32_t g_framebuffer_present_saved_cr3 = 0;
+
+static uint32_t desktop_read_cr3(void)
+{
+    uint32_t cr3;
+
+    __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
+    return cr3;
+}
+
+static void desktop_write_cr3(uint32_t cr3)
+{
+    __asm__ volatile ("mov %0, %%cr3" :: "r"(cr3) : "memory");
+}
 
 /*
  * Framebuffer present critical section.
@@ -70,6 +85,11 @@ static uint32_t desktop_framebuffer_present_begin(void)
                       : "=r"(flags)
                       :
                       : "memory");
+    if (g_framebuffer_present_depth == 0) {
+        g_framebuffer_present_saved_cr3 = desktop_read_cr3();
+        if (g_framebuffer_present_saved_cr3 != PAGE_DIR_ADDR)
+            desktop_write_cr3(PAGE_DIR_ADDR);
+    }
     g_framebuffer_present_depth++;
     return flags;
 }
@@ -78,6 +98,11 @@ static void desktop_framebuffer_present_end(uint32_t flags)
 {
     if (g_framebuffer_present_depth > 0)
         g_framebuffer_present_depth--;
+    if (g_framebuffer_present_depth == 0 &&
+        g_framebuffer_present_saved_cr3 != 0 &&
+        g_framebuffer_present_saved_cr3 != PAGE_DIR_ADDR) {
+        desktop_write_cr3(g_framebuffer_present_saved_cr3);
+    }
     if (flags & (1u << 9))
         __asm__ volatile ("sti" ::: "memory");
 }

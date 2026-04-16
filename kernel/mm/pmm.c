@@ -18,6 +18,41 @@ extern uint32_t _kernel_end;
 static uint8_t bitmap[PMM_MAX_PAGES / 8];
 static uint8_t refcount[PMM_MAX_PAGES];
 
+static int pmm_multiboot_framebuffer_range(const multiboot_info_t *mbi,
+                                           uint32_t *base_out,
+                                           uint32_t *length_out)
+{
+    uint32_t bytes_per_pixel;
+    uint64_t row_bytes;
+    uint64_t last_row_offset;
+    uint64_t length;
+    uint64_t base;
+
+    if (!mbi || !base_out || !length_out)
+        return -1;
+    if ((mbi->flags & MULTIBOOT_FLAG_FRAMEBUFFER) == 0)
+        return -1;
+    base = mbi->framebuffer_addr;
+    if (base > UINT32_MAX)
+        return -1;
+    if (mbi->framebuffer_width == 0 || mbi->framebuffer_height == 0 ||
+        mbi->framebuffer_pitch == 0 || mbi->framebuffer_bpp == 0)
+        return -1;
+
+    bytes_per_pixel = ((uint32_t)mbi->framebuffer_bpp + 7u) / 8u;
+    row_bytes = (uint64_t)mbi->framebuffer_width * bytes_per_pixel;
+    last_row_offset =
+        (uint64_t)(mbi->framebuffer_height - 1u) * mbi->framebuffer_pitch;
+    length = last_row_offset + row_bytes;
+    if (length == 0 || length > UINT32_MAX ||
+        base + length > ((uint64_t)UINT32_MAX + 1u))
+        return -1;
+
+    *base_out = (uint32_t)base;
+    *length_out = (uint32_t)length;
+    return 0;
+}
+
 static void bitmap_set(uint32_t page) {
     bitmap[page / 8] |= (1u << (page % 8));
 }
@@ -78,8 +113,14 @@ void pmm_init(multiboot_info_t *mbi) {
 
     /* ── Re-mark all reserved regions ─────────────────────────────────────── */
 
-    /* Page 0: BIOS IVT + BDA */
-    pmm_mark_used(0x00000000, 0x1000);
+    /*
+     * Reserve the whole first MiB.  GRUB's memory map may describe parts of
+     * conventional memory as usable, but this range also contains firmware
+     * scratch areas and Multiboot data that can still be touched after boot.
+     * User pages must never be allocated here; otherwise normal stack writes
+     * can corrupt executable text placed in low physical memory.
+     */
+    pmm_mark_used(0x00000000, 0x00100000);
 
     /* Kernel image: from _kernel_start (0x100000) to _kernel_end */
     uint32_t kstart = (uint32_t)&_kernel_start;
@@ -91,17 +132,35 @@ void pmm_init(multiboot_info_t *mbi) {
     pmm_mark_used(0x00011000, 0x21000);
 
     /* Kernel heap (0x32000–0x8FFFF) and kernel stack area (up to 0x90000).
-     * Also cover 0x90000–0xFFFFF to skip the rest of the first megabyte. */
+     * Kept explicit for documentation even though the first-MiB reservation
+     * above already pins these pages. */
     pmm_mark_used(0x00032000, 0x000CE000);  /* 0x32000 – 0xFFFFF */
 
     /* VGA/ROM hole */
     pmm_mark_used(0x000A0000, 0x20000);
+
+    {
+        uint32_t fb_base;
+        uint32_t fb_len;
+
+        if (pmm_multiboot_framebuffer_range(mbi, &fb_base, &fb_len) == 0)
+            pmm_mark_used(fb_base, fb_len);
+    }
 
     for (uint32_t page = 0; page < PMM_MAX_PAGES; page++) {
         if (bitmap_test(page))
             refcount[page] = 0xFF;
     }
 }
+
+#ifdef KTEST_ENABLED
+int pmm_multiboot_framebuffer_range_for_test(const multiboot_info_t *mbi,
+                                             uint32_t *base_out,
+                                             uint32_t *length_out)
+{
+    return pmm_multiboot_framebuffer_range(mbi, base_out, length_out);
+}
+#endif
 
 uint32_t pmm_alloc_page(void) {
     for (uint32_t i = 0; i < PMM_MAX_PAGES / 8; i++) {

@@ -1056,6 +1056,42 @@ static void test_desktop_taskbar_click_focuses_processes_window(ktest_case_t *tc
     desktop_test_destroy(&desktop);
 }
 
+static void test_desktop_taskbar_shell_refocus_forwards_keys(ktest_case_t *tc)
+{
+    desktop_state_t desktop;
+    gui_display_t display;
+    desktop_pointer_event_t ev;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_open_shell_window(&desktop);
+
+    KTEST_EXPECT_EQ(tc, desktop_handle_key(&desktop, 27),
+                    DESKTOP_KEY_CONSUMED);
+    desktop.launcher_selection = DESKTOP_APP_FILES;
+    KTEST_EXPECT_EQ(tc, desktop_handle_key(&desktop, '\n'),
+                    DESKTOP_KEY_CONSUMED);
+    KTEST_EXPECT_EQ(tc, desktop_focused_app_for_test(&desktop),
+                    DESKTOP_APP_FILES);
+    KTEST_EXPECT_EQ(tc, desktop_handle_key(&desktop, 'a'),
+                    DESKTOP_KEY_CONSUMED);
+
+    k_memset(&ev, 0, sizeof(ev));
+    ev.left_down = 1;
+    ev.x = 8;
+    ev.y = desktop.taskbar.y;
+    ev.pixel_x = ev.x * (int)GUI_FONT_W;
+    ev.pixel_y = ev.y * (int)GUI_FONT_H;
+    desktop_handle_pointer(&desktop, &ev);
+
+    KTEST_EXPECT_EQ(tc, desktop_focused_app_for_test(&desktop),
+                    DESKTOP_APP_SHELL);
+    KTEST_EXPECT_EQ(tc, desktop_handle_key(&desktop, 'a'),
+                    DESKTOP_KEY_FORWARD);
+
+    desktop_test_destroy(&desktop);
+}
+
 static void test_desktop_text_taskbar_renders_open_window_labels(ktest_case_t *tc)
 {
     gui_display_t display;
@@ -1936,6 +1972,17 @@ static void test_mouse_stream_keeps_response_like_bytes_inside_packet(ktest_case
     KTEST_EXPECT_EQ(tc, packet.buttons, 0x0B);
     KTEST_EXPECT_EQ(tc, packet.dx, -6);
     KTEST_EXPECT_EQ(tc, packet.dy, -86);
+}
+
+static void test_mouse_irq_drains_initial_packet_without_aux_status(
+    ktest_case_t *tc)
+{
+    KTEST_EXPECT_EQ(tc, mouse_irq_should_read_byte_for_test(0x01, 0), 1);
+    KTEST_EXPECT_EQ(tc, mouse_irq_should_read_byte_for_test(0x01, 1), 1);
+    KTEST_EXPECT_EQ(tc, mouse_irq_should_read_byte_for_test(0x01, 2), 1);
+    KTEST_EXPECT_EQ(tc, mouse_irq_should_read_byte_for_test(0x01, 3), 0);
+    KTEST_EXPECT_EQ(tc, mouse_irq_should_read_byte_for_test(0x21, 3), 1);
+    KTEST_EXPECT_EQ(tc, mouse_irq_should_read_byte_for_test(0x00, 0), 0);
 }
 
 static void test_mouse_framebuffer_motion_uses_build_configured_scale(
@@ -3652,6 +3699,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_framebuffer_launcher_click_uses_visible_item_rows),
     KTEST_CASE(test_desktop_text_launcher_keeps_bottom_border_visible),
     KTEST_CASE(test_desktop_taskbar_click_focuses_processes_window),
+    KTEST_CASE(test_desktop_taskbar_shell_refocus_forwards_keys),
     KTEST_CASE(test_desktop_text_taskbar_renders_open_window_labels),
     KTEST_CASE(test_desktop_shell_open_matches_rendered_window_rect),
     KTEST_CASE(test_desktop_shell_output_still_routes_after_mini_apps_open),
@@ -3682,6 +3730,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_mouse_stream_delivers_response_like_packet_headers),
     KTEST_CASE(test_mouse_stream_delivers_overflow_packets),
     KTEST_CASE(test_mouse_stream_keeps_response_like_bytes_inside_packet),
+    KTEST_CASE(test_mouse_irq_drains_initial_packet_without_aux_status),
     KTEST_CASE(test_mouse_framebuffer_motion_uses_build_configured_scale),
     KTEST_CASE(test_mouse_text_motion_ignores_framebuffer_speed),
     KTEST_CASE(test_mouse_overflow_packet_keeps_framebuffer_cursor_visible),

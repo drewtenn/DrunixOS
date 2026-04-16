@@ -97,6 +97,8 @@ KOBJS = kernel/kernel-entry.o kernel/kernel.o \
         kernel/proc/uaccess.o \
         kernel/fs/fs.o kernel/fs/vfs.o kernel/fs/procfs.o
 
+$(KOBJS): .ktest-flag
+
 kernel.elf: $(KOBJS) $(KTOBJS)
 	$(LD) -m elf_i386 -o $@ -T kernel/kernel.ld $(KOBJS) $(KTOBJS)
 

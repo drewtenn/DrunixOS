@@ -235,6 +235,15 @@ int mouse_motion_scale_for_test(desktop_state_t *desktop)
  */
 #define PS2_STATUS_AUX_BUFFER 0x20
 
+static int mouse_irq_should_read_byte(uint8_t status, int bytes_read)
+{
+    if ((status & PS2_STATUS_OUT_FULL) == 0)
+        return 0;
+    if (bytes_read < 3)
+        return 1;
+    return (status & PS2_STATUS_AUX_BUFFER) != 0;
+}
+
 static void mouse_handler(void)
 {
     desktop_pointer_event_t ev;
@@ -245,6 +254,7 @@ static void mouse_handler(void)
     uint8_t status;
     int have_pending = 0;
     int prev_left_down = -1;
+    int bytes_read = 0;
 
     desktop = desktop_global();
 
@@ -262,11 +272,11 @@ static void mouse_handler(void)
      */
     for (;;) {
         status = port_byte_in(PS2_STATUS_PORT);
-        if ((status & (PS2_STATUS_OUT_FULL | PS2_STATUS_AUX_BUFFER)) !=
-            (PS2_STATUS_OUT_FULL | PS2_STATUS_AUX_BUFFER))
+        if (!mouse_irq_should_read_byte(status, bytes_read))
             break;
 
         data = port_byte_in(PS2_DATA_PORT);
+        bytes_read++;
         if (mouse_stream_consume(&g_stream, data, &packet) <= 0)
             continue;
         if (mouse_decode_packet(&packet, &ev) != 0)
@@ -295,6 +305,13 @@ static void mouse_handler(void)
     if (have_pending && desktop_is_active())
         desktop_handle_pointer(desktop, &pending_ev);
 }
+
+#ifdef KTEST_ENABLED
+int mouse_irq_should_read_byte_for_test(uint8_t status, int bytes_read)
+{
+    return mouse_irq_should_read_byte(status, bytes_read);
+}
+#endif
 
 int mouse_init(void)
 {

@@ -6,6 +6,7 @@
 #include "ktest.h"
 #include "pmm.h"
 #include "paging.h"
+#include "kstring.h"
 
 /*
  * PMM unit tests.
@@ -109,14 +110,68 @@ static void test_reserved_pages_are_pinned(ktest_case_t *tc) {
     uint32_t before = pmm_free_page_count();
 
     KTEST_EXPECT_EQ(tc, pmm_refcount(0), 255u);
+    KTEST_EXPECT_EQ(tc, pmm_refcount(0x3000u), 255u);
     KTEST_EXPECT_EQ(tc, pmm_refcount(PAGE_DIR_ADDR), 255u);
 
     pmm_decref(0);
+    pmm_decref(0x3000u);
     pmm_decref(PAGE_DIR_ADDR);
 
     KTEST_EXPECT_EQ(tc, pmm_refcount(0), 255u);
+    KTEST_EXPECT_EQ(tc, pmm_refcount(0x3000u), 255u);
     KTEST_EXPECT_EQ(tc, pmm_refcount(PAGE_DIR_ADDR), 255u);
     KTEST_EXPECT_EQ(tc, pmm_free_page_count(), before);
+}
+
+static void test_alloc_never_returns_low_conventional_memory(ktest_case_t *tc) {
+    uint32_t p = pmm_alloc_page();
+    KTEST_ASSERT_NOT_NULL(tc, p);
+    KTEST_EXPECT_GE(tc, p, 0x00100000u);
+    pmm_free_page(p);
+}
+
+static void test_multiboot_framebuffer_reservation_covers_visible_rows(
+    ktest_case_t *tc)
+{
+    multiboot_info_t mbi;
+    uint32_t base = 0;
+    uint32_t length = 0;
+
+    k_memset(&mbi, 0, sizeof(mbi));
+    mbi.flags = MULTIBOOT_FLAG_FRAMEBUFFER;
+    mbi.framebuffer_addr = 0x0046B000u;
+    mbi.framebuffer_width = 1024;
+    mbi.framebuffer_height = 768;
+    mbi.framebuffer_pitch = 4096;
+    mbi.framebuffer_bpp = 32;
+
+    KTEST_EXPECT_EQ(tc,
+                    pmm_multiboot_framebuffer_range_for_test(&mbi, &base,
+                                                             &length),
+                    0);
+    KTEST_EXPECT_EQ(tc, base, 0x0046B000u);
+    KTEST_EXPECT_EQ(tc, length, 1024u * 768u * 4u);
+}
+
+static void test_multiboot_framebuffer_reservation_rejects_wrap(
+    ktest_case_t *tc)
+{
+    multiboot_info_t mbi;
+    uint32_t base = 0;
+    uint32_t length = 0;
+
+    k_memset(&mbi, 0, sizeof(mbi));
+    mbi.flags = MULTIBOOT_FLAG_FRAMEBUFFER;
+    mbi.framebuffer_addr = 0xFFFFF000u;
+    mbi.framebuffer_width = 1024;
+    mbi.framebuffer_height = 2;
+    mbi.framebuffer_pitch = 4096;
+    mbi.framebuffer_bpp = 32;
+
+    KTEST_EXPECT_EQ(tc,
+                    pmm_multiboot_framebuffer_range_for_test(&mbi, &base,
+                                                             &length),
+                    -1);
 }
 
 /* ── Suite ──────────────────────────────────────────────────────────────── */
@@ -131,6 +186,9 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_refcount_tracks_shared_page),
     KTEST_CASE(test_refcount_saturates_at_255),
     KTEST_CASE(test_reserved_pages_are_pinned),
+    KTEST_CASE(test_alloc_never_returns_low_conventional_memory),
+    KTEST_CASE(test_multiboot_framebuffer_reservation_covers_visible_rows),
+    KTEST_CASE(test_multiboot_framebuffer_reservation_rejects_wrap),
 };
 
 static ktest_suite_t suite = KTEST_SUITE("pmm", cases);

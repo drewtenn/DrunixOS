@@ -6,7 +6,7 @@ Drunix is a 32-bit x86 hobby operating system that boots through GRUB2 with the 
 
 The normal boot path asks GRUB for a 1024x768x32 linear framebuffer and starts a simple GUI desktop. The boot shell is opened as the main desktop app inside that GUI shell, with keyboard input, PS/2 mouse pointer support, taskbar/menu launching, framebuffer text rendering, double-buffered flicker-free compositing with an overlay mouse cursor, and a VGA text-mode fallback when a suitable framebuffer is unavailable. The disk image includes a small userland with the shell and basic utilities.
 
-![Drunix desktop running in QEMU](docs/drunix-desktop.png)
+![Drunix desktop running in QEMU with Files, Processes, Help, and Shell windows open](docs/drunix-desktop.png)
 
 ## Dependencies
 
