@@ -55,3 +55,4 @@ venv/
 .double-fault-test-flag
 .klog-debugcon-flag
 .ktest-flag
+.mouse-speed-flag

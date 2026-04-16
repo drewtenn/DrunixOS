@@ -11,7 +11,26 @@
 #define PS2_RESP_ACK   0xFA
 #define PS2_RESP_BAT   0xAA
 #define PS2_RESP_RESEND 0xFE
+#ifndef MOUSE_FRAMEBUFFER_PIXEL_SCALE
 #define MOUSE_FRAMEBUFFER_PIXEL_SCALE 4
+#endif
+
+#define MOUSE_FRAMEBUFFER_PIXEL_SCALE_MIN 1
+#define MOUSE_FRAMEBUFFER_PIXEL_SCALE_MAX 16
+
+#if MOUSE_FRAMEBUFFER_PIXEL_SCALE < MOUSE_FRAMEBUFFER_PIXEL_SCALE_MIN
+#define MOUSE_EFFECTIVE_FRAMEBUFFER_PIXEL_SCALE MOUSE_FRAMEBUFFER_PIXEL_SCALE_MIN
+#elif MOUSE_FRAMEBUFFER_PIXEL_SCALE > MOUSE_FRAMEBUFFER_PIXEL_SCALE_MAX
+#define MOUSE_EFFECTIVE_FRAMEBUFFER_PIXEL_SCALE MOUSE_FRAMEBUFFER_PIXEL_SCALE_MAX
+#else
+#define MOUSE_EFFECTIVE_FRAMEBUFFER_PIXEL_SCALE MOUSE_FRAMEBUFFER_PIXEL_SCALE
+#endif
+
+#define MOUSE_PACKET_ALWAYS_ONE 0x08u
+#define MOUSE_PACKET_X_SIGN     0x10u
+#define MOUSE_PACKET_Y_SIGN     0x20u
+#define MOUSE_PACKET_X_OVERFLOW 0x40u
+#define MOUSE_PACKET_Y_OVERFLOW 0x80u
 
 extern void port_byte_out(unsigned short port, unsigned char data);
 extern unsigned char port_byte_in(unsigned short port);
@@ -104,8 +123,12 @@ int mouse_decode_packet(const mouse_packet_t *packet, desktop_pointer_event_t *e
     if (!packet || !ev)
         return -1;
 
-    ev->dx = packet->dx;
-    ev->dy = packet->dy;
+    ev->dx = (packet->buttons & MOUSE_PACKET_X_OVERFLOW)
+        ? ((packet->buttons & MOUSE_PACKET_X_SIGN) ? -127 : 127)
+        : packet->dx;
+    ev->dy = (packet->buttons & MOUSE_PACKET_Y_OVERFLOW)
+        ? ((packet->buttons & MOUSE_PACKET_Y_SIGN) ? -127 : 127)
+        : packet->dy;
     ev->left_down = (packet->buttons & 0x1u) != 0;
     return 0;
 }
@@ -120,31 +143,15 @@ void mouse_stream_reset(mouse_packet_stream_t *stream)
     stream->index = 0;
 }
 
-static int mouse_stream_is_response(uint8_t data)
-{
-    return data == PS2_RESP_ACK ||
-           data == PS2_RESP_BAT ||
-           data == PS2_RESP_RESEND;
-}
-
 int mouse_stream_consume(mouse_packet_stream_t *stream, uint8_t data,
                          mouse_packet_t *packet_out)
 {
     if (!stream || !packet_out)
         return -1;
 
-    if (stream->index == 0 && mouse_stream_is_response(data)) {
-        mouse_stream_reset(stream);
-        return 0;
-    }
-
     if (stream->index == 0) {
-        if ((data & 0x08u) == 0)
+        if ((data & MOUSE_PACKET_ALWAYS_ONE) == 0)
             return 0;
-        if ((data & 0xC0u) != 0) {
-            mouse_stream_reset(stream);
-            return 0;
-        }
     }
 
     stream->bytes[stream->index++] = data;
@@ -161,7 +168,7 @@ int mouse_stream_consume(mouse_packet_stream_t *stream, uint8_t data,
 static int mouse_motion_scale(const desktop_state_t *desktop)
 {
     if (desktop && desktop->framebuffer_enabled && desktop->framebuffer)
-        return MOUSE_FRAMEBUFFER_PIXEL_SCALE;
+        return MOUSE_EFFECTIVE_FRAMEBUFFER_PIXEL_SCALE;
     return 1;
 }
 
@@ -212,6 +219,11 @@ void mouse_update_pointer_for_test(desktop_state_t *desktop,
                                    desktop_pointer_event_t *ev)
 {
     mouse_update_pointer(desktop, ev);
+}
+
+int mouse_motion_scale_for_test(desktop_state_t *desktop)
+{
+    return mouse_motion_scale(desktop);
 }
 #endif
 

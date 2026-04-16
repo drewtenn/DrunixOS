@@ -13,6 +13,21 @@
 #include "tty.h"
 #include <limits.h>
 
+#ifndef MOUSE_FRAMEBUFFER_PIXEL_SCALE
+#define MOUSE_FRAMEBUFFER_PIXEL_SCALE 4
+#endif
+
+#define TEST_MOUSE_FRAMEBUFFER_SCALE_MIN 1
+#define TEST_MOUSE_FRAMEBUFFER_SCALE_MAX 16
+
+#if MOUSE_FRAMEBUFFER_PIXEL_SCALE < TEST_MOUSE_FRAMEBUFFER_SCALE_MIN
+#define TEST_MOUSE_EFFECTIVE_FRAMEBUFFER_SCALE TEST_MOUSE_FRAMEBUFFER_SCALE_MIN
+#elif MOUSE_FRAMEBUFFER_PIXEL_SCALE > TEST_MOUSE_FRAMEBUFFER_SCALE_MAX
+#define TEST_MOUSE_EFFECTIVE_FRAMEBUFFER_SCALE TEST_MOUSE_FRAMEBUFFER_SCALE_MAX
+#else
+#define TEST_MOUSE_EFFECTIVE_FRAMEBUFFER_SCALE MOUSE_FRAMEBUFFER_PIXEL_SCALE
+#endif
+
 static gui_cell_t desktop_cells[80 * 25];
 static gui_cell_t large_desktop_cells[128 * 48];
 static gui_cell_t pointer_motion_cells[60 * 25];
@@ -947,17 +962,29 @@ static void test_mouse_packet_decode_preserves_motion_and_buttons(ktest_case_t *
     KTEST_EXPECT_EQ(tc, ev.dy, 60);
 }
 
-static void test_mouse_stream_resyncs_after_noise_and_ack(ktest_case_t *tc)
+static void test_mouse_packet_decode_saturates_overflow_motion(ktest_case_t *tc)
+{
+    desktop_pointer_event_t ev;
+    mouse_packet_t packet = { .buttons = 0x48, .dx = 1, .dy = 0 };
+
+    KTEST_EXPECT_EQ(tc, mouse_decode_packet(&packet, &ev), 0);
+    KTEST_EXPECT_EQ(tc, ev.dx, 127);
+    KTEST_EXPECT_EQ(tc, ev.dy, 0);
+
+    packet.buttons = 0x58;
+    KTEST_EXPECT_EQ(tc, mouse_decode_packet(&packet, &ev), 0);
+    KTEST_EXPECT_EQ(tc, ev.dx, (uint32_t)-127);
+}
+
+static void test_mouse_stream_resyncs_after_noise(ktest_case_t *tc)
 {
     mouse_packet_stream_t stream;
     mouse_packet_t packet;
 
     mouse_stream_reset(&stream);
-    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0xFA, &packet), 0);
-    KTEST_EXPECT_EQ(tc, stream.index, 0);
     KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0x00, &packet), 0);
     KTEST_EXPECT_EQ(tc, stream.index, 0);
-    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0xC8, &packet), 0);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0xC0, &packet), 0);
     KTEST_EXPECT_EQ(tc, stream.index, 0);
     KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0x0B, &packet), 0);
     KTEST_EXPECT_EQ(tc, stream.index, 1);
@@ -967,6 +994,39 @@ static void test_mouse_stream_resyncs_after_noise_and_ack(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, packet.buttons, 0x0B);
     KTEST_EXPECT_EQ(tc, packet.dx, 0x01);
     KTEST_EXPECT_EQ(tc, packet.dy, -1);
+}
+
+static void test_mouse_stream_delivers_response_like_packet_headers(
+    ktest_case_t *tc)
+{
+    mouse_packet_stream_t stream;
+    mouse_packet_t packet;
+
+    mouse_stream_reset(&stream);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0xAA, &packet), 0);
+    KTEST_EXPECT_EQ(tc, stream.index, 1);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0x01, &packet), 0);
+    KTEST_EXPECT_EQ(tc, stream.index, 2);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0x02, &packet), 1);
+    KTEST_EXPECT_EQ(tc, packet.buttons, 0xAA);
+    KTEST_EXPECT_EQ(tc, packet.dx, 1);
+    KTEST_EXPECT_EQ(tc, packet.dy, 2);
+}
+
+static void test_mouse_stream_delivers_overflow_packets(ktest_case_t *tc)
+{
+    mouse_packet_stream_t stream;
+    mouse_packet_t packet;
+
+    mouse_stream_reset(&stream);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0x48, &packet), 0);
+    KTEST_EXPECT_EQ(tc, stream.index, 1);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0x01, &packet), 0);
+    KTEST_EXPECT_EQ(tc, stream.index, 2);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0x00, &packet), 1);
+    KTEST_EXPECT_EQ(tc, packet.buttons, 0x48);
+    KTEST_EXPECT_EQ(tc, packet.dx, 1);
+    KTEST_EXPECT_EQ(tc, packet.dy, 0);
 }
 
 static void test_mouse_stream_keeps_response_like_bytes_inside_packet(ktest_case_t *tc)
@@ -985,12 +1045,14 @@ static void test_mouse_stream_keeps_response_like_bytes_inside_packet(ktest_case
     KTEST_EXPECT_EQ(tc, packet.dy, -86);
 }
 
-static void test_mouse_framebuffer_motion_scales_raw_deltas(ktest_case_t *tc)
+static void test_mouse_framebuffer_motion_uses_build_configured_scale(
+    ktest_case_t *tc)
 {
     gui_display_t display;
     desktop_state_t desktop;
     framebuffer_info_t fb;
     desktop_pointer_event_t ev;
+    int expected_x;
 
     k_memset(&fb, 0, sizeof(fb));
     fb.width = 480u;
@@ -1003,13 +1065,111 @@ static void test_mouse_framebuffer_motion_scales_raw_deltas(ktest_case_t *tc)
     mouse_pointer_reset_for_test(240, 192);
     k_memset(&ev, 0, sizeof(ev));
     ev.dx = 2;
+    expected_x = 240 + 2 * TEST_MOUSE_EFFECTIVE_FRAMEBUFFER_SCALE;
 
     mouse_update_pointer_for_test(&desktop, &ev);
 
-    KTEST_EXPECT_EQ(tc, ev.pixel_x, 248);
+    KTEST_EXPECT_EQ(tc, mouse_motion_scale_for_test(&desktop),
+                    TEST_MOUSE_EFFECTIVE_FRAMEBUFFER_SCALE);
+    KTEST_EXPECT_EQ(tc, ev.pixel_x, expected_x);
     KTEST_EXPECT_EQ(tc, ev.pixel_y, 192);
-    KTEST_EXPECT_EQ(tc, ev.x, 31);
+    KTEST_EXPECT_EQ(tc, ev.x, expected_x / (int)GUI_FONT_W);
     KTEST_EXPECT_EQ(tc, ev.y, 12);
+    desktop_test_destroy(&desktop);
+}
+
+static void test_mouse_text_motion_ignores_framebuffer_speed(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    desktop_pointer_event_t ev;
+    int start_x;
+    int start_y;
+    int raw_dx;
+    int expected_x;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+
+    start_x = 240;
+    start_y = 192;
+    raw_dx = 2;
+    expected_x = start_x + raw_dx;
+
+    mouse_pointer_reset_for_test(start_x, start_y);
+    k_memset(&ev, 0, sizeof(ev));
+    ev.dx = raw_dx;
+
+    mouse_update_pointer_for_test(&desktop, &ev);
+
+    KTEST_EXPECT_EQ(tc, mouse_motion_scale_for_test(&desktop), 1);
+    KTEST_EXPECT_EQ(tc, ev.pixel_x, expected_x);
+    KTEST_EXPECT_EQ(tc, ev.pixel_y, start_y);
+    KTEST_EXPECT_EQ(tc, ev.x, 30);
+    KTEST_EXPECT_EQ(tc, ev.y, 12);
+    desktop_test_destroy(&desktop);
+}
+
+static void test_mouse_overflow_packet_keeps_framebuffer_cursor_visible(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+    mouse_packet_stream_t stream;
+    mouse_packet_t packet;
+    desktop_pointer_event_t ev;
+    int start_x;
+    int start_y;
+    int expected_x;
+    int max_cursor_x;
+    uint32_t white;
+
+    k_memset(pointer_motion_pixels, 0, sizeof(pointer_motion_pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pointer_motion_pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+    start_x = 240;
+    start_y = 192;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    desktop_render(&desktop);
+
+    mouse_pointer_reset_for_test(start_x, start_y);
+    mouse_stream_reset(&stream);
+    k_memset(&packet, 0, sizeof(packet));
+    k_memset(&ev, 0, sizeof(ev));
+
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0x48, &packet), 0);
+    KTEST_EXPECT_EQ(tc, mouse_stream_consume(&stream, 0x01, &packet), 0);
+    KTEST_ASSERT_EQ(tc, mouse_stream_consume(&stream, 0x00, &packet), 1);
+    KTEST_ASSERT_EQ(tc, mouse_decode_packet(&packet, &ev), 0);
+
+    max_cursor_x = (int)fb.width - 8;
+    expected_x = start_x + 127 * TEST_MOUSE_EFFECTIVE_FRAMEBUFFER_SCALE;
+    if (expected_x > max_cursor_x)
+        expected_x = max_cursor_x;
+
+    mouse_update_pointer_for_test(&desktop, &ev);
+    desktop_handle_pointer(&desktop, &ev);
+
+    white = framebuffer_pack_rgb(&fb, 255, 255, 255);
+    KTEST_EXPECT_EQ(tc, desktop.pointer_pixel_x, expected_x);
+    KTEST_EXPECT_EQ(tc, desktop.pointer_pixel_y, start_y);
+    KTEST_EXPECT_EQ(tc, pointer_motion_pixels[start_y * 480 + expected_x],
+                    white);
     desktop_test_destroy(&desktop);
 }
 
@@ -2075,9 +2235,14 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_syscall_clear_clears_desktop_shell_buffer),
     KTEST_CASE(test_tty_ctrl_c_echo_routes_to_desktop_shell_buffer),
     KTEST_CASE(test_mouse_packet_decode_preserves_motion_and_buttons),
-    KTEST_CASE(test_mouse_stream_resyncs_after_noise_and_ack),
+    KTEST_CASE(test_mouse_packet_decode_saturates_overflow_motion),
+    KTEST_CASE(test_mouse_stream_resyncs_after_noise),
+    KTEST_CASE(test_mouse_stream_delivers_response_like_packet_headers),
+    KTEST_CASE(test_mouse_stream_delivers_overflow_packets),
     KTEST_CASE(test_mouse_stream_keeps_response_like_bytes_inside_packet),
-    KTEST_CASE(test_mouse_framebuffer_motion_scales_raw_deltas),
+    KTEST_CASE(test_mouse_framebuffer_motion_uses_build_configured_scale),
+    KTEST_CASE(test_mouse_text_motion_ignores_framebuffer_speed),
+    KTEST_CASE(test_mouse_overflow_packet_keeps_framebuffer_cursor_visible),
     KTEST_CASE(test_desktop_pointer_click_focuses_shell_window),
     KTEST_CASE(test_desktop_pointer_click_ignores_hidden_shell_window),
     KTEST_CASE(test_desktop_render_draws_visible_mouse_pointer),

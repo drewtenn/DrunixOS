@@ -120,6 +120,19 @@ Useful targets:
 - `make docs` builds both the EPUB and the PDF
 - `make clean` removes build outputs
 
+### Build Options
+
+Mouse cursor speed in the framebuffer desktop is controlled at build time:
+
+```sh
+make MOUSE_SPEED=6 os.iso
+```
+
+`MOUSE_SPEED` defaults to `4`. Values below `1` use `1`; values above `16` use
+`16`. The option affects framebuffer mouse motion only. VGA text fallback
+pointer motion remains unscaled, at one pixel per raw mouse unit before cell
+coordinates are derived.
+
 ## Debugging
 
 Start QEMU paused with a GDB stub and attach GDB:

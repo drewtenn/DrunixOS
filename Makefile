@@ -7,6 +7,8 @@ GDB     := i386-elf-gdb
 CFLAGS  := -m32 -g -ffreestanding -mno-sse -mno-sse2 -mno-mmx -msoft-float -Wstack-usage=1024
 INC     := -I kernel -I kernel/arch -I kernel/mm -I kernel/drivers -I kernel/proc -I kernel/fs -I kernel/lib -I kernel/gui
 DEPFLAGS := -MMD -MP
+MOUSE_SPEED ?= 4
+CFLAGS += -DMOUSE_FRAMEBUFFER_PIXEL_SCALE=$(MOUSE_SPEED)
 
 # ─── Unit tests ──────────────────────────────────────────────────────────────
 # Build with KTEST=1 to compile the in-kernel test suite and run it at boot:
@@ -46,11 +48,15 @@ endif
 	echo "$(DOUBLE_FAULT_TEST)" | cmp -s - $@ || echo "$(DOUBLE_FAULT_TEST)" > $@
 .klog-debugcon-flag: FORCE
 	echo "$(KLOG_TO_DEBUGCON)" | cmp -s - $@ || echo "$(KLOG_TO_DEBUGCON)" > $@
+.mouse-speed-flag: FORCE
+	echo "$(MOUSE_SPEED)" | cmp -s - $@ || echo "$(MOUSE_SPEED)" > $@
 FORCE:
 
 kernel/kernel.o: .ktest-flag
 kernel/kernel.o: .double-fault-test-flag
 kernel/lib/klog.o: .klog-debugcon-flag
+kernel/drivers/mouse.o: .mouse-speed-flag
+kernel/test/test_desktop.o: .mouse-speed-flag
 
 # GRUB2 mkrescue (provided by: brew install i686-elf-grub xorriso)
 GRUB_MKRESCUE := i686-elf-grub-mkrescue
@@ -380,7 +386,7 @@ rebuild:
 clean:
 	find kernel -name '*.o' -delete
 	find kernel -name '*.d' -delete
-	$(RM) *.elf core.* disk.img os.iso $(ISO_KERNEL) "$(PDF)" "$(EPUB)" .ktest-flag .double-fault-test-flag .klog-debugcon-flag
+	$(RM) *.elf core.* disk.img os.iso $(ISO_KERNEL) "$(PDF)" "$(EPUB)" .ktest-flag .double-fault-test-flag .klog-debugcon-flag .mouse-speed-flag
 	$(RM) -f docs/diagrams/*.png
 	$(MAKE) -C user clean
 

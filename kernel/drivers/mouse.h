@@ -25,6 +25,7 @@ int mouse_init(void);
 void mouse_pointer_reset_for_test(int pixel_x, int pixel_y);
 void mouse_update_pointer_for_test(desktop_state_t *desktop,
                                    desktop_pointer_event_t *ev);
+int mouse_motion_scale_for_test(desktop_state_t *desktop);
 #endif
 
 #endif
