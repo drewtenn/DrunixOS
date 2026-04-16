@@ -39,14 +39,14 @@ static int sum_array(const int *values, int count)
 
 int main(int argc, char **argv)
 {
-    printf("Hello from C++ userland\n");
+    printf("Hello from C++ userland!\n");
     printf("argc=%d\n", argc);
     if (argc > 0 && argv && argv[0])
         printf("argv[0]=%s\n", argv[0]);
-    printf("global ctor value=%d\n", g_ctor_value);
+    printf("global constructor value=%d\n", g_ctor_value);
 
     Greeter *greeter = new DrunixGreeter();
-    printf("virtual dispatch: %s\n", greeter->message());
+    printf("%s\n", greeter->message());
     delete greeter;
 
     int *values = new int[3];
@@ -54,7 +54,7 @@ int main(int argc, char **argv)
     values[1] = 2;
     values[2] = 3;
     int sum = sum_array(values, 3);
-    printf("sum=%d\n", sum);
+    printf("new[] sum=%d\n", sum);
     delete[] values;
 
     if (g_ctor_value != 42)
