@@ -136,6 +136,9 @@ void desktop_set_scroll_interleave_hook_for_test(
 int desktop_window_count_for_test(const desktop_state_t *desktop);
 desktop_app_kind_t desktop_focused_app_for_test(const desktop_state_t *desktop);
 int desktop_window_z_for_test(const desktop_state_t *desktop, int window_id);
+const desktop_window_t *desktop_window_for_test(
+    const desktop_state_t *desktop, int window_id);
+int desktop_dragging_window_for_test(const desktop_state_t *desktop);
 void desktop_focus_window_for_test(desktop_state_t *desktop, int window_id);
 #endif
 
