@@ -156,7 +156,9 @@ DOCS_SRC := docs/partI-firmware-to-kernel.md \
             docs/partIX-graphical-environment.md \
             docs/ch27-mouse.md \
             docs/ch28-desktop.md \
-            docs/ch29-debugging.md
+            docs/partX-development-tools.md \
+            docs/ch29-debugging.md \
+            docs/ch30-cpp-userland.md
 
 EPUB_FRONTMATTER := docs/epub-copyright.md
 PDF_FRONTMATTER := docs/epub-copyright.md

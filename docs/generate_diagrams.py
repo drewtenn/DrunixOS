@@ -223,6 +223,9 @@ DIAGRAM_BUCKETS = {
     # Chapter 29
     'ch29-diag01.svg': 'handoff_path',
     'ch29-diag02.svg': 'decision_tree',
+    # Chapter 30
+    'ch30-diag01.svg': 'handoff_path',
+    'ch30-diag02.svg': 'layer_stack',
 }
 
 def wrap_chars_for_width(px, avg_char_px=6.2):
@@ -1880,5 +1883,19 @@ tree(Path('ch29-diag02.svg'),'Where GDB and interrupts meet','A breakpoint can s
  ('idt','clean',''),
  ('noidt','bad','')
 ],w=860,h=1048,panel_x=34,panel_w=792, relative=True)
+# Chapter 30
+timeline(Path('ch30-diag01.svg'),'C++ user program startup','The kernel still enters `_start`; the user runtime runs language hooks around `main` before exiting.',[
+ ('initial user stack','kernel writes argc, argv, and envp','blue'),
+ ('constructors','walk `.init_array` and `.ctors`','green'),
+ ('`main(argc, argv, envp)`','run the C++ program','amber'),
+ ('destructors','walk `.fini_array` and `.dtors`','green'),
+ ('`sys_exit(ret)`','return `main` status to the kernel','blue')
+], preferred_w=140, gap=16, h=332)
+stack(Path('ch30-diag02.svg'),'Userland C++ runtime layers','C++ support is a thin language layer on top of the existing C user runtime.',[
+ ('C++ user program','classes, globals, virtual calls, and allocation','blue'),
+ ('C++ runtime layer','constructors, destructors, operators, and ABI hooks','green'),
+ ('C user runtime and libc','startup, syscalls, heap, strings, and stdio','amber'),
+ ('Kernel ABI','`int 0x80`, file descriptors, and `SYS_BRK`','blue')
+],h=340)
 
 validate_generated_diagrams()
