@@ -7,15 +7,62 @@
 
 ENTRY(_start)
 
-SECTIONS {
+SECTIONS
+{
     . = 0x400000;
 
-    .text   : { *(.text)   }
-    .rodata : { *(.rodata) }
-    .data   : { *(.data)   }
-    .bss    : {
+    .text : {
+        *(.text)
+        *(.text.*)
+    }
+
+    .rodata : {
+        *(.rodata)
+        *(.rodata.*)
+    }
+
+    .init_array : {
+        __init_array_start = .;
+        KEEP (*(SORT_BY_INIT_PRIORITY(.init_array.*)))
+        KEEP (*(.init_array))
+        __init_array_end = .;
+    }
+
+    .ctors : {
+        __ctors_start = .;
+        KEEP (*(.ctors))
+        KEEP (*(SORT_BY_NAME(.ctors.*)))
+        __ctors_end = .;
+    }
+
+    .fini_array : {
+        __fini_array_start = .;
+        KEEP (*(SORT_BY_INIT_PRIORITY(.fini_array.*)))
+        KEEP (*(.fini_array))
+        __fini_array_end = .;
+    }
+
+    .dtors : {
+        __dtors_start = .;
+        KEEP (*(.dtors))
+        KEEP (*(SORT_BY_NAME(.dtors.*)))
+        __dtors_end = .;
+    }
+
+    .eh_frame : {
+        *(.eh_frame)
+        *(.eh_frame.*)
+    }
+
+    .data : {
+        *(.data)
+        *(.data.*)
+    }
+
+    .bss : {
         *(.bss)
+        *(.bss.*)
         *(COMMON)
-        . = ALIGN(4096);   /* align BSS end to page boundary */
+        . = ALIGN(4096);
     }
 }

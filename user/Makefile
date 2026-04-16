@@ -9,12 +9,15 @@ CFLAGS = -m32 -ffreestanding -nostdlib -fno-pie -no-pie \
          -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall \
          -fdebug-prefix-map=$(abspath ..)=.
 
-LIB_OBJS = lib/crt0.o lib/syscall.o lib/malloc.o \
+LIB_OBJS = lib/crt0.o lib/cxx_init.o lib/syscall.o lib/malloc.o \
            lib/string.o lib/ctype.o lib/stdlib.o lib/stdio.o \
            lib/unistd.o lib/time.o
 
 lib/crt0.o: lib/crt0.asm
 	$(NASM) -f elf32 -o $@ $<
+
+lib/cxx_init.o: lib/cxx_init.c
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 lib/syscall.o: lib/syscall.c lib/syscall.h
 	$(CC) $(CFLAGS) -c -o $@ $<
