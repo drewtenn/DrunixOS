@@ -941,14 +941,40 @@ static void test_desktop_shell_open_matches_rendered_window_rect(ktest_case_t *t
 static void test_desktop_shell_output_still_routes_after_mini_apps_open(
     ktest_case_t *tc)
 {
+    static uint32_t pixels[480 * 400];
     desktop_state_t desktop;
     gui_display_t display;
+    framebuffer_info_t fb;
+    int files_id;
+    int help_id;
 
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
     gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
     desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
     desktop_open_shell_window(&desktop);
-    desktop_open_app_window(&desktop, DESKTOP_APP_FILES);
-    desktop_open_app_window(&desktop, DESKTOP_APP_HELP);
+    files_id = desktop_open_app_window(&desktop, DESKTOP_APP_FILES);
+    help_id = desktop_open_app_window(&desktop, DESKTOP_APP_HELP);
+
+    KTEST_ASSERT_TRUE(tc, desktop.shell_window_open);
+    KTEST_ASSERT_TRUE(tc, files_id > 0);
+    KTEST_ASSERT_TRUE(tc, help_id > 0);
+    KTEST_ASSERT_NOT_NULL(tc, desktop_window_for_test(&desktop, files_id));
+    KTEST_ASSERT_NOT_NULL(tc, desktop_window_for_test(&desktop, help_id));
+    KTEST_EXPECT_EQ(tc, desktop_window_count_for_test(&desktop), 3);
+    desktop_render(&desktop);
 
     KTEST_EXPECT_EQ(tc, desktop_write_console_output(&desktop, "A", 1), 1);
     KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&desktop.shell_terminal, 0, 0).ch,
