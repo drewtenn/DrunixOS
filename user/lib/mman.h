@@ -3,6 +3,10 @@
 
 #include "syscall.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 static inline void *mmap(void *addr, unsigned int length, int prot, int flags,
                          int fd, unsigned int offset)
 {
@@ -18,5 +22,9 @@ static inline int mprotect(void *addr, unsigned int length, int prot)
 {
     return sys_mprotect(addr, length, prot);
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

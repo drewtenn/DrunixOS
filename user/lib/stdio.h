@@ -45,6 +45,10 @@ typedef struct FILE {
     unsigned int flags;  /* _IO_* bits above */
 } FILE;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 extern FILE *stdin;
 extern FILE *stdout;
 extern FILE *stderr;
@@ -81,5 +85,9 @@ int sprintf (char *buf, const char *fmt, ...);
 int snprintf(char *buf, size_t sz, const char *fmt, ...);
 int vfprintf (FILE *f, const char *fmt, va_list ap);
 int vsnprintf(char *buf, size_t sz, const char *fmt, va_list ap);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

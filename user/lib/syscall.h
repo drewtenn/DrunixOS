@@ -86,6 +86,10 @@ typedef struct {
 #define MAP_ANON       MAP_ANONYMOUS
 #define MAP_FAILED     ((void *)-1)
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
  * syscall.h — user-space syscall interface.
  *
@@ -370,5 +374,9 @@ int sys_tcgetpgrp(int fd);
 
 /* Read kernel clock time. clock_id 0 is CLOCK_REALTIME. */
 int sys_clock_gettime(int clock_id, sys_timespec_t *ts);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

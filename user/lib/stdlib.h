@@ -14,6 +14,10 @@
 
 #include "malloc.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int  atoi(const char *s);
 int  abs(int x);
 char *getenv(const char *name);
@@ -31,5 +35,9 @@ void exit(int status);
  * default disposition.  Like POSIX abort(), this never returns.
  */
 void abort(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

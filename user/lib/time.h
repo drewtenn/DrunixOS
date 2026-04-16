@@ -24,6 +24,10 @@ struct tm {
     int tm_isdst;  /* daylight saving flag; always 0 for UTC */
 };
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define CLOCK_REALTIME 0
 
 int clock_gettime(int clock_id, struct timespec *ts);
@@ -35,5 +39,9 @@ struct tm *localtime(const time_t *timer);
 struct tm *localtime_r(const time_t *timer, struct tm *result);
 
 size_t strftime(char *s, size_t max, const char *format, const struct tm *tm);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

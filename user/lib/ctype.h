@@ -12,6 +12,10 @@
  * unchanged, for the conversion functions).
  */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int isdigit(int c);
 int isalpha(int c);
 int isalnum(int c);
@@ -21,5 +25,9 @@ int islower(int c);
 
 int toupper(int c);
 int tolower(int c);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

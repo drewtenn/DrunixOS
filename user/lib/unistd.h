@@ -24,6 +24,10 @@
  * and are implemented in glibc.
  */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* ── Process control ─────────────────────────────────────────────────── */
 
 int  fork(void);
@@ -88,5 +92,9 @@ long  lseek(int fd, long offset, int whence);
  * real terminal descriptors — and treating a successful return as "yes".
  */
 int isatty(int fd);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
