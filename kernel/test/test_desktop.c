@@ -11,7 +11,6 @@
 #include "paging.h"
 #include "process.h"
 #include "sched.h"
-#include "vfs.h"
 #include "syscall.h"
 #include "tty.h"
 #include <limits.h>
@@ -47,43 +46,33 @@ extern int boot_framebuffer_grid_for_test(const framebuffer_info_t *fb,
                                           int *cols,
                                           int *rows);
 
-static int desktop_apps_test_root_getdents(const char *path, char *buf,
-                                           uint32_t bufsz)
+static int desktop_apps_test_fill_entries(char *buf, uint32_t bufsz, int count)
 {
-    static const char entries[] = "alpha\0beta/\0gamma\0";
-    uint32_t n = (uint32_t)sizeof(entries);
+    uint32_t written = 0;
 
     if (!buf)
         return -1;
-    if (!path || path[0] != '\0')
-        return -1;
 
-    if (n > bufsz)
-        n = bufsz;
-    k_memcpy(buf, entries, n);
-    return (int)n;
-}
+    for (int i = 0; i < count; i++) {
+        char entry[12];
+        uint32_t len;
 
-static const fs_ops_t desktop_apps_test_root_ops = {
-    .init     = 0,
-    .open     = 0,
-    .getdents = desktop_apps_test_root_getdents,
-    .create   = 0,
-    .unlink   = 0,
-    .mkdir    = 0,
-    .rmdir    = 0,
-    .rename   = 0,
-    .stat     = 0,
-};
+        entry[0] = 'e';
+        entry[1] = 'n';
+        entry[2] = 't';
+        entry[3] = 'r';
+        entry[4] = 'y';
+        entry[5] = '0' + (char)(i / 10);
+        entry[6] = '0' + (char)(i % 10);
+        entry[7] = '\0';
+        len = k_strlen(entry) + 1u;
+        if (written + len > bufsz)
+            break;
+        k_memcpy(buf + written, entry, len);
+        written += len;
+    }
 
-static int desktop_apps_test_prepare_vfs(void)
-{
-    vfs_reset();
-    if (vfs_register("root", &desktop_apps_test_root_ops) != 0)
-        return -1;
-    if (vfs_mount("/", "root") != 0)
-        return -1;
-    return 0;
+    return (int)written;
 }
 
 static void desktop_test_destroy(desktop_state_t *desktop)
@@ -100,12 +89,10 @@ static void desktop_test_destroy(desktop_state_t *desktop)
 static void test_desktop_files_app_lists_root_entries(ktest_case_t *tc)
 {
     static desktop_app_state_t apps;
-
-    sched_init();
-    KTEST_ASSERT_EQ(tc, desktop_apps_test_prepare_vfs(), 0);
+    static const char dents[] = "alpha\0beta/\0gamma";
 
     desktop_apps_init(&apps);
-    desktop_app_refresh(&apps);
+    desktop_app_refresh_files_for_test(&apps.files, dents, sizeof(dents));
 
     KTEST_EXPECT_TRUE(tc, k_strcmp(desktop_app_line_for_test(&apps.files, 0),
                                    "Files: /") == 0);
@@ -122,11 +109,8 @@ static void test_desktop_help_app_has_keyboard_page(ktest_case_t *tc)
 {
     static desktop_app_state_t apps;
 
-    sched_init();
-    KTEST_ASSERT_EQ(tc, desktop_apps_test_prepare_vfs(), 0);
-
     desktop_apps_init(&apps);
-    desktop_app_refresh(&apps);
+    desktop_app_refresh_help_for_test(&apps.help);
 
     KTEST_EXPECT_TRUE(tc, k_strcmp(desktop_app_line_for_test(&apps.help, 0),
                                    "Drunix Help") == 0);
@@ -144,15 +128,33 @@ static void test_desktop_processes_app_handles_empty_snapshot(ktest_case_t *tc)
     static desktop_app_state_t apps;
 
     sched_init();
-    KTEST_ASSERT_EQ(tc, desktop_apps_test_prepare_vfs(), 0);
 
     desktop_apps_init(&apps);
-    desktop_app_refresh(&apps);
+    desktop_app_refresh_processes_for_test(&apps.processes);
 
     KTEST_EXPECT_TRUE(tc, k_strcmp(desktop_app_line_for_test(&apps.processes, 0),
                                    "PID  STATE  NAME") == 0);
     KTEST_EXPECT_NULL(tc, desktop_app_line_for_test(&apps.processes, 1));
     KTEST_EXPECT_EQ(tc, apps.processes.line_count, 1);
+}
+
+static void test_desktop_files_app_replaces_last_visible_line_when_truncated(
+    ktest_case_t *tc)
+{
+    static desktop_app_state_t apps;
+    char dents[33 * 8];
+    int n;
+
+    desktop_apps_init(&apps);
+    n = desktop_apps_test_fill_entries(dents, sizeof(dents), 33);
+    KTEST_ASSERT_EQ(tc, n, (int)sizeof(dents));
+    desktop_app_refresh_files_for_test(&apps.files, dents, n);
+
+    KTEST_EXPECT_TRUE(tc, k_strcmp(desktop_app_line_for_test(&apps.files, 0),
+                                   "Files: /") == 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(desktop_app_line_for_test(&apps.files, 31),
+                                   "... more entries") == 0);
+    KTEST_EXPECT_EQ(tc, apps.files.line_count, 32);
 }
 
 static void test_terminal_write_wraps_and_retains_history(ktest_case_t *tc)
@@ -2970,6 +2972,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_gui_display_draw_text_stops_at_region_edge),
     KTEST_CASE(test_gui_display_presents_cells_to_framebuffer),
     KTEST_CASE(test_desktop_files_app_lists_root_entries),
+    KTEST_CASE(test_desktop_files_app_replaces_last_visible_line_when_truncated),
     KTEST_CASE(test_desktop_help_app_has_keyboard_page),
     KTEST_CASE(test_desktop_processes_app_handles_empty_snapshot),
     KTEST_CASE(test_desktop_boot_layout_opens_shell_window),

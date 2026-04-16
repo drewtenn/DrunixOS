@@ -19,6 +19,11 @@ int desktop_app_handle_key(desktop_app_state_t *state,
 #ifdef KTEST_ENABLED
 const char *desktop_app_line_for_test(const desktop_app_view_t *view,
                                       int line);
+void desktop_app_refresh_files_for_test(desktop_app_view_t *view,
+                                        const char *dents,
+                                        int n);
+void desktop_app_refresh_processes_for_test(desktop_app_view_t *view);
+void desktop_app_refresh_help_for_test(desktop_app_view_t *view);
 #endif
 
 #endif /* GUI_DESKTOP_APPS_H */

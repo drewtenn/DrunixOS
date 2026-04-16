@@ -37,6 +37,51 @@ static void desktop_app_append_line(desktop_app_view_t *view, const char *text)
     desktop_app_set_line(view, view->line_count, text);
 }
 
+static void desktop_app_mark_truncated(desktop_app_view_t *view)
+{
+    if (!view)
+        return;
+
+    if (view->line_count < DESKTOP_APP_MAX_LINES)
+        desktop_app_append_line(view, "... more entries");
+    else
+        desktop_app_set_line(view, DESKTOP_APP_MAX_LINES - 1,
+                             "... more entries");
+}
+
+static void desktop_app_refresh_files_from_dents(desktop_app_view_t *view,
+                                                 const char *dents,
+                                                 int n)
+{
+    int i;
+    int truncated = 0;
+
+    desktop_app_clear_view(view);
+    desktop_app_set_line(view, 0, "Files: /");
+
+    if (!dents || n < 0) {
+        desktop_app_append_line(view, "error: cannot list /");
+        return;
+    }
+
+    for (i = 0; i < n; ) {
+        const char *entry = dents + i;
+        uint32_t len = k_strlen(entry);
+
+        if (view->line_count >= DESKTOP_APP_MAX_LINES - 1 &&
+            i + (int)len + 1 < n) {
+            truncated = 1;
+            break;
+        }
+
+        desktop_app_append_line(view, entry);
+        i += (int)len + 1;
+    }
+
+    if (truncated || i < n)
+        desktop_app_mark_truncated(view);
+}
+
 static const char *desktop_app_process_state_label(const process_t *proc)
 {
     if (!proc)
@@ -63,34 +108,9 @@ static void desktop_app_refresh_files(desktop_app_view_t *view)
 {
     char dents[512];
     int n;
-    int i;
-    int truncated = 0;
 
-    desktop_app_clear_view(view);
-    desktop_app_set_line(view, 0, "Files: /");
-
-    n = vfs_getdents("/", dents, sizeof(dents));
-    if (n < 0) {
-        desktop_app_append_line(view, "error: cannot list /");
-        return;
-    }
-
-    for (i = 0; i < n; ) {
-        const char *entry = dents + i;
-        uint32_t len = k_strlen(entry);
-
-        if (view->line_count >= DESKTOP_APP_MAX_LINES - 1 &&
-            i + (int)len + 1 < n) {
-            truncated = 1;
-            break;
-        }
-
-        desktop_app_append_line(view, entry);
-        i += (int)len + 1;
-    }
-
-    if ((truncated || i < n) && view->line_count < DESKTOP_APP_MAX_LINES)
-        desktop_app_append_line(view, "... more entries");
+    n = vfs_getdents(0, dents, sizeof(dents));
+    desktop_app_refresh_files_from_dents(view, dents, n);
 }
 
 static void desktop_app_refresh_processes(desktop_app_view_t *view)
@@ -178,5 +198,22 @@ const char *desktop_app_line_for_test(const desktop_app_view_t *view, int line)
     if (!view || line < 0 || line >= view->line_count)
         return 0;
     return view->lines[line];
+}
+
+void desktop_app_refresh_files_for_test(desktop_app_view_t *view,
+                                        const char *dents,
+                                        int n)
+{
+    desktop_app_refresh_files_from_dents(view, dents, n);
+}
+
+void desktop_app_refresh_processes_for_test(desktop_app_view_t *view)
+{
+    desktop_app_refresh_processes(view);
+}
+
+void desktop_app_refresh_help_for_test(desktop_app_view_t *view)
+{
+    desktop_app_refresh_help(view);
 }
 #endif
