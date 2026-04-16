@@ -695,6 +695,33 @@ static void test_desktop_text_taskbar_renders_open_window_labels(ktest_case_t *t
     desktop_test_destroy(&desktop);
 }
 
+static void test_desktop_shell_open_matches_rendered_window_rect(ktest_case_t *tc)
+{
+    desktop_state_t desktop;
+    gui_display_t display;
+    int shell_id;
+    const desktop_window_t *win;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    shell_id = desktop_open_app_window(&desktop, DESKTOP_APP_SHELL);
+    win = desktop_window_for_test(&desktop, shell_id);
+    KTEST_ASSERT_NOT_NULL(tc, win);
+
+    KTEST_EXPECT_EQ(tc, win->rect.x, desktop.window_pixel_rect.x);
+    KTEST_EXPECT_EQ(tc, win->rect.y, desktop.window_pixel_rect.y);
+    KTEST_EXPECT_EQ(tc, win->rect.w, desktop.window_pixel_rect.w);
+    KTEST_EXPECT_EQ(tc, win->rect.h, desktop.window_pixel_rect.h);
+    KTEST_EXPECT_EQ(tc, win->content_rect.x, desktop.window_pixel_rect.x + 8);
+    KTEST_EXPECT_EQ(tc, win->content_rect.y, desktop.window_pixel_rect.y + 24);
+    KTEST_EXPECT_EQ(tc, desktop.shell_terminal.pixel_rect.x,
+                    desktop.shell_pixel_rect.x);
+    KTEST_EXPECT_EQ(tc, desktop.shell_terminal.pixel_rect.y,
+                    desktop.shell_pixel_rect.y);
+
+    desktop_test_destroy(&desktop);
+}
+
 static void test_desktop_close_button_closes_files_window(ktest_case_t *tc)
 {
     desktop_state_t desktop;
@@ -719,6 +746,38 @@ static void test_desktop_close_button_closes_files_window(ktest_case_t *tc)
     desktop_handle_pointer(&desktop, &ev);
 
     KTEST_EXPECT_EQ(tc, desktop_window_count_for_test(&desktop), 0);
+
+    desktop_test_destroy(&desktop);
+}
+
+static void test_desktop_shell_close_button_closes_visible_shell_window(
+    ktest_case_t *tc)
+{
+    desktop_state_t desktop;
+    gui_display_t display;
+    desktop_pointer_event_t ev;
+    int shell_id;
+    const desktop_window_t *win;
+
+    gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    shell_id = desktop_open_app_window(&desktop, DESKTOP_APP_SHELL);
+    win = desktop_window_for_test(&desktop, shell_id);
+    KTEST_ASSERT_NOT_NULL(tc, win);
+
+    k_memset(&ev, 0, sizeof(ev));
+    ev.left_down = 1;
+    ev.pixel_x = desktop.window_pixel_rect.x +
+                 desktop.window_pixel_rect.w - 10;
+    ev.pixel_y = desktop.window_pixel_rect.y + 8;
+    ev.x = ev.pixel_x / (int)GUI_FONT_W;
+    ev.y = ev.pixel_y / (int)GUI_FONT_H;
+    desktop_handle_pointer(&desktop, &ev);
+
+    KTEST_EXPECT_FALSE(tc, desktop.shell_window_open);
+    KTEST_EXPECT_EQ(tc, desktop_window_count_for_test(&desktop), 0);
+    KTEST_EXPECT_EQ(tc, desktop_handle_key(&desktop, 'a'),
+                    DESKTOP_KEY_CONSUMED);
 
     desktop_test_destroy(&desktop);
 }
@@ -2817,7 +2876,9 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_text_launcher_keeps_bottom_border_visible),
     KTEST_CASE(test_desktop_taskbar_click_focuses_processes_window),
     KTEST_CASE(test_desktop_text_taskbar_renders_open_window_labels),
+    KTEST_CASE(test_desktop_shell_open_matches_rendered_window_rect),
     KTEST_CASE(test_desktop_close_button_closes_files_window),
+    KTEST_CASE(test_desktop_shell_close_button_closes_visible_shell_window),
     KTEST_CASE(test_desktop_title_drag_moves_window_and_clamps_top_left),
     KTEST_CASE(test_desktop_shell_drag_preserves_window_size),
     KTEST_CASE(test_desktop_shell_drag_syncs_terminal_pixel_rect_in_framebuffer_mode),

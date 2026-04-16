@@ -1833,8 +1833,12 @@ int desktop_open_app_window(desktop_state_t *desktop, desktop_app_kind_t app)
         return -1;
     existing = desktop_find_app_window(desktop, app);
     if (existing) {
-        if (app == DESKTOP_APP_SHELL)
+        if (app == DESKTOP_APP_SHELL) {
+            existing->rect = desktop->window_pixel_rect;
+            desktop_update_window_content_rect(existing);
+            desktop_sync_shell_geometry(desktop, existing);
             desktop->shell_window_open = 1;
+        }
         desktop_focus_window(desktop, existing->id);
         return existing->id;
     }
@@ -1854,8 +1858,12 @@ int desktop_open_app_window(desktop_state_t *desktop, desktop_app_kind_t app)
     k_strncpy(slot->title, desktop_app_title(app),
               DESKTOP_WINDOW_TITLE_MAX - 1);
     desktop_default_window_rect(desktop, app, &slot->rect);
+    if (app == DESKTOP_APP_SHELL) {
+        slot->rect = desktop->window_pixel_rect;
+    }
     desktop_update_window_content_rect(slot);
     if (app == DESKTOP_APP_SHELL) {
+        desktop_sync_shell_geometry(desktop, slot);
         desktop->shell_window_open = 1;
     }
     desktop_focus_window(desktop, slot->id);
