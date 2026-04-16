@@ -3,18 +3,21 @@
 ;
 ; Provides _start, the ELF entry point declared in user.ld.
 ;
-; The kernel's process_create() pre-populates the user stack with a
-; System V i386 argv frame before iret'ing to ring 3.  On entry, ESP
-; points at argc, with the char** argv pointer one word above it:
+; The kernel's process_create() pre-populates the user stack with a Linux/
+; System V i386 initial frame before iret'ing to ring 3.  On entry, ESP
+; points at argc, followed by inline argv pointers, a NULL, inline envp
+; pointers, a NULL, and auxv:
 ;
 ;     [esp + 0] = argc (int)
-;     [esp + 4] = argv (char**)    — points further up into this same page
-;     [esp + 8] = envp (char**)    — NULL-terminated environment vector
+;     [esp + 4] = argv[0]
+;        ...
+;     [esp + 4 + argc*4] = NULL
+;     next word = envp[0]
 ;
-; crt0 pops all three, stores envp in the libc global `environ`, runs C/C++
-; constructors, pushes them in cdecl order, calls main(argc, argv, envp), runs
-; C/C++ destructors, then feeds the return value to sys_exit().  Programs with
-; a two-argument main simply ignore the third stack argument under cdecl.
+; crt0 derives argv and envp from that raw stack, stores envp in the libc
+; global `environ`, runs C/C++ constructors, calls main(argc, argv, envp),
+; runs C/C++ destructors, then feeds the return value to sys_exit(). Programs
+; with a two-argument main simply ignore the third stack argument under cdecl.
 
 bits 32
 
@@ -27,9 +30,9 @@ extern __drunix_run_destructors
 
 section .text
 _start:
-    pop   eax        ; argc
-    pop   ebx        ; argv (char **)
-    pop   ecx        ; envp (char **)
+    mov   eax, [esp]        ; argc
+    lea   ebx, [esp + 4]    ; argv (char **)
+    lea   ecx, [ebx + eax * 4 + 4] ; envp (char **), after argv NULL
     mov   [environ], ecx
     push  eax
     push  ebx

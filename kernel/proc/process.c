@@ -23,9 +23,12 @@ extern void process_enter_usermode(uint32_t entry, uint32_t user_esp,
 extern void process_initial_launch(void);
 extern void process_exec_launch(void);
 
+#define LINUX_AT_NULL   0u
+#define LINUX_AT_PAGESZ 6u
+
 /*
- * Build the System V i386 argv/envp frame at the top of a freshly mapped user
- * stack and return the initial ESP the process should start with.
+ * Build the Linux/System V i386 initial stack at the top of a freshly mapped
+ * user stack and return the initial ESP the process should start with.
  *
  * The top user-stack page was just mapped by paging_map_page() in the
  * caller, so its PDE/PTE are present in the new page directory.  Because
@@ -43,19 +46,19 @@ extern void process_exec_launch(void);
  *   +--------------------------+
  *   | 0..3 bytes zero pad      |  align next word to 4 bytes
  *   +--------------------------+
+ *   | auxv terminator value    |
+ *   | AT_NULL                  |
+ *   | PAGE_SIZE                |
+ *   | AT_PAGESZ                |
  *   | NULL                     |  envp terminator
  *   | envp[envc-1] (char*)     |
  *   |  ...                     |
- *   | envp[0]      (char*)     |  ← uenvp_vaddr
- *   +--------------------------+
+ *   | envp[0]      (char*)     |
  *   | NULL                     |  argv terminator
  *   | argv[argc-1] (char*)     |
  *   |  ...                     |
- *   | argv[0]      (char*)     |  ← uargv_vaddr (== **argv pointer below)
- *   +--------------------------+
- *   | uenvp_vaddr              |  char **envp, passed to main as arg 3
- *   | uargv_vaddr              |  char **argv, passed to main as arg 2
- *   | argc                     |  int argc,    passed to main as arg 1  ← ESP
+ *   | argv[0]      (char*)     |  ← argv == ESP + 4
+ *   | argc                     |  int argc ← ESP
  *   +--------------------------+
  *
  * Returns 0 on success, negative on error.
@@ -66,9 +69,7 @@ static int build_user_stack_frame(uint32_t pd_phys,
                                   uint32_t *out_esp)
 {
     /* Normalise the "no argv" case so the rest of this function can assume
-     * argc is a small non-negative integer.  crt0 always pops argc and the
-     * argv pointer unconditionally, so we must push those two words even
-     * when the caller did not supply any arguments. */
+     * argc is a small non-negative integer. */
     if (argc < 0 || argv == 0)
         argc = 0;
     if (envc < 0 || envp == 0)
@@ -106,15 +107,15 @@ static int build_user_stack_frame(uint32_t pd_phys,
      * USER_STACK_TOP.  Grow the frame downward in three chunks:
      *   1. raw string bytes (top of stack)
      *   2. pad to 4-byte alignment
-     *   3. envp pointer array (envc + 1 entries incl. NULL)
-     *   4. argv pointer array (argc + 1 entries incl. NULL)
-     *   5. envp pointer, argv pointer, argc
+     *   3. Linux raw initial stack words:
+     *      argc, argv[], NULL, envp[], NULL, auxv pairs, AT_NULL
      */
-    uint32_t strings_off   = strbytes;                  /* bytes consumed by strings */
-    uint32_t pad           = (4u - (strings_off & 3u)) & 3u;
-    uint32_t env_array_off = strings_off + pad + ((uint32_t)envc + 1u) * 4u;
-    uint32_t argv_array_off = env_array_off + ((uint32_t)argc + 1u) * 4u;
-    uint32_t frame_off     = argv_array_off + 12u;      /* + envp + argv + argc */
+    uint32_t strings_off = strbytes;                    /* bytes consumed by strings */
+    uint32_t pad = (4u - (strings_off & 3u)) & 3u;
+    uint32_t aux_words = 4u;                            /* AT_PAGESZ pair + AT_NULL */
+    uint32_t stack_words = 1u + (uint32_t)argc + 1u +
+                           (uint32_t)envc + 1u + aux_words;
+    uint32_t frame_off = strings_off + pad + stack_words * 4u;
 
     /* Reject anything that would spill past the top stack page. */
     if (frame_off > 0x1000u)
@@ -173,38 +174,41 @@ static int build_user_stack_frame(uint32_t pd_phys,
     }
 
     /*
-     * Step 2: write envp and argv pointer arrays just below the strings,
-     * 4-byte aligned.
-     */
-    uint32_t *env_arr_k =
-        (uint32_t *)(page_end - (strings_off + pad + ((uint32_t)envc + 1u) * 4u));
-    for (int i = 0; i < envc; i++)
-        env_arr_k[i] = uenv_ptrs[i];
-    env_arr_k[envc] = 0;
-
-    uint32_t *argv_arr_k = (uint32_t *)(page_end - argv_array_off);
-    for (int i = 0; i < argc; i++)
-        argv_arr_k[i] = uargv_ptrs[i];
-    argv_arr_k[argc] = 0;                                       /* NULL terminator */
-
-    uint32_t uenv_vaddr =
-        USER_STACK_TOP - (strings_off + pad + ((uint32_t)envc + 1u) * 4u);
-    uint32_t uargv_vaddr =
-        USER_STACK_TOP - argv_array_off;
-
-    /*
-     * Step 3: push envp, argv, then argc so crt0 can forward
-     * main(argc, argv, envp).  Programs declaring a two-argument main ignore
-     * the extra stack word under cdecl.
+     * Step 2: write the Linux raw initial stack just below the strings.  The
+     * argv and envp vectors are inline after argc; auxv follows envp.
      */
     uint32_t *tail_k = (uint32_t *)(page_end - frame_off);
-    tail_k[0] = (uint32_t)argc;         /* low address — this is ESP on entry */
-    tail_k[1] = uargv_vaddr;            /* next word up */
-    tail_k[2] = uenv_vaddr;
+    uint32_t idx = 0;
+
+    tail_k[idx++] = (uint32_t)argc;
+    for (int i = 0; i < argc; i++)
+        tail_k[idx++] = uargv_ptrs[i];
+    tail_k[idx++] = 0;                  /* argv terminator */
+
+    for (int i = 0; i < envc; i++)
+        tail_k[idx++] = uenv_ptrs[i];
+    tail_k[idx++] = 0;                  /* envp terminator */
+
+    tail_k[idx++] = LINUX_AT_PAGESZ;
+    tail_k[idx++] = PAGE_SIZE;
+    tail_k[idx++] = LINUX_AT_NULL;
+    tail_k[idx++] = 0;
 
     *out_esp = USER_STACK_TOP - frame_off;
     return 0;
 }
+
+#ifdef KTEST_ENABLED
+int process_build_user_stack_frame_for_test(uint32_t pd_phys,
+                                            const char *const *argv,
+                                            int argc,
+                                            const char *const *envp,
+                                            int envc,
+                                            uint32_t *out_esp)
+{
+    return build_user_stack_frame(pd_phys, argv, argc, envp, envc, out_esp);
+}
+#endif
 
 static uint32_t *build_launch_isr_frame(uint32_t *ksp, const process_t *proc)
 {

@@ -28,6 +28,8 @@ extern void process_exec_launch(void);
 #define TEST_NT_DRUNIX_FAULT  0x44584654u
 #define TEST_NT_DRUNIX_MAPS   0x44584d50u
 #define TEST_LINUX_MAP_FIXED  0x10u
+#define TEST_LINUX_AT_EMPTY_PATH 0x1000u
+#define TEST_LINUX_STATX_BASIC_STATS 0x7ffu
 
 static uint32_t test_align_up(uint32_t val, uint32_t align)
 {
@@ -245,6 +247,49 @@ static void test_sched_add_builds_initial_frame_for_never_run_process(ktest_case
     KTEST_EXPECT_EQ(tc, frame[4], (uint32_t)process_initial_launch);
     KTEST_EXPECT_EQ(tc, frame[19], 0x00403000u);
     KTEST_EXPECT_EQ(tc, frame[22], 0xBFFFC000u);
+}
+
+static void test_process_builds_linux_i386_initial_stack_shape(ktest_case_t *tc)
+{
+    static process_t proc;
+    const char *argv[] = { "linuxprobe", 0 };
+    const char *envp[] = { "DRUNIX=1", 0 };
+    uint32_t esp = USER_STACK_TOP;
+    uint32_t *stack;
+    const char *arg0;
+    const char *env0;
+
+    k_memset(&proc, 0, sizeof(proc));
+    vma_init(&proc);
+    proc.pd_phys = paging_create_user_space();
+    KTEST_ASSERT_NE(tc, proc.pd_phys, 0u);
+    KTEST_ASSERT_EQ(tc,
+                    map_test_page(&proc, USER_STACK_TOP - PAGE_SIZE,
+                                  PG_PRESENT | PG_WRITABLE | PG_USER),
+                    0u);
+    KTEST_ASSERT_EQ(tc,
+                    (uint32_t)process_build_user_stack_frame_for_test(
+                        proc.pd_phys, argv, 1, envp, 1, &esp),
+                    0u);
+    stack = (uint32_t *)mapped_alias(&proc, esp);
+    KTEST_ASSERT_NOT_NULL(tc, stack);
+
+    KTEST_EXPECT_EQ(tc, stack[0], 1u);
+    KTEST_EXPECT_EQ(tc, stack[2], 0u);
+    KTEST_EXPECT_EQ(tc, stack[4], 0u);
+    KTEST_EXPECT_EQ(tc, stack[5], 6u);         /* AT_PAGESZ */
+    KTEST_EXPECT_EQ(tc, stack[6], PAGE_SIZE);
+    KTEST_EXPECT_EQ(tc, stack[7], 0u);         /* AT_NULL */
+    KTEST_EXPECT_EQ(tc, stack[8], 0u);
+
+    arg0 = (const char *)mapped_alias(&proc, stack[1]);
+    env0 = (const char *)mapped_alias(&proc, stack[3]);
+    KTEST_ASSERT_NOT_NULL(tc, arg0);
+    KTEST_ASSERT_NOT_NULL(tc, env0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(arg0, "linuxprobe") == 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(env0, "DRUNIX=1") == 0);
+
+    process_release_user_space(&proc);
 }
 
 static void test_vma_add_keeps_regions_sorted_and_findable(ktest_case_t *tc)
@@ -792,6 +837,18 @@ static void test_linux_syscalls_fill_uname_time_and_fstat64(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, page[0x410], 0x80u);
     KTEST_EXPECT_EQ(tc, page[0x411], 0x21u);
 
+    page[0x300] = '\0';
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_STATX, 1, 0x00800300u,
+                                    TEST_LINUX_AT_EMPTY_PATH,
+                                    TEST_LINUX_STATX_BASIC_STATS,
+                                    0x00800500u, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc, page[0x500], 0xffu);
+    KTEST_EXPECT_EQ(tc, page[0x501], 0x07u);
+    KTEST_EXPECT_EQ(tc, page[0x51c], 0x80u);
+    KTEST_EXPECT_EQ(tc, page[0x51d], 0x21u);
+
     stop_syscall_test_process(cur);
 }
 
@@ -846,6 +903,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_process_build_initial_frame_layout),
     KTEST_CASE(test_process_build_exec_frame_layout),
     KTEST_CASE(test_sched_add_builds_initial_frame_for_never_run_process),
+    KTEST_CASE(test_process_builds_linux_i386_initial_stack_shape),
     KTEST_CASE(test_vma_add_keeps_regions_sorted_and_findable),
     KTEST_CASE(test_vma_add_rejects_overlapping_regions),
     KTEST_CASE(test_vma_map_anonymous_places_regions_below_stack),
