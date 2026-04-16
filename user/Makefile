@@ -1,5 +1,5 @@
-PROGS = hello shell writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello
-C_PROGS = shell
+PROGS = chello hello shell writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello
+C_PROGS = chello shell
 CXX_PROGS = hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello
 
 all: $(PROGS)
@@ -17,10 +17,12 @@ CXXFLAGS = -m32 -ffreestanding -nostdlib -fno-pie -no-pie \
            -fno-threadsafe-statics -fdebug-prefix-map=$(abspath ..)=.
 CXXLIBS = $(shell $(CXX) -m32 -print-libgcc-file-name)
 
-LIB_OBJS = lib/crt0.o lib/cxx_init.o lib/syscall.o lib/malloc.o \
-           lib/string.o lib/ctype.o lib/stdlib.o lib/stdio.o \
-           lib/unistd.o lib/time.o
+C_RUNTIME_OBJS = lib/crt0.o lib/cxx_init.o lib/syscall.o lib/malloc.o \
+                 lib/string.o lib/ctype.o lib/stdlib.o lib/stdio.o \
+                 lib/unistd.o lib/time.o
 CXX_RUNTIME_OBJS = lib/cxxrt.o lib/cxxabi.o
+C_LINK_OBJS = $(C_RUNTIME_OBJS)
+CXX_LINK_OBJS = $(C_RUNTIME_OBJS) $(CXX_RUNTIME_OBJS)
 
 lib/crt0.o: lib/crt0.asm
 	$(NASM) -f elf32 -o $@ $<
@@ -65,11 +67,11 @@ lib/cxxabi.o: lib/cxxabi.cpp lib/syscall.h
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -I . -c -o $@ $<
 
-$(C_PROGS): %: %.o $(LIB_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) $@.o
+$(C_PROGS): %: %.o $(C_LINK_OBJS) user.ld
+	$(LD) -m elf_i386 -T user.ld -o $@ $(C_LINK_OBJS) $@.o
 
-$(CXX_PROGS): %: %.o $(LIB_OBJS) $(CXX_RUNTIME_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(LIB_OBJS) $(CXX_RUNTIME_OBJS) $@.o $(CXXLIBS)
+$(CXX_PROGS): %: %.o $(CXX_LINK_OBJS) user.ld
+	$(LD) -m elf_i386 -T user.ld -o $@ $(CXX_LINK_OBJS) $@.o $(CXXLIBS)
 
 clean:
 	find . -name '*.o' -delete

@@ -4,7 +4,7 @@
 
 Drunix is a 32-bit x86 hobby operating system that boots through GRUB2 with the Multiboot1 protocol and runs a freestanding C kernel. The kernel provides protected-mode interrupt handling, paging, a physical and heap allocator, ATA disk I/O, a DUFS filesystem, a mount-tree VFS with synthetic `/dev` and `/proc` namespaces, preemptive scheduling built around generic wait queues, signals, a TTY subsystem with job control, an ELF user-program loader, and per-process virtual-memory bookkeeping for demand-paged heaps, grow-down stacks, copy-on-write fork, and anonymous `mmap` regions. User programs can be written in C or in a small freestanding C++ subset backed by the repo-owned user runtime.
 
-The normal boot path asks GRUB for a 1024x768x32 linear framebuffer and starts a simple GUI desktop. The boot shell is opened as the main desktop app inside that GUI shell, with keyboard input, PS/2 mouse pointer support, taskbar/menu launching, framebuffer text rendering, double-buffered flicker-free compositing with an overlay mouse cursor, and a VGA text-mode fallback when a suitable framebuffer is unavailable. The disk image includes a small userland with a C shell and C++ utility programs.
+The normal boot path asks GRUB for a 1024x768x32 linear framebuffer and starts a simple GUI desktop. The boot shell is opened as the main desktop app inside that GUI shell, with keyboard input, PS/2 mouse pointer support, taskbar/menu launching, framebuffer text rendering, double-buffered flicker-free compositing with an overlay mouse cursor, and a VGA text-mode fallback when a suitable framebuffer is unavailable. The disk image includes a small mixed-language userland: the shell and `chello` exercise the C runtime path, while the utility programs exercise the C++ runtime path.
 
 <a href="docs/drunix-desktop.png">
   <img src="docs/drunix-desktop.png" alt="Drunix desktop running in QEMU with Files, Processes, Help, and Shell windows open">
@@ -166,9 +166,11 @@ Exceptions, RTTI, `libstdc++`, and `libsupc++` are not part of the current
 runtime. Code that depends on those features should fail at compile or link
 time instead of pulling in hosted runtime libraries implicitly.
 
-The smoke binary is `/bin/cpphello`, built from `user/cpphello.cpp`.
-All packaged non-shell utilities are also C++ sources. The shell and the
-runtime library remain C for now.
+The C smoke binary is `/bin/chello`, built from `user/chello.c`. The C++
+smoke binary is `/bin/cpphello`, built from `user/cpphello.cpp`.
+`user/Makefile` keeps the runtime lanes explicit: C programs link the C
+runtime objects, while C++ programs link those same C runtime objects plus
+the C++ runtime objects.
 The book-level walkthrough is Chapter 30, `docs/ch30-cpp-userland.md`.
 
 ## Debugging
