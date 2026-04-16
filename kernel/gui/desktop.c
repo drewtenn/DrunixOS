@@ -162,9 +162,9 @@ static void desktop_layout(desktop_state_t *desktop)
     desktop->taskbar.h = 1;
 
     desktop->launcher_rect.x = 1;
-    desktop->launcher_rect.y = desktop->display->rows - 6;
+    desktop->launcher_rect.y = desktop->display->rows - 7;
     desktop->launcher_rect.w = 18;
-    desktop->launcher_rect.h = 5;
+    desktop->launcher_rect.h = 6;
 
     shell_w = desktop->display->cols - margin_x * 2;
     shell_h = desktop->display->rows - margin_top - taskbar_gap;
@@ -1824,6 +1824,19 @@ void desktop_render(desktop_state_t *desktop)
                           ' ', DESKTOP_ATTR_TASKBAR);
     gui_display_draw_text(desktop->display, 2, desktop->taskbar.y, 10,
                           "Menu", DESKTOP_ATTR_TITLE);
+    {
+        int task_x = 8;
+
+        for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+            if (!desktop->windows[i].open)
+                continue;
+            gui_display_draw_text(desktop->display, task_x,
+                                  desktop->taskbar.y, 9,
+                                  desktop->windows[i].title,
+                                  DESKTOP_ATTR_TITLE);
+            task_x += 10;
+        }
+    }
 
     if (desktop->shell_window_open) {
         gui_display_draw_frame(desktop->display,
