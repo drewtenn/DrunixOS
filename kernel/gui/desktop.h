@@ -3,6 +3,7 @@
 
 #include "display.h"
 #include "framebuffer.h"
+#include "desktop_app_types.h"
 #include "terminal.h"
 #include <stdint.h>
 
@@ -15,14 +16,6 @@ typedef enum {
 
 #define DESKTOP_MAX_WINDOWS 4
 #define DESKTOP_WINDOW_TITLE_MAX 16
-
-typedef enum {
-    DESKTOP_APP_NONE = 0,
-    DESKTOP_APP_SHELL = 1,
-    DESKTOP_APP_FILES = 2,
-    DESKTOP_APP_PROCESSES = 3,
-    DESKTOP_APP_HELP = 4,
-} desktop_app_kind_t;
 
 typedef struct {
     int id;

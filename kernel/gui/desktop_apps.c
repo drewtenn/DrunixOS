@@ -66,7 +66,13 @@ static void desktop_app_refresh_files_from_dents(desktop_app_view_t *view,
 
     for (i = 0; i < n; ) {
         const char *entry = dents + i;
-        uint32_t len = k_strlen(entry);
+        uint32_t remaining = (uint32_t)(n - i);
+        uint32_t len = k_strnlen(entry, remaining);
+
+        if (len == remaining) {
+            truncated = 1;
+            break;
+        }
 
         if (view->line_count >= DESKTOP_APP_MAX_LINES - 1 &&
             i + (int)len + 1 < n) {

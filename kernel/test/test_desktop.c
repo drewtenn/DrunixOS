@@ -46,35 +46,6 @@ extern int boot_framebuffer_grid_for_test(const framebuffer_info_t *fb,
                                           int *cols,
                                           int *rows);
 
-static int desktop_apps_test_fill_entries(char *buf, uint32_t bufsz, int count)
-{
-    uint32_t written = 0;
-
-    if (!buf)
-        return -1;
-
-    for (int i = 0; i < count; i++) {
-        char entry[12];
-        uint32_t len;
-
-        entry[0] = 'e';
-        entry[1] = 'n';
-        entry[2] = 't';
-        entry[3] = 'r';
-        entry[4] = 'y';
-        entry[5] = '0' + (char)(i / 10);
-        entry[6] = '0' + (char)(i % 10);
-        entry[7] = '\0';
-        len = k_strlen(entry) + 1u;
-        if (written + len > bufsz)
-            break;
-        k_memcpy(buf + written, entry, len);
-        written += len;
-    }
-
-    return (int)written;
-}
-
 static void desktop_test_destroy(desktop_state_t *desktop)
 {
     if (!desktop)
@@ -142,19 +113,21 @@ static void test_desktop_files_app_replaces_last_visible_line_when_truncated(
     ktest_case_t *tc)
 {
     static desktop_app_state_t apps;
-    char dents[33 * 8];
-    int n;
+    struct {
+        char dents[3];
+        char guard;
+    } input = { { 'a', 'b', 'c' }, 'Z' };
 
     desktop_apps_init(&apps);
-    n = desktop_apps_test_fill_entries(dents, sizeof(dents), 33);
-    KTEST_ASSERT_EQ(tc, n, (int)sizeof(dents));
-    desktop_app_refresh_files_for_test(&apps.files, dents, n);
+    desktop_app_refresh_files_for_test(&apps.files, input.dents,
+                                        sizeof(input.dents));
 
     KTEST_EXPECT_TRUE(tc, k_strcmp(desktop_app_line_for_test(&apps.files, 0),
                                    "Files: /") == 0);
-    KTEST_EXPECT_TRUE(tc, k_strcmp(desktop_app_line_for_test(&apps.files, 31),
+    KTEST_EXPECT_TRUE(tc, k_strcmp(desktop_app_line_for_test(&apps.files, 1),
                                    "... more entries") == 0);
-    KTEST_EXPECT_EQ(tc, apps.files.line_count, 32);
+    KTEST_EXPECT_EQ(tc, apps.files.line_count, 2);
+    KTEST_EXPECT_EQ(tc, input.guard, 'Z');
 }
 
 static void test_terminal_write_wraps_and_retains_history(ktest_case_t *tc)

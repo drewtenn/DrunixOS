@@ -2,8 +2,7 @@
 #define GUI_DESKTOP_APPS_H
 
 #include "desktop_app_types.h"
-#include "desktop.h"
-#include "pixel.h"
+#include "display.h"
 #include <stdint.h>
 
 void desktop_apps_init(desktop_app_state_t *state);
