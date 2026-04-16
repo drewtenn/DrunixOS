@@ -4,6 +4,43 @@
 #include "process.h"
 #include "sched.h"
 #include "vfs.h"
+#include <limits.h>
+
+static int desktop_app_rect_intersect(gui_pixel_rect_t a,
+                                      gui_pixel_rect_t b,
+                                      gui_pixel_rect_t *out)
+{
+    int64_t left;
+    int64_t top;
+    int64_t right;
+    int64_t bottom;
+    int64_t a_right;
+    int64_t a_bottom;
+    int64_t b_right;
+    int64_t b_bottom;
+
+    if (!out)
+        return 0;
+
+    a_right = (int64_t)a.x + (int64_t)a.w;
+    a_bottom = (int64_t)a.y + (int64_t)a.h;
+    b_right = (int64_t)b.x + (int64_t)b.w;
+    b_bottom = (int64_t)b.y + (int64_t)b.h;
+    left = a.x > b.x ? a.x : b.x;
+    top = a.y > b.y ? a.y : b.y;
+    right = a_right < b_right ? a_right : b_right;
+    bottom = a_bottom < b_bottom ? a_bottom : b_bottom;
+    if (right <= left || bottom <= top)
+        return 0;
+    if (left < INT_MIN || top < INT_MIN || right > INT_MAX ||
+        bottom > INT_MAX)
+        return 0;
+    out->x = (int)left;
+    out->y = (int)top;
+    out->w = (int)(right - left);
+    out->h = (int)(bottom - top);
+    return 1;
+}
 
 static void desktop_app_clear_view(desktop_app_view_t *view)
 {
@@ -179,23 +216,89 @@ void desktop_app_refresh(desktop_app_state_t *state)
 
 void desktop_app_render(const desktop_app_state_t *state,
                         desktop_app_kind_t app,
-                        gui_display_t *display,
-                        const gui_rect_t *rect)
+                        const gui_pixel_surface_t *surface,
+                        const gui_pixel_theme_t *theme,
+                        const gui_pixel_rect_t *rect)
 {
-    (void)state;
-    (void)app;
-    (void)display;
-    (void)rect;
+    const desktop_app_view_t *view = 0;
+    gui_pixel_rect_t clip;
+    int start_line;
+    int visible_y;
+    int line;
+
+    if (!state || !surface || !surface->fb || !theme || !rect)
+        return;
+
+    if (app == DESKTOP_APP_FILES)
+        view = &state->files;
+    else if (app == DESKTOP_APP_PROCESSES)
+        view = &state->processes;
+    else if (app == DESKTOP_APP_HELP)
+        view = &state->help;
+    else
+        return;
+
+    if (!desktop_app_rect_intersect(surface->clip, *rect, &clip))
+        return;
+
+    framebuffer_fill_rect(surface->fb, clip.x, clip.y, clip.w, clip.h,
+                          theme->window_bg);
+
+    start_line = view->scroll < 0 ? 0 : view->scroll;
+    visible_y = rect->y + 6;
+    for (line = start_line; line < view->line_count; line++) {
+        if (visible_y + (int)GUI_FONT_H > rect->y + rect->h)
+            break;
+        framebuffer_draw_text_clipped(surface->fb, &clip,
+                                      rect->x + 6,
+                                      visible_y,
+                                      view->lines[line],
+                                      theme->title_fg,
+                                      theme->window_bg);
+        visible_y += (int)GUI_FONT_H;
+    }
 }
 
-int desktop_app_handle_key(desktop_app_state_t *state,
-                           desktop_app_kind_t app,
-                           uint32_t key)
+desktop_app_key_result_t desktop_app_handle_key(desktop_app_state_t *state,
+                                                desktop_app_kind_t app,
+                                                uint32_t key)
 {
-    (void)state;
-    (void)app;
-    (void)key;
-    return 0;
+    desktop_app_view_t *view = 0;
+
+    if (!state)
+        return DESKTOP_APP_KEY_IGNORED;
+
+    if (app == DESKTOP_APP_FILES)
+        view = &state->files;
+    else if (app == DESKTOP_APP_PROCESSES)
+        view = &state->processes;
+    else if (app == DESKTOP_APP_HELP)
+        view = &state->help;
+    else
+        return DESKTOP_APP_KEY_IGNORED;
+
+    if (key == 'q' || key == 27)
+        return DESKTOP_APP_KEY_CLOSE;
+
+    if (key == 'j') {
+        if (view->scroll < view->line_count - 1) {
+            view->scroll++;
+            if (view->scroll < 0)
+                view->scroll = 0;
+            return DESKTOP_APP_KEY_HANDLED;
+        }
+        return DESKTOP_APP_KEY_IGNORED;
+    }
+
+    if (key == 'k') {
+        if (view->scroll > 0) {
+            view->scroll--;
+            return DESKTOP_APP_KEY_HANDLED;
+        }
+        return DESKTOP_APP_KEY_IGNORED;
+    }
+
+    return DESKTOP_APP_KEY_IGNORED;
 }
 
 #ifdef KTEST_ENABLED

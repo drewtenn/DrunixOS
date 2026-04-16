@@ -1,4 +1,5 @@
 #include "desktop.h"
+#include "desktop_apps.h"
 #include "kheap.h"
 #include "kstring.h"
 #include <limits.h>
@@ -1577,6 +1578,7 @@ void desktop_init(desktop_state_t *desktop, gui_display_t *display)
     desktop->shell_ansi_state = 0;
     desktop->shell_ansi_val = 0;
     desktop->shell_attr = display->default_attr;
+    desktop_apps_init(&desktop->app_state);
     for (int row = 0; row < desktop->shell_cells_h; row++)
         desktop_shell_clear_line(desktop, row, 0);
     desktop->next_window_id = 0;
@@ -1758,6 +1760,9 @@ int desktop_write_process_output(desktop_state_t *desktop,
 
 desktop_key_result_t desktop_handle_key(desktop_state_t *desktop, char c)
 {
+    desktop_window_t *focused_window;
+    desktop_app_key_result_t app_key_result;
+
     if (!desktop || !desktop->active)
         return DESKTOP_KEY_FORWARD;
 
@@ -1790,6 +1795,20 @@ desktop_key_result_t desktop_handle_key(desktop_state_t *desktop, char c)
     if (desktop->launcher_open && c == '\t') {
         desktop->focus = DESKTOP_FOCUS_TASKBAR;
         desktop_render(desktop);
+        return DESKTOP_KEY_CONSUMED;
+    }
+
+    focused_window = desktop_find_window(desktop, desktop->focused_window_id);
+    if (focused_window && focused_window->app != DESKTOP_APP_SHELL) {
+        app_key_result = desktop_app_handle_key(&desktop->app_state,
+                                                focused_window->app,
+                                                (uint32_t)c);
+        if (app_key_result == DESKTOP_APP_KEY_CLOSE) {
+            desktop_close_window(desktop, focused_window->id);
+            desktop_render(desktop);
+        } else if (app_key_result == DESKTOP_APP_KEY_HANDLED) {
+            desktop_render(desktop);
+        }
         return DESKTOP_KEY_CONSUMED;
     }
 
@@ -1840,6 +1859,8 @@ int desktop_open_app_window(desktop_state_t *desktop, desktop_app_kind_t app)
             desktop->shell_window_open = 1;
         }
         desktop_focus_window(desktop, existing->id);
+        if (app != DESKTOP_APP_SHELL)
+            desktop_app_refresh(&desktop->app_state);
         return existing->id;
     }
     for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
@@ -1867,6 +1888,8 @@ int desktop_open_app_window(desktop_state_t *desktop, desktop_app_kind_t app)
         desktop->shell_window_open = 1;
     }
     desktop_focus_window(desktop, slot->id);
+    if (app != DESKTOP_APP_SHELL)
+        desktop_app_refresh(&desktop->app_state);
     return slot->id;
 }
 

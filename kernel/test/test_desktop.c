@@ -94,6 +94,64 @@ static void test_desktop_help_app_has_keyboard_page(ktest_case_t *tc)
     KTEST_EXPECT_GE(tc, apps.help.line_count, 8);
 }
 
+static void test_desktop_help_app_q_requests_close(ktest_case_t *tc)
+{
+    static desktop_app_state_t apps;
+
+    desktop_apps_init(&apps);
+    desktop_app_refresh(&apps);
+
+    KTEST_EXPECT_EQ(tc,
+                    desktop_app_handle_key(&apps, DESKTOP_APP_HELP, 'q'),
+                    DESKTOP_APP_KEY_CLOSE);
+}
+
+static void test_desktop_app_render_clips_to_content_rect(ktest_case_t *tc)
+{
+    static uint32_t pixels[96 * 96];
+    static desktop_app_state_t apps;
+    framebuffer_info_t fb;
+    gui_pixel_surface_t surface;
+    gui_pixel_theme_t theme;
+    gui_pixel_rect_t rect;
+    uint32_t outside;
+    uint32_t inside;
+
+    desktop_apps_init(&apps);
+    desktop_app_refresh_help_for_test(&apps.help);
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 96u * sizeof(uint32_t);
+    fb.width = 96u;
+    fb.height = 96u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+    surface.fb = &fb;
+    surface.clip.x = 18;
+    surface.clip.y = 18;
+    surface.clip.w = 8;
+    surface.clip.h = 8;
+    k_memset(&theme, 0, sizeof(theme));
+    theme.window_bg = 0x00A0B0C0u;
+    rect.x = 10;
+    rect.y = 10;
+    rect.w = 40;
+    rect.h = 40;
+
+    desktop_app_render(&apps, DESKTOP_APP_HELP, &surface, &theme, &rect);
+
+    outside = pixels[17 * 96 + 19];
+    inside = pixels[19 * 96 + 19];
+    KTEST_EXPECT_EQ(tc, outside, 0u);
+    KTEST_EXPECT_NE(tc, inside, 0u);
+}
+
 static void test_desktop_processes_app_handles_empty_snapshot(ktest_case_t *tc)
 {
     static desktop_app_state_t apps;
@@ -2947,6 +3005,8 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_files_app_lists_root_entries),
     KTEST_CASE(test_desktop_files_app_replaces_last_visible_line_when_truncated),
     KTEST_CASE(test_desktop_help_app_has_keyboard_page),
+    KTEST_CASE(test_desktop_help_app_q_requests_close),
+    KTEST_CASE(test_desktop_app_render_clips_to_content_rect),
     KTEST_CASE(test_desktop_processes_app_handles_empty_snapshot),
     KTEST_CASE(test_desktop_boot_layout_opens_shell_window),
     KTEST_CASE(test_desktop_layout_scales_to_framebuffer_grid),

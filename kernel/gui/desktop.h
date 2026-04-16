@@ -60,6 +60,7 @@ typedef struct {
     uint32_t shell_pid;
     uint32_t shell_pgid;
     gui_terminal_t shell_terminal;
+    desktop_app_state_t app_state;
     desktop_window_t windows[DESKTOP_MAX_WINDOWS];
     int next_window_id;
     int focused_window_id;
