@@ -19,6 +19,7 @@ Required:
 - `nasm`
 - `qemu-system-i386`
 - `x86_64-elf-gcc`
+- `x86_64-elf-g++`
 - `x86_64-elf-ld`
 - `i686-elf-grub-mkrescue`
 - `xorriso`
@@ -43,6 +44,13 @@ brew install i386-elf-gdb pandoc typst
 pip3 install cairosvg
 # or: brew install librsvg
 ```
+Verify the compiler tools you need are on `PATH`:
+
+```sh
+x86_64-elf-gcc --version
+x86_64-elf-g++ --version
+x86_64-elf-ld --version
+```
 
 ### Windows
 
@@ -58,6 +66,7 @@ You still need an `x86_64-elf` cross toolchain and `i386-elf-gdb` on your `PATH`
 
 ```sh
 x86_64-elf-gcc --version
+x86_64-elf-g++ --version
 x86_64-elf-ld --version
 i386-elf-gdb --version
 i686-elf-grub-mkrescue --version
@@ -92,6 +101,14 @@ pip3 install cairosvg
 ```
 
 As on Windows, make sure the `x86_64-elf` cross compiler/linker and optional `i386-elf-gdb` are installed and visible on `PATH`.
+
+Verify the compiler tools you need are on `PATH`:
+
+```sh
+x86_64-elf-gcc --version
+x86_64-elf-g++ --version
+x86_64-elf-ld --version
+```
 
 If your distro installs `grub-mkrescue` but not `i686-elf-grub-mkrescue`, add a symlink or wrapper with the `i686-elf-grub-mkrescue` name because that is what this repo's Makefile invokes.
 
@@ -133,6 +150,23 @@ make MOUSE_SPEED=6 os.iso
 `16`. The option affects framebuffer mouse motion only. VGA text fallback
 pointer motion remains unscaled, at one pixel per raw mouse unit before cell
 coordinates are derived.
+
+### Userland C++ Support
+
+User programs can be written in C or in a freestanding C++ subset. C programs
+continue to compile with `x86_64-elf-gcc`; C++ programs compile with
+`x86_64-elf-g++` and link against the repo-owned user runtime in `user/lib`.
+
+The current C++ userland supports global constructors and destructors,
+classes, virtual dispatch, `new`, `delete`, `new[]`, and `delete[]`.
+Allocation uses the existing `malloc` and `free` implementation backed by
+`SYS_BRK`.
+
+Exceptions, RTTI, `libstdc++`, and `libsupc++` are not part of the current
+runtime. Code that depends on those features should fail at compile or link
+time instead of pulling in hosted runtime libraries implicitly.
+
+The smoke binary is `/bin/cpphello`, built from `user/cpphello.cpp`.
 
 ## Debugging
 
