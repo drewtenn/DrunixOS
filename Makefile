@@ -73,7 +73,7 @@ kernel/test/test_desktop.o: .mouse-speed-flag
 GRUB_MKRESCUE := i686-elf-grub-mkrescue
 ISO_KERNEL    := iso/boot/kernel.elf
 DISK_SECTORS  := 102400
-USER_PROGS    := shell chello hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello linuxhello linuxprobe linuxabi busybox bbcompat dufstest redirtest
+USER_PROGS    := shell chello hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello linuxhello linuxprobe linuxabi busybox bbcompat dufstest redirtest ext3wtest
 USER_BINS     := $(addprefix user/,$(USER_PROGS))
 DISK_FILES    := $(foreach prog,$(USER_PROGS),user/$(prog) bin/$(prog)) \
                  tools/hello.txt hello.txt \
