@@ -440,7 +440,7 @@ static int ext3_overlay_put(uint32_t fs_block, const uint8_t *data)
 {
     uint8_t *copy;
 
-    if (!data || fs_block == 0)
+    if (!data)
         return -1;
     for (uint32_t i = 0; i < g_overlay_count; i++) {
         if (g_overlay[i].fs_block == fs_block) {
@@ -462,6 +462,17 @@ static int ext3_overlay_put(uint32_t fs_block, const uint8_t *data)
     g_overlay[g_overlay_count].data = copy;
     g_overlay_count++;
     return 0;
+}
+
+static void ext3_overlay_clear(void)
+{
+    for (uint32_t i = 0; i < g_overlay_count; i++) {
+        if (g_overlay[i].data)
+            kfree(g_overlay[i].data);
+        g_overlay[i].fs_block = 0;
+        g_overlay[i].data = 0;
+    }
+    g_overlay_count = 0;
 }
 
 static int ext3_read_inode(uint32_t ino, ext3_inode_t *out)
@@ -1981,6 +1992,47 @@ static int ext3_tx_end(int rc)
     return rc;
 }
 
+static int ext3_load_bg(void)
+{
+    uint8_t *blk = (uint8_t *)kmalloc(g_block_size);
+
+    if (!blk)
+        return -1;
+    if (ext3_read_block(g_bgdt_block, blk) != 0) {
+        kfree(blk);
+        return -1;
+    }
+    k_memcpy(&g_bg, blk, sizeof(g_bg));
+    kfree(blk);
+    return 0;
+}
+
+static int ext3_checkpoint_replay(void)
+{
+    ext3_inode_t journal;
+
+    if (g_overlay_count == 0)
+        return 0;
+    if (!g_dev->write_sector)
+        return -1;
+    for (uint32_t i = 0; i < g_overlay_count; i++) {
+        if (ext3_write_disk_block(g_overlay[i].fs_block,
+                                  g_overlay[i].data) != 0)
+            return -1;
+    }
+    if (g_super.journal_inum == 0 ||
+        ext3_read_inode(g_super.journal_inum, &journal) != 0)
+        return -1;
+    if (jbd_update_super(&journal, 0u, 0u) != 0)
+        return -1;
+    g_super.feature_incompat &= ~EXT3_FEATURE_INCOMPAT_RECOVER;
+    if (ext3_flush_super_raw() != 0)
+        return -1;
+    ext3_overlay_clear();
+    g_needs_recovery = 0;
+    return ext3_load_bg();
+}
+
 static int jbd_revoked(uint32_t block, const uint32_t *revokes,
                        uint32_t revoke_count)
 {
@@ -2241,7 +2293,6 @@ static int ext3_replay_journal(void)
 
 static int ext3_init(void *ctx)
 {
-    uint8_t *blk;
     uint32_t allowed_incompat;
     uint32_t allowed_ro;
 
@@ -2288,18 +2339,13 @@ static int ext3_init(void *ctx)
     g_needs_recovery =
         (g_super.feature_incompat & EXT3_FEATURE_INCOMPAT_RECOVER) != 0;
     g_bgdt_block = (g_block_size == 1024u) ? 2u : 1u;
-    blk = (uint8_t *)kmalloc(g_block_size);
-    if (!blk)
+    if (ext3_load_bg() != 0)
         return -1;
-    if (ext3_read_block(g_bgdt_block, blk) != 0) {
-        kfree(blk);
-        return -1;
-    }
-    k_memcpy(&g_bg, blk, sizeof(g_bg));
-    kfree(blk);
 
     if (ext3_replay_journal() != 0)
         return -1;
+    if (g_overlay_count != 0 && ext3_checkpoint_replay() != 0)
+        klog("EXT3", "journal checkpoint failed; keeping writes disabled");
 
     if (!g_needs_recovery && g_overlay_count == 0 && g_dev->write_sector &&
         g_super.blocks_count <= g_super.blocks_per_group &&
