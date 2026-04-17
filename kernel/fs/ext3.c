@@ -154,6 +154,8 @@ static ext3_tx_block_t g_tx[EXT3_TX_MAX_BLOCKS];
 static uint32_t g_tx_count;
 static uint32_t g_tx_depth;
 static uint32_t g_tx_failed;
+static ext3_super_t g_tx_super_before;
+static uint32_t g_tx_has_snapshot;
 
 static uint16_t be16(const uint8_t *p)
 {
@@ -166,6 +168,14 @@ static uint32_t be32(const uint8_t *p)
            ((uint32_t)p[1] << 16) |
            ((uint32_t)p[2] << 8) |
            p[3];
+}
+
+static void put_be32(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)(v >> 24);
+    p[1] = (uint8_t)(v >> 16);
+    p[2] = (uint8_t)(v >> 8);
+    p[3] = (uint8_t)v;
 }
 
 static int ext3_read_bytes(uint32_t byte_off, uint8_t *buf, uint32_t count)
@@ -282,6 +292,7 @@ static void ext3_tx_reset(void)
     g_tx_count = 0;
     g_tx_depth = 0;
     g_tx_failed = 0;
+    g_tx_has_snapshot = 0;
 }
 
 static int ext3_read_block(uint32_t block, uint8_t *buf)
@@ -363,10 +374,17 @@ static void ext3_bmap_clear(uint8_t *map, uint32_t bit)
     map[bit / 8u] &= (uint8_t)~(1u << (bit % 8u));
 }
 
+static int ext3_flush_super_image_raw(const ext3_super_t *super)
+{
+    if (!super)
+        return -1;
+    return ext3_write_bytes(EXT3_SUPER_OFFSET, (const uint8_t *)super,
+                            sizeof(g_super));
+}
+
 static int ext3_flush_super_raw(void)
 {
-    return ext3_write_bytes(EXT3_SUPER_OFFSET, (const uint8_t *)&g_super,
-                            sizeof(g_super));
+    return ext3_flush_super_image_raw(&g_super);
 }
 
 static int ext3_flush_super(void)
@@ -1708,6 +1726,163 @@ static int ext3_journal_read_block(const ext3_inode_t *journal,
     if (phys == 0)
         return -1;
     return ext3_read_disk_block(phys, buf);
+}
+
+static int ext3_journal_write_block(const ext3_inode_t *journal,
+                                    uint32_t logical, const uint8_t *buf)
+{
+    uint32_t phys = ext3_block_index(journal, logical);
+
+    if (phys == 0)
+        return -1;
+    return ext3_write_disk_block(phys, buf);
+}
+
+static void jbd_write_header(uint8_t *blk, uint32_t type, uint32_t seq)
+{
+    put_be32(blk, JBD_MAGIC);
+    put_be32(blk + 4u, type);
+    put_be32(blk + 8u, seq);
+}
+
+static int jbd_update_super(const ext3_inode_t *journal, uint32_t start,
+                            uint32_t seq)
+{
+    uint8_t *blk = (uint8_t *)kmalloc(g_block_size);
+    int rc;
+
+    if (!blk)
+        return -1;
+    if (ext3_journal_read_block(journal, 0, blk) != 0) {
+        kfree(blk);
+        return -1;
+    }
+    if (seq != 0)
+        put_be32(blk + 24u, seq);
+    put_be32(blk + 28u, start);
+    rc = ext3_journal_write_block(journal, 0, blk);
+    kfree(blk);
+    return rc;
+}
+
+static int jbd_write_transaction(const ext3_inode_t *journal, uint32_t seq)
+{
+    uint8_t *desc;
+    uint8_t *data;
+    uint32_t off = 12u;
+
+    if (g_tx_count == 0)
+        return 0;
+    if (g_tx_count + 2u >= (uint32_t)(journal->size / g_block_size))
+        return -1;
+    if (12u + g_tx_count * 8u > g_block_size)
+        return -1;
+
+    desc = (uint8_t *)kmalloc(g_block_size);
+    data = (uint8_t *)kmalloc(g_block_size);
+    if (!desc || !data) {
+        if (desc) kfree(desc);
+        if (data) kfree(data);
+        return -1;
+    }
+
+    k_memset(desc, 0, g_block_size);
+    jbd_write_header(desc, JBD_DESCRIPTOR_BLOCK, seq);
+    for (uint32_t i = 0; i < g_tx_count; i++) {
+        uint32_t flags = JBD_FLAG_SAME_UUID;
+        if (i + 1u == g_tx_count)
+            flags |= JBD_FLAG_LAST_TAG;
+        if (be32(g_tx[i].data) == JBD_MAGIC)
+            flags |= JBD_FLAG_ESCAPE;
+        put_be32(desc + off, g_tx[i].fs_block);
+        put_be32(desc + off + 4u, flags);
+        off += 8u;
+    }
+    if (ext3_journal_write_block(journal, 1u, desc) != 0) {
+        kfree(desc);
+        kfree(data);
+        return -1;
+    }
+
+    for (uint32_t i = 0; i < g_tx_count; i++) {
+        k_memcpy(data, g_tx[i].data, g_block_size);
+        if (be32(data) == JBD_MAGIC)
+            k_memset(data, 0, 4u);
+        if (ext3_journal_write_block(journal, 2u + i, data) != 0) {
+            kfree(desc);
+            kfree(data);
+            return -1;
+        }
+    }
+
+    k_memset(desc, 0, g_block_size);
+    jbd_write_header(desc, JBD_COMMIT_BLOCK, seq);
+    if (ext3_journal_write_block(journal, 2u + g_tx_count, desc) != 0) {
+        kfree(desc);
+        kfree(data);
+        return -1;
+    }
+
+    kfree(desc);
+    kfree(data);
+    return 0;
+}
+
+static int ext3_checkpoint_tx(void)
+{
+    for (uint32_t i = 0; i < g_tx_count; i++) {
+        if (ext3_write_disk_block(g_tx[i].fs_block, g_tx[i].data) != 0)
+            return -1;
+    }
+    return 0;
+}
+
+static int ext3_commit_tx(void)
+{
+    ext3_inode_t journal;
+    ext3_super_t recover_super;
+    uint8_t *jsb;
+    uint32_t seq;
+
+    if (g_tx_failed)
+        return -1;
+    if (g_tx_count == 0)
+        return 0;
+    if (g_super.journal_dev != 0 || g_super.journal_inum == 0)
+        return -1;
+    if (ext3_read_inode(g_super.journal_inum, &journal) != 0)
+        return -1;
+
+    jsb = (uint8_t *)kmalloc(g_block_size);
+    if (!jsb)
+        return -1;
+    if (ext3_journal_read_block(&journal, 0, jsb) != 0) {
+        kfree(jsb);
+        return -1;
+    }
+    seq = be32(jsb + 24u);
+    if (seq == 0)
+        seq = 1u;
+    kfree(jsb);
+
+    recover_super = g_tx_has_snapshot ? g_tx_super_before : g_super;
+    recover_super.feature_incompat |= EXT3_FEATURE_INCOMPAT_RECOVER;
+    if (ext3_flush_super_image_raw(&recover_super) != 0)
+        return -1;
+
+    g_super.feature_incompat |= EXT3_FEATURE_INCOMPAT_RECOVER;
+    if (ext3_flush_super() != 0)
+        return -1;
+    if (jbd_update_super(&journal, 1u, seq) != 0)
+        return -1;
+    if (jbd_write_transaction(&journal, seq) != 0)
+        return -1;
+    if (ext3_checkpoint_tx() != 0)
+        return -1;
+    if (jbd_update_super(&journal, 0u, seq + 1u) != 0)
+        return -1;
+    g_super.feature_incompat &= ~EXT3_FEATURE_INCOMPAT_RECOVER;
+    return ext3_flush_super_raw();
 }
 
 static int jbd_revoked(uint32_t block, const uint32_t *revokes,
