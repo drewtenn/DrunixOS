@@ -4,6 +4,10 @@ NASM    := nasm
 PYTHON  := python3
 QEMU    := qemu-system-i386
 GDB     := i386-elf-gdb
+E2FSPROGS_SBIN ?= /opt/homebrew/opt/e2fsprogs/sbin
+E2FSCK  ?= $(if $(wildcard $(E2FSPROGS_SBIN)/e2fsck),$(E2FSPROGS_SBIN)/e2fsck,e2fsck)
+DUMPE2FS ?= $(if $(wildcard $(E2FSPROGS_SBIN)/dumpe2fs),$(E2FSPROGS_SBIN)/dumpe2fs,dumpe2fs)
+DEBUGFS ?= $(if $(wildcard $(E2FSPROGS_SBIN)/debugfs),$(E2FSPROGS_SBIN)/debugfs,debugfs)
 CFLAGS  := -m32 -g -ffreestanding -mno-sse -mno-sse2 -mno-mmx -msoft-float -Wstack-usage=1024
 INC     := -I kernel -I kernel/arch -I kernel/mm -I kernel/drivers -I kernel/proc -I kernel/fs -I kernel/lib -I kernel/gui
 DEPFLAGS := -MMD -MP
@@ -124,7 +128,7 @@ $(USER_BINS):
 
 # ─── Hard-disk images ────────────────────────────────────────────────────────
 # disk.img is the primary ATA master (hd0).  By default it is a deterministic
-# ext3-compatible read-only root.  ROOT_FS=dufs builds hd0 as DUFS instead.
+# Linux-compatible ext3 root.  ROOT_FS=dufs builds hd0 as DUFS instead.
 ifeq ($(ROOT_FS),dufs)
 disk.img: $(USER_BINS) tools/hello.txt tools/readme.txt tools/mkfs.py
 	$(PYTHON) tools/mkfs.py $@ $(DISK_SECTORS) $(DISK_FILES)
@@ -275,6 +279,12 @@ kernel: os.iso
 #             programs.  Most run/debug targets intentionally do NOT depend on
 #             this so that the filesystem state is preserved across boots.
 disk: disk.img dufs.img
+
+validate-ext3-linux: disk.img tools/check_ext3_linux_compat.py
+	$(PYTHON) tools/check_ext3_linux_compat.py disk.img
+	$(E2FSCK) -fn disk.img
+	$(DUMPE2FS) -h disk.img | grep -q 'Filesystem features:.*has_journal'
+	$(DUMPE2FS) -h disk.img | grep -q 'Journal inode:[[:space:]]*8'
 
 # `pdf`    — render the PDF book from the markdown chapter sources.
 pdf: docs/Drunix\ OS.pdf
@@ -431,6 +441,37 @@ test-linux-abi:
 	! grep -q "LINUXABI FAIL" linuxabi.log
 	! grep -Eq "unknown syscall|Unhandled syscall" debugcon-linuxabi.log
 
+# `test-ext3-linux-compat` — verify a freshly generated ext3 root with host
+#                            e2fsprogs, then boot Drunix writable ext3 smoke
+#                            tests and fsck the mutated root image.
+test-ext3-linux-compat:
+	$(MAKE) validate-ext3-linux
+	$(MAKE) KLOG_TO_DEBUGCON=1 INIT_PROGRAM=bin/ext3wtest INIT_ARG0=ext3wtest kernel disk
+	rm -f serial-ext3w.log debugcon-ext3w.log disk-ext3w.img dufs-ext3w.img ext3wtest.log
+	cp -f disk.img disk-ext3w.img
+	cp -f dufs.img dufs-ext3w.img
+	sh -c '$(QEMU) -display none -drive format=raw,file=disk-ext3w.img,if=ide,index=0 -drive format=raw,file=dufs-ext3w.img,if=ide,index=1 -cdrom os.iso -boot d -no-reboot -no-shutdown -serial file:serial-ext3w.log -debugcon file:debugcon-ext3w.log -global isa-debugcon.iobase=0xe9 >/dev/null 2>&1 & pid=$$!; sleep 20; kill $$pid >/dev/null 2>&1 || true; wait $$pid >/dev/null 2>&1 || true'
+	$(PYTHON) tools/dufs_extract.py dufs-ext3w.img ext3wtest.log ext3wtest.log
+	cat ext3wtest.log
+	grep -q "EXT3WTEST PASS" ext3wtest.log
+	$(PYTHON) tools/check_ext3_linux_compat.py disk-ext3w.img
+	$(E2FSCK) -fn disk-ext3w.img
+
+# `test-ext3-host-write-interop` — use e2fsprogs debugfs to write into the
+#                                  generated ext3 image, then read it back and
+#                                  fsck the host-mutated image.
+test-ext3-host-write-interop:
+	$(MAKE) validate-ext3-linux
+	rm -f disk-ext3-host.img build/ext3-host.txt ext3-host-readback.txt
+	mkdir -p build
+	printf 'linux-host\n' > build/ext3-host.txt
+	cp -f disk.img disk-ext3-host.img
+	$(DEBUGFS) -w -R 'write build/ext3-host.txt linux-host.txt' disk-ext3-host.img
+	$(DEBUGFS) -R 'cat linux-host.txt' disk-ext3-host.img > ext3-host-readback.txt
+	grep -q '^linux-host$$' ext3-host-readback.txt
+	$(PYTHON) tools/check_ext3_linux_compat.py disk-ext3-host.img
+	$(E2FSCK) -fn disk-ext3-host.img
+
 # `test-all` — run every test suite: in-kernel unit tests (KTEST) followed by
 #              all halt-inducing tests.  Exits non-zero if any suite fails.
 test-all:
@@ -457,16 +498,19 @@ rebuild:
 clean:
 	find kernel -name '*.o' -delete
 	find kernel -name '*.d' -delete
-	$(RM) *.elf core.* disk.img dufs.img disk-df.img dufs-df.img disk-bbcompat.img dufs-bbcompat.img disk-linuxabi.img dufs-linuxabi.img os.iso $(ISO_KERNEL) "$(PDF)" "$(EPUB)" .ktest-flag .double-fault-test-flag .klog-debugcon-flag .mouse-speed-flag .init-program-flag
+	$(RM) *.elf core.* disk.img dufs.img disk-df.img dufs-df.img disk-bbcompat.img dufs-bbcompat.img disk-linuxabi.img dufs-linuxabi.img disk-ext3w.img dufs-ext3w.img disk-ext3-host.img os.iso $(ISO_KERNEL) "$(PDF)" "$(EPUB)" .ktest-flag .double-fault-test-flag .klog-debugcon-flag .mouse-speed-flag .init-program-flag
 	$(RM) -f serial-bbcompat.log debugcon-bbcompat.log bbcompat.log
 	$(RM) -f serial-linuxabi.log debugcon-linuxabi.log linuxabi.log
+	$(RM) -f serial-ext3w.log debugcon-ext3w.log ext3wtest.log
+	$(RM) -f build/ext3-host.txt ext3-host-readback.txt
 	$(RM) -rf build/busybox
 	$(RM) -f docs/diagrams/*.png
 	$(MAKE) -C user clean
 
 .PHONY: all kernel run run-stdio run-fresh disk \
         debug debug-user debug-fresh \
-        test test-fresh test-halt test-busybox-compat test-linux-abi test-all \
+        test test-fresh test-halt test-busybox-compat test-linux-abi test-ext3-linux-compat test-ext3-host-write-interop test-all \
+        validate-ext3-linux \
         pdf epub docs \
         rebuild clean
 
