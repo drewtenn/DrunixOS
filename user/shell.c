@@ -425,7 +425,7 @@ static void cmd_pwd(void)
         return;
     }
 
-    printf("/%s\n", cwd_buf);
+    printf("%s\n", cwd_buf);
 }
 
 static void cmd_echo(int argc, char **argv)
@@ -1100,7 +1100,7 @@ static void print_prompt(void)
 {
     char cwd_buf[64];
     sys_getcwd(cwd_buf, sizeof(cwd_buf));
-    printf(TERM_COLOR_CYAN "drunix:" TERM_COLOR_GREEN "/%s" TERM_COLOR_CYAN "> " TERM_COLOR_RESET, cwd_buf);
+    printf(TERM_COLOR_CYAN "drunix:" TERM_COLOR_GREEN "%s" TERM_COLOR_CYAN "> " TERM_COLOR_RESET, cwd_buf);
 }
 
 static void redraw_prompt_line(const char *buf, int len, int prev_len)

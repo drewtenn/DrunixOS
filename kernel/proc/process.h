@@ -83,6 +83,7 @@ typedef enum {
     FD_TYPE_PIPE_WRITE = 5,  /* write end of a kernel pipe            */
     FD_TYPE_TTY        = 6,  /* TTY line discipline (stdin)           */
     FD_TYPE_PROCFILE   = 7,  /* synthetic procfs file                 */
+    FD_TYPE_DIR        = 8,  /* directory fd for Linux getdents64     */
 } fd_type_t;
 
 /*
@@ -116,6 +117,10 @@ typedef struct {
             uint32_t size;      /* last observed synthetic file size   */
             uint32_t offset;    /* current read offset                 */
         } proc;
+        struct {
+            char path[128];     /* VFS path without leading slash       */
+            uint32_t index;     /* next directory-entry index           */
+        } dir;
     } u;
 } file_handle_t;
 
@@ -178,6 +183,11 @@ typedef struct process {
     uint32_t     tty_id;        /* controlling TTY index attached to this process     */
     uint32_t     parent_pid;    /* PID of the process that created this one  */
     uint32_t     exit_status;   /* exit code from SYS_EXIT, read by waiter   */
+    uint32_t     umask;         /* Linux umask(2), inherited across fork/exec */
+    uint32_t     user_tls_base;  /* Linux i386 set_thread_area descriptor base */
+    uint32_t     user_tls_limit; /* Linux i386 set_thread_area descriptor limit */
+    uint32_t     user_tls_limit_in_pages; /* nonzero when descriptor uses 4 KiB pages */
+    uint32_t     user_tls_present; /* nonzero when the per-process TLS slot is valid */
     wait_queue_t state_waiters; /* waitpid waiters for exit/stop transitions */
     vm_area_t    vmas[PROCESS_MAX_VMAS]; /* sorted by ascending start address */
     uint32_t     vma_count;
@@ -297,6 +307,13 @@ void process_build_initial_frame(process_t *proc);
  */
 void process_build_exec_frame(process_t *proc, uint32_t old_pd_phys,
                               uint32_t old_kstack_bottom);
+
+/*
+ * process_restore_user_tls: load this process's Linux i386 TLS descriptor
+ * into the single hardware GDT TLS slot. The scheduler calls this whenever it
+ * changes the current process because the GDT itself is global.
+ */
+void process_restore_user_tls(const process_t *proc);
 
 /*
  * process_launch: switch to the process's address space and perform an iret

@@ -37,6 +37,16 @@ extern uint32_t g_irq_frame_esp;
 
 /* ── Internal helpers ───────────────────────────────────────────────────── */
 
+static void sanitize_return_segments(uint32_t *frame)
+{
+    if (!frame || (frame[15] & 3u) != 3u)
+        return;
+
+    if (!g_current->user_tls_present &&
+        (frame[0] & 0xFFFFu) == GDT_USER_TLS_SEG)
+        frame[0] = 0;
+}
+
 /*
  * sched_pick_next: round-robin from g_current, skipping non-READY slots.
  * Returns NULL if no READY process found.
@@ -272,6 +282,7 @@ void sched_exec_current(process_t *replacement)
     g_current->state = PROC_RUNNING;
 
     gdt_set_tss_esp0(g_current->kstack_top);
+    process_restore_user_tls(g_current);
     __asm__ volatile ("fxrstor %0" :: "m"(*g_current->fpu_state));
     switch_context((uint32_t *)0, g_current->saved_esp, g_current->pd_phys);
 
@@ -444,6 +455,7 @@ void schedule(void)
     g_current = next;
     next->state = PROC_RUNNING;
     gdt_set_tss_esp0(next->kstack_top);
+    process_restore_user_tls(next);
 
     /* Restore next's FPU/SSE state before switching stacks */
     __asm__ volatile ("fxrstor %0" :: "m"(*next->fpu_state));
@@ -702,6 +714,7 @@ uint32_t sched_signal_check(uint32_t frame_esp)
     if (!g_current) return frame_esp;
 
     uint32_t *frame = (uint32_t *)frame_esp;
+    sanitize_return_segments(frame);
 
     /*
      * Only deliver signals when returning to ring-3 code.  The saved CS is

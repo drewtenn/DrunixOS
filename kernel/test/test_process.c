@@ -31,6 +31,11 @@ extern void process_exec_launch(void);
 #define TEST_LINUX_AT_NO_AUTOMOUNT 0x0800u
 #define TEST_LINUX_AT_EMPTY_PATH 0x1000u
 #define TEST_LINUX_STATX_BASIC_STATS 0x7ffu
+#define TEST_LINUX_F_DUPFD    0u
+#define TEST_LINUX_F_GETFD    1u
+#define TEST_LINUX_F_SETFD    2u
+#define TEST_LINUX_F_GETFL    3u
+#define TEST_LINUX_TIOCGWINSZ 0x5413u
 
 static uint32_t test_align_up(uint32_t val, uint32_t align)
 {
@@ -854,6 +859,191 @@ static void test_linux_syscalls_fill_uname_time_and_fstat64(ktest_case_t *tc)
     stop_syscall_test_process(cur);
 }
 
+static void test_linux_syscalls_support_busybox_identity_and_rt_sigmask(ktest_case_t *tc)
+{
+    static process_t seed;
+    process_t *cur = start_syscall_test_process(&seed);
+    uint8_t *page;
+
+    KTEST_ASSERT_NOT_NULL(tc, cur);
+    KTEST_ASSERT_EQ(tc, map_test_user_page(cur, 0x00800000u), 0u);
+    page = mapped_alias(cur, 0x00800000u);
+    KTEST_ASSERT_NOT_NULL(tc, page);
+
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_GETUID32, 0, 0, 0, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_GETGID32, 0, 0, 0, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_GETEUID32, 0, 0, 0, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_GETEGID32, 0, 0, 0, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_SETGID32, 0, 0, 0, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_SETUID32, 0, 0, 0, 0, 0, 0),
+                    0u);
+
+    page[0x100] = (uint8_t)(1u << 2);  /* block signal 2 */
+    page[0x101] = 0;
+    page[0x102] = 0;
+    page[0x103] = 0;
+    page[0x104] = 0xAA;
+    page[0x105] = 0xAA;
+    page[0x106] = 0xAA;
+    page[0x107] = 0xAA;
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_RT_SIGPROCMASK, 0,
+                                    0x00800100u, 0x00800200u, 8, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc, cur->sig_blocked, 1u << 2);
+    KTEST_EXPECT_EQ(tc, page[0x200], 0u);
+    KTEST_EXPECT_EQ(tc, page[0x204], 0u);
+
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_RT_SIGPROCMASK, 1,
+                                    0x00800100u, 0x00800200u, 8, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc, cur->sig_blocked, 0u);
+    KTEST_EXPECT_EQ(tc, page[0x200], 1u << 2);
+
+    stop_syscall_test_process(cur);
+}
+
+static void test_linux_syscalls_support_busybox_stdio_helpers(ktest_case_t *tc)
+{
+    static process_t seed;
+    process_t *cur = start_syscall_test_process(&seed);
+    uint8_t *page;
+    uint32_t *u32;
+
+    KTEST_ASSERT_NOT_NULL(tc, cur);
+    KTEST_ASSERT_EQ(tc, map_test_user_page(cur, 0x00800000u), 0u);
+    page = mapped_alias(cur, 0x00800000u);
+    KTEST_ASSERT_NOT_NULL(tc, page);
+    u32 = (uint32_t *)page;
+
+    u32[0] = 0x00800100u;
+    u32[1] = 3u;
+    u32[2] = 0x00800110u;
+    u32[3] = 2u;
+    page[0x100] = (uint8_t)'o';
+    page[0x101] = (uint8_t)'k';
+    page[0x102] = (uint8_t)'\n';
+    page[0x110] = (uint8_t)'.';
+    page[0x111] = (uint8_t)'\n';
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_WRITEV, 1, 0x00800000u,
+                                    2, 0, 0, 0),
+                    5u);
+
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_GETCWD, 0x00800500u,
+                                    32, 0, 0, 0, 0),
+                    2u);
+    KTEST_EXPECT_EQ(tc, page[0x500], (uint8_t)'/');
+    KTEST_EXPECT_EQ(tc, page[0x501], 0u);
+
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_IOCTL, 1, TEST_LINUX_TIOCGWINSZ,
+                                    0x00800200u, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_TRUE(tc, page[0x200] != 0u || page[0x201] != 0u);
+    KTEST_EXPECT_TRUE(tc, page[0x202] != 0u || page[0x203] != 0u);
+
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_FCNTL64, 1, TEST_LINUX_F_GETFD,
+                                    0, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_FCNTL64, 1, TEST_LINUX_F_SETFD,
+                                    1, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_FCNTL64, 1, TEST_LINUX_F_GETFL,
+                                    0, 0, 0, 0),
+                    1u);
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_FCNTL64, 1, TEST_LINUX_F_DUPFD,
+                                    4, 0, 0, 0),
+                    4u);
+    KTEST_EXPECT_EQ(tc, cur->open_files[4].type, FD_TYPE_STDOUT);
+
+    cur->open_files[3].type = FD_TYPE_FILE;
+    cur->open_files[3].writable = 0;
+    cur->open_files[3].u.file.inode_num = 1u;
+    cur->open_files[3].u.file.size = 100u;
+    cur->open_files[3].u.file.offset = 10u;
+
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS__LLSEEK, 3, 0, 5,
+                                    0x00800300u, 1, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc, u32[0x300 / 4], 15u);
+    KTEST_EXPECT_EQ(tc, u32[0x304 / 4], 0u);
+    KTEST_EXPECT_EQ(tc, cur->open_files[3].u.file.offset, 15u);
+
+    u32[0x400 / 4] = 5u;
+    u32[0x404 / 4] = 0u;
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_SENDFILE64, 1, 3,
+                                    0x00800400u, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc, u32[0x400 / 4], 5u);
+
+    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_GETTID, 0, 0, 0, 0, 0, 0),
+                    cur->pid);
+
+    stop_syscall_test_process(cur);
+}
+
+static void test_process_restore_user_tls_switches_global_gdt_slot(ktest_case_t *tc)
+{
+    static process_t first;
+    static process_t second;
+    uint32_t base = 0;
+    uint32_t limit = 0;
+    int limit_in_pages = 0;
+    int present = 0;
+
+    k_memset(&first, 0, sizeof(first));
+    k_memset(&second, 0, sizeof(second));
+
+    first.user_tls_present = 1;
+    first.user_tls_base = 0x11111000u;
+    first.user_tls_limit = 0x00000FFFu;
+    first.user_tls_limit_in_pages = 0;
+
+    second.user_tls_present = 1;
+    second.user_tls_base = 0x22222000u;
+    second.user_tls_limit = 0x000FFFFFu;
+    second.user_tls_limit_in_pages = 1;
+
+    process_restore_user_tls(&first);
+    gdt_get_user_tls_for_test(&base, &limit, &limit_in_pages, &present);
+    KTEST_EXPECT_EQ(tc, present, 1);
+    KTEST_EXPECT_EQ(tc, base, first.user_tls_base);
+    KTEST_EXPECT_EQ(tc, limit, first.user_tls_limit);
+    KTEST_EXPECT_EQ(tc, limit_in_pages, first.user_tls_limit_in_pages);
+
+    process_restore_user_tls(&second);
+    gdt_get_user_tls_for_test(&base, &limit, &limit_in_pages, &present);
+    KTEST_EXPECT_EQ(tc, present, 1);
+    KTEST_EXPECT_EQ(tc, base, second.user_tls_base);
+    KTEST_EXPECT_EQ(tc, limit, second.user_tls_limit);
+    KTEST_EXPECT_EQ(tc, limit_in_pages, second.user_tls_limit_in_pages);
+
+    second.user_tls_present = 0;
+    process_restore_user_tls(&second);
+    gdt_get_user_tls_for_test(&base, &limit, &limit_in_pages, &present);
+    KTEST_EXPECT_EQ(tc, present, 0);
+}
+
 static void test_linux_syscalls_install_tls_and_map_mmap2(ktest_case_t *tc)
 {
     static process_t seed;
@@ -925,6 +1115,9 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_mem_forensics_classifies_stack_limit_fault),
     KTEST_CASE(test_mem_forensics_counts_present_heap_pages),
     KTEST_CASE(test_linux_syscalls_fill_uname_time_and_fstat64),
+    KTEST_CASE(test_linux_syscalls_support_busybox_identity_and_rt_sigmask),
+    KTEST_CASE(test_linux_syscalls_support_busybox_stdio_helpers),
+    KTEST_CASE(test_process_restore_user_tls_switches_global_gdt_slot),
     KTEST_CASE(test_linux_syscalls_install_tls_and_map_mmap2),
 };
 

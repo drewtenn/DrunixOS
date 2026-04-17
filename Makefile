@@ -8,7 +8,13 @@ CFLAGS  := -m32 -g -ffreestanding -mno-sse -mno-sse2 -mno-mmx -msoft-float -Wsta
 INC     := -I kernel -I kernel/arch -I kernel/mm -I kernel/drivers -I kernel/proc -I kernel/fs -I kernel/lib -I kernel/gui
 DEPFLAGS := -MMD -MP
 MOUSE_SPEED ?= 4
+INIT_PROGRAM ?= bin/shell
+INIT_ARG0 ?= shell
+INIT_ENV0 ?= PATH=/bin
 CFLAGS += -DMOUSE_FRAMEBUFFER_PIXEL_SCALE=$(MOUSE_SPEED)
+CFLAGS += -DDRUNIX_INIT_PROGRAM=\"$(INIT_PROGRAM)\"
+CFLAGS += -DDRUNIX_INIT_ARG0=\"$(INIT_ARG0)\"
+CFLAGS += -DDRUNIX_INIT_ENV0=\"$(INIT_ENV0)\"
 
 # ─── Unit tests ──────────────────────────────────────────────────────────────
 # Build with KTEST=1 to compile the in-kernel test suite and run it at boot:
@@ -50,10 +56,13 @@ endif
 	echo "$(KLOG_TO_DEBUGCON)" | cmp -s - $@ || echo "$(KLOG_TO_DEBUGCON)" > $@
 .mouse-speed-flag: FORCE
 	echo "$(MOUSE_SPEED)" | cmp -s - $@ || echo "$(MOUSE_SPEED)" > $@
+.init-program-flag: FORCE
+	printf '%s\n%s\n%s\n' "$(INIT_PROGRAM)" "$(INIT_ARG0)" "$(INIT_ENV0)" | cmp -s - $@ || printf '%s\n%s\n%s\n' "$(INIT_PROGRAM)" "$(INIT_ARG0)" "$(INIT_ENV0)" > $@
 FORCE:
 
 kernel/kernel.o: .ktest-flag
 kernel/kernel.o: .double-fault-test-flag
+kernel/kernel.o: .init-program-flag
 kernel/lib/klog.o: .klog-debugcon-flag
 kernel/drivers/mouse.o: .mouse-speed-flag
 kernel/test/test_desktop.o: .mouse-speed-flag
@@ -62,7 +71,7 @@ kernel/test/test_desktop.o: .mouse-speed-flag
 GRUB_MKRESCUE := i686-elf-grub-mkrescue
 ISO_KERNEL    := iso/boot/kernel.elf
 DISK_SECTORS  := 102400
-USER_PROGS    := shell chello hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello linuxhello linuxprobe
+USER_PROGS    := shell chello hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello linuxhello linuxprobe linuxabi busybox bbcompat
 USER_BINS     := $(addprefix user/,$(USER_PROGS))
 DISK_FILES    := $(foreach prog,$(USER_PROGS),user/$(prog) bin/$(prog)) \
                  tools/hello.txt hello.txt \
@@ -382,19 +391,46 @@ test-halt:
 	grep -q "\[PANIC\] --- DOUBLE FAULT ---" debugcon-df.log
 	grep -q "fault entered through dedicated TSS" debugcon-df.log
 
+# `test-busybox-compat` — boot the unattended BusyBox compatibility runner as
+#                         the initial process, then extract its on-disk report.
+test-busybox-compat:
+	$(MAKE) KLOG_TO_DEBUGCON=1 INIT_PROGRAM=bin/bbcompat INIT_ARG0=bbcompat kernel disk
+	rm -f serial-bbcompat.log debugcon-bbcompat.log disk-bbcompat.img bbcompat.log
+	cp -f disk.img disk-bbcompat.img
+	sh -c '$(QEMU) -display none -drive format=raw,file=disk-bbcompat.img,if=ide,index=0 -cdrom os.iso -boot d -no-reboot -no-shutdown -serial file:serial-bbcompat.log -debugcon file:debugcon-bbcompat.log -global isa-debugcon.iobase=0xe9 >/dev/null 2>&1 & pid=$$!; sleep 120; kill $$pid >/dev/null 2>&1 || true; wait $$pid >/dev/null 2>&1 || true'
+	$(PYTHON) tools/dufs_extract.py disk-bbcompat.img bbcompat.log bbcompat.log
+	cat bbcompat.log
+	grep -q "BBCOMPAT SUMMARY passed 255/255" bbcompat.log
+	! grep -q "BBCOMPAT FAIL" bbcompat.log
+	! grep -Eq "unknown syscall|Unhandled syscall" debugcon-bbcompat.log
+
+# `test-linux-abi` — boot a static Linux/i386 ELF that checks syscall return
+#                    values and errno-compatible negative results directly.
+test-linux-abi:
+	$(MAKE) KLOG_TO_DEBUGCON=1 INIT_PROGRAM=bin/linuxabi INIT_ARG0=linuxabi kernel disk
+	rm -f serial-linuxabi.log debugcon-linuxabi.log disk-linuxabi.img linuxabi.log
+	cp -f disk.img disk-linuxabi.img
+	sh -c '$(QEMU) -display none -drive format=raw,file=disk-linuxabi.img,if=ide,index=0 -cdrom os.iso -boot d -no-reboot -no-shutdown -serial file:serial-linuxabi.log -debugcon file:debugcon-linuxabi.log -global isa-debugcon.iobase=0xe9 >/dev/null 2>&1 & pid=$$!; sleep 30; kill $$pid >/dev/null 2>&1 || true; wait $$pid >/dev/null 2>&1 || true'
+	$(PYTHON) tools/dufs_extract.py disk-linuxabi.img linuxabi.log linuxabi.log
+	cat linuxabi.log
+	grep -q "LINUXABI SUMMARY passed 355/355" linuxabi.log
+	! grep -q "LINUXABI FAIL" linuxabi.log
+	! grep -Eq "unknown syscall|Unhandled syscall" debugcon-linuxabi.log
+
 # `test-all` — run every test suite: in-kernel unit tests (KTEST) followed by
 #              all halt-inducing tests.  Exits non-zero if any suite fails.
 test-all:
 	$(MAKE) test
+	$(MAKE) test-linux-abi
 	$(MAKE) test-halt
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UTILITY TARGETS
 # ─────────────────────────────────────────────────────────────────────────────
 
-# `all`     — default entry point: build the kernel ISO, then boot the OS using
-#             the existing disk image.  Does NOT rebuild the filesystem.
-all: run
+# `all`     — default entry point: build the kernel ISO and disk image, then
+#             boot the OS with the freshly built filesystem.
+all: run-fresh
 
 # `rebuild` — wipe all build outputs, rebuild the kernel and filesystem from
 #             scratch, and boot.  Use this when you want a completely clean slate.
@@ -407,13 +443,16 @@ rebuild:
 clean:
 	find kernel -name '*.o' -delete
 	find kernel -name '*.d' -delete
-	$(RM) *.elf core.* disk.img os.iso $(ISO_KERNEL) "$(PDF)" "$(EPUB)" .ktest-flag .double-fault-test-flag .klog-debugcon-flag .mouse-speed-flag
+	$(RM) *.elf core.* disk.img disk-bbcompat.img disk-linuxabi.img os.iso $(ISO_KERNEL) "$(PDF)" "$(EPUB)" .ktest-flag .double-fault-test-flag .klog-debugcon-flag .mouse-speed-flag .init-program-flag
+	$(RM) -f serial-bbcompat.log debugcon-bbcompat.log bbcompat.log
+	$(RM) -f serial-linuxabi.log debugcon-linuxabi.log linuxabi.log
+	$(RM) -rf build/busybox
 	$(RM) -f docs/diagrams/*.png
 	$(MAKE) -C user clean
 
 .PHONY: all kernel run run-stdio run-fresh disk \
         debug debug-user debug-fresh \
-        test test-fresh test-halt test-all \
+        test test-fresh test-halt test-busybox-compat test-linux-abi test-all \
         pdf epub docs \
         rebuild clean
 

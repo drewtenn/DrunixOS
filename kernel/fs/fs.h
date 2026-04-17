@@ -51,6 +51,7 @@
 #define DUFS_TYPE_FREE  0
 #define DUFS_TYPE_FILE  1
 #define DUFS_TYPE_DIR   2
+#define DUFS_TYPE_SYMLINK 3
 
 /* ── On-disk structures ─────────────────────────────────────────────────── */
 
@@ -99,12 +100,16 @@ int  fs_init(void);
 int  fs_open(const char *path, uint32_t *inode_out, uint32_t *size_out);
 int  fs_read(uint32_t inode_num, uint32_t offset, uint8_t *buf, uint32_t count);
 int  fs_write(uint32_t inode_num, uint32_t offset, const uint8_t *buf, uint32_t count);
+int  fs_truncate(uint32_t inode_num, uint32_t size);
 int  fs_create(const char *path);
 int  fs_flush_inode(uint32_t inode_num);
 int  fs_unlink(const char *path);
 int  fs_mkdir(const char *path);
 int  fs_rmdir(const char *path);
 int  fs_rename(const char *oldpath, const char *newpath);
+int  fs_link(const char *oldpath, const char *newpath, uint32_t follow);
+int  fs_symlink(const char *target, const char *linkpath);
+int  fs_readlink(const char *path, char *buf, uint32_t bufsz);
 int  fs_list(const char *path, char *buf, uint32_t bufsz);
 /* fs_stat is not exported directly — accessed via the VFS ops table only. */
 

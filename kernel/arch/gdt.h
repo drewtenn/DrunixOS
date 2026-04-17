@@ -56,6 +56,12 @@ void gdt_set_tss_esp0(uint32_t esp0);
  * GDT_USER_TLS_SEG.
  */
 void gdt_set_user_tls(uint32_t base, uint32_t limit, int limit_in_pages);
+void gdt_clear_user_tls(void);
+
+#ifdef KTEST_ENABLED
+void gdt_get_user_tls_for_test(uint32_t *base_out, uint32_t *limit_out,
+                               int *limit_in_pages_out, int *present_out);
+#endif
 
 /*
  * gdt_get_runtime_tss: return the main TSS currently loaded in TR. During a

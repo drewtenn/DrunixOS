@@ -130,3 +130,30 @@ void gdt_set_user_tls(uint32_t base, uint32_t limit, int limit_in_pages)
 
     gdt_set_entry(GDT_USER_TLS_ENTRY, base, limit, 0xF2, flags);
 }
+
+void gdt_clear_user_tls(void)
+{
+    gdt_set_entry(GDT_USER_TLS_ENTRY, 0, 0, 0, 0);
+}
+
+#ifdef KTEST_ENABLED
+void gdt_get_user_tls_for_test(uint32_t *base_out, uint32_t *limit_out,
+                               int *limit_in_pages_out, int *present_out)
+{
+    const gdt_entry_t *entry = &gdt[GDT_USER_TLS_ENTRY];
+
+    if (base_out) {
+        *base_out = (uint32_t)entry->base_low |
+                    ((uint32_t)entry->base_mid << 16) |
+                    ((uint32_t)entry->base_high << 24);
+    }
+    if (limit_out) {
+        *limit_out = (uint32_t)entry->limit_low |
+                     (((uint32_t)entry->limit_high_flags & 0x0Fu) << 16);
+    }
+    if (limit_in_pages_out)
+        *limit_in_pages_out = (entry->limit_high_flags & 0x80u) != 0;
+    if (present_out)
+        *present_out = (entry->access & 0x80u) != 0;
+}
+#endif

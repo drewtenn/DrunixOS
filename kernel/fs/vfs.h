@@ -20,7 +20,7 @@
 
 /*
  * File/directory metadata returned by vfs_stat().
- * type: 1 = regular file or file-like node, 2 = directory.
+ * type: 1 = regular file or file-like node, 2 = directory, 3 = symlink.
  * mtime is a Unix timestamp in UTC seconds.
  */
 typedef struct {
@@ -37,6 +37,7 @@ typedef enum {
     VFS_NODE_CHARDEV = 3,
     VFS_NODE_TTY     = 4,
     VFS_NODE_PROCFILE = 5,
+    VFS_NODE_SYMLINK = 6,
 } vfs_node_type_t;
 
 /*
@@ -117,11 +118,21 @@ typedef struct {
     int (*rename)(const char *oldpath, const char *newpath);
 
     /*
+     * link: create a hardlink from newpath to oldpath.
+     * symlink: create a symbolic link at linkpath containing target.
+     * readlink: copy the symbolic-link target to buf and return byte count.
+     */
+    int (*link)(const char *oldpath, const char *newpath, uint32_t follow);
+    int (*symlink)(const char *target, const char *linkpath);
+    int (*readlink)(const char *path, char *buf, uint32_t bufsz);
+
+    /*
      * stat: retrieve metadata for the file or directory at path.
      * Fills *st and returns 0 on success, -1 if not found.
      * May be NULL if the filesystem does not support stat.
      */
     int (*stat)(const char *path, vfs_stat_t *st);
+    int (*lstat)(const char *path, vfs_stat_t *st);
 } fs_ops_t;
 
 /*
@@ -166,6 +177,10 @@ int vfs_unlink(const char *path);
 int vfs_mkdir(const char *name);
 int vfs_rmdir(const char *name);
 int vfs_rename(const char *oldpath, const char *newpath);
+int vfs_link(const char *oldpath, const char *newpath, uint32_t follow);
+int vfs_symlink(const char *target, const char *linkpath);
+int vfs_readlink(const char *path, char *buf, uint32_t bufsz);
 int vfs_stat(const char *path, vfs_stat_t *st);
+int vfs_lstat(const char *path, vfs_stat_t *st);
 
 #endif

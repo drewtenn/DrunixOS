@@ -15,6 +15,7 @@ typedef enum {
     PROCFS_FILE_KMSG    = 5,
     PROCFS_FILE_VMSTAT  = 6,
     PROCFS_FILE_FAULT   = 7,
+    PROCFS_FILE_MOUNTS  = 8,
 } procfs_file_kind_t;
 
 int procfs_fill_node(const char *relpath, vfs_node_t *node_out);

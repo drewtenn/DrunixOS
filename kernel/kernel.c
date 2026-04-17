@@ -324,23 +324,32 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
         klog("BOOT", "desktop unavailable, using legacy console");
     }
 
-    /* Look up the shell executable in the filesystem. */
-    klog("BOOT", "locating initial shell");
+#ifndef DRUNIX_INIT_PROGRAM
+#define DRUNIX_INIT_PROGRAM "bin/shell"
+#endif
+#ifndef DRUNIX_INIT_ARG0
+#define DRUNIX_INIT_ARG0 "shell"
+#endif
+#ifndef DRUNIX_INIT_ENV0
+#define DRUNIX_INIT_ENV0 "PATH=/bin"
+#endif
+
+    /* Look up the initial user executable in the filesystem. */
+    klog("BOOT", "locating initial program");
     uint32_t shell_ino, elf_size;
-    if (vfs_open("bin/shell", &shell_ino, &elf_size) != 0)
+    if (vfs_open(DRUNIX_INIT_PROGRAM, &shell_ino, &elf_size) != 0)
     {
-        klog("FS", "shell not found");
+        klog("FS", "initial program not found");
         for (;;)
             __asm__ volatile("hlt");
     }
-    klog_uint("FS", "shell inode", shell_ino);
-    klog_uint("FS", "shell size", elf_size);
+    klog_uint("FS", "initial program inode", shell_ino);
+    klog_uint("FS", "initial program size", elf_size);
 
-    /* Create the shell process and register it with the scheduler.
-     * Pass a one-element argv so the boot shell sees argv[0] == "shell",
-     * matching the argv[0] convention used by later exec'd programs. */
-    static const char *shell_argv[] = {"shell"};
-    static const char *shell_envp[] = {"PATH=/bin"};
+    /* Create the initial process and register it with the scheduler.
+     * Pass a one-element argv so argv[0] follows the later exec convention. */
+    static const char *shell_argv[] = {DRUNIX_INIT_ARG0};
+    static const char *shell_envp[] = {DRUNIX_INIT_ENV0};
     static process_t proc;
     klog_uint("HEAP", "before process_create", kheap_free_bytes());
     int rc = process_create(&proc, shell_ino, shell_argv, 1, shell_envp, 1, 0);
@@ -357,7 +366,7 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
         for (;;)
             __asm__ volatile("hlt");
     }
-    klog_uint("PROC", "boot shell pid", proc.pid);
+    klog_uint("PROC", "initial process pid", proc.pid);
     if (desktop_is_active()) {
         desktop_attach_shell_process(&boot_desktop, proc.pid, proc.pgid);
         desktop_render(&boot_desktop);

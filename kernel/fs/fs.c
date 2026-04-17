@@ -481,28 +481,24 @@ static int dir_count_entries(uint32_t dir_ino)
 
 /* ── Path resolution ────────────────────────────────────────────────────── */
 
-/*
- * Walk an arbitrary-depth path and return the containing directory inode
- * number and the final component (leaf name).
- *
- *   "file"       → dir_ino=1 (root), leaf="file"
- *   "a/file"     → dir_ino=inode("a"), leaf="file"
- *   "a/b/c/file" → dir_ino=inode("a/b/c"), leaf="file"
- *   "/a/b/file"  → same as "a/b/file" (leading slash is skipped)
- *
- * Each intermediate component must name an existing directory.
- * Returns 0 on success, -1 if any intermediate directory is missing,
- * not a directory, or if the path is structurally invalid.
- */
-static int path_resolve(const char *path, uint32_t *dir_ino_out, char *leaf_out)
+static int read_symlink_target(uint32_t ino, char *out, uint32_t outsz);
+static int symlink_target_path_with_tail(const char *link_path,
+                                         const char *target,
+                                         const char *tail,
+                                         char *out, uint32_t outsz);
+
+static int path_resolve_follow(const char *path, uint32_t *dir_ino_out,
+                               char *leaf_out, uint32_t depth)
 {
     if (!path || path[0] == '\0') return -1;
+    if (depth > 8) return -40;
 
     /* Skip any leading slash so "/a/b" is treated the same as "a/b". */
     const char *p = path;
     if (*p == '/') p++;
     if (*p == '\0') return -1; /* bare "/" has no leaf */
 
+    const char *path_start = p;
     uint32_t cur_dir = 1; /* start at root */
 
     for (;;) {
@@ -538,12 +534,145 @@ static int path_resolve(const char *path, uint32_t *dir_ino_out, char *leaf_out)
 
         dufs_inode_t dinode;
         if (inode_read(ino, &dinode) != 0) return -1;
+        if (dinode.type == DUFS_TYPE_SYMLINK) {
+            char *link_path = (char *)kmalloc(4096);
+            char *target = (char *)kmalloc(4096);
+            char *next = (char *)kmalloc(4096);
+            int rc;
+
+            if (!link_path || !target || !next) {
+                if (link_path) kfree(link_path);
+                if (target) kfree(target);
+                if (next) kfree(next);
+                return -1;
+            }
+
+            uint32_t link_len = (uint32_t)(slash - path_start);
+            if (link_len == 0 || link_len + 1u > 4096u) {
+                kfree(link_path);
+                kfree(target);
+                kfree(next);
+                return -1;
+            }
+            k_memcpy(link_path, path_start, link_len);
+            link_path[link_len] = '\0';
+
+            if (read_symlink_target(ino, target, 4096) < 0 ||
+                symlink_target_path_with_tail(link_path, target,
+                                              slash + 1, next, 4096) != 0) {
+                kfree(link_path);
+                kfree(target);
+                kfree(next);
+                return -1;
+            }
+            rc = path_resolve_follow(next, dir_ino_out, leaf_out, depth + 1u);
+            kfree(link_path);
+            kfree(target);
+            kfree(next);
+            return rc;
+        }
         if (dinode.type != DUFS_TYPE_DIR) return -1;
 
         cur_dir = ino;
         p = slash + 1;
         if (*p == '\0') return -1; /* trailing slash — no leaf */
     }
+}
+
+/*
+ * Walk an arbitrary-depth path and return the containing directory inode
+ * number and the final component (leaf name). Intermediate symlinks are
+ * followed with a Linux-style depth cap; the final component is left as-is
+ * for callers such as lstat(), readlink(), and linkat() without follow.
+ */
+static int path_resolve(const char *path, uint32_t *dir_ino_out, char *leaf_out)
+{
+    return path_resolve_follow(path, dir_ino_out, leaf_out, 0);
+}
+
+static int symlink_target_path(const char *link_path, const char *target,
+                               char *out, uint32_t outsz)
+{
+    if (!link_path || !target || !out || outsz == 0 || target[0] == '\0')
+        return -1;
+
+    if (target[0] == '/') {
+        uint32_t len = k_strlen(target);
+        if (len + 1u > outsz)
+            return -1;
+        k_memcpy(out, target, len + 1u);
+        return 0;
+    }
+
+    const char *slash = k_strrchr(link_path, '/');
+    if (!slash) {
+        uint32_t len = k_strlen(target);
+        if (len + 1u > outsz)
+            return -1;
+        k_memcpy(out, target, len + 1u);
+        return 0;
+    }
+
+    uint32_t parent_len = (uint32_t)(slash - link_path);
+    uint32_t target_len = k_strlen(target);
+    if (parent_len + 1u + target_len + 1u > outsz)
+        return -1;
+
+    k_memcpy(out, link_path, parent_len);
+    out[parent_len] = '/';
+    k_memcpy(out + parent_len + 1u, target, target_len + 1u);
+    return 0;
+}
+
+static int symlink_target_path_with_tail(const char *link_path,
+                                         const char *target,
+                                         const char *tail,
+                                         char *out, uint32_t outsz)
+{
+    if (symlink_target_path(link_path, target, out, outsz) != 0)
+        return -1;
+    if (!tail || tail[0] == '\0')
+        return 0;
+
+    uint32_t base_len = k_strlen(out);
+    uint32_t tail_len = k_strlen(tail);
+    uint32_t need_sep = 1;
+
+    if (base_len == 1 && out[0] == '/')
+        need_sep = 0;
+    if (base_len + need_sep + tail_len + 1u > outsz)
+        return -1;
+    if (need_sep)
+        out[base_len++] = '/';
+    k_memcpy(out + base_len, tail, tail_len + 1u);
+    return 0;
+}
+
+static int read_symlink_target(uint32_t ino, char *out, uint32_t outsz)
+{
+    dufs_inode_t inode;
+    int n;
+
+    if (!out || outsz == 0)
+        return -1;
+    if (inode_read(ino, &inode) != 0 || inode.type != DUFS_TYPE_SYMLINK)
+        return -1;
+    if (inode.size + 1u > outsz)
+        return -1;
+
+    n = fs_read(ino, 0, (uint8_t *)out, inode.size);
+    if (n != (int)inode.size)
+        return -1;
+    out[inode.size] = '\0';
+    return (int)inode.size;
+}
+
+static void stat_from_inode(const dufs_inode_t *inode, vfs_stat_t *st)
+{
+    st->type       = inode->type;
+    st->size       = inode->size;
+    st->link_count = inode->link_count;
+    st->mtime      = inode->mtime;
 }
 
 /* ── Free all blocks belonging to an inode ──────────────────────────────── */
@@ -635,10 +764,14 @@ int fs_init(void)
     return 0;
 }
 
-int fs_open(const char *path, uint32_t *inode_out, uint32_t *size_out)
+static int fs_open_follow(const char *path, uint32_t *inode_out,
+                          uint32_t *size_out, uint32_t depth)
 {
     uint32_t dir_ino;
     char leaf[DUFS_MAX_NAME];
+
+    if (depth > 8)
+        return -40;
     if (path_resolve(path, &dir_ino, leaf) != 0) return -1;
 
     uint32_t ino = dir_lookup(dir_ino, leaf);
@@ -649,6 +782,27 @@ int fs_open(const char *path, uint32_t *inode_out, uint32_t *size_out)
 
     dufs_inode_t inode;
     if (inode_read(ino, &inode) != 0) return -1;
+    if (inode.type == DUFS_TYPE_SYMLINK) {
+        char *target = (char *)kmalloc(4096);
+        char *next = (char *)kmalloc(4096);
+        int rc;
+
+        if (!target || !next) {
+            if (target) kfree(target);
+            if (next) kfree(next);
+            return -1;
+        }
+        if (read_symlink_target(ino, target, 4096) < 0 ||
+            symlink_target_path(path, target, next, 4096) != 0) {
+            kfree(target);
+            kfree(next);
+            return -1;
+        }
+        rc = fs_open_follow(next, inode_out, size_out, depth + 1u);
+        kfree(target);
+        kfree(next);
+        return rc;
+    }
     if (inode.type != DUFS_TYPE_FILE) {
         klog_uint("OPEN", "wrong type", inode.type);
         return -1;
@@ -657,6 +811,11 @@ int fs_open(const char *path, uint32_t *inode_out, uint32_t *size_out)
     *inode_out = ino;
     *size_out  = inode.size;
     return 0;
+}
+
+int fs_open(const char *path, uint32_t *inode_out, uint32_t *size_out)
+{
+    return fs_open_follow(path, inode_out, size_out, 0);
 }
 
 int fs_read(uint32_t inode_num, uint32_t offset, uint8_t *buf, uint32_t count)
@@ -747,6 +906,27 @@ int fs_write(uint32_t inode_num, uint32_t offset,
     return (int)written;
 }
 
+int fs_truncate(uint32_t inode_num, uint32_t size)
+{
+    dufs_inode_t inode;
+
+    if (inode_read(inode_num, &inode) != 0)
+        return -1;
+    if (inode.type != DUFS_TYPE_FILE)
+        return -1;
+    if (inode.size == size)
+        return 0;
+
+    if (size > inode.size) {
+        uint8_t zero = 0;
+        return fs_write(inode_num, size - 1u, &zero, 1u) == 1 ? 0 : -1;
+    }
+
+    inode.size = size;
+    inode.mtime = clock_unix_time();
+    return inode_write(inode_num, &inode);
+}
+
 int fs_create(const char *path)
 {
     uint32_t dir_ino;
@@ -814,7 +994,8 @@ int fs_unlink(const char *path)
 
     dufs_inode_t inode;
     if (inode_read(child_ino, &inode) != 0) return -1;
-    if (inode.type != DUFS_TYPE_FILE) return -1;
+    if (inode.type != DUFS_TYPE_FILE && inode.type != DUFS_TYPE_SYMLINK)
+        return -1;
 
     if (inode.link_count > 0) inode.link_count--;
     if (inode.link_count == 0) {
@@ -942,6 +1123,152 @@ int fs_rename(const char *oldpath, const char *newpath)
     return 0;
 }
 
+static int fs_link_source_inode(const char *path, uint32_t follow,
+                                uint32_t depth, uint32_t *ino_out)
+{
+    uint32_t old_dir_ino;
+    char old_leaf[DUFS_MAX_NAME];
+    int rc;
+
+    if (depth > 8) return -40;
+    if (path_resolve(path, &old_dir_ino, old_leaf) != 0) return -1;
+
+    uint32_t src_ino = dir_lookup(old_dir_ino, old_leaf);
+    if (src_ino == 0) return -1;
+
+    dufs_inode_t inode;
+    if (inode_read(src_ino, &inode) != 0) return -1;
+    if (follow && inode.type == DUFS_TYPE_SYMLINK) {
+        char *target = (char *)kmalloc(4096);
+        char *next = (char *)kmalloc(4096);
+
+        if (!target || !next) {
+            if (target) kfree(target);
+            if (next) kfree(next);
+            return -1;
+        }
+        if (read_symlink_target(src_ino, target, 4096) < 0 ||
+            symlink_target_path(path, target, next, 4096) != 0) {
+            kfree(target);
+            kfree(next);
+            return -1;
+        }
+        rc = fs_link_source_inode(next, follow, depth + 1u, ino_out);
+        kfree(target);
+        kfree(next);
+        return rc;
+    }
+
+    *ino_out = src_ino;
+    return 0;
+}
+
+int fs_link(const char *oldpath, const char *newpath, uint32_t follow)
+{
+    if (!oldpath || !newpath || oldpath[0] == '\0' || newpath[0] == '\0')
+        return -1;
+
+    uint32_t src_ino;
+    int rc = fs_link_source_inode(oldpath, follow, 0, &src_ino);
+    if (rc != 0) return rc;
+
+    dufs_inode_t inode;
+    if (inode_read(src_ino, &inode) != 0) return -1;
+    if (inode.type == DUFS_TYPE_DIR) return -1;
+
+    uint32_t new_dir_ino;
+    char new_leaf[DUFS_MAX_NAME];
+    if (path_resolve(newpath, &new_dir_ino, new_leaf) != 0) return -1;
+    if (dir_lookup(new_dir_ino, new_leaf) != 0) return -1;
+
+    if (dir_add(new_dir_ino, new_leaf, src_ino) != 0) return -1;
+    inode.link_count++;
+    inode.mtime = clock_unix_time();
+    if (inode_write(src_ino, &inode) != 0) return -1;
+    return 0;
+}
+
+int fs_symlink(const char *target, const char *linkpath)
+{
+    if (!target || !linkpath || target[0] == '\0' || linkpath[0] == '\0')
+        return -1;
+
+    uint32_t dir_ino;
+    char leaf[DUFS_MAX_NAME];
+    if (path_resolve(linkpath, &dir_ino, leaf) != 0) return -1;
+    if (dir_lookup(dir_ino, leaf) != 0) return -1;
+
+    uint32_t target_len = k_strlen(target);
+    if (target_len == 0 || target_len >= 4096u)
+        return -1;
+
+    uint32_t new_ino = inode_alloc();
+    if (new_ino == 0) return -1;
+
+    dufs_inode_t inode;
+    zero_inode(&inode);
+    inode.type       = DUFS_TYPE_SYMLINK;
+    inode.link_count = 1;
+    inode.mtime      = clock_unix_time();
+    inode.atime      = inode.mtime;
+
+    if (inode_write(new_ino, &inode) != 0) {
+        inode_free(new_ino);
+        flush_inode_bitmap();
+        return -1;
+    }
+
+    if (fs_write(new_ino, 0, (const uint8_t *)target, target_len) !=
+        (int)target_len) {
+        inode_read(new_ino, &inode);
+        free_inode_blocks(&inode);
+        inode_free(new_ino);
+        inode_write(new_ino, &inode);
+        flush_inode_bitmap();
+        flush_block_bitmap();
+        return -1;
+    }
+
+    if (dir_add(dir_ino, leaf, new_ino) != 0) {
+        inode_read(new_ino, &inode);
+        free_inode_blocks(&inode);
+        inode_free(new_ino);
+        inode_write(new_ino, &inode);
+        flush_inode_bitmap();
+        flush_block_bitmap();
+        return -1;
+    }
+
+    flush_inode_bitmap();
+    flush_block_bitmap();
+    return 0;
+}
+
+int fs_readlink(const char *path, char *buf, uint32_t bufsz)
+{
+    if (!path || !buf || bufsz == 0)
+        return -22;
+
+    uint32_t dir_ino;
+    char leaf[DUFS_MAX_NAME];
+    if (path_resolve(path, &dir_ino, leaf) != 0) return -2;
+
+    uint32_t ino = dir_lookup(dir_ino, leaf);
+    if (ino == 0) return -2;
+
+    dufs_inode_t inode;
+    if (inode_read(ino, &inode) != 0) return -2;
+    if (inode.type != DUFS_TYPE_SYMLINK) return -22;
+
+    uint32_t n = inode.size;
+    if (n > bufsz)
+        n = bufsz;
+    if (n == 0)
+        return 0;
+    int rc = fs_read(ino, 0, (uint8_t *)buf, n);
+    return rc == (int)n ? (int)n : -1;
+}
+
 int fs_list(const char *path, char *buf, uint32_t bufsz)
 {
     uint32_t dir_ino;
@@ -1002,10 +1329,14 @@ done:
     return (int)written;
 }
 
-int fs_stat(const char *path, vfs_stat_t *st)
+static int fs_stat_common(const char *path, vfs_stat_t *st,
+                          uint32_t follow, uint32_t depth)
 {
     uint32_t dir_ino;
     char leaf[DUFS_MAX_NAME];
+
+    if (depth > 8)
+        return -40;
     if (path_resolve(path, &dir_ino, leaf) != 0) return -1;
 
     uint32_t ino = dir_lookup(dir_ino, leaf);
@@ -1013,12 +1344,40 @@ int fs_stat(const char *path, vfs_stat_t *st)
 
     dufs_inode_t inode;
     if (inode_read(ino, &inode) != 0) return -1;
+    if (follow && inode.type == DUFS_TYPE_SYMLINK) {
+        char *target = (char *)kmalloc(4096);
+        char *next = (char *)kmalloc(4096);
+        int rc;
 
-    st->type       = inode.type;
-    st->size       = inode.size;
-    st->link_count = inode.link_count;
-    st->mtime      = inode.mtime;
+        if (!target || !next) {
+            if (target) kfree(target);
+            if (next) kfree(next);
+            return -1;
+        }
+        if (read_symlink_target(ino, target, 4096) < 0 ||
+            symlink_target_path(path, target, next, 4096) != 0) {
+            kfree(target);
+            kfree(next);
+            return -1;
+        }
+        rc = fs_stat_common(next, st, follow, depth + 1u);
+        kfree(target);
+        kfree(next);
+        return rc;
+    }
+
+    stat_from_inode(&inode, st);
     return 0;
+}
+
+int fs_stat(const char *path, vfs_stat_t *st)
+{
+    return fs_stat_common(path, st, 1, 0);
+}
+
+int fs_lstat(const char *path, vfs_stat_t *st)
+{
+    return fs_stat_common(path, st, 0, 0);
 }
 
 /* ── VFS registration ───────────────────────────────────────────────────── */
@@ -1032,7 +1391,11 @@ static const fs_ops_t dufs_ops = {
     .mkdir    = fs_mkdir,
     .rmdir    = fs_rmdir,
     .rename   = fs_rename,
+    .link     = fs_link,
+    .symlink  = fs_symlink,
+    .readlink = fs_readlink,
     .stat     = fs_stat,
+    .lstat    = fs_lstat,
 };
 
 void dufs_register(void) {

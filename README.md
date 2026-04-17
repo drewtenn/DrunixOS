@@ -21,6 +21,7 @@ Required:
 - `x86_64-elf-gcc`
 - `x86_64-elf-g++`
 - `x86_64-elf-ld`
+- `i486-linux-musl-gcc`
 - `i686-elf-grub-mkrescue`
 - `xorriso`
 
@@ -30,7 +31,7 @@ Optional:
 - `pandoc` for `make epub`, `make pdf`, and `make docs`
 - `typst` for `make pdf` and `make docs`
 - `cairosvg` (Python package) or `rsvg-convert` for `make epub` and `make docs` — converts SVG diagrams to PNG
-- `zip`, `unzip`, and `perl` for EPUB packaging
+- `zip`, `unzip`, and `perl` for `make epub` and `make docs` — used to repackage the EPUB after post-processing
 
 ## Install Dependencies
 
@@ -50,6 +51,19 @@ Verify the compiler tools you need are on `PATH`:
 x86_64-elf-gcc --version
 x86_64-elf-g++ --version
 x86_64-elf-ld --version
+i486-linux-musl-gcc --version
+```
+
+The `x86_64-elf-*` tools build the freestanding Drunix kernel and native
+Drunix user programs. The `i486-linux-musl-gcc` tool builds static Linux i386
+ABI probes such as `linuxprobe` and generated BusyBox binaries. One portable
+way to install that musl toolchain on macOS is the Homebrew musl-cross package
+with the i486 target enabled:
+
+```sh
+brew tap filosottile/musl-cross
+brew install musl-cross --with-i486
+i486-linux-musl-gcc --version
 ```
 
 ### Windows
@@ -58,7 +72,7 @@ The simplest supported setup is WSL2 with Ubuntu. Inside the WSL shell:
 
 ```sh
 sudo apt update
-sudo apt install -y build-essential python3 nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl
+sudo apt install -y build-essential python3 curl nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl
 pip3 install cairosvg
 ```
 
@@ -68,8 +82,20 @@ You still need an `x86_64-elf` cross toolchain and `i386-elf-gdb` on your `PATH`
 x86_64-elf-gcc --version
 x86_64-elf-g++ --version
 x86_64-elf-ld --version
+i486-linux-musl-gcc --version
 i386-elf-gdb --version
 i686-elf-grub-mkrescue --version
+```
+
+If your package set does not include `i486-linux-musl-gcc`, install a musl
+cross toolchain and put its `bin` directory on `PATH`:
+
+```sh
+mkdir -p "$HOME/toolchains"
+curl -L -o /tmp/i486-linux-musl-cross.tgz https://musl.cc/i486-linux-musl-cross.tgz
+tar -C "$HOME/toolchains" -xzf /tmp/i486-linux-musl-cross.tgz
+export PATH="$HOME/toolchains/i486-linux-musl-cross/bin:$PATH"
+i486-linux-musl-gcc --version
 ```
 
 If your distro provides `grub-mkrescue` instead of `i686-elf-grub-mkrescue`, create a compatibility symlink or wrapper so the command name used by the Makefile exists.
@@ -82,21 +108,21 @@ Ubuntu / Debian:
 
 ```sh
 sudo apt update
-sudo apt install -y build-essential python3 nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl
+sudo apt install -y build-essential python3 curl nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl
 pip3 install cairosvg
 ```
 
 Fedora:
 
 ```sh
-sudo dnf install -y make python3 nasm qemu-system-i386 xorriso grub2-tools-extra mtools pandoc typst zip unzip perl
+sudo dnf install -y make python3 curl nasm qemu-system-i386 xorriso grub2-tools-extra mtools pandoc typst zip unzip perl
 pip3 install cairosvg
 ```
 
 Arch:
 
 ```sh
-sudo pacman -S --needed make python nasm qemu-desktop xorriso grub mtools pandoc typst zip unzip perl
+sudo pacman -S --needed make python curl nasm qemu-desktop xorriso grub mtools pandoc typst zip unzip perl
 pip3 install cairosvg
 ```
 
@@ -108,6 +134,18 @@ Verify the compiler tools you need are on `PATH`:
 x86_64-elf-gcc --version
 x86_64-elf-g++ --version
 x86_64-elf-ld --version
+i486-linux-musl-gcc --version
+```
+
+If `i486-linux-musl-gcc` is not packaged by your distro, use the musl
+cross-toolchain tarball shown in the Windows section and add its `bin`
+directory to `PATH`.
+
+If you use a different musl triplet, override the Makefile defaults:
+
+```sh
+make LINUX_I386_CC=<your-triplet>-gcc \
+     LINUX_I386_CROSS_COMPILE=<your-triplet>- user/busybox
 ```
 
 If your distro installs `grub-mkrescue` but not `i686-elf-grub-mkrescue`, add a symlink or wrapper with the `i686-elf-grub-mkrescue` name because that is what this repo's Makefile invokes.
@@ -124,7 +162,7 @@ On a normal QEMU boot, Drunix opens the shell inside the framebuffer desktop. If
 
 Useful targets:
 
-- `make all` rebuilds the kernel and ISO as needed, then launches QEMU with the existing `disk.img`
+- `make all` rebuilds the kernel, ISO, and `disk.img` as needed, then launches QEMU
 - `make run` rebuilds the kernel and ISO as needed, then launches QEMU without rebuilding `disk.img`
 - `make run-fresh` rebuilds `disk.img`, then launches QEMU
 - `make disk` rebuilds `disk.img`

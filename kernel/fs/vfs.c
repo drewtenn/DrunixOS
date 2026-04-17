@@ -426,6 +426,7 @@ int vfs_resolve(const char *path, vfs_node_t *node_out)
     const vfs_mount_t *mnt;
     const char *rel;
     vfs_stat_t st;
+    int rc;
 
     if (!norm || !node_out)
         return -1;
@@ -476,16 +477,25 @@ int vfs_resolve(const char *path, vfs_node_t *node_out)
         return rc;
     }
 
-    if (mnt->ops->stat && mnt->ops->stat(rel, &st) == 0 && st.type == 2) {
-        node_out->type = VFS_NODE_DIR;
-        kfree(norm);
-        return 0;
+    if (mnt->ops->stat) {
+        rc = mnt->ops->stat(rel, &st);
+        if (rc == 0 && st.type == 2) {
+            node_out->type = VFS_NODE_DIR;
+            kfree(norm);
+            return 0;
+        }
+        if (rc < -1) {
+            kfree(norm);
+            return rc;
+        }
     }
 
+    rc = -1;
     if (!mnt->ops->open ||
-        mnt->ops->open(rel, &node_out->inode_num, &node_out->size) != 0) {
+        (rc = mnt->ops->open(rel, &node_out->inode_num,
+                             &node_out->size)) != 0) {
         kfree(norm);
-        return -1;
+        return rc < -1 ? rc : -1;
     }
 
     node_out->type = VFS_NODE_FILE;
@@ -727,7 +737,90 @@ out:
     return rc;
 }
 
-int vfs_stat(const char *path, vfs_stat_t *st)
+int vfs_link(const char *oldpath, const char *newpath, uint32_t follow)
+{
+    char *oldnorm = 0;
+    char *newnorm = 0;
+    const vfs_mount_t *oldmnt = 0;
+    const vfs_mount_t *newmnt = 0;
+    const char *oldrel = 0;
+    const char *newrel = 0;
+    int rc = -1;
+
+    if (vfs_mutation_mount(oldpath, &oldnorm, &oldmnt, &oldrel) != 0)
+        return -1;
+    if (vfs_mutation_mount(newpath, &newnorm, &newmnt, &newrel) != 0) {
+        kfree(oldnorm);
+        return -1;
+    }
+
+    if (oldmnt != newmnt || oldmnt->kind != VFS_MOUNT_KIND_FS ||
+        !oldmnt->ops->link)
+        goto out;
+
+    rc = oldmnt->ops->link(oldrel, newrel, follow);
+
+out:
+    kfree(newnorm);
+    kfree(oldnorm);
+    return rc;
+}
+
+int vfs_symlink(const char *target, const char *linkpath)
+{
+    char *norm = 0;
+    const vfs_mount_t *mnt = 0;
+    const char *rel = 0;
+    int rc;
+
+    if (!target || target[0] == '\0')
+        return -1;
+    if (vfs_mutation_mount(linkpath, &norm, &mnt, &rel) != 0)
+        return -1;
+    if (mnt->kind != VFS_MOUNT_KIND_FS || !mnt->ops->symlink) {
+        kfree(norm);
+        return -1;
+    }
+
+    rc = mnt->ops->symlink(target, rel);
+    kfree(norm);
+    return rc;
+}
+
+int vfs_readlink(const char *path, char *buf, uint32_t bufsz)
+{
+    char *norm = vfs_normalize_alloc(path);
+    int mount_idx;
+    const vfs_mount_t *mnt;
+    const char *rel;
+    int rc;
+
+    if (!norm || !buf || bufsz == 0)
+        return -22;
+    if (norm[0] == '\0' || vfs_find_mount_exact(norm) >= 0) {
+        kfree(norm);
+        return -22;
+    }
+
+    mount_idx = vfs_find_mount_for_path(norm);
+    if (mount_idx < 0) {
+        kfree(norm);
+        return -2;
+    }
+
+    mnt = &vfs_mounts[mount_idx];
+    rel = vfs_relpath(mnt, norm);
+    if (mnt->kind != VFS_MOUNT_KIND_FS || !mnt->ops->readlink) {
+        kfree(norm);
+        return -22;
+    }
+
+    rc = mnt->ops->readlink(rel, buf, bufsz);
+    kfree(norm);
+    return rc;
+}
+
+static int vfs_stat_common(const char *path, vfs_stat_t *st, uint32_t follow)
 {
     char *norm = vfs_normalize_alloc(path);
     int mount_idx;
@@ -774,6 +867,12 @@ int vfs_stat(const char *path, vfs_stat_t *st)
         return rc;
     }
 
+    if (!follow && mnt->ops->lstat) {
+        int rc = mnt->ops->lstat(rel, st);
+        kfree(norm);
+        return rc;
+    }
+
     if (mnt->ops->stat) {
         int rc = mnt->ops->stat(rel, st);
         kfree(norm);
@@ -790,4 +889,14 @@ int vfs_stat(const char *path, vfs_stat_t *st)
         kfree(norm);
         return rc;
     }
+}
+
+int vfs_stat(const char *path, vfs_stat_t *st)
+{
+    return vfs_stat_common(path, st, 1);
+}
+
+int vfs_lstat(const char *path, vfs_stat_t *st)
+{
+    return vfs_stat_common(path, st, 0);
 }

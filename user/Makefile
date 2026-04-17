@@ -1,9 +1,11 @@
-PROGS = chello hello shell writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello linuxhello linuxprobe
-C_PROGS = chello shell
+PROGS = chello hello shell writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello linuxhello linuxprobe linuxabi busybox bbcompat
+C_PROGS = chello shell bbcompat
 CXX_PROGS = hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello
-LINUX_PROGS = linuxhello linuxprobe
+LINUX_PROGS = linuxhello linuxprobe linuxabi busybox
 LINUX_ASM_PROGS = linuxhello
-LINUX_C_PROGS = linuxprobe
+LINUX_C_PROGS = linuxprobe linuxabi
+LINUX_BUSYBOX_PROGS = busybox
+CLEAN_PROGS = $(filter-out $(LINUX_BUSYBOX_PROGS),$(PROGS))
 
 all: $(PROGS)
 
@@ -12,6 +14,8 @@ CXX    = x86_64-elf-g++
 LD     = x86_64-elf-ld
 NASM   = nasm
 LINUX_I386_CC ?= i486-linux-musl-gcc
+BUSYBOX_VERSION ?= 1.36.1
+BUSYBOX_BUILD_DIR ?= ../build/busybox
 CFLAGS = -m32 -ffreestanding -nostdlib -fno-pie -no-pie \
          -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall \
          -fdebug-prefix-map=$(abspath ..)=.
@@ -87,7 +91,10 @@ $(LINUX_ASM_PROGS): %: %.o
 $(LINUX_C_PROGS): %: %.c
 	$(LINUX_I386_CC) $(LINUX_CFLAGS) -o $@ $<
 
+$(LINUX_BUSYBOX_PROGS):
+	../tools/build_linux_busybox.sh $@ $(BUSYBOX_VERSION) $(BUSYBOX_BUILD_DIR)
+
 clean:
 	find . -name '*.o' -delete
 	find . -name '*.elf' -delete
-	$(RM) $(PROGS)
+	$(RM) $(CLEAN_PROGS)

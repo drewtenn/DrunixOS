@@ -289,6 +289,16 @@ void process_build_exec_frame(process_t *proc, uint32_t old_pd_phys,
     proc->saved_esp = (uint32_t)ksp;
 }
 
+void process_restore_user_tls(const process_t *proc)
+{
+    if (proc && proc->user_tls_present) {
+        gdt_set_user_tls(proc->user_tls_base, proc->user_tls_limit,
+                         (int)proc->user_tls_limit_in_pages);
+    } else {
+        gdt_clear_user_tls();
+    }
+}
+
 int process_create(process_t *proc, uint32_t inode_num,
                    const char *const *argv, int argc,
                    const char *const *envp, int envc,
@@ -372,6 +382,11 @@ int process_create(process_t *proc, uint32_t inode_num,
     proc->tty_id        = parent ? parent->tty_id : 0;
     proc->parent_pid    = parent ? parent->pid : 0;
     proc->exit_status   = 0;
+    proc->umask         = parent ? parent->umask : 022u;
+    proc->user_tls_base  = 0;
+    proc->user_tls_limit = 0;
+    proc->user_tls_limit_in_pages = 0;
+    proc->user_tls_present = 0;
     sched_wait_queue_init(&proc->state_waiters);
     vma_init(proc);
     if (proc->image_start < proc->image_end &&
@@ -476,6 +491,7 @@ void process_launch(process_t *proc)
 {
     /* Tell the CPU where to find the kernel stack when INT fires from ring 3 */
     gdt_set_tss_esp0(proc->kstack_top);
+    process_restore_user_tls(proc);
 
     /* Activate the process's own page directory */
     paging_switch_directory(proc->pd_phys);

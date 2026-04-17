@@ -13,6 +13,7 @@
  * Syscall numbers (kernel/proc/syscall.h) use Linux i386 public values.
  * Drunix-only convenience calls use the SYS_DRUNIX_* private range.
  *  19   SYS_LSEEK     ebx=fd, ecx=offset, edx=whence → new_offset, -1 on error
+ *  41   SYS_DUP       ebx=oldfd → newfd, -1 on error
  */
 
 #include "syscall.h"
@@ -161,7 +162,7 @@ int sys_getdents(const char *path, char *buf, int size)
     __asm__ volatile (
         "int $0x80"
         : "=a"(r)
-        : "a"(141), "b"(path), "c"(buf), "d"(size)
+        : "a"(4008), "b"(path), "c"(buf), "d"(size)
         : "memory"
     );
     return r;

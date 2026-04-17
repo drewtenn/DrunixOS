@@ -138,6 +138,14 @@ static int procfs_parse_path(const char *relpath, uint32_t *node_type_out,
         return 0;
     }
 
+    if (k_strcmp(relpath, "mounts") == 0) {
+        if (node_type_out) *node_type_out = VFS_NODE_PROCFILE;
+        if (kind_out) *kind_out = PROCFS_FILE_MOUNTS;
+        if (pid_out) *pid_out = 0;
+        if (index_out) *index_out = 0;
+        return 0;
+    }
+
     if (procfs_parse_u32(relpath, &pid, &slash) != 0)
         return -1;
 
@@ -281,6 +289,7 @@ static const char *procfs_fd_kind_name(uint32_t kind)
     case PROCFS_FILE_FD:      return "fd";
     case PROCFS_FILE_MODULES: return "modules";
     case PROCFS_FILE_KMSG:    return "kmsg";
+    case PROCFS_FILE_MOUNTS:  return "mounts";
     default:                  return "unknown";
     }
 }
@@ -342,13 +351,24 @@ static void procfs_render_modules(render_buf_t *rb)
     }
 }
 
+static void procfs_render_mounts(render_buf_t *rb)
+{
+    /*
+     * Keep the table intentionally small: enough for BusyBox df and other
+     * simple readers that only need to discover the root filesystem and procfs.
+     */
+    procfs_emitf(rb, "rootfs / rootfs rw 0 0\n");
+    procfs_emitf(rb, "proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n");
+}
+
 static int procfs_render_file(uint32_t kind, uint32_t pid, uint32_t index,
                               char *buf, uint32_t cap, uint32_t *size_out)
 {
     render_buf_t rb = { buf, cap, 0 };
     const process_t *proc = 0;
 
-    if (kind != PROCFS_FILE_MODULES && kind != PROCFS_FILE_KMSG) {
+    if (kind != PROCFS_FILE_MODULES && kind != PROCFS_FILE_KMSG &&
+        kind != PROCFS_FILE_MOUNTS) {
         proc = procfs_lookup_process(pid);
         if (!proc)
             return -1;
@@ -371,6 +391,9 @@ static int procfs_render_file(uint32_t kind, uint32_t pid, uint32_t index,
         break;
     case PROCFS_FILE_MODULES:
         procfs_render_modules(&rb);
+        break;
+    case PROCFS_FILE_MOUNTS:
+        procfs_render_mounts(&rb);
         break;
     case PROCFS_FILE_KMSG:
         if (klog_snapshot(buf, cap, size_out) != 0)
@@ -460,6 +483,8 @@ int procfs_getdents(const char *relpath, char *buf, uint32_t bufsz)
             return (int)written;
         if (procfs_append_dirent(buf, bufsz, &written, "modules", 0) != 0)
             return (int)written;
+        if (procfs_append_dirent(buf, bufsz, &written, "mounts", 0) != 0)
+            return (int)written;
 
         for (int i = 0; i < n; i++) {
             k_snprintf(name, sizeof(name), "%u", pids[i]);
@@ -479,6 +504,8 @@ int procfs_getdents(const char *relpath, char *buf, uint32_t bufsz)
         if (procfs_append_dirent(buf, bufsz, &written, "kmsg", 0) != 0)
             return (int)written;
         if (procfs_append_dirent(buf, bufsz, &written, "modules", 0) != 0)
+            return (int)written;
+        if (procfs_append_dirent(buf, bufsz, &written, "mounts", 0) != 0)
             return (int)written;
         return (int)written;
     }
