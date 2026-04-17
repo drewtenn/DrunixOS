@@ -280,7 +280,7 @@ kernel: os.iso
 #             this so that the filesystem state is preserved across boots.
 disk: disk.img dufs.img
 
-validate-ext3-linux: disk.img tools/check_ext3_linux_compat.py
+validate-ext3-linux: disk.img tools/check_ext3_linux_compat.py tools/check_ext3_journal_activity.py
 	$(PYTHON) tools/check_ext3_linux_compat.py disk.img
 	$(E2FSCK) -fn disk.img
 	$(DUMPE2FS) -h disk.img | grep -q 'Filesystem features:.*has_journal'
@@ -455,6 +455,7 @@ test-ext3-linux-compat:
 	cat ext3wtest.log
 	grep -q "EXT3WTEST PASS" ext3wtest.log
 	$(PYTHON) tools/check_ext3_linux_compat.py disk-ext3w.img
+	$(PYTHON) tools/check_ext3_journal_activity.py disk-ext3w.img 1
 	$(E2FSCK) -fn disk-ext3w.img
 
 # `test-ext3-host-write-interop` — use e2fsprogs debugfs to write into the

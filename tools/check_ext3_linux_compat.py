@@ -102,6 +102,19 @@ class Image:
             "ptrs": ptrs,
         }
 
+    def journal_superblock(self):
+        inode = self.inode(JOURNAL_INO)
+        first = inode["ptrs"][0]
+        if first == 0:
+            fail("journal inode has no first block")
+        return self.block(first)
+
+    def journal_sequence(self):
+        return self.be32(self.journal_superblock(), 24)
+
+    def journal_start(self):
+        return self.be32(self.journal_superblock(), 28)
+
     def dir_entries(self, ino):
         inode = self.inode(ino)
         if inode["mode"] & S_IFMT != S_IFDIR:
@@ -161,10 +174,7 @@ def check_journal(img):
         expected_sectors += BLOCK // 512
     if inode["blocks"] != expected_sectors:
         fail("journal inode i_blocks does not match allocated blocks")
-    first = inode["ptrs"][0]
-    if first == 0:
-        fail("journal inode has no first block")
-    jsb = img.block(first)
+    jsb = img.journal_superblock()
     if img.be32(jsb, 0) != JBD_MAGIC:
         fail("journal superblock magic is missing")
     if img.be32(jsb, 4) != JBD_SUPERBLOCK_V2:
