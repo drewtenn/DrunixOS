@@ -8,6 +8,7 @@
 *.img
 *.iso
 /build/
+.worktrees/
 user/date
 user/cat
 user/chello
