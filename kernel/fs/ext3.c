@@ -43,6 +43,7 @@
 #define EXT3_REPLAY_MAX_BLOCKS    32u
 #define EXT3_REPLAY_MAX_TAGS      64u
 #define EXT3_REPLAY_MAX_REVOKES   128u
+#define EXT3_TX_MAX_BLOCKS        128u
 
 typedef struct {
     uint32_t inodes_count;
@@ -142,8 +143,17 @@ typedef struct {
     uint8_t *data;
 } ext3_overlay_block_t;
 
+typedef struct {
+    uint32_t fs_block;
+    uint8_t *data;
+} ext3_tx_block_t;
+
 static ext3_overlay_block_t g_overlay[EXT3_REPLAY_MAX_BLOCKS];
 static uint32_t g_overlay_count;
+static ext3_tx_block_t g_tx[EXT3_TX_MAX_BLOCKS];
+static uint32_t g_tx_count;
+static uint32_t g_tx_depth;
+static uint32_t g_tx_failed;
 
 static uint16_t be16(const uint8_t *p)
 {
@@ -237,6 +247,8 @@ static int ext3_write_disk_block(uint32_t block, const uint8_t *buf)
     return 0;
 }
 
+static int ext3_write_block(uint32_t block, const uint8_t *buf);
+
 static int ext3_write_zeroed_block(uint32_t block)
 {
     uint8_t *z = (uint8_t *)kmalloc(g_block_size);
@@ -245,15 +257,44 @@ static int ext3_write_zeroed_block(uint32_t block)
     if (!z)
         return -1;
     k_memset(z, 0, g_block_size);
-    rc = ext3_write_disk_block(block, z);
+    rc = ext3_write_block(block, z);
     kfree(z);
     return rc;
 }
 
+static int ext3_tx_find(uint32_t fs_block)
+{
+    for (uint32_t i = 0; i < g_tx_count; i++) {
+        if (g_tx[i].fs_block == fs_block)
+            return (int)i;
+    }
+    return -1;
+}
+
+static void ext3_tx_reset(void)
+{
+    for (uint32_t i = 0; i < g_tx_count; i++) {
+        if (g_tx[i].data)
+            kfree(g_tx[i].data);
+        g_tx[i].fs_block = 0;
+        g_tx[i].data = 0;
+    }
+    g_tx_count = 0;
+    g_tx_depth = 0;
+    g_tx_failed = 0;
+}
+
 static int ext3_read_block(uint32_t block, uint8_t *buf)
 {
+    int tx_idx;
+
     if (!buf)
         return -1;
+    tx_idx = ext3_tx_find(block);
+    if (tx_idx >= 0) {
+        k_memcpy(buf, g_tx[tx_idx].data, g_block_size);
+        return 0;
+    }
     for (uint32_t i = 0; i < g_overlay_count; i++) {
         if (g_overlay[i].fs_block == block) {
             k_memcpy(buf, g_overlay[i].data, g_block_size);
@@ -261,6 +302,40 @@ static int ext3_read_block(uint32_t block, uint8_t *buf)
         }
     }
     return ext3_read_disk_block(block, buf);
+}
+
+static int ext3_write_block(uint32_t block, const uint8_t *buf)
+{
+    uint8_t *copy;
+    int idx;
+
+    if (!buf || block == 0)
+        return -1;
+    if (g_tx_depth == 0)
+        return ext3_write_disk_block(block, buf);
+
+    idx = ext3_tx_find(block);
+    if (idx >= 0) {
+        k_memcpy(g_tx[idx].data, buf, g_block_size);
+        return 0;
+    }
+
+    if (g_tx_count >= EXT3_TX_MAX_BLOCKS) {
+        klog("EXT3", "journal transaction block limit hit");
+        g_tx_failed = 1;
+        return -1;
+    }
+
+    copy = (uint8_t *)kmalloc(g_block_size);
+    if (!copy) {
+        g_tx_failed = 1;
+        return -1;
+    }
+    k_memcpy(copy, buf, g_block_size);
+    g_tx[g_tx_count].fs_block = block;
+    g_tx[g_tx_count].data = copy;
+    g_tx_count++;
+    return 0;
 }
 
 static int ext3_can_mutate(void)
@@ -301,12 +376,12 @@ static int ext3_flush_bg(void)
 
     if (!blk)
         return -1;
-    if (ext3_read_disk_block(g_bgdt_block, blk) != 0) {
+    if (ext3_read_block(g_bgdt_block, blk) != 0) {
         kfree(blk);
         return -1;
     }
     k_memcpy(blk, &g_bg, sizeof(g_bg));
-    rc = ext3_write_disk_block(g_bgdt_block, blk);
+    rc = ext3_write_block(g_bgdt_block, blk);
     kfree(blk);
     return rc;
 }
@@ -394,12 +469,12 @@ static int ext3_write_inode(uint32_t ino, const ext3_inode_t *in)
     blk = (uint8_t *)kmalloc(g_block_size);
     if (!blk)
         return -1;
-    if (ext3_read_disk_block(block, blk) != 0) {
+    if (ext3_read_block(block, blk) != 0) {
         kfree(blk);
         return -1;
     }
     k_memcpy(blk + block_off, in, sizeof(*in));
-    rc = ext3_write_disk_block(block, blk);
+    rc = ext3_write_block(block, blk);
     kfree(blk);
     return rc;
 }
@@ -425,13 +500,13 @@ static uint32_t ext3_alloc_block(void)
     map = (uint8_t *)kmalloc(g_block_size);
     if (!map)
         return 0;
-    if (ext3_read_disk_block(g_bg.block_bitmap, map) != 0)
+    if (ext3_read_block(g_bg.block_bitmap, map) != 0)
         goto done;
 
     for (uint32_t b = g_super.first_data_block; b < g_super.blocks_count; b++) {
         if (!ext3_bmap_test(map, b)) {
             ext3_bmap_set(map, b);
-            if (ext3_write_disk_block(g_bg.block_bitmap, map) != 0) {
+            if (ext3_write_block(g_bg.block_bitmap, map) != 0) {
                 ext3_bmap_clear(map, b);
                 break;
             }
@@ -463,14 +538,14 @@ static int ext3_free_block(uint32_t block)
     map = (uint8_t *)kmalloc(g_block_size);
     if (!map)
         return -1;
-    if (ext3_read_disk_block(g_bg.block_bitmap, map) != 0)
+    if (ext3_read_block(g_bg.block_bitmap, map) != 0)
         goto done;
     if (!ext3_bmap_test(map, block)) {
         rc = 0;
         goto done;
     }
     ext3_bmap_clear(map, block);
-    if (ext3_write_disk_block(g_bg.block_bitmap, map) != 0)
+    if (ext3_write_block(g_bg.block_bitmap, map) != 0)
         goto done;
     g_super.free_blocks_count++;
     g_bg.free_blocks_count++;
@@ -492,14 +567,14 @@ static uint32_t ext3_alloc_inode(uint32_t is_dir)
     map = (uint8_t *)kmalloc(g_block_size);
     if (!map)
         return 0;
-    if (ext3_read_disk_block(g_bg.inode_bitmap, map) != 0)
+    if (ext3_read_block(g_bg.inode_bitmap, map) != 0)
         goto done;
 
     for (uint32_t i = first; i <= g_super.inodes_count; i++) {
         uint32_t bit = i - 1u;
         if (!ext3_bmap_test(map, bit)) {
             ext3_bmap_set(map, bit);
-            if (ext3_write_disk_block(g_bg.inode_bitmap, map) != 0)
+            if (ext3_write_block(g_bg.inode_bitmap, map) != 0)
                 break;
             if (g_super.free_inodes_count > 0)
                 g_super.free_inodes_count--;
@@ -530,14 +605,14 @@ static int ext3_free_inode(uint32_t ino, uint32_t was_dir)
     map = (uint8_t *)kmalloc(g_block_size);
     if (!map)
         return -1;
-    if (ext3_read_disk_block(g_bg.inode_bitmap, map) != 0)
+    if (ext3_read_block(g_bg.inode_bitmap, map) != 0)
         goto done;
     if (!ext3_bmap_test(map, ino - 1u)) {
         rc = 0;
         goto done;
     }
     ext3_bmap_clear(map, ino - 1u);
-    if (ext3_write_disk_block(g_bg.inode_bitmap, map) != 0)
+    if (ext3_write_block(g_bg.inode_bitmap, map) != 0)
         goto done;
     g_super.free_inodes_count++;
     g_bg.free_inodes_count++;
@@ -655,7 +730,7 @@ static uint32_t ext3_ensure_block(ext3_inode_t *in, uint32_t logical)
         in->block[12] = block;
         ext3_inode_blocks_add(in, 1);
     }
-    if (ext3_read_disk_block(in->block[12], blk) != 0) {
+    if (ext3_read_block(in->block[12], blk) != 0) {
         kfree(blk);
         return 0;
     }
@@ -668,7 +743,7 @@ static uint32_t ext3_ensure_block(ext3_inode_t *in, uint32_t logical)
         }
         ((uint32_t *)blk)[logical] = block;
         ext3_inode_blocks_add(in, 1);
-        if (ext3_write_disk_block(in->block[12], blk) != 0) {
+        if (ext3_write_block(in->block[12], blk) != 0) {
             kfree(blk);
             return 0;
         }
@@ -697,7 +772,7 @@ static int ext3_free_inode_blocks(ext3_inode_t *in)
         blk = (uint8_t *)kmalloc(g_block_size);
         if (!blk)
             return -1;
-        if (ext3_read_disk_block(in->block[12], blk) != 0) {
+        if (ext3_read_block(in->block[12], blk) != 0) {
             kfree(blk);
             return -1;
         }
@@ -747,7 +822,7 @@ static int ext3_truncate_blocks(ext3_inode_t *in, uint32_t keep_blocks)
     blk = (uint8_t *)kmalloc(g_block_size);
     if (!blk)
         return -1;
-    if (ext3_read_disk_block(in->block[12], blk) != 0) {
+    if (ext3_read_block(in->block[12], blk) != 0) {
         kfree(blk);
         return -1;
     }
@@ -772,7 +847,7 @@ static int ext3_truncate_blocks(ext3_inode_t *in, uint32_t keep_blocks)
         ext3_inode_blocks_sub(in, 1);
         return 0;
     }
-    if (dirty && ext3_write_disk_block(in->block[12], blk) != 0) {
+    if (dirty && ext3_write_block(in->block[12], blk) != 0) {
         kfree(blk);
         return -1;
     }
@@ -1138,7 +1213,7 @@ static int ext3_dir_add(uint32_t dir_ino, const char *name, uint32_t child_ino,
         uint32_t base = logical * g_block_size;
         uint32_t off = pos - base;
 
-        if (phys == 0 || ext3_read_disk_block(phys, blk) != 0)
+        if (phys == 0 || ext3_read_block(phys, blk) != 0)
             break;
         while (off + sizeof(ext3_dirent_t) <= g_block_size &&
                base + off < size) {
@@ -1152,7 +1227,7 @@ static int ext3_dir_add(uint32_t dir_ino, const char *name, uint32_t child_ino,
             if (de->inode == 0 && de->rec_len >= need) {
                 ext3_write_dirent(blk + off, child_ino, name, file_type,
                                   de->rec_len);
-                if (ext3_write_disk_block(phys, blk) != 0)
+                if (ext3_write_block(phys, blk) != 0)
                     goto fail;
                 dir.mtime = dir.ctime = clock_unix_time();
                 if (ext3_write_inode(dir_ino, &dir) != 0)
@@ -1168,7 +1243,7 @@ static int ext3_dir_add(uint32_t dir_ino, const char *name, uint32_t child_ino,
                 de->rec_len = (uint16_t)actual;
                 ext3_write_dirent(blk + off + actual, child_ino, name,
                                   file_type, new_rec);
-                if (ext3_write_disk_block(phys, blk) != 0)
+                if (ext3_write_block(phys, blk) != 0)
                     goto fail;
                 dir.mtime = dir.ctime = clock_unix_time();
                 if (ext3_write_inode(dir_ino, &dir) != 0)
@@ -1189,7 +1264,7 @@ static int ext3_dir_add(uint32_t dir_ino, const char *name, uint32_t child_ino,
         k_memset(blk, 0, g_block_size);
         ext3_write_dirent(blk, child_ino, name, file_type,
                           (uint16_t)g_block_size);
-        if (ext3_write_disk_block(phys, blk) != 0)
+        if (ext3_write_block(phys, blk) != 0)
             goto fail;
         dir.size = size + g_block_size;
         dir.mtime = dir.ctime = clock_unix_time();
@@ -1227,7 +1302,7 @@ static int ext3_dir_remove(uint32_t dir_ino, const char *name)
         uint32_t base = logical * g_block_size;
         uint32_t off = pos - base;
 
-        if (phys == 0 || ext3_read_disk_block(phys, blk) != 0)
+        if (phys == 0 || ext3_read_block(phys, blk) != 0)
             break;
         while (off + sizeof(ext3_dirent_t) <= g_block_size &&
                base + off < size) {
@@ -1239,7 +1314,7 @@ static int ext3_dir_remove(uint32_t dir_ino, const char *name)
                 k_memcmp(blk + off + sizeof(ext3_dirent_t), name,
                          want_len) == 0) {
                 de->inode = 0;
-                if (ext3_write_disk_block(phys, blk) != 0) {
+                if (ext3_write_block(phys, blk) != 0) {
                     kfree(blk);
                     return -1;
                 }
@@ -1289,13 +1364,13 @@ static int ext3_write(void *ctx, uint32_t inode_num, uint32_t offset,
         if (phys == 0)
             break;
         if (chunk != g_block_size) {
-            if (ext3_read_disk_block(phys, blk) != 0)
+            if (ext3_read_block(phys, blk) != 0)
                 break;
         } else {
             k_memset(blk, 0, g_block_size);
         }
         k_memcpy(blk + block_off, buf + done, chunk);
-        if (ext3_write_disk_block(phys, blk) != 0)
+        if (ext3_write_block(phys, blk) != 0)
             break;
         done += chunk;
     }
@@ -1452,7 +1527,7 @@ static int ext3_mkdir(void *ctx, const char *path)
     ext3_write_dirent(blk + ext3_dir_rec_len(1), parent_ino, "..",
                       EXT3_FT_DIR,
                       (uint16_t)(g_block_size - ext3_dir_rec_len(1)));
-    if (ext3_write_disk_block(block, blk) != 0) {
+    if (ext3_write_block(block, blk) != 0) {
         kfree(blk);
         ext3_free_block(block);
         ext3_free_inode(ino, 1);
