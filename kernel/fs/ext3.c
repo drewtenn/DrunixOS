@@ -309,7 +309,7 @@ static int ext3_write_block(uint32_t block, const uint8_t *buf)
     uint8_t *copy;
     int idx;
 
-    if (!buf || block == 0)
+    if (!buf)
         return -1;
     if (g_tx_depth == 0)
         return ext3_write_disk_block(block, buf);
@@ -363,10 +363,30 @@ static void ext3_bmap_clear(uint8_t *map, uint32_t bit)
     map[bit / 8u] &= (uint8_t)~(1u << (bit % 8u));
 }
 
-static int ext3_flush_super(void)
+static int ext3_flush_super_raw(void)
 {
     return ext3_write_bytes(EXT3_SUPER_OFFSET, (const uint8_t *)&g_super,
                             sizeof(g_super));
+}
+
+static int ext3_flush_super(void)
+{
+    uint8_t *blk;
+    uint32_t block = EXT3_SUPER_OFFSET / g_block_size;
+    uint32_t off = EXT3_SUPER_OFFSET % g_block_size;
+    int rc;
+
+    blk = (uint8_t *)kmalloc(g_block_size);
+    if (!blk)
+        return -1;
+    if (ext3_read_block(block, blk) != 0) {
+        kfree(blk);
+        return -1;
+    }
+    k_memcpy(blk + off, &g_super, sizeof(g_super));
+    rc = ext3_write_block(block, blk);
+    kfree(blk);
+    return rc;
 }
 
 static int ext3_flush_bg(void)
