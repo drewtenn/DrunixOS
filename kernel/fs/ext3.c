@@ -351,8 +351,11 @@ static int ext3_write_block(uint32_t block, const uint8_t *buf)
 
 static int ext3_can_mutate(void)
 {
-    return g_writable && g_overlay_count == 0;
+    return g_writable && g_overlay_count == 0 && g_tx_failed == 0;
 }
+
+static int ext3_tx_begin(void);
+static int ext3_tx_end(int rc);
 
 static uint32_t ext3_dir_rec_len(uint32_t name_len)
 {
@@ -1372,8 +1375,8 @@ static int ext3_dir_remove(uint32_t dir_ino, const char *name)
     return -1;
 }
 
-static int ext3_write(void *ctx, uint32_t inode_num, uint32_t offset,
-                      const uint8_t *buf, uint32_t count)
+static int ext3_write_body(void *ctx, uint32_t inode_num, uint32_t offset,
+                           const uint8_t *buf, uint32_t count)
 {
     ext3_inode_t in;
     uint8_t *blk;
@@ -1424,7 +1427,18 @@ static int ext3_write(void *ctx, uint32_t inode_num, uint32_t offset,
     return (int)done;
 }
 
-static int ext3_truncate(void *ctx, uint32_t inode_num, uint32_t size)
+static int ext3_write(void *ctx, uint32_t inode_num, uint32_t offset,
+                      const uint8_t *buf, uint32_t count)
+{
+    int rc;
+
+    if (ext3_tx_begin() != 0)
+        return -1;
+    rc = ext3_write_body(ctx, inode_num, offset, buf, count);
+    return ext3_tx_end(rc);
+}
+
+static int ext3_truncate_body(void *ctx, uint32_t inode_num, uint32_t size)
 {
     ext3_inode_t in;
     uint32_t old_size;
@@ -1450,7 +1464,17 @@ static int ext3_truncate(void *ctx, uint32_t inode_num, uint32_t size)
     return ext3_write_inode(inode_num, &in);
 }
 
-static int ext3_create(void *ctx, const char *path)
+static int ext3_truncate(void *ctx, uint32_t inode_num, uint32_t size)
+{
+    int rc;
+
+    if (ext3_tx_begin() != 0)
+        return -1;
+    rc = ext3_truncate_body(ctx, inode_num, size);
+    return ext3_tx_end(rc);
+}
+
+static int ext3_create_body(void *ctx, const char *path)
 {
     uint32_t dir_ino;
     uint32_t existing;
@@ -1494,7 +1518,17 @@ static int ext3_create(void *ctx, const char *path)
     return (int)ino;
 }
 
-static int ext3_unlink(void *ctx, const char *path)
+static int ext3_create(void *ctx, const char *path)
+{
+    int rc;
+
+    if (ext3_tx_begin() != 0)
+        return -1;
+    rc = ext3_create_body(ctx, path);
+    return ext3_tx_end(rc);
+}
+
+static int ext3_unlink_body(void *ctx, const char *path)
 {
     uint32_t dir_ino;
     uint32_t ino;
@@ -1527,7 +1561,17 @@ static int ext3_unlink(void *ctx, const char *path)
     return ext3_dir_remove(dir_ino, leaf);
 }
 
-static int ext3_mkdir(void *ctx, const char *path)
+static int ext3_unlink(void *ctx, const char *path)
+{
+    int rc;
+
+    if (ext3_tx_begin() != 0)
+        return -1;
+    rc = ext3_unlink_body(ctx, path);
+    return ext3_tx_end(rc);
+}
+
+static int ext3_mkdir_body(void *ctx, const char *path)
 {
     uint32_t parent_ino;
     uint32_t ino;
@@ -1644,7 +1688,17 @@ static int ext3_dir_is_empty(uint32_t ino)
     return 1;
 }
 
-static int ext3_rmdir(void *ctx, const char *path)
+static int ext3_mkdir(void *ctx, const char *path)
+{
+    int rc;
+
+    if (ext3_tx_begin() != 0)
+        return -1;
+    rc = ext3_mkdir_body(ctx, path);
+    return ext3_tx_end(rc);
+}
+
+static int ext3_rmdir_body(void *ctx, const char *path)
 {
     uint32_t parent_ino;
     uint32_t ino;
@@ -1674,6 +1728,16 @@ static int ext3_rmdir(void *ctx, const char *path)
         ext3_write_inode(parent_ino, &parent);
     }
     return 0;
+}
+
+static int ext3_rmdir(void *ctx, const char *path)
+{
+    int rc;
+
+    if (ext3_tx_begin() != 0)
+        return -1;
+    rc = ext3_rmdir_body(ctx, path);
+    return ext3_tx_end(rc);
 }
 
 static int ext3_readonly_rename(void *ctx, const char *oldpath,
@@ -1883,6 +1947,38 @@ static int ext3_commit_tx(void)
         return -1;
     g_super.feature_incompat &= ~EXT3_FEATURE_INCOMPAT_RECOVER;
     return ext3_flush_super_raw();
+}
+
+static int ext3_tx_begin(void)
+{
+    if (!g_writable || g_overlay_count != 0)
+        return -1;
+    if (g_tx_depth == 0) {
+        ext3_tx_reset();
+        g_tx_super_before = g_super;
+        g_tx_has_snapshot = 1;
+    }
+    g_tx_depth++;
+    return 0;
+}
+
+static int ext3_tx_end(int rc)
+{
+    int commit_rc = 0;
+
+    if (g_tx_depth == 0)
+        return rc;
+    if (g_tx_depth > 1) {
+        g_tx_depth--;
+        return rc;
+    }
+
+    if (rc == 0 || rc > 0)
+        commit_rc = ext3_commit_tx();
+    if (commit_rc != 0)
+        rc = -1;
+    ext3_tx_reset();
+    return rc;
 }
 
 static int jbd_revoked(uint32_t block, const uint32_t *revokes,
