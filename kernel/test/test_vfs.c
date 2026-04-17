@@ -49,8 +49,10 @@ static int count_entry(const char *buf, int n, const char *want)
     return found;
 }
 
-static int mock_root_open(const char *path, uint32_t *inode_out, uint32_t *size_out)
+static int mock_root_open(void *ctx, const char *path,
+                          uint32_t *inode_out, uint32_t *size_out)
 {
+    (void)ctx;
     if (k_strcmp(path, "hello") == 0) {
         *inode_out = ROOT_FILE_INO;
         *size_out = ROOT_FILE_SIZE;
@@ -64,10 +66,12 @@ static int mock_root_open(const char *path, uint32_t *inode_out, uint32_t *size_
     return -1;
 }
 
-static int mock_root_getdents(const char *path, char *buf, uint32_t bufsz)
+static int mock_root_getdents(void *ctx, const char *path, char *buf,
+                              uint32_t bufsz)
 {
     uint32_t written = 0;
 
+    (void)ctx;
     if (!buf)
         return -1;
 
@@ -92,8 +96,9 @@ static int mock_root_getdents(const char *path, char *buf, uint32_t bufsz)
     return -1;
 }
 
-static int mock_root_stat(const char *path, vfs_stat_t *st)
+static int mock_root_stat(void *ctx, const char *path, vfs_stat_t *st)
 {
+    (void)ctx;
     if (k_strcmp(path, "hello") == 0) {
         st->type = 1;
         st->size = ROOT_FILE_SIZE;
@@ -118,8 +123,27 @@ static int mock_root_stat(const char *path, vfs_stat_t *st)
     return -1;
 }
 
-static int mock_sub_open(const char *path, uint32_t *inode_out, uint32_t *size_out)
+static int mock_root_read(void *ctx, uint32_t inode_num, uint32_t offset,
+                          uint8_t *buf, uint32_t count)
 {
+    static const char data[] = "root!";
+    uint32_t size = (uint32_t)sizeof(data) - 1u;
+
+    (void)ctx;
+    if (inode_num != ROOT_FILE_INO || !buf)
+        return -1;
+    if (offset >= size)
+        return 0;
+    if (count > size - offset)
+        count = size - offset;
+    k_memcpy(buf, data + offset, count);
+    return (int)count;
+}
+
+static int mock_sub_open(void *ctx, const char *path,
+                         uint32_t *inode_out, uint32_t *size_out)
+{
+    (void)ctx;
     if (k_strcmp(path, "childfile") == 0) {
         *inode_out = CHILD_FILE_INO;
         *size_out = CHILD_FILE_SIZE;
@@ -128,11 +152,30 @@ static int mock_sub_open(const char *path, uint32_t *inode_out, uint32_t *size_o
     return -1;
 }
 
-static int mock_sub_getdents(const char *path, char *buf, uint32_t bufsz)
+static int mock_sub_read(void *ctx, uint32_t inode_num, uint32_t offset,
+                         uint8_t *buf, uint32_t count)
+{
+    static const char data[] = "child!!";
+    uint32_t size = (uint32_t)sizeof(data) - 1u;
+
+    (void)ctx;
+    if (inode_num != CHILD_FILE_INO || !buf)
+        return -1;
+    if (offset >= size)
+        return 0;
+    if (count > size - offset)
+        count = size - offset;
+    k_memcpy(buf, data + offset, count);
+    return (int)count;
+}
+
+static int mock_sub_getdents(void *ctx, const char *path, char *buf,
+                             uint32_t bufsz)
 {
     static const char entries[] = "childfile\0";
     uint32_t n = (uint32_t)sizeof(entries);
 
+    (void)ctx;
     if (!buf)
         return -1;
     if (path && path[0] != '\0')
@@ -144,8 +187,9 @@ static int mock_sub_getdents(const char *path, char *buf, uint32_t bufsz)
     return (int)n;
 }
 
-static int mock_sub_stat(const char *path, vfs_stat_t *st)
+static int mock_sub_stat(void *ctx, const char *path, vfs_stat_t *st)
 {
+    (void)ctx;
     if (k_strcmp(path, "childfile") != 0)
         return -1;
     st->type = 1;
@@ -165,6 +209,7 @@ static const fs_ops_t mock_root_ops = {
     .rmdir    = 0,
     .rename   = 0,
     .stat     = mock_root_stat,
+    .read     = mock_root_read,
 };
 
 static const fs_ops_t mock_sub_ops = {
@@ -177,6 +222,7 @@ static const fs_ops_t mock_sub_ops = {
     .rmdir    = 0,
     .rename   = 0,
     .stat     = mock_sub_stat,
+    .read     = mock_sub_read,
 };
 
 static int setup_mount_tree(void)
@@ -333,9 +379,10 @@ static int read_procfs_text_file(uint32_t kind, uint32_t pid, char *buf, uint32_
 
 static void test_open_no_mount(ktest_case_t *tc)
 {
-    uint32_t ino = 0, size = 0;
+    vfs_file_ref_t ref;
+    uint32_t size = 0;
     vfs_reset();
-    KTEST_EXPECT_TRUE(tc, vfs_open("anything", &ino, &size) < 0);
+    KTEST_EXPECT_TRUE(tc, vfs_open_file("anything", &ref, &size) < 0);
     vfs_reset();
 }
 
@@ -363,12 +410,35 @@ static void test_unlink_no_mount(ktest_case_t *tc)
 
 static void test_cross_mount_open_prefers_child_mount(ktest_case_t *tc)
 {
-    uint32_t ino = 0, size = 0;
+    vfs_file_ref_t ref;
+    uint32_t size = 0;
 
     KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree(), 0u);
-    KTEST_EXPECT_EQ(tc, (uint32_t)vfs_open("mnt/childfile", &ino, &size), 0u);
-    KTEST_EXPECT_EQ(tc, ino, CHILD_FILE_INO);
+    KTEST_EXPECT_EQ(tc,
+                    (uint32_t)vfs_open_file("mnt/childfile", &ref, &size),
+                    0u);
+    KTEST_EXPECT_EQ(tc, ref.inode_num, CHILD_FILE_INO);
     KTEST_EXPECT_EQ(tc, size, CHILD_FILE_SIZE);
+    vfs_reset();
+}
+
+static void test_file_ref_read_uses_owning_mount(ktest_case_t *tc)
+{
+    vfs_file_ref_t ref;
+    uint32_t size = 0;
+    char buf[8];
+    int n;
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree(), 0u);
+    KTEST_EXPECT_EQ(tc,
+                    (uint32_t)vfs_open_file("mnt/childfile", &ref, &size),
+                    0u);
+    KTEST_EXPECT_EQ(tc, size, CHILD_FILE_SIZE);
+
+    n = vfs_read(ref, 0u, (uint8_t *)buf, 7u);
+    KTEST_EXPECT_EQ(tc, (uint32_t)n, 7u);
+    buf[7] = '\0';
+    KTEST_EXPECT_TRUE(tc, k_strcmp(buf, "child!!") == 0);
     vfs_reset();
 }
 
@@ -655,6 +725,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_create_no_mount),
     KTEST_CASE(test_unlink_no_mount),
     KTEST_CASE(test_cross_mount_open_prefers_child_mount),
+    KTEST_CASE(test_file_ref_read_uses_owning_mount),
     KTEST_CASE(test_root_listing_includes_mount_points_once),
     KTEST_CASE(test_mount_root_stat_reports_directory),
     KTEST_CASE(test_dev_namespace_lists_and_resolves_devices),

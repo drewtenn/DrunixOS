@@ -178,6 +178,7 @@ static int devfs_fill_node(const char *relpath, vfs_node_t *node_out)
         return -1;
 
     node_out->inode_num = 0;
+    node_out->mount_id = 0;
     node_out->size = 0;
     node_out->dev_id = 0;
     node_out->dev_name[0] = '\0';
@@ -399,7 +400,7 @@ int vfs_mount(const char *mount_path, const char *fs_name)
     }
 
     if (kind == VFS_MOUNT_KIND_FS) {
-        int rc = ops->init ? ops->init() : 0;
+        int rc = ops->init ? ops->init(ops->ctx) : 0;
         if (rc != 0)
             return rc;
     }
@@ -433,6 +434,7 @@ int vfs_resolve(const char *path, vfs_node_t *node_out)
 
     node_out->type = VFS_NODE_NONE;
     node_out->inode_num = 0;
+    node_out->mount_id = 0;
     node_out->size = 0;
     node_out->dev_id = 0;
     node_out->dev_name[0] = '\0';
@@ -478,7 +480,7 @@ int vfs_resolve(const char *path, vfs_node_t *node_out)
     }
 
     if (mnt->ops->stat) {
-        rc = mnt->ops->stat(rel, &st);
+        rc = mnt->ops->stat(mnt->ops->ctx, rel, &st);
         if (rc == 0 && st.type == 2) {
             node_out->type = VFS_NODE_DIR;
             kfree(norm);
@@ -492,29 +494,85 @@ int vfs_resolve(const char *path, vfs_node_t *node_out)
 
     rc = -1;
     if (!mnt->ops->open ||
-        (rc = mnt->ops->open(rel, &node_out->inode_num,
+        (rc = mnt->ops->open(mnt->ops->ctx, rel, &node_out->inode_num,
                              &node_out->size)) != 0) {
         kfree(norm);
         return rc < -1 ? rc : -1;
     }
 
     node_out->type = VFS_NODE_FILE;
+    node_out->mount_id = (uint32_t)mount_idx + 1u;
     kfree(norm);
     return 0;
 }
 
-int vfs_open(const char *path, uint32_t *inode_out, uint32_t *size_out)
+int vfs_open_file(const char *path, vfs_file_ref_t *ref_out,
+                  uint32_t *size_out)
 {
     vfs_node_t node;
 
-    if (!inode_out || !size_out)
+    if (!ref_out || !size_out)
         return -1;
     if (vfs_resolve(path, &node) != 0 || node.type != VFS_NODE_FILE)
         return -1;
 
-    *inode_out = node.inode_num;
+    ref_out->mount_id = node.mount_id;
+    ref_out->inode_num = node.inode_num;
     *size_out = node.size;
     return 0;
+}
+
+static const fs_ops_t *vfs_ops_for_file_ref(vfs_file_ref_t ref)
+{
+    uint32_t idx;
+
+    if (ref.mount_id == 0)
+        return 0;
+    idx = ref.mount_id - 1u;
+    if (idx >= VFS_MAX_MOUNTS)
+        return 0;
+    if (!vfs_mounts[idx].in_use ||
+        vfs_mounts[idx].kind != VFS_MOUNT_KIND_FS)
+        return 0;
+    return vfs_mounts[idx].ops;
+}
+
+int vfs_read(vfs_file_ref_t ref, uint32_t offset,
+             uint8_t *buf, uint32_t count)
+{
+    const fs_ops_t *ops = vfs_ops_for_file_ref(ref);
+
+    if (!ops || !ops->read)
+        return -1;
+    return ops->read(ops->ctx, ref.inode_num, offset, buf, count);
+}
+
+int vfs_write(vfs_file_ref_t ref, uint32_t offset,
+              const uint8_t *buf, uint32_t count)
+{
+    const fs_ops_t *ops = vfs_ops_for_file_ref(ref);
+
+    if (!ops || !ops->write)
+        return -1;
+    return ops->write(ops->ctx, ref.inode_num, offset, buf, count);
+}
+
+int vfs_truncate(vfs_file_ref_t ref, uint32_t size)
+{
+    const fs_ops_t *ops = vfs_ops_for_file_ref(ref);
+
+    if (!ops || !ops->truncate)
+        return -1;
+    return ops->truncate(ops->ctx, ref.inode_num, size);
+}
+
+int vfs_flush(vfs_file_ref_t ref)
+{
+    const fs_ops_t *ops = vfs_ops_for_file_ref(ref);
+
+    if (!ops || !ops->flush)
+        return -1;
+    return ops->flush(ops->ctx, ref.inode_num);
 }
 
 int vfs_getdents(const char *path, char *buf, uint32_t bufsz)
@@ -559,9 +617,10 @@ int vfs_getdents(const char *path, char *buf, uint32_t bufsz)
             }
 
             if (norm[0] != '\0' && rel[0] == '\0')
-                n = mnt->ops->getdents(0, tmp, bufsz);
+                n = mnt->ops->getdents(mnt->ops->ctx, 0, tmp, bufsz);
             else
-                n = mnt->ops->getdents(rel[0] ? rel : 0, tmp, bufsz);
+                n = mnt->ops->getdents(mnt->ops->ctx,
+                                       rel[0] ? rel : 0, tmp, bufsz);
 
             if (n < 0) {
                 kfree(tmp);
@@ -647,7 +706,7 @@ int vfs_mkdir(const char *path)
         return -1;
     }
 
-    rc = mnt->ops->mkdir(rel);
+    rc = mnt->ops->mkdir(mnt->ops->ctx, rel);
     kfree(norm);
     return rc;
 }
@@ -666,7 +725,7 @@ int vfs_create(const char *path)
         return -1;
     }
 
-    rc = mnt->ops->create(rel);
+    rc = mnt->ops->create(mnt->ops->ctx, rel);
     kfree(norm);
     return rc;
 }
@@ -685,7 +744,7 @@ int vfs_unlink(const char *path)
         return -1;
     }
 
-    rc = mnt->ops->unlink(rel);
+    rc = mnt->ops->unlink(mnt->ops->ctx, rel);
     kfree(norm);
     return rc;
 }
@@ -704,7 +763,7 @@ int vfs_rmdir(const char *path)
         return -1;
     }
 
-    rc = mnt->ops->rmdir(rel);
+    rc = mnt->ops->rmdir(mnt->ops->ctx, rel);
     kfree(norm);
     return rc;
 }
@@ -729,7 +788,7 @@ int vfs_rename(const char *oldpath, const char *newpath)
     if (oldmnt != newmnt || oldmnt->kind != VFS_MOUNT_KIND_FS || !oldmnt->ops->rename)
         goto out;
 
-    rc = oldmnt->ops->rename(oldrel, newrel);
+    rc = oldmnt->ops->rename(oldmnt->ops->ctx, oldrel, newrel);
 
 out:
     kfree(newnorm);
@@ -758,7 +817,7 @@ int vfs_link(const char *oldpath, const char *newpath, uint32_t follow)
         !oldmnt->ops->link)
         goto out;
 
-    rc = oldmnt->ops->link(oldrel, newrel, follow);
+    rc = oldmnt->ops->link(oldmnt->ops->ctx, oldrel, newrel, follow);
 
 out:
     kfree(newnorm);
@@ -782,7 +841,7 @@ int vfs_symlink(const char *target, const char *linkpath)
         return -1;
     }
 
-    rc = mnt->ops->symlink(target, rel);
+    rc = mnt->ops->symlink(mnt->ops->ctx, target, rel);
     kfree(norm);
     return rc;
 }
@@ -815,7 +874,7 @@ int vfs_readlink(const char *path, char *buf, uint32_t bufsz)
         return -22;
     }
 
-    rc = mnt->ops->readlink(rel, buf, bufsz);
+    rc = mnt->ops->readlink(mnt->ops->ctx, rel, buf, bufsz);
     kfree(norm);
     return rc;
 }
@@ -868,20 +927,21 @@ static int vfs_stat_common(const char *path, vfs_stat_t *st, uint32_t follow)
     }
 
     if (!follow && mnt->ops->lstat) {
-        int rc = mnt->ops->lstat(rel, st);
+        int rc = mnt->ops->lstat(mnt->ops->ctx, rel, st);
         kfree(norm);
         return rc;
     }
 
     if (mnt->ops->stat) {
-        int rc = mnt->ops->stat(rel, st);
+        int rc = mnt->ops->stat(mnt->ops->ctx, rel, st);
         kfree(norm);
         return rc;
     }
 
     {
         uint32_t ino, sz;
-        int rc = mnt->ops->open ? mnt->ops->open(rel, &ino, &sz) : -1;
+        int rc = mnt->ops->open ?
+                 mnt->ops->open(mnt->ops->ctx, rel, &ino, &sz) : -1;
         if (rc == 0) {
             vfs_filelike_stat(st);
             st->size = sz;

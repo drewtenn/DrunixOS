@@ -5,7 +5,6 @@
 
 #include "module.h"
 #include "elf.h"
-#include "fs.h"
 #include "kheap.h"
 #include "klog.h"
 #include "kstring.h"
@@ -58,12 +57,13 @@ static void module_record_loaded(const char *module_name, uint32_t base, uint32_
  * Internal helpers
  * ---------------------------------------------------------------------- */
 
-/* Read 'size' bytes from the file (identified by inode_num) at byte offset
+/* Read 'size' bytes from a VFS file at byte offset
  * 'file_off' into 'dst'.  Returns 0 on success, -1 on I/O error.
  */
-static int mod_read(uint32_t inode_num, uint32_t file_off, void *dst, uint32_t size)
+static int mod_read(vfs_file_ref_t file_ref, uint32_t file_off,
+                    void *dst, uint32_t size)
 {
-    int n = fs_read(inode_num, file_off, (uint8_t *)dst, size);
+    int n = vfs_read(file_ref, file_off, (uint8_t *)dst, size);
     return (n == (int)size) ? 0 : -1;
 }
 
@@ -79,7 +79,8 @@ static int mod_read(uint32_t inode_num, uint32_t file_off, void *dst, uint32_t s
  */
 #define MAX_SECTIONS 64
 
-int module_load(const char *module_name, uint32_t inode_num, uint32_t size)
+int module_load_file(const char *module_name, vfs_file_ref_t file_ref,
+                     uint32_t size)
 {
     /* ---- 0. Size guard ---- */
     if (size > MODULE_MAX_SIZE) {
@@ -89,7 +90,7 @@ int module_load(const char *module_name, uint32_t inode_num, uint32_t size)
 
     /* ---- 1. Read and validate the ELF header ---- */
     Elf32_Ehdr ehdr;
-    if (mod_read(inode_num, 0, &ehdr, sizeof(ehdr)) != 0) return -1;
+    if (mod_read(file_ref, 0, &ehdr, sizeof(ehdr)) != 0) return -1;
 
     if (*(uint32_t *)ehdr.e_ident != ELF_MAGIC) {
         klog("MOD", "bad ELF magic");
@@ -117,7 +118,7 @@ int module_load(const char *module_name, uint32_t inode_num, uint32_t size)
     /* ---- 2. Read the section header table ---- */
     shdrs = (Elf32_Shdr *)kmalloc(shnum * sizeof(Elf32_Shdr));
     if (!shdrs) { rc = -3; goto done; }
-    if (mod_read(inode_num, ehdr.e_shoff, shdrs,
+    if (mod_read(file_ref, ehdr.e_shoff, shdrs,
                  shnum * sizeof(Elf32_Shdr)) != 0) goto done;
 
     /* ---- 3. Compute total allocation size for SHF_ALLOC sections ---- */
@@ -148,7 +149,7 @@ int module_load(const char *module_name, uint32_t inode_num, uint32_t size)
         section_addr[i] = (uint32_t)(base + cursor);
 
         if (shdrs[i].sh_type == SHT_PROGBITS) {
-            if (mod_read(inode_num, shdrs[i].sh_offset,
+            if (mod_read(file_ref, shdrs[i].sh_offset,
                          base + cursor, shdrs[i].sh_size) != 0) goto done;
         }
         /* SHT_NOBITS (BSS) is already zero-filled from k_memset above */
@@ -172,7 +173,7 @@ int module_load(const char *module_name, uint32_t inode_num, uint32_t size)
     /* Read symbol table into heap buffer */
     syms = (Elf32_Sym *)kmalloc(sym_count * sizeof(Elf32_Sym));
     if (!syms) { rc = -3; goto done; }
-    if (mod_read(inode_num, shdrs[symtab_idx].sh_offset,
+    if (mod_read(file_ref, shdrs[symtab_idx].sh_offset,
                  syms, shdrs[symtab_idx].sh_size) != 0) goto done;
 
     /* Read string table into heap buffer */
@@ -180,7 +181,7 @@ int module_load(const char *module_name, uint32_t inode_num, uint32_t size)
     if (strtab_sz > 65536u) { klog("MOD", "strtab too large"); goto done; }
     strtab_buf = (char *)kmalloc(strtab_sz);
     if (!strtab_buf) { rc = -3; goto done; }
-    if (mod_read(inode_num, shdrs[strtab_idx].sh_offset,
+    if (mod_read(file_ref, shdrs[strtab_idx].sh_offset,
                  strtab_buf, strtab_sz) != 0) goto done;
 
     /* ---- 7. Resolve undefined (external) symbols against kernel_exports ---- */
@@ -227,7 +228,7 @@ int module_load(const char *module_name, uint32_t inode_num, uint32_t size)
         uint32_t rel_count = shdrs[i].sh_size / sizeof(Elf32_Rel);
         for (uint32_t r = 0; r < rel_count; r++) {
             Elf32_Rel rel;
-            if (mod_read(inode_num,
+            if (mod_read(file_ref,
                          shdrs[i].sh_offset + r * sizeof(Elf32_Rel),
                          &rel, sizeof(rel)) != 0) goto done;
 

@@ -113,8 +113,16 @@ void sys_write_n(const char *buf, int count);
 /* Read up to count bytes from fd into buf. Returns bytes read, 0 at EOF. */
 int sys_read(int fd, char *buf, int count);
 
+#define SYS_O_RDONLY 0
+#define SYS_O_WRONLY 01
+#define SYS_O_RDWR   02
+#define SYS_O_CREAT  0100
+#define SYS_O_TRUNC  01000
+#define SYS_O_APPEND 02000
+
 /* Open a file by name (read-only). Returns a file descriptor (>=3) or -1 if not found. */
 int sys_open(const char *name);
+int sys_open_flags(const char *name, int flags, int mode);
 
 /*
  * Create a new file (or truncate an existing one) for writing.
@@ -238,6 +246,7 @@ int sys_pipe(int fds[2]);
  * If old_fd == new_fd the call is a no-op.
  * Returns new_fd on success, -1 on error.
  */
+int sys_dup(int old_fd);
 int sys_dup2(int old_fd, int new_fd);
 
 /*

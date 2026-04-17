@@ -4,18 +4,20 @@
  */
 
 #include "elf.h"
-#include "fs.h"
 #include "kstring.h"
 #include "paging.h"
 #include "pmm.h"
 #include <stdint.h>
 
-int elf_load(uint32_t inode_num, uint32_t pd_phys, uint32_t *entry_out,
-             uint32_t *image_start_out, uint32_t *heap_start_out)
+int elf_load_file(vfs_file_ref_t file_ref, uint32_t pd_phys,
+                  uint32_t *entry_out,
+                  uint32_t *image_start_out,
+                  uint32_t *heap_start_out)
 {
     Elf32_Ehdr ehdr;
 
-    if (fs_read(inode_num, 0, (uint8_t *)&ehdr, sizeof(Elf32_Ehdr)) != sizeof(Elf32_Ehdr))
+    if (vfs_read(file_ref, 0, (uint8_t *)&ehdr, sizeof(Elf32_Ehdr)) !=
+        sizeof(Elf32_Ehdr))
         return -1;
 
     /* Validate ELF magic ("\x7FELF") */
@@ -35,7 +37,7 @@ int elf_load(uint32_t inode_num, uint32_t pd_phys, uint32_t *entry_out,
         Elf32_Phdr phdr;
         uint32_t phdr_off = ehdr.e_phoff + (uint32_t)i * ehdr.e_phentsize;
 
-        if (fs_read(inode_num, phdr_off, (uint8_t *)&phdr, sizeof(Elf32_Phdr)) !=
+        if (vfs_read(file_ref, phdr_off, (uint8_t *)&phdr, sizeof(Elf32_Phdr)) !=
             (int)sizeof(Elf32_Phdr))
             return -6;
 
@@ -96,10 +98,10 @@ int elf_load(uint32_t inode_num, uint32_t pd_phys, uint32_t *entry_out,
             uint32_t space     = 0x1000 - write_off;
             uint32_t to_copy   = (file_remain < space) ? file_remain : space;
 
-            if (fs_read(inode_num,
-                        phdr.p_offset + file_done,
-                        (uint8_t *)pg_phys + write_off,
-                        to_copy) != (int)to_copy)
+            if (vfs_read(file_ref,
+                         phdr.p_offset + file_done,
+                         (uint8_t *)pg_phys + write_off,
+                         to_copy) != (int)to_copy)
                 return -9;
 
             file_done   += to_copy;

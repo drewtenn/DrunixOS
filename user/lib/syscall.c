@@ -80,7 +80,19 @@ int sys_open(const char *name)
     __asm__ volatile (
         "int $0x80"
         : "=a"(r)
-        : "a"(5), "b"(name)
+        : "a"(5), "b"(name), "c"(0), "d"(0)
+        : "memory"
+    );
+    return r;
+}
+
+int sys_open_flags(const char *name, int flags, int mode)
+{
+    int r;
+    __asm__ volatile (
+        "int $0x80"
+        : "=a"(r)
+        : "a"(5), "b"(name), "c"(flags), "d"(mode)
         : "memory"
     );
     return r;
@@ -382,6 +394,18 @@ int sys_pipe(int fds[2])
         "int $0x80"
         : "=a"(r)
         : "a"(42), "b"(fds)
+        : "memory"
+    );
+    return r;
+}
+
+int sys_dup(int old_fd)
+{
+    int r;
+    __asm__ volatile (
+        "int $0x80"
+        : "=a"(r)
+        : "a"(41), "b"(old_fd)
         : "memory"
     );
     return r;

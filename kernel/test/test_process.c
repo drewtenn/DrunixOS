@@ -479,7 +479,7 @@ static void test_core_dump_writes_drunix_notes_in_order(ktest_case_t *tc)
     uint32_t expected_vmstat_len = 0;
     uint32_t expected_fault_len = 0;
     uint32_t expected_maps_len = 0;
-    uint32_t ino = 0;
+    vfs_file_ref_t ref;
     uint32_t size = 0;
     uint32_t off = 0;
     int n;
@@ -520,18 +520,18 @@ static void test_core_dump_writes_drunix_notes_in_order(ktest_case_t *tc)
                     0u);
 
     KTEST_ASSERT_EQ(tc, (uint32_t)core_dump_process(&proc, SIGSEGV), 0u);
-    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_open("core.77", &ino, &size), 0u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_open_file("core.77", &ref, &size), 0u);
 
-    n = fs_read(ino, 0u, (uint8_t *)&ehdr, (uint32_t)sizeof(ehdr));
+    n = vfs_read(ref, 0u, (uint8_t *)&ehdr, (uint32_t)sizeof(ehdr));
     KTEST_ASSERT_EQ(tc, (uint32_t)n, (uint32_t)sizeof(ehdr));
     KTEST_EXPECT_EQ(tc, ehdr.e_type, ET_CORE);
 
-    n = fs_read(ino, ehdr.e_phoff, (uint8_t *)&phdr, (uint32_t)sizeof(phdr));
+    n = vfs_read(ref, ehdr.e_phoff, (uint8_t *)&phdr, (uint32_t)sizeof(phdr));
     KTEST_ASSERT_EQ(tc, (uint32_t)n, (uint32_t)sizeof(phdr));
     KTEST_EXPECT_EQ(tc, phdr.p_type, PT_NOTE);
     KTEST_ASSERT_TRUE(tc, phdr.p_filesz < sizeof(note_buf));
 
-    n = fs_read(ino, phdr.p_offset, note_buf, phdr.p_filesz);
+    n = vfs_read(ref, phdr.p_offset, note_buf, phdr.p_filesz);
     KTEST_ASSERT_EQ(tc, (uint32_t)n, phdr.p_filesz);
 
     k_memcpy(&nhdr, note_buf + off, sizeof(nhdr));

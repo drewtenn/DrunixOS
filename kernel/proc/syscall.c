@@ -768,7 +768,7 @@ static int linux_truncate_path(process_t *cur, uint32_t user_path,
                                uint64_t length)
 {
     char *rpath;
-    uint32_t inode = 0;
+    vfs_file_ref_t ref;
     uint32_t size = 0;
     int rc;
 
@@ -785,12 +785,12 @@ static int linux_truncate_path(process_t *cur, uint32_t user_path,
         return -1;
     }
 
-    rc = vfs_open(rpath, &inode, &size);
+    rc = vfs_open_file(rpath, &ref, &size);
     kfree(rpath);
     if (rc != 0)
         return -2;
     (void)size;
-    return fs_truncate(inode, (uint32_t)length) == 0 ? 0 : -1;
+    return vfs_truncate(ref, (uint32_t)length) == 0 ? 0 : -1;
 }
 
 static int linux_truncate_fd(process_t *cur, uint32_t fd, uint64_t length)
@@ -805,13 +805,14 @@ static int linux_truncate_fd(process_t *cur, uint32_t fd, uint64_t length)
     fh = &cur->open_files[fd];
     if (fh->type != FD_TYPE_FILE || !fh->writable)
         return -1;
-    if (fs_truncate(fh->u.file.inode_num, (uint32_t)length) != 0)
+    if (vfs_truncate(fh->u.file.ref, (uint32_t)length) != 0)
         return -1;
 
     for (uint32_t i = 0; i < MAX_FDS; i++) {
         file_handle_t *other = &cur->open_files[i];
         if (other->type == FD_TYPE_FILE &&
-            other->u.file.inode_num == fh->u.file.inode_num) {
+            other->u.file.ref.mount_id == fh->u.file.ref.mount_id &&
+            other->u.file.ref.inode_num == fh->u.file.ref.inode_num) {
             other->u.file.size = (uint32_t)length;
             if (other->u.file.offset > other->u.file.size)
                 other->u.file.offset = other->u.file.size;
@@ -1037,8 +1038,8 @@ static uint32_t syscall_write_fd(uint32_t fd, uint32_t user_buf,
                                        chunk) != 0)
                 return written ? written : (uint32_t)-1;
 
-            n = fs_write(fh->u.file.inode_num, fh->u.file.offset + written,
-                         kbuf, chunk);
+            n = vfs_write(fh->u.file.ref, fh->u.file.offset + written,
+                          kbuf, chunk);
             if (n < 0)
                 return written ? written : (uint32_t)-1;
 
@@ -1160,10 +1161,9 @@ static uint32_t syscall_read_fd(uint32_t fd, uint32_t user_buf,
 
             if (chunk > USER_IO_CHUNK)
                 chunk = USER_IO_CHUNK;
-            n = fs_read(fh->u.file.inode_num, file_off + copied,
-                        kbuf, chunk);
+            n = vfs_read(fh->u.file.ref, file_off + copied, kbuf, chunk);
             if (n < 0) {
-                klog("READ", "fs_read failed");
+                klog("READ", "vfs_read failed");
                 return copied ? copied : (uint32_t)-1;
             }
             if (n == 0)
@@ -1622,7 +1622,7 @@ static uint32_t syscall_sendfile64(process_t *cur, uint32_t out_fd,
             chunk = size - read_off;
 
         if (in->type == FD_TYPE_FILE) {
-            n = fs_read(in->u.file.inode_num, read_off, kbuf, chunk);
+            n = vfs_read(in->u.file.ref, read_off, kbuf, chunk);
         } else {
             n = procfs_read_file(in->u.proc.kind, in->u.proc.pid,
                                  in->u.proc.index, read_off,
@@ -1806,6 +1806,8 @@ static int fd_install_vfs_node(process_t *proc, const vfs_node_t *node,
     switch (node->type) {
     case VFS_NODE_FILE:
         proc->open_files[fd].type = FD_TYPE_FILE;
+        proc->open_files[fd].u.file.ref.mount_id = node->mount_id;
+        proc->open_files[fd].u.file.ref.inode_num = node->inode_num;
         proc->open_files[fd].u.file.inode_num = node->inode_num;
         proc->open_files[fd].u.file.size = node->size;
         proc->open_files[fd].u.file.offset = 0;
@@ -1933,7 +1935,7 @@ static uint32_t syscall_execve(uint32_t user_path, uint32_t user_argv,
     char *kenvstrs;
     int kenvc = 0;
     char *exec_rpath;
-    uint32_t ino;
+    vfs_file_ref_t exec_ref;
     uint32_t sz;
     process_t *new_proc;
 
@@ -1982,7 +1984,7 @@ static uint32_t syscall_execve(uint32_t user_path, uint32_t user_argv,
         kfree(kstrs);
         return (uint32_t)-1;
     }
-    if (vfs_open(exec_rpath, &ino, &sz) != 0) {
+    if (vfs_open_file(exec_rpath, &exec_ref, &sz) != 0) {
         klog("EXEC", "file not found");
         kfree(exec_rpath);
         kfree(kenvstrs);
@@ -1998,7 +2000,7 @@ static uint32_t syscall_execve(uint32_t user_path, uint32_t user_argv,
         return (uint32_t)-1;
     }
 
-    if (process_create(new_proc, ino, kargv, kargc, kenvp, kenvc, 0) != 0) {
+    if (process_create_file(new_proc, exec_ref, kargv, kargc, kenvp, kenvc, 0) != 0) {
         klog("EXEC", "process_create failed");
         kfree(new_proc);
         kfree(kenvstrs);
@@ -2054,7 +2056,7 @@ static void fd_close_one(process_t *proc, unsigned fd)
     file_handle_t *fh = &proc->open_files[fd];
 
     if (fh->type == FD_TYPE_FILE && fh->writable)
-        fs_flush_inode(fh->u.file.inode_num);
+        vfs_flush(fh->u.file.ref);
 
     if (fh->type == FD_TYPE_PIPE_READ) {
         pipe_buf_t *pb = pipe_get((int)fh->u.pipe.pipe_idx);
@@ -2241,9 +2243,15 @@ static uint32_t SYSCALL_NOINLINE syscall_case_open(uint32_t eax, uint32_t ebx,
         vfs_node_t node;
         if ((flags & (LINUX_O_CREAT | LINUX_O_TRUNC)) != 0) {
             int ino_c = vfs_create(rpath);
+            vfs_file_ref_t ref_c;
+            uint32_t size_c = 0;
             if (ino_c < 0) {
                 klog("OPEN", rpath);
                 klog("OPEN", "create failed");
+                kfree(rpath);
+                return (uint32_t)-1;
+            }
+            if (vfs_open_file(rpath, &ref_c, &size_c) != 0) {
                 kfree(rpath);
                 return (uint32_t)-1;
             }
@@ -2256,8 +2264,9 @@ static uint32_t SYSCALL_NOINLINE syscall_case_open(uint32_t eax, uint32_t ebx,
             }
             cur->open_files[fd].type             = FD_TYPE_FILE;
             cur->open_files[fd].writable         = 1;
+            cur->open_files[fd].u.file.ref        = ref_c;
             cur->open_files[fd].u.file.inode_num = (uint32_t)ino_c;
-            cur->open_files[fd].u.file.size      = 0;
+            cur->open_files[fd].u.file.size      = size_c;
             cur->open_files[fd].u.file.offset    = 0;
             kfree(rpath);
             return (uint32_t)fd;
@@ -2328,7 +2337,13 @@ static uint32_t SYSCALL_NOINLINE syscall_case_openat(uint32_t eax, uint32_t ebx,
 
         if ((flags & (LINUX_O_CREAT | LINUX_O_TRUNC)) != 0) {
             int ino_c = vfs_create(rpath);
+            vfs_file_ref_t ref_c;
+            uint32_t size_c = 0;
             if (ino_c < 0) {
+                kfree(rpath);
+                return (uint32_t)-1;
+            }
+            if (vfs_open_file(rpath, &ref_c, &size_c) != 0) {
                 kfree(rpath);
                 return (uint32_t)-1;
             }
@@ -2340,8 +2355,9 @@ static uint32_t SYSCALL_NOINLINE syscall_case_openat(uint32_t eax, uint32_t ebx,
             }
             cur->open_files[fd].type             = FD_TYPE_FILE;
             cur->open_files[fd].writable         = 1;
+            cur->open_files[fd].u.file.ref        = ref_c;
             cur->open_files[fd].u.file.inode_num = (uint32_t)ino_c;
-            cur->open_files[fd].u.file.size      = 0;
+            cur->open_files[fd].u.file.size      = size_c;
             cur->open_files[fd].u.file.offset    = 0;
             kfree(rpath);
             return (uint32_t)fd;
@@ -2926,11 +2942,18 @@ static uint32_t SYSCALL_NOINLINE syscall_case_creat(uint32_t eax, uint32_t ebx,
         }
 
         int ino_c = vfs_create(rpath);
-        kfree(rpath);
+        vfs_file_ref_t ref_c;
+        uint32_t size_c = 0;
         if (ino_c < 0) {
+            kfree(rpath);
             klog("CREATE", "vfs_create failed");
             return (uint32_t)-1;
         }
+        if (vfs_open_file(rpath, &ref_c, &size_c) != 0) {
+            kfree(rpath);
+            return (uint32_t)-1;
+        }
+        kfree(rpath);
 
         int fd = fd_alloc(cur);
         if (fd < 0) {
@@ -2939,8 +2962,9 @@ static uint32_t SYSCALL_NOINLINE syscall_case_creat(uint32_t eax, uint32_t ebx,
         }
         cur->open_files[fd].type             = FD_TYPE_FILE;
         cur->open_files[fd].writable         = 1;
+        cur->open_files[fd].u.file.ref        = ref_c;
         cur->open_files[fd].u.file.inode_num = (uint32_t)ino_c;
-        cur->open_files[fd].u.file.size      = 0;
+        cur->open_files[fd].u.file.size      = size_c;
         cur->open_files[fd].u.file.offset    = 0;
         return (uint32_t)fd;
     }
@@ -3952,12 +3976,12 @@ static uint32_t SYSCALL_NOINLINE syscall_case_drunix_modload(uint32_t eax, uint3
         /*
          * ebx = pointer to null-terminated module filename in user space.
          *
-         * Looks up the file via the VFS to get its starting LBA and byte
-         * size, then calls module_load() to read the ELF relocatable object
+         * Looks up the file via the VFS to get a mount-qualified file ref and
+         * size, then calls module_load_file() to read the ELF relocatable object
          * from disk, resolve symbols against kernel_exports[], apply
          * relocations, and call the module's module_init() function.
          *
-         * Returns 0 on success, or a negative error code from module_load():
+         * Returns 0 on success, or a negative error code from module_load_file():
          *   -1  invalid ELF
          *   -2  relocation error (undefined symbol or unsupported reloc type)
          *   -3  out of kernel heap memory
@@ -3971,14 +3995,15 @@ static uint32_t SYSCALL_NOINLINE syscall_case_drunix_modload(uint32_t eax, uint3
             kfree(rpath);
             return (uint32_t)-1;
         }
-        uint32_t ino, sz;
-        if (vfs_open(rpath, &ino, &sz) != 0) {
+        vfs_file_ref_t mod_ref;
+        uint32_t sz;
+        if (vfs_open_file(rpath, &mod_ref, &sz) != 0) {
             klog("MODLOAD", "file not found");
             kfree(rpath);
             return (uint32_t)-1;
         }
         {
-            uint32_t ret = (uint32_t)module_load(rpath, ino, sz);
+            uint32_t ret = (uint32_t)module_load_file(rpath, mod_ref, sz);
             kfree(rpath);
             return ret;
         }

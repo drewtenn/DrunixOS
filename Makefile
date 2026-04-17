@@ -11,10 +11,12 @@ MOUSE_SPEED ?= 4
 INIT_PROGRAM ?= bin/shell
 INIT_ARG0 ?= shell
 INIT_ENV0 ?= PATH=/bin
+ROOT_FS ?= ext3
 CFLAGS += -DMOUSE_FRAMEBUFFER_PIXEL_SCALE=$(MOUSE_SPEED)
 CFLAGS += -DDRUNIX_INIT_PROGRAM=\"$(INIT_PROGRAM)\"
 CFLAGS += -DDRUNIX_INIT_ARG0=\"$(INIT_ARG0)\"
 CFLAGS += -DDRUNIX_INIT_ENV0=\"$(INIT_ENV0)\"
+CFLAGS += -DDRUNIX_ROOT_FS=\"$(ROOT_FS)\"
 
 # ─── Unit tests ──────────────────────────────────────────────────────────────
 # Build with KTEST=1 to compile the in-kernel test suite and run it at boot:
@@ -57,7 +59,7 @@ endif
 .mouse-speed-flag: FORCE
 	echo "$(MOUSE_SPEED)" | cmp -s - $@ || echo "$(MOUSE_SPEED)" > $@
 .init-program-flag: FORCE
-	printf '%s\n%s\n%s\n' "$(INIT_PROGRAM)" "$(INIT_ARG0)" "$(INIT_ENV0)" | cmp -s - $@ || printf '%s\n%s\n%s\n' "$(INIT_PROGRAM)" "$(INIT_ARG0)" "$(INIT_ENV0)" > $@
+	printf '%s\n%s\n%s\n%s\n' "$(INIT_PROGRAM)" "$(INIT_ARG0)" "$(INIT_ENV0)" "$(ROOT_FS)" | cmp -s - $@ || printf '%s\n%s\n%s\n%s\n' "$(INIT_PROGRAM)" "$(INIT_ARG0)" "$(INIT_ENV0)" "$(ROOT_FS)" > $@
 FORCE:
 
 kernel/kernel.o: .ktest-flag
@@ -71,12 +73,13 @@ kernel/test/test_desktop.o: .mouse-speed-flag
 GRUB_MKRESCUE := i686-elf-grub-mkrescue
 ISO_KERNEL    := iso/boot/kernel.elf
 DISK_SECTORS  := 102400
-USER_PROGS    := shell chello hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello linuxhello linuxprobe linuxabi busybox bbcompat
+USER_PROGS    := shell chello hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello linuxhello linuxprobe linuxabi busybox bbcompat dufstest redirtest
 USER_BINS     := $(addprefix user/,$(USER_PROGS))
 DISK_FILES    := $(foreach prog,$(USER_PROGS),user/$(prog) bin/$(prog)) \
                  tools/hello.txt hello.txt \
                  tools/readme.txt readme.txt
 QEMU_COMMON   := -drive format=raw,file=disk.img,if=ide,index=0 \
+                 -drive format=raw,file=dufs.img,if=ide,index=1 \
                  -cdrom os.iso \
                  -boot d -no-reboot -no-shutdown \
                  -global isa-debugcon.iobase=0xe9
@@ -104,7 +107,7 @@ KOBJS = kernel/kernel-entry.o kernel/kernel.o \
         kernel/proc/elf.o kernel/proc/process.o kernel/proc/process_asm.o \
         kernel/proc/sched.o kernel/proc/syscall.o kernel/proc/core.o kernel/proc/mem_forensics.o kernel/proc/pipe.o kernel/proc/switch.o \
         kernel/proc/uaccess.o \
-        kernel/fs/fs.o kernel/fs/vfs.o kernel/fs/procfs.o
+        kernel/fs/fs.o kernel/fs/vfs.o kernel/fs/procfs.o kernel/fs/ext3.o
 
 $(KOBJS): .ktest-flag
 
@@ -119,13 +122,21 @@ kernel.elf: $(KOBJS) $(KTOBJS)
 $(USER_BINS):
 	$(MAKE) -C user $(@F)
 
-# ─── DUFS hard-disk image ────────────────────────────────────────────────────
-# Presented to QEMU as the primary ATA master (if=ide,index=0).
-# 50 MiB = 102400 sectors.  Built by tools/mkfs.py (DUFS v3):
-#   superblock LBA 1, inode bitmap LBA 2-9, block bitmap LBA 10-17,
-#   inode table LBA 18-273, data blocks LBA 274+ (4096-byte blocks).
+# ─── Hard-disk images ────────────────────────────────────────────────────────
+# disk.img is the primary ATA master (hd0).  By default it is a deterministic
+# ext3-compatible read-only root.  ROOT_FS=dufs builds hd0 as DUFS instead.
+ifeq ($(ROOT_FS),dufs)
 disk.img: $(USER_BINS) tools/hello.txt tools/readme.txt tools/mkfs.py
 	$(PYTHON) tools/mkfs.py $@ $(DISK_SECTORS) $(DISK_FILES)
+else
+disk.img: $(USER_BINS) tools/hello.txt tools/readme.txt tools/mkext3.py
+	$(PYTHON) tools/mkext3.py $@ $(DISK_SECTORS) $(DISK_FILES)
+endif
+
+# dufs.img is the primary ATA slave (hd1), mounted at /dufs during ext3-root
+# boots.  It is intentionally not rebuilt by run-fresh when it already exists.
+dufs.img: tools/mkfs.py
+	$(PYTHON) tools/mkfs.py $@ $(DISK_SECTORS)
 
 # ─── Documentation ───────────────────────────────────────────────────────────
 DOCS_SRC := docs/partI-firmware-to-kernel.md \
@@ -263,7 +274,7 @@ kernel: os.iso
 #             Use this to (re)populate the filesystem after adding/changing user
 #             programs.  Most run/debug targets intentionally do NOT depend on
 #             this so that the filesystem state is preserved across boots.
-disk: disk.img
+disk: disk.img dufs.img
 
 # `pdf`    — render the PDF book from the markdown chapter sources.
 pdf: docs/Drunix\ OS.pdf
@@ -281,14 +292,14 @@ docs: pdf epub
 # `run`     — boot the OS in QEMU.  Uses whatever disk.img is already on disk;
 #             does NOT rebuild the filesystem.  Logs written to serial.log and
 #             debugcon.log.
-run: os.iso
+run: os.iso dufs.img
 	rm -f serial.log debugcon.log
 	$(QEMU) $(QEMU_COMMON) $(QEMU_LOGS)
 
 # `run-stdio` — same as `run` but routes the debugcon port to the terminal
 #               instead of a file.  Useful when you want to tail kernel log
 #               output live without opening debugcon.log separately.
-run-stdio: os.iso
+run-stdio: os.iso dufs.img
 	$(QEMU) $(QEMU_COMMON) -serial file:serial.log -debugcon stdio
 
 # `debug`   — start QEMU paused with the GDB remote stub active, then attach
@@ -297,7 +308,7 @@ run-stdio: os.iso
 #             for source-level stepping. Set breakpoints, then `continue` to
 #             boot. Does NOT rebuild the filesystem.
 #             Port: localhost:1234 (QEMU default).
-debug: os.iso
+debug: os.iso dufs.img
 	rm -f serial.log debugcon.log
 	$(QEMU) -s -S \
 	    $(QEMU_COMMON) \
@@ -321,7 +332,7 @@ debug: os.iso
 #                If the program is loaded at a non-default address by the kernel
 #                ELF loader, adjust with GDB's `add-symbol-file user/<app> <addr>`
 #                after connecting.
-debug-user: os.iso
+debug-user: os.iso dufs.img
 	@test -n "$(APP)" || (echo "Usage: make debug-user APP=<program name>  (e.g. APP=shell)"; exit 1)
 	rm -f serial.log debugcon.log
 	$(QEMU) -s -S \
@@ -343,13 +354,13 @@ debug-user: os.iso
 # `run-fresh`   — rebuild the DUFS disk image from scratch, then boot the OS.
 #                 Use this after adding or changing user programs to get a clean
 #                 filesystem state.
-run-fresh: os.iso disk.img
+run-fresh: os.iso disk.img dufs.img
 	rm -f serial.log debugcon.log
 	$(QEMU) $(QEMU_COMMON) $(QEMU_LOGS)
 
 # `debug-fresh` — rebuild the DUFS disk image from scratch, then boot paused
 #                 under the GDB stub.  Combines `run-fresh` and `debug`.
-debug-fresh: os.iso disk.img
+debug-fresh: os.iso disk.img dufs.img
 	rm -f serial.log debugcon.log
 	$(QEMU) -s -S \
 	    $(QEMU_COMMON) \
@@ -385,9 +396,10 @@ test-fresh:
 #               Currently verifies the double-fault path via a dedicated TSS.
 test-halt:
 	$(MAKE) DOUBLE_FAULT_TEST=1 kernel disk
-	rm -f serial-df.log debugcon-df.log disk-df.img
+	rm -f serial-df.log debugcon-df.log disk-df.img dufs-df.img
 	cp -f disk.img disk-df.img
-	sh -c '$(QEMU) -display none -drive format=raw,file=disk-df.img,if=ide,index=0 -cdrom os.iso -boot d -no-reboot -no-shutdown -serial file:serial-df.log -debugcon file:debugcon-df.log -global isa-debugcon.iobase=0xe9 >/dev/null 2>&1 & pid=$$!; sleep 3; kill $$pid >/dev/null 2>&1 || true; wait $$pid >/dev/null 2>&1 || true'
+	cp -f dufs.img dufs-df.img
+	sh -c '$(QEMU) -display none -drive format=raw,file=disk-df.img,if=ide,index=0 -drive format=raw,file=dufs-df.img,if=ide,index=1 -cdrom os.iso -boot d -no-reboot -no-shutdown -serial file:serial-df.log -debugcon file:debugcon-df.log -global isa-debugcon.iobase=0xe9 >/dev/null 2>&1 & pid=$$!; sleep 3; kill $$pid >/dev/null 2>&1 || true; wait $$pid >/dev/null 2>&1 || true'
 	grep -q "\[PANIC\] --- DOUBLE FAULT ---" debugcon-df.log
 	grep -q "fault entered through dedicated TSS" debugcon-df.log
 
@@ -395,10 +407,11 @@ test-halt:
 #                         the initial process, then extract its on-disk report.
 test-busybox-compat:
 	$(MAKE) KLOG_TO_DEBUGCON=1 INIT_PROGRAM=bin/bbcompat INIT_ARG0=bbcompat kernel disk
-	rm -f serial-bbcompat.log debugcon-bbcompat.log disk-bbcompat.img bbcompat.log
+	rm -f serial-bbcompat.log debugcon-bbcompat.log disk-bbcompat.img dufs-bbcompat.img bbcompat.log
 	cp -f disk.img disk-bbcompat.img
-	sh -c '$(QEMU) -display none -drive format=raw,file=disk-bbcompat.img,if=ide,index=0 -cdrom os.iso -boot d -no-reboot -no-shutdown -serial file:serial-bbcompat.log -debugcon file:debugcon-bbcompat.log -global isa-debugcon.iobase=0xe9 >/dev/null 2>&1 & pid=$$!; sleep 120; kill $$pid >/dev/null 2>&1 || true; wait $$pid >/dev/null 2>&1 || true'
-	$(PYTHON) tools/dufs_extract.py disk-bbcompat.img bbcompat.log bbcompat.log
+	cp -f dufs.img dufs-bbcompat.img
+	sh -c '$(QEMU) -display none -drive format=raw,file=disk-bbcompat.img,if=ide,index=0 -drive format=raw,file=dufs-bbcompat.img,if=ide,index=1 -cdrom os.iso -boot d -no-reboot -no-shutdown -serial file:serial-bbcompat.log -debugcon file:debugcon-bbcompat.log -global isa-debugcon.iobase=0xe9 >/dev/null 2>&1 & pid=$$!; sleep 120; kill $$pid >/dev/null 2>&1 || true; wait $$pid >/dev/null 2>&1 || true'
+	$(PYTHON) tools/dufs_extract.py dufs-bbcompat.img bbcompat.log bbcompat.log
 	cat bbcompat.log
 	grep -q "BBCOMPAT SUMMARY passed 255/255" bbcompat.log
 	! grep -q "BBCOMPAT FAIL" bbcompat.log
@@ -408,10 +421,11 @@ test-busybox-compat:
 #                    values and errno-compatible negative results directly.
 test-linux-abi:
 	$(MAKE) KLOG_TO_DEBUGCON=1 INIT_PROGRAM=bin/linuxabi INIT_ARG0=linuxabi kernel disk
-	rm -f serial-linuxabi.log debugcon-linuxabi.log disk-linuxabi.img linuxabi.log
+	rm -f serial-linuxabi.log debugcon-linuxabi.log disk-linuxabi.img dufs-linuxabi.img linuxabi.log
 	cp -f disk.img disk-linuxabi.img
-	sh -c '$(QEMU) -display none -drive format=raw,file=disk-linuxabi.img,if=ide,index=0 -cdrom os.iso -boot d -no-reboot -no-shutdown -serial file:serial-linuxabi.log -debugcon file:debugcon-linuxabi.log -global isa-debugcon.iobase=0xe9 >/dev/null 2>&1 & pid=$$!; sleep 30; kill $$pid >/dev/null 2>&1 || true; wait $$pid >/dev/null 2>&1 || true'
-	$(PYTHON) tools/dufs_extract.py disk-linuxabi.img linuxabi.log linuxabi.log
+	cp -f dufs.img dufs-linuxabi.img
+	sh -c '$(QEMU) -display none -drive format=raw,file=disk-linuxabi.img,if=ide,index=0 -drive format=raw,file=dufs-linuxabi.img,if=ide,index=1 -cdrom os.iso -boot d -no-reboot -no-shutdown -serial file:serial-linuxabi.log -debugcon file:debugcon-linuxabi.log -global isa-debugcon.iobase=0xe9 >/dev/null 2>&1 & pid=$$!; sleep 30; kill $$pid >/dev/null 2>&1 || true; wait $$pid >/dev/null 2>&1 || true'
+	$(PYTHON) tools/dufs_extract.py dufs-linuxabi.img linuxabi.log linuxabi.log
 	cat linuxabi.log
 	grep -q "LINUXABI SUMMARY passed 355/355" linuxabi.log
 	! grep -q "LINUXABI FAIL" linuxabi.log
@@ -443,7 +457,7 @@ rebuild:
 clean:
 	find kernel -name '*.o' -delete
 	find kernel -name '*.d' -delete
-	$(RM) *.elf core.* disk.img disk-bbcompat.img disk-linuxabi.img os.iso $(ISO_KERNEL) "$(PDF)" "$(EPUB)" .ktest-flag .double-fault-test-flag .klog-debugcon-flag .mouse-speed-flag .init-program-flag
+	$(RM) *.elf core.* disk.img dufs.img disk-df.img dufs-df.img disk-bbcompat.img dufs-bbcompat.img disk-linuxabi.img dufs-linuxabi.img os.iso $(ISO_KERNEL) "$(PDF)" "$(EPUB)" .ktest-flag .double-fault-test-flag .klog-debugcon-flag .mouse-speed-flag .init-program-flag
 	$(RM) -f serial-bbcompat.log debugcon-bbcompat.log bbcompat.log
 	$(RM) -f serial-linuxabi.log debugcon-linuxabi.log linuxabi.log
 	$(RM) -rf build/busybox

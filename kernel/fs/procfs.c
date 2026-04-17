@@ -424,6 +424,7 @@ int procfs_fill_node(const char *relpath, vfs_node_t *node_out)
 
     node_out->type = node_type;
     node_out->inode_num = 0;
+    node_out->mount_id = 0;
     node_out->size = 0;
     node_out->dev_id = 0;
     node_out->dev_name[0] = '\0';

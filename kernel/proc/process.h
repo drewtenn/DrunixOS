@@ -5,6 +5,7 @@
 
 #include "wait.h"
 #include "vma.h"
+#include "vfs.h"
 #include <stdint.h>
 
 /*
@@ -76,7 +77,7 @@
  */
 typedef enum {
     FD_TYPE_NONE       = 0,  /* slot is free                          */
-    FD_TYPE_FILE       = 1,  /* DUFS inode-based file                 */
+    FD_TYPE_FILE       = 1,  /* VFS-backed regular file               */
     FD_TYPE_CHARDEV    = 2,  /* character device (e.g. keyboard)      */
     FD_TYPE_STDOUT     = 3,  /* VGA console output via print_bytes()  */
     FD_TYPE_PIPE_READ  = 4,  /* read end of a kernel pipe             */
@@ -97,7 +98,8 @@ typedef struct {
     uint32_t  writable;  /* 1 if the fd is open for writing            */
     union {
         struct {
-            uint32_t inode_num; /* DUFS inode number                   */
+            vfs_file_ref_t ref; /* owning mount and backend inode      */
+            uint32_t inode_num; /* inode number for Linux stat output  */
             uint32_t size;      /* cached file size in bytes           */
             uint32_t offset;    /* current read/write offset           */
         } file;
@@ -279,10 +281,10 @@ typedef struct process {
  *
  * Returns 0 on success, negative on error.
  */
-int process_create(process_t *proc, uint32_t inode_num,
-                   const char *const *argv, int argc,
-                   const char *const *envp, int envc,
-                   const file_handle_t *inherit_fds);
+int process_create_file(process_t *proc, vfs_file_ref_t file_ref,
+                        const char *const *argv, int argc,
+                        const char *const *envp, int envc,
+                        const file_handle_t *inherit_fds);
 
 #ifdef KTEST_ENABLED
 int process_build_user_stack_frame_for_test(uint32_t pd_phys,

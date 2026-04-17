@@ -299,10 +299,10 @@ void process_restore_user_tls(const process_t *proc)
     }
 }
 
-int process_create(process_t *proc, uint32_t inode_num,
-                   const char *const *argv, int argc,
-                   const char *const *envp, int envc,
-                   const file_handle_t *inherit_fds)
+int process_create_file(process_t *proc, vfs_file_ref_t file_ref,
+                        const char *const *argv, int argc,
+                        const char *const *envp, int envc,
+                        const file_handle_t *inherit_fds)
 {
     process_t *parent = sched_current();
 
@@ -314,7 +314,7 @@ int process_create(process_t *proc, uint32_t inode_num,
     uint32_t entry       = 0;
     uint32_t image_start = 0;
     uint32_t heap_start  = 0;
-    if (elf_load(inode_num, pd_phys, &entry, &image_start, &heap_start) != 0)
+    if (elf_load_file(file_ref, pd_phys, &entry, &image_start, &heap_start) != 0)
         return -2;
 
     /* Step 3: allocate and map the user stack */
@@ -620,7 +620,7 @@ void process_close_all_fds(process_t *proc)
             continue;
 
         if (fh->type == FD_TYPE_FILE && fh->writable)
-            fs_flush_inode(fh->u.file.inode_num);
+            vfs_flush(fh->u.file.ref);
 
         if (fh->type == FD_TYPE_PIPE_READ) {
             pipe_buf_t *pb = pipe_get((int)fh->u.pipe.pipe_idx);

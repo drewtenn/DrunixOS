@@ -50,6 +50,7 @@ typedef enum {
 typedef struct {
     uint32_t type;
     uint32_t inode_num;
+    uint32_t mount_id;
     uint32_t size;
     uint32_t dev_id;
     char     dev_name[VFS_DEV_NAME_MAX];
@@ -59,18 +60,26 @@ typedef struct {
 } vfs_node_t;
 
 typedef struct {
+    uint32_t mount_id;
+    uint32_t inode_num;
+} vfs_file_ref_t;
+
+typedef struct {
+    void *ctx;
+
     /*
      * init: initialise the filesystem implementation before it is mounted.
      * Returns 0 on success, negative on error.
      */
-    int (*init)(void);
+    int (*init)(void *ctx);
 
     /*
      * open: look up a file by name.
      * On success writes the file's inode number to *inode_out and its size
      * in bytes to *size_out, then returns 0.  Returns -1 if not found.
      */
-    int (*open)(const char *name, uint32_t *inode_out, uint32_t *size_out);
+    int (*open)(void *ctx, const char *name,
+                uint32_t *inode_out, uint32_t *size_out);
 
     /*
      * getdents: enumerate null-terminated names into buf.
@@ -79,33 +88,33 @@ typedef struct {
      * Returns the number of bytes written (including NUL terminators).
      * Stops early if the buffer would overflow.
      */
-    int (*getdents)(const char *path, char *buf, uint32_t bufsz);
+    int (*getdents)(void *ctx, const char *path, char *buf, uint32_t bufsz);
 
     /*
      * create: create a new file or truncate an existing one by path.
      * Returns the file's inode number (>= 0) on success, or -1 on error.
      */
-    int (*create)(const char *path);
+    int (*create)(void *ctx, const char *path);
 
     /*
      * unlink: delete a file by path.
      * Returns 0 on success, -1 if not found or on I/O error.
      */
-    int (*unlink)(const char *path);
+    int (*unlink)(void *ctx, const char *path);
 
     /*
      * mkdir: create a directory at the root level.
      * Returns 0 on success, -1 on error (duplicate, invalid name, or full).
      * May be NULL if the filesystem does not support directories.
      */
-    int (*mkdir)(const char *name);
+    int (*mkdir)(void *ctx, const char *name);
 
     /*
      * rmdir: remove an empty directory at the root level.
      * Returns 0 on success, -1 if not found, not empty, or on I/O error.
      * May be NULL if the filesystem does not support directory removal.
      */
-    int (*rmdir)(const char *name);
+    int (*rmdir)(void *ctx, const char *name);
 
     /*
      * rename: atomically rename or move a file or directory.
@@ -115,24 +124,32 @@ typedef struct {
      * Returns 0 on success, -1 on error.
      * May be NULL if the filesystem does not support rename.
      */
-    int (*rename)(const char *oldpath, const char *newpath);
+    int (*rename)(void *ctx, const char *oldpath, const char *newpath);
 
     /*
      * link: create a hardlink from newpath to oldpath.
      * symlink: create a symbolic link at linkpath containing target.
      * readlink: copy the symbolic-link target to buf and return byte count.
      */
-    int (*link)(const char *oldpath, const char *newpath, uint32_t follow);
-    int (*symlink)(const char *target, const char *linkpath);
-    int (*readlink)(const char *path, char *buf, uint32_t bufsz);
+    int (*link)(void *ctx, const char *oldpath, const char *newpath,
+                uint32_t follow);
+    int (*symlink)(void *ctx, const char *target, const char *linkpath);
+    int (*readlink)(void *ctx, const char *path, char *buf, uint32_t bufsz);
 
     /*
      * stat: retrieve metadata for the file or directory at path.
      * Fills *st and returns 0 on success, -1 if not found.
      * May be NULL if the filesystem does not support stat.
      */
-    int (*stat)(const char *path, vfs_stat_t *st);
-    int (*lstat)(const char *path, vfs_stat_t *st);
+    int (*stat)(void *ctx, const char *path, vfs_stat_t *st);
+    int (*lstat)(void *ctx, const char *path, vfs_stat_t *st);
+
+    int (*read)(void *ctx, uint32_t inode_num, uint32_t offset,
+                uint8_t *buf, uint32_t count);
+    int (*write)(void *ctx, uint32_t inode_num, uint32_t offset,
+                 const uint8_t *buf, uint32_t count);
+    int (*truncate)(void *ctx, uint32_t inode_num, uint32_t size);
+    int (*flush)(void *ctx, uint32_t inode_num);
 } fs_ops_t;
 
 /*
@@ -162,15 +179,22 @@ void vfs_reset(void);
 int vfs_resolve(const char *path, vfs_node_t *node_out);
 
 /*
- * vfs_open / vfs_getdents / vfs_create / vfs_unlink / vfs_mkdir: operate on
- * the mounted namespace.  Return -1 if the path is invalid, does not exist,
- * or the selected backend does not support the requested operation.
+ * vfs_open_file / vfs_getdents / vfs_create / vfs_unlink / vfs_mkdir:
+ * operate on the mounted namespace.  Return -1 if the path is invalid, does
+ * not exist, or the selected backend does not support the requested operation.
  *
- * vfs_open succeeds only for regular files backed by a real filesystem and
- * writes the file's inode number to *inode_out.
+ * vfs_open_file succeeds only for regular files backed by a real filesystem
+ * and writes a mount-qualified file reference to *ref_out.
  * vfs_create returns the new inode number on success, or -1 on error.
  */
-int vfs_open(const char *path, uint32_t *inode_out, uint32_t *size_out);
+int vfs_open_file(const char *path, vfs_file_ref_t *ref_out,
+                  uint32_t *size_out);
+int vfs_read(vfs_file_ref_t ref, uint32_t offset,
+             uint8_t *buf, uint32_t count);
+int vfs_write(vfs_file_ref_t ref, uint32_t offset,
+              const uint8_t *buf, uint32_t count);
+int vfs_truncate(vfs_file_ref_t ref, uint32_t size);
+int vfs_flush(vfs_file_ref_t ref);
 int vfs_getdents(const char *path, char *buf, uint32_t bufsz);
 int vfs_create(const char *path);
 int vfs_unlink(const char *path);

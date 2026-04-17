@@ -96,6 +96,7 @@ typedef struct {
 /* ── Public API ─────────────────────────────────────────────────────────── */
 
 void dufs_register(void);
+int  dufs_use_device(const char *blkdev_name);
 int  fs_init(void);
 int  fs_open(const char *path, uint32_t *inode_out, uint32_t *size_out);
 int  fs_read(uint32_t inode_num, uint32_t offset, uint8_t *buf, uint32_t count);

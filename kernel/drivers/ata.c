@@ -56,14 +56,17 @@ static void ata_delay400(void) {
 }
 
 /* Common LBA28 transfer setup for read and write. */
-static void ata_setup_lba(uint32_t lba) {
+static void ata_setup_lba(uint32_t lba, uint8_t slave) {
+    /* bit 6 = LBA mode, bit 5 = 1 (obsolete), bit 4 selects slave. */
+    port_byte_out(ATA_PRIMARY_BASE + ATA_REG_DRV_HEAD,
+                  0xE0 | (slave ? 0x10 : 0x00) |
+                  ((uint8_t)(lba >> 24) & 0x0F));
+    ata_delay400();
+
     port_byte_out(ATA_PRIMARY_BASE + ATA_REG_SECCOUNT, 1);
     port_byte_out(ATA_PRIMARY_BASE + ATA_REG_LBA_LO,  (uint8_t)(lba));
     port_byte_out(ATA_PRIMARY_BASE + ATA_REG_LBA_MID, (uint8_t)(lba >> 8));
     port_byte_out(ATA_PRIMARY_BASE + ATA_REG_LBA_HI,  (uint8_t)(lba >> 16));
-    /* bit 6 = LBA mode, bit 5 = 1 (obsolete), bit 4 = 0 (master drive = disk.img at index=0) */
-    port_byte_out(ATA_PRIMARY_BASE + ATA_REG_DRV_HEAD,
-                  0xE0 | ((uint8_t)(lba >> 24) & 0x0F));
 }
 
 void ata_init(void) {
@@ -96,18 +99,9 @@ void ata_init(void) {
     klog("ATA", "drive not ready (DRDY timeout)");
 }
 
-static const blkdev_ops_t ata_ops = {
-    .read_sector  = ata_read_sector,
-    .write_sector = ata_write_sector,
-};
-
-void ata_register(void) {
-    blkdev_register("hd0", &ata_ops);
-}
-
-int ata_read_sector(uint32_t lba, uint8_t *buf) {
+static int ata_read_sector_drive(uint32_t lba, uint8_t *buf, uint8_t slave) {
     if (ata_wait_bsy() != ATA_OK) return ATA_TIMEOUT;
-    ata_setup_lba(lba);
+    ata_setup_lba(lba, slave);
     port_byte_out(ATA_PRIMARY_BASE + ATA_REG_COMMAND, ATA_CMD_READ_SECTORS);
     ata_delay400();
 
@@ -118,9 +112,9 @@ int ata_read_sector(uint32_t lba, uint8_t *buf) {
     return ATA_OK;
 }
 
-int ata_write_sector(uint32_t lba, const uint8_t *buf) {
+static int ata_write_sector_drive(uint32_t lba, const uint8_t *buf, uint8_t slave) {
     if (ata_wait_bsy() != ATA_OK) return ATA_TIMEOUT;
-    ata_setup_lba(lba);
+    ata_setup_lba(lba, slave);
     port_byte_out(ATA_PRIMARY_BASE + ATA_REG_COMMAND, ATA_CMD_WRITE_SECTORS);
     ata_delay400();
 
@@ -133,4 +127,35 @@ int ata_write_sector(uint32_t lba, const uint8_t *buf) {
     port_byte_out(ATA_PRIMARY_BASE + ATA_REG_COMMAND, ATA_CMD_FLUSH_CACHE);
     if (ata_wait_bsy() != ATA_OK) return ATA_TIMEOUT;
     return ATA_OK;
+}
+
+int ata_read_sector(uint32_t lba, uint8_t *buf) {
+    return ata_read_sector_drive(lba, buf, 0);
+}
+
+int ata_write_sector(uint32_t lba, const uint8_t *buf) {
+    return ata_write_sector_drive(lba, buf, 0);
+}
+
+static int ata_read_sector_slave(uint32_t lba, uint8_t *buf) {
+    return ata_read_sector_drive(lba, buf, 1);
+}
+
+static int ata_write_sector_slave(uint32_t lba, const uint8_t *buf) {
+    return ata_write_sector_drive(lba, buf, 1);
+}
+
+static const blkdev_ops_t ata_master_ops = {
+    .read_sector  = ata_read_sector,
+    .write_sector = ata_write_sector,
+};
+
+static const blkdev_ops_t ata_slave_ops = {
+    .read_sector  = ata_read_sector_slave,
+    .write_sector = ata_write_sector_slave,
+};
+
+void ata_register(void) {
+    blkdev_register("hd0", &ata_master_ops);
+    blkdev_register("hd1", &ata_slave_ops);
 }

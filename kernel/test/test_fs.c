@@ -23,6 +23,13 @@
 #define TEST_DIR     "_ktdir_"
 #define TEST_SUBFILE "_ktdir_/_ktsub_"
 
+static int fs_test_init(void)
+{
+    if (dufs_use_device("hd1") != 0)
+        return -1;
+    return fs_init();
+}
+
 static int mem_eq(const uint8_t *a, const uint8_t *b, uint32_t n)
 {
     for (uint32_t i = 0; i < n; i++)
@@ -34,12 +41,14 @@ static int mem_eq(const uint8_t *a, const uint8_t *b, uint32_t n)
 
 static void test_fs_init_ok(ktest_case_t *tc)
 {
-    int rc = fs_init();
+    int rc = fs_test_init();
     KTEST_EXPECT_EQ(tc, (uint32_t)rc, 0u);
 }
 
 static void test_fs_create_and_unlink(ktest_case_t *tc)
 {
+    KTEST_ASSERT_EQ(tc, (uint32_t)fs_test_init(), 0u);
+
     int ino = fs_create(TEST_FILE);
     KTEST_EXPECT_TRUE(tc, ino > 0);
 
@@ -59,6 +68,8 @@ static void test_fs_write_and_readback(ktest_case_t *tc)
         'k','t','e','s','t','-','w','r','i','t','e','-','o','k'
     };
     const uint32_t dlen = (uint32_t)sizeof(data);
+
+    KTEST_ASSERT_EQ(tc, (uint32_t)fs_test_init(), 0u);
 
     int ino = fs_create(TEST_FILE);
     KTEST_ASSERT_TRUE(tc, ino > 0);
@@ -80,6 +91,8 @@ static void test_fs_open_after_write(ktest_case_t *tc)
     static const uint8_t data[] = {'h','e','l','l','o'};
     const uint32_t dlen = (uint32_t)sizeof(data);
 
+    KTEST_ASSERT_EQ(tc, (uint32_t)fs_test_init(), 0u);
+
     int ino = fs_create(TEST_FILE);
     KTEST_ASSERT_TRUE(tc, ino > 0);
 
@@ -97,6 +110,8 @@ static void test_fs_open_after_write(ktest_case_t *tc)
 
 static void test_fs_unlink_removes_file(ktest_case_t *tc)
 {
+    KTEST_ASSERT_EQ(tc, (uint32_t)fs_test_init(), 0u);
+
     int ino = fs_create(TEST_FILE);
     KTEST_ASSERT_TRUE(tc, ino > 0);
 
@@ -112,6 +127,8 @@ static void test_fs_unlink_removes_file(ktest_case_t *tc)
 
 static void test_fs_mkdir_creates_entry(ktest_case_t *tc)
 {
+    KTEST_ASSERT_EQ(tc, (uint32_t)fs_test_init(), 0u);
+
     int rc = fs_mkdir(TEST_DIR);
     KTEST_EXPECT_EQ(tc, (uint32_t)rc, 0u);
 
@@ -136,11 +153,13 @@ static void test_fs_mkdir_creates_entry(ktest_case_t *tc)
 
     /* Clean up: remove the directory and reload from disk. */
     fs_rmdir(TEST_DIR);
-    fs_init();
+    fs_test_init();
 }
 
 static void test_fs_create_in_subdir(ktest_case_t *tc)
 {
+    KTEST_ASSERT_EQ(tc, (uint32_t)fs_test_init(), 0u);
+
     /* Create the directory first. */
     int rc = fs_mkdir(TEST_DIR);
     KTEST_EXPECT_EQ(tc, (uint32_t)rc, 0u);
@@ -188,7 +207,7 @@ static void test_fs_create_in_subdir(ktest_case_t *tc)
     /* Clean up. */
     fs_unlink(TEST_SUBFILE);
     fs_rmdir(TEST_DIR);
-    fs_init();
+    fs_test_init();
 }
 
 /* ── Suite ──────────────────────────────────────────────────────────────── */

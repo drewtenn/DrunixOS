@@ -12,12 +12,45 @@
 #include "clock.h"
 #include <stdint.h>
 
-/* ── Global state ───────────────────────────────────────────────────────── */
+/* ── Mount state ────────────────────────────────────────────────────────── */
 
-static const blkdev_ops_t *g_blkdev;
-static dufs_super_t        g_super;
-static uint8_t             g_inode_bitmap[4096];  /* 32,768 inode bits  */
-static uint8_t             g_block_bitmap[4096];  /* 32,768 block bits  */
+typedef struct {
+    const char         *blkdev_name;
+    const blkdev_ops_t *blkdev;
+    dufs_super_t        super;
+    uint8_t             inode_bitmap[4096];  /* 32,768 inode bits */
+    uint8_t             block_bitmap[4096];  /* 32,768 block bits */
+} dufs_mount_t;
+
+static dufs_mount_t g_dufs_hd0 = { .blkdev_name = "hd0" };
+static dufs_mount_t g_dufs_hd1 = { .blkdev_name = "hd1" };
+static dufs_mount_t *g_dufs = &g_dufs_hd0;
+
+#define g_blkdev       (g_dufs->blkdev)
+#define g_super        (g_dufs->super)
+#define g_inode_bitmap (g_dufs->inode_bitmap)
+#define g_block_bitmap (g_dufs->block_bitmap)
+
+static void dufs_select(dufs_mount_t *mnt)
+{
+    if (mnt)
+        g_dufs = mnt;
+}
+
+int dufs_use_device(const char *blkdev_name)
+{
+    if (!blkdev_name)
+        return -1;
+    if (k_strcmp(blkdev_name, "hd0") == 0) {
+        dufs_select(&g_dufs_hd0);
+        return 0;
+    }
+    if (k_strcmp(blkdev_name, "hd1") == 0) {
+        dufs_select(&g_dufs_hd1);
+        return 0;
+    }
+    return -1;
+}
 
 /* ── Generic bitmap helpers ─────────────────────────────────────────────── */
 
@@ -736,7 +769,10 @@ static void zero_inode(dufs_inode_t *inode)
 
 int fs_init(void)
 {
-    g_blkdev = blkdev_get("hd0");
+    if (!g_dufs)
+        dufs_select(&g_dufs_hd0);
+
+    g_blkdev = blkdev_get(g_dufs->blkdev_name);
     if (!g_blkdev) return -1;
 
     uint8_t buf[512];
@@ -1382,22 +1418,164 @@ int fs_lstat(const char *path, vfs_stat_t *st)
 
 /* ── VFS registration ───────────────────────────────────────────────────── */
 
+static dufs_mount_t *dufs_mount_from_ctx(void *ctx)
+{
+    return ctx ? (dufs_mount_t *)ctx : &g_dufs_hd0;
+}
+
+static int dufs_vfs_init(void *ctx)
+{
+    dufs_select(dufs_mount_from_ctx(ctx));
+    return fs_init();
+}
+
+static int dufs_vfs_open(void *ctx, const char *path,
+                         uint32_t *inode_out, uint32_t *size_out)
+{
+    dufs_select(dufs_mount_from_ctx(ctx));
+    return fs_open(path, inode_out, size_out);
+}
+
+static int dufs_vfs_list(void *ctx, const char *path, char *buf,
+                         uint32_t bufsz)
+{
+    dufs_select(dufs_mount_from_ctx(ctx));
+    return fs_list(path, buf, bufsz);
+}
+
+static int dufs_vfs_create(void *ctx, const char *path)
+{
+    dufs_select(dufs_mount_from_ctx(ctx));
+    return fs_create(path);
+}
+
+static int dufs_vfs_unlink(void *ctx, const char *path)
+{
+    dufs_select(dufs_mount_from_ctx(ctx));
+    return fs_unlink(path);
+}
+
+static int dufs_vfs_mkdir(void *ctx, const char *path)
+{
+    dufs_select(dufs_mount_from_ctx(ctx));
+    return fs_mkdir(path);
+}
+
+static int dufs_vfs_rmdir(void *ctx, const char *path)
+{
+    dufs_select(dufs_mount_from_ctx(ctx));
+    return fs_rmdir(path);
+}
+
+static int dufs_vfs_rename(void *ctx, const char *oldpath,
+                           const char *newpath)
+{
+    dufs_select(dufs_mount_from_ctx(ctx));
+    return fs_rename(oldpath, newpath);
+}
+
+static int dufs_vfs_link(void *ctx, const char *oldpath,
+                         const char *newpath, uint32_t follow)
+{
+    dufs_select(dufs_mount_from_ctx(ctx));
+    return fs_link(oldpath, newpath, follow);
+}
+
+static int dufs_vfs_symlink(void *ctx, const char *target,
+                            const char *linkpath)
+{
+    dufs_select(dufs_mount_from_ctx(ctx));
+    return fs_symlink(target, linkpath);
+}
+
+static int dufs_vfs_readlink(void *ctx, const char *path, char *buf,
+                             uint32_t bufsz)
+{
+    dufs_select(dufs_mount_from_ctx(ctx));
+    return fs_readlink(path, buf, bufsz);
+}
+
+static int dufs_vfs_stat(void *ctx, const char *path, vfs_stat_t *st)
+{
+    dufs_select(dufs_mount_from_ctx(ctx));
+    return fs_stat(path, st);
+}
+
+static int dufs_vfs_lstat(void *ctx, const char *path, vfs_stat_t *st)
+{
+    dufs_select(dufs_mount_from_ctx(ctx));
+    return fs_lstat(path, st);
+}
+
+static int dufs_vfs_read(void *ctx, uint32_t inode_num, uint32_t offset,
+                         uint8_t *buf, uint32_t count)
+{
+    dufs_select(dufs_mount_from_ctx(ctx));
+    return fs_read(inode_num, offset, buf, count);
+}
+
+static int dufs_vfs_write(void *ctx, uint32_t inode_num, uint32_t offset,
+                          const uint8_t *buf, uint32_t count)
+{
+    dufs_select(dufs_mount_from_ctx(ctx));
+    return fs_write(inode_num, offset, buf, count);
+}
+
+static int dufs_vfs_truncate(void *ctx, uint32_t inode_num, uint32_t size)
+{
+    dufs_select(dufs_mount_from_ctx(ctx));
+    return fs_truncate(inode_num, size);
+}
+
+static int dufs_vfs_flush(void *ctx, uint32_t inode_num)
+{
+    dufs_select(dufs_mount_from_ctx(ctx));
+    return fs_flush_inode(inode_num);
+}
+
 static const fs_ops_t dufs_ops = {
-    .init     = fs_init,
-    .open     = fs_open,
-    .getdents = fs_list,
-    .create   = fs_create,
-    .unlink   = fs_unlink,
-    .mkdir    = fs_mkdir,
-    .rmdir    = fs_rmdir,
-    .rename   = fs_rename,
-    .link     = fs_link,
-    .symlink  = fs_symlink,
-    .readlink = fs_readlink,
-    .stat     = fs_stat,
-    .lstat    = fs_lstat,
+    .ctx      = &g_dufs_hd0,
+    .init     = dufs_vfs_init,
+    .open     = dufs_vfs_open,
+    .getdents = dufs_vfs_list,
+    .create   = dufs_vfs_create,
+    .unlink   = dufs_vfs_unlink,
+    .mkdir    = dufs_vfs_mkdir,
+    .rmdir    = dufs_vfs_rmdir,
+    .rename   = dufs_vfs_rename,
+    .link     = dufs_vfs_link,
+    .symlink  = dufs_vfs_symlink,
+    .readlink = dufs_vfs_readlink,
+    .stat     = dufs_vfs_stat,
+    .lstat    = dufs_vfs_lstat,
+    .read     = dufs_vfs_read,
+    .write    = dufs_vfs_write,
+    .truncate = dufs_vfs_truncate,
+    .flush    = dufs_vfs_flush,
+};
+
+static const fs_ops_t dufs1_ops = {
+    .ctx      = &g_dufs_hd1,
+    .init     = dufs_vfs_init,
+    .open     = dufs_vfs_open,
+    .getdents = dufs_vfs_list,
+    .create   = dufs_vfs_create,
+    .unlink   = dufs_vfs_unlink,
+    .mkdir    = dufs_vfs_mkdir,
+    .rmdir    = dufs_vfs_rmdir,
+    .rename   = dufs_vfs_rename,
+    .link     = dufs_vfs_link,
+    .symlink  = dufs_vfs_symlink,
+    .readlink = dufs_vfs_readlink,
+    .stat     = dufs_vfs_stat,
+    .lstat    = dufs_vfs_lstat,
+    .read     = dufs_vfs_read,
+    .write    = dufs_vfs_write,
+    .truncate = dufs_vfs_truncate,
+    .flush    = dufs_vfs_flush,
 };
 
 void dufs_register(void) {
     vfs_register("dufs", &dufs_ops);
+    vfs_register("dufs1", &dufs1_ops);
 }

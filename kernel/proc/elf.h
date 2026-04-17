@@ -3,6 +3,7 @@
 #ifndef ELF_H
 #define ELF_H
 
+#include "vfs.h"
 #include <stdint.h>
 
 /* ELF magic: bytes 0–3 of e_ident, read as a little-endian uint32 */
@@ -171,7 +172,9 @@ typedef struct {
                          * ELF32_R_TYPE(r_info): R_386_* relocation type */
 } __attribute__((packed)) Elf32_Rel;
 
-int elf_load(uint32_t inode_num, uint32_t pd_phys, uint32_t *entry_out,
-             uint32_t *image_start_out, uint32_t *heap_start_out);
+int elf_load_file(vfs_file_ref_t file_ref, uint32_t pd_phys,
+                  uint32_t *entry_out,
+                  uint32_t *image_start_out,
+                  uint32_t *heap_start_out);
 
 #endif

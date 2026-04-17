@@ -16,6 +16,7 @@
 #include "process.h"
 #include "sched.h"
 #include "fs.h"
+#include "ext3.h"
 #include "vfs.h"
 #include "desktop.h"
 #include "framebuffer.h"
@@ -40,6 +41,10 @@
 #define FB_REQUEST_HEIGHT 768
 #define FB_CELL_COLS (FB_REQUEST_WIDTH / 8)
 #define FB_CELL_ROWS (FB_REQUEST_HEIGHT / 16)
+
+#ifndef DRUNIX_ROOT_FS
+#define DRUNIX_ROOT_FS "ext3"
+#endif
 
 #define SCROLLBACK_ROWS 500
 #define ROW_BYTES (MAX_COLS * 2)
@@ -226,6 +231,8 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
 
     klog("BOOT", "registering DUFS");
     dufs_register();
+    klog("BOOT", "registering EXT3");
+    ext3_register();
 
     /*
      * Enable hardware interrupts only after the IRQ dispatch table and early
@@ -242,13 +249,20 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
 #endif
 
     klog("BOOT", "mounting root namespace");
-    if (vfs_mount("/", "dufs") != 0)
+    if (vfs_mount("/", DRUNIX_ROOT_FS) != 0)
     {
         klog("FS", "mount failed");
         for (;;)
             __asm__ volatile("hlt");
     }
-    klog("FS", "DUFS mounted at /");
+    klog("FS", "root mounted");
+
+    if (k_strcmp(DRUNIX_ROOT_FS, "ext3") == 0) {
+        if (vfs_mount("/dufs", "dufs1") != 0)
+            klog("FS", "dufs1 mount at /dufs failed");
+        else
+            klog("FS", "dufs1 mounted at /dufs");
+    }
 
     if (vfs_mount("/dev", "devfs") != 0)
     {
@@ -336,14 +350,15 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
 
     /* Look up the initial user executable in the filesystem. */
     klog("BOOT", "locating initial program");
-    uint32_t shell_ino, elf_size;
-    if (vfs_open(DRUNIX_INIT_PROGRAM, &shell_ino, &elf_size) != 0)
+    vfs_file_ref_t shell_ref;
+    uint32_t elf_size;
+    if (vfs_open_file(DRUNIX_INIT_PROGRAM, &shell_ref, &elf_size) != 0)
     {
         klog("FS", "initial program not found");
         for (;;)
             __asm__ volatile("hlt");
     }
-    klog_uint("FS", "initial program inode", shell_ino);
+    klog_uint("FS", "initial program inode", shell_ref.inode_num);
     klog_uint("FS", "initial program size", elf_size);
 
     /* Create the initial process and register it with the scheduler.
@@ -352,7 +367,8 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
     static const char *shell_envp[] = {DRUNIX_INIT_ENV0};
     static process_t proc;
     klog_uint("HEAP", "before process_create", kheap_free_bytes());
-    int rc = process_create(&proc, shell_ino, shell_argv, 1, shell_envp, 1, 0);
+    int rc = process_create_file(&proc, shell_ref,
+                                 shell_argv, 1, shell_envp, 1, 0);
     klog_uint("HEAP", "after process_create", kheap_free_bytes());
     if (rc != 0)
     {

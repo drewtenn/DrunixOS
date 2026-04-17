@@ -3,13 +3,14 @@
 #ifndef MODULE_H
 #define MODULE_H
 
+#include "vfs.h"
 #include <stdint.h>
 
 /*
  * Runtime loadable kernel modules.
  *
  * A module is an ELF32 relocatable object (ET_REL, produced by gcc -c) that
- * exports a symbol named "module_init".  module_load() reads the object from
+ * exports a symbol named "module_init".  module_load_file() reads the object from
  * disk, allocates kernel heap memory for its sections, applies R_386_32 and
  * R_386_PC32 relocations, resolves external symbols against the kernel export
  * table, and calls module_init().  The init function typically registers the
@@ -51,10 +52,10 @@ extern const ksym_t   kernel_exports[];
 extern const uint32_t kernel_exports_count;
 
 /*
- * module_load: load an ELF32 relocatable object from disk via the DUFS inode
+ * module_load_file: load an ELF32 relocatable object from a VFS file
  * and execute its module_init function.
  *
- * inode_num:  DUFS inode number of the module binary.
+ * file_ref:   mounted-file reference for the module binary.
  * size:       total size of the module binary in bytes.
  *
  * Returns 0 on success, or:
@@ -64,7 +65,8 @@ extern const uint32_t kernel_exports_count;
  *   -4  module_init returned a non-zero error code
  *   -5  module too large (size > MODULE_MAX_SIZE)
  */
-int module_load(const char *module_name, uint32_t inode_num, uint32_t size);
+int module_load_file(const char *module_name, vfs_file_ref_t file_ref,
+                     uint32_t size);
 
 /*
  * module_snapshot: copy currently loaded module metadata into `out`.

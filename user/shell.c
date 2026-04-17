@@ -19,6 +19,19 @@
 
 #define SHELL_MAX_ARGS 16
 
+typedef struct
+{
+    char *stdin_path;
+    char *stdout_path;
+    int stdout_append;
+} shell_redir_t;
+
+typedef struct
+{
+    int saved_stdin;
+    int saved_stdout;
+} shell_redir_state_t;
+
 static int tokenize(char *line, char **out_argv, int max_argv);
 static int readline(char *buf, int max);
 static void print_prompt(void);
@@ -653,15 +666,8 @@ static int parse_exit_status(const char *s, int *out)
 
 /* ── built-in: cat ──────────────────────────────────────────────────────── */
 
-static void cmd_cat(const char *name)
+static void cmd_cat_fd(int fd)
 {
-    int fd = sys_open(name);
-    if (fd < 0)
-    {
-        printf("cat: not found: %s\n", name);
-        return;
-    }
-
     /* Use the raw binary-safe path here rather than printf("%s"): file
      * contents may contain embedded NUL bytes (e.g. when a user `cat`s a
      * compiled ELF), and the counted-byte sys_write_n preserves them. */
@@ -673,6 +679,18 @@ static void cmd_cat(const char *name)
             break;
         sys_write_n(buf, n);
     }
+}
+
+static void cmd_cat(const char *name)
+{
+    int fd = sys_open(name);
+    if (fd < 0)
+    {
+        printf("cat: not found: %s\n", name);
+        return;
+    }
+
+    cmd_cat_fd(fd);
     sys_close(fd);
 }
 
@@ -982,6 +1000,9 @@ static void cmd_help(void)
         "  jobs            list stopped/background jobs\n"
         "  fg [N]          resume job N in the foreground\n"
         "  bg [N]          resume stopped job N in the background\n"
+        "  cmd > file      redirect stdout to a file\n"
+        "  cmd >> file     append stdout to a file\n"
+        "  cmd < file      redirect stdin from a file\n"
         "  Ctrl+Z          stop the foreground program\n"
         "  Page Up/Down    scroll through terminal history\n"
         "Any other input tries to run a program by that name.\n");
@@ -1020,6 +1041,175 @@ static int tokenize(char *line, char **out_argv, int max_argv)
     }
     out_argv[argc] = (char *)0;
     return argc;
+}
+
+static void shell_redir_init(shell_redir_t *redir)
+{
+    redir->stdin_path = 0;
+    redir->stdout_path = 0;
+    redir->stdout_append = 0;
+}
+
+static int shell_redir_token(const char *token)
+{
+    return !strcmp(token, "<") || !strcmp(token, ">") || !strcmp(token, ">>");
+}
+
+static int shell_parse_redirections(char **argv, int *argc, shell_redir_t *redir)
+{
+    int out = 0;
+
+    shell_redir_init(redir);
+    for (int i = 0; i < *argc; i++)
+    {
+        if (!shell_redir_token(argv[i]))
+        {
+            argv[out++] = argv[i];
+            continue;
+        }
+
+        if (i + 1 >= *argc || shell_redir_token(argv[i + 1]))
+        {
+            printf("redirection: missing path after %s\n", argv[i]);
+            return -1;
+        }
+
+        if (!strcmp(argv[i], "<"))
+        {
+            redir->stdin_path = argv[i + 1];
+        }
+        else
+        {
+            redir->stdout_path = argv[i + 1];
+            redir->stdout_append = !strcmp(argv[i], ">>");
+        }
+        i++;
+    }
+
+    argv[out] = (char *)0;
+    *argc = out;
+    if (out == 0)
+    {
+        printf("redirection: missing command\n");
+        return -1;
+    }
+    return 0;
+}
+
+static int shell_open_output_redir(const shell_redir_t *redir)
+{
+    int fd;
+
+    if (!redir->stdout_append)
+        return sys_create(redir->stdout_path);
+
+    fd = sys_open_flags(redir->stdout_path, SYS_O_WRONLY | SYS_O_APPEND, 0666);
+    if (fd >= 0)
+        return fd;
+    return sys_create(redir->stdout_path);
+}
+
+static int shell_redir_apply(const shell_redir_t *redir)
+{
+    if (redir->stdin_path)
+    {
+        int fd = sys_open(redir->stdin_path);
+        if (fd < 0)
+        {
+            printf("redirection: cannot open input: %s\n", redir->stdin_path);
+            return -1;
+        }
+        if (sys_dup2(fd, 0) < 0)
+        {
+            sys_close(fd);
+            printf("redirection: cannot redirect input\n");
+            return -1;
+        }
+        sys_close(fd);
+    }
+
+    if (redir->stdout_path)
+    {
+        int fd = shell_open_output_redir(redir);
+        if (fd < 0)
+        {
+            printf("redirection: cannot open output: %s\n", redir->stdout_path);
+            return -1;
+        }
+        if (sys_dup2(fd, 1) < 0)
+        {
+            sys_close(fd);
+            printf("redirection: cannot redirect output\n");
+            return -1;
+        }
+        sys_close(fd);
+    }
+
+    return 0;
+}
+
+static int shell_redir_begin(const shell_redir_t *redir, shell_redir_state_t *state)
+{
+    state->saved_stdin = -1;
+    state->saved_stdout = -1;
+
+    if (redir->stdin_path)
+    {
+        state->saved_stdin = sys_dup(0);
+        if (state->saved_stdin < 0)
+        {
+            printf("redirection: cannot save stdin\n");
+            return -1;
+        }
+    }
+
+    if (redir->stdout_path)
+    {
+        state->saved_stdout = sys_dup(1);
+        if (state->saved_stdout < 0)
+        {
+            if (state->saved_stdin >= 0)
+                sys_close(state->saved_stdin);
+            state->saved_stdin = -1;
+            printf("redirection: cannot save stdout\n");
+            return -1;
+        }
+    }
+
+    if (shell_redir_apply(redir) != 0)
+    {
+        if (state->saved_stdin >= 0)
+        {
+            sys_dup2(state->saved_stdin, 0);
+            sys_close(state->saved_stdin);
+            state->saved_stdin = -1;
+        }
+        if (state->saved_stdout >= 0)
+        {
+            sys_dup2(state->saved_stdout, 1);
+            sys_close(state->saved_stdout);
+            state->saved_stdout = -1;
+        }
+        return -1;
+    }
+
+    return 0;
+}
+
+static void shell_redir_end(shell_redir_state_t *state)
+{
+    if (state->saved_stdin >= 0)
+    {
+        sys_dup2(state->saved_stdin, 0);
+        sys_close(state->saved_stdin);
+        state->saved_stdin = -1;
+    }
+    if (state->saved_stdout >= 0)
+    {
+        sys_dup2(state->saved_stdout, 1);
+        sys_close(state->saved_stdout);
+        state->saved_stdout = -1;
+    }
 }
 
 /* ── readline ───────────────────────────────────────────────────────────── */
@@ -1699,7 +1889,8 @@ static int exec_replace_self(char **argv, int argc)
  * pipe and execs lv[0]. The right child wires its stdin to the read end and
  * execs rv[0]. The parent closes both pipe ends and waits for both children.
  */
-static void run_piped(char **lv, int lc, char **rv, int rc)
+static void run_piped(char **lv, int lc, const shell_redir_t *lr,
+                      char **rv, int rc, const shell_redir_t *rr)
 {
     char cmd[64];
     int fds[2];
@@ -1731,6 +1922,8 @@ static void run_piped(char **lv, int lc, char **rv, int rc)
         sys_dup2(fds[1], 1);
         sys_close(fds[0]);
         sys_close(fds[1]);
+        if (shell_redir_apply(lr) != 0)
+            sys_exit(1);
         if (resolve_command_path(lv[0], exec_path, sizeof(exec_path)) != 0)
         {
             printf("pipe: left exec failed\n");
@@ -1763,6 +1956,8 @@ static void run_piped(char **lv, int lc, char **rv, int rc)
         sys_dup2(fds[0], 0);
         sys_close(fds[0]);
         sys_close(fds[1]);
+        if (shell_redir_apply(rr) != 0)
+            sys_exit(1);
         if (resolve_command_path(rv[0], exec_path, sizeof(exec_path)) != 0)
         {
             printf("pipe: right exec failed\n");
@@ -2184,9 +2379,34 @@ int main(int argc, char **argv)
         }
         if (pipe_pos > 0 && pipe_pos < tc - 1)
         {
+            shell_redir_t left_redir;
+            shell_redir_t right_redir;
+            int lc = pipe_pos;
+            int rc = tc - pipe_pos - 1;
+
             tokens[pipe_pos] = (char *)0; /* NUL-terminate the left argv */
-            run_piped(tokens, pipe_pos,
-                      &tokens[pipe_pos + 1], tc - pipe_pos - 1);
+            if (shell_parse_redirections(tokens, &lc, &left_redir) != 0 ||
+                shell_parse_redirections(&tokens[pipe_pos + 1], &rc,
+                                         &right_redir) != 0)
+            {
+                last_status = 2;
+                continue;
+            }
+            run_piped(tokens, lc, &left_redir,
+                      &tokens[pipe_pos + 1], rc, &right_redir);
+            continue;
+        }
+
+        shell_redir_t redir;
+        shell_redir_state_t redir_state;
+        if (shell_parse_redirections(tokens, &tc, &redir) != 0)
+        {
+            last_status = 2;
+            continue;
+        }
+        if (shell_redir_begin(&redir, &redir_state) != 0)
+        {
+            last_status = 1;
             continue;
         }
 
@@ -2214,14 +2434,18 @@ int main(int argc, char **argv)
             if (tc > 2)
             {
                 printf("exit: too many arguments\n");
-                continue;
+                last_status = 2;
             }
-            if (tc == 2 && !parse_exit_status(tokens[1], &status))
+            else if (tc == 2 && !parse_exit_status(tokens[1], &status))
             {
                 printf("exit: numeric argument required: %s\n", tokens[1]);
                 status = 2;
+                sys_exit(status);
             }
-            sys_exit(status);
+            else
+            {
+                sys_exit(status);
+            }
         }
         else if (!strcmp(tokens[0], "readonly"))
         {
@@ -2311,7 +2535,7 @@ int main(int argc, char **argv)
         else if (!strcmp(tokens[0], "cat"))
         {
             if (tc < 2)
-                printf("usage: cat <filename>\n");
+                cmd_cat_fd(0);
             else
                 cmd_cat(tokens[1]);
             last_status = 0;
@@ -2447,6 +2671,8 @@ int main(int argc, char **argv)
             run_program(tokens, tc);
             last_status = 0;
         }
+
+        shell_redir_end(&redir_state);
     }
 
     return 0;
