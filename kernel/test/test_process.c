@@ -28,6 +28,7 @@ extern void process_exec_launch(void);
 #define TEST_NT_DRUNIX_FAULT  0x44584654u
 #define TEST_NT_DRUNIX_MAPS   0x44584d50u
 #define TEST_LINUX_MAP_FIXED  0x10u
+#define TEST_LINUX_AT_NO_AUTOMOUNT 0x0800u
 #define TEST_LINUX_AT_EMPTY_PATH 0x1000u
 #define TEST_LINUX_STATX_BASIC_STATS 0x7ffu
 
@@ -840,7 +841,8 @@ static void test_linux_syscalls_fill_uname_time_and_fstat64(ktest_case_t *tc)
     page[0x300] = '\0';
     KTEST_EXPECT_EQ(tc,
                     syscall_handler(SYS_STATX, 1, 0x00800300u,
-                                    TEST_LINUX_AT_EMPTY_PATH,
+                                    TEST_LINUX_AT_EMPTY_PATH |
+                                        TEST_LINUX_AT_NO_AUTOMOUNT,
                                     TEST_LINUX_STATX_BASIC_STATS,
                                     0x00800500u, 0),
                     0u);

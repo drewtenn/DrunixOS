@@ -171,6 +171,18 @@ typedef struct {
 #define LINUX_S_IFCHR 0020000u
 #define LINUX_S_IFDIR 0040000u
 #define LINUX_S_IFREG 0100000u
+#define LINUX_AT_NO_AUTOMOUNT 0x0800u
+#define LINUX_AT_EMPTY_PATH 0x1000u
+#define LINUX_AT_STATX_SYNC_TYPE 0x6000u
+#define LINUX_STATX_BASIC_STATS 0x000007FFu
+
+typedef struct {
+    uint32_t mode;
+    uint32_t nlink;
+    uint32_t size;
+    uint32_t mtime;
+    uint64_t ino;
+} linux_fd_stat_t;
 
 static void linux_put_u32(uint8_t *buf, uint32_t off, uint32_t value)
 {
@@ -225,6 +237,78 @@ static void linux_fill_stat64(uint8_t *st,
     linux_put_u64(st, 96u, mtime);      /* st_atim.tv_sec */
     linux_put_u64(st, 112u, mtime);     /* st_mtim.tv_sec */
     linux_put_u64(st, 128u, mtime);     /* st_ctim.tv_sec */
+}
+
+static void linux_fill_statx_timestamp(uint8_t *stx, uint32_t off,
+                                       uint32_t sec)
+{
+    linux_put_u64(stx, off, sec);       /* tv_sec */
+    linux_put_u32(stx, off + 8u, 0u);   /* tv_nsec */
+    linux_put_u32(stx, off + 12u, 0u);  /* __reserved */
+}
+
+static void linux_fill_statx(uint8_t *stx, const linux_fd_stat_t *meta)
+{
+    uint32_t blocks;
+
+    k_memset(stx, 0, 256u);
+    blocks = (meta->size + 511u) / 512u;
+
+    linux_put_u32(stx, 0u, LINUX_STATX_BASIC_STATS); /* stx_mask */
+    linux_put_u32(stx, 4u, 4096u);                   /* stx_blksize */
+    linux_put_u32(stx, 16u, meta->nlink);            /* stx_nlink */
+    linux_put_u32(stx, 20u, 0u);                     /* stx_uid */
+    linux_put_u32(stx, 24u, 0u);                     /* stx_gid */
+    linux_put_u32(stx, 28u, meta->mode);             /* stx_mode */
+    linux_put_u64(stx, 32u, meta->ino);              /* stx_ino */
+    linux_put_u64(stx, 40u, meta->size);             /* stx_size */
+    linux_put_u64(stx, 48u, blocks);                 /* stx_blocks */
+    linux_fill_statx_timestamp(stx, 64u, meta->mtime);
+    linux_fill_statx_timestamp(stx, 96u, meta->mtime);
+    linux_fill_statx_timestamp(stx, 112u, meta->mtime);
+    linux_put_u32(stx, 136u, 1u);                    /* stx_dev_major */
+}
+
+static int linux_fd_stat_metadata(process_t *cur, uint32_t fd,
+                                  linux_fd_stat_t *meta)
+{
+    file_handle_t *fh;
+
+    if (!cur || !meta || fd >= MAX_FDS)
+        return -1;
+
+    fh = &cur->open_files[fd];
+    meta->nlink = 1;
+    meta->size = 0;
+    meta->mtime = clock_unix_time();
+    meta->ino = fd + 1u;
+
+    switch (fh->type) {
+    case FD_TYPE_FILE:
+        meta->mode = LINUX_S_IFREG | 0644u;
+        meta->size = fh->u.file.size;
+        meta->ino = fh->u.file.inode_num;
+        break;
+    case FD_TYPE_PROCFILE:
+        meta->mode = LINUX_S_IFREG | 0444u;
+        meta->size = fh->u.proc.size;
+        meta->ino = 0x70000000ull + fh->u.proc.kind * 1024u +
+                    fh->u.proc.pid * 16u + fh->u.proc.index;
+        break;
+    case FD_TYPE_CHARDEV:
+    case FD_TYPE_TTY:
+    case FD_TYPE_STDOUT:
+        meta->mode = LINUX_S_IFCHR | 0600u;
+        break;
+    case FD_TYPE_PIPE_READ:
+    case FD_TYPE_PIPE_WRITE:
+        meta->mode = LINUX_S_IFIFO | 0600u;
+        break;
+    default:
+        return -1;
+    }
+
+    return 0;
 }
 
 static int prot_is_valid(uint32_t prot)
@@ -1422,43 +1506,51 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
          */
         process_t *cur = sched_current();
         uint8_t st64[144];
-        file_handle_t *fh;
-        uint32_t mode;
-        uint32_t nlink = 1;
-        uint32_t size = 0;
-        uint32_t mtime = clock_unix_time();
-        uint64_t ino = ebx + 1u;
+        linux_fd_stat_t meta;
 
-        if (!cur || ecx == 0 || ebx >= MAX_FDS)
+        if (!cur || ecx == 0 ||
+            linux_fd_stat_metadata(cur, ebx, &meta) != 0)
             return (uint32_t)-1;
-        fh = &cur->open_files[ebx];
-        switch (fh->type) {
-        case FD_TYPE_FILE:
-            mode = LINUX_S_IFREG | 0644u;
-            size = fh->u.file.size;
-            ino = fh->u.file.inode_num;
-            break;
-        case FD_TYPE_PROCFILE:
-            mode = LINUX_S_IFREG | 0444u;
-            size = fh->u.proc.size;
-            ino = 0x70000000ull + fh->u.proc.kind * 1024u +
-                  fh->u.proc.pid * 16u + fh->u.proc.index;
-            break;
-        case FD_TYPE_CHARDEV:
-        case FD_TYPE_TTY:
-        case FD_TYPE_STDOUT:
-            mode = LINUX_S_IFCHR | 0600u;
-            break;
-        case FD_TYPE_PIPE_READ:
-        case FD_TYPE_PIPE_WRITE:
-            mode = LINUX_S_IFIFO | 0600u;
-            break;
-        default:
-            return (uint32_t)-1;
-        }
 
-        linux_fill_stat64(st64, mode, nlink, size, mtime, ino);
+        linux_fill_stat64(st64, meta.mode, meta.nlink, meta.size,
+                          meta.mtime, meta.ino);
         if (uaccess_copy_to_user(cur, ecx, st64, sizeof(st64)) != 0)
+            return (uint32_t)-1;
+        return 0;
+    }
+
+    case SYS_STATX: {
+        /*
+         * Linux i386 statx:
+         *   ebx = dirfd, ecx = path, edx = flags, esi = mask, edi = statx *.
+         *
+         * musl implements fstat(fd, &st) by issuing
+         * statx(fd, "", AT_EMPTY_PATH, STATX_BASIC_STATS, &stx), then
+         * translating the result in userspace.  Support that form first so
+         * static Linux binaries can use stdio/file metadata.
+         */
+        process_t *cur = sched_current();
+        uint8_t stx[256];
+        linux_fd_stat_t meta;
+        char path[2];
+
+        (void)esi;
+        if (!cur || ecx == 0 || edi == 0)
+            return (uint32_t)-1;
+        if ((edx & ~(LINUX_AT_NO_AUTOMOUNT | LINUX_AT_EMPTY_PATH |
+                     LINUX_AT_STATX_SYNC_TYPE)) != 0)
+            return (uint32_t)-1;
+        if ((edx & LINUX_AT_EMPTY_PATH) == 0)
+            return (uint32_t)-1;
+        if (uaccess_copy_string_from_user(cur, path, sizeof(path), ecx) != 0)
+            return (uint32_t)-1;
+        if (path[0] != '\0')
+            return (uint32_t)-1;
+        if (linux_fd_stat_metadata(cur, ebx, &meta) != 0)
+            return (uint32_t)-1;
+
+        linux_fill_statx(stx, &meta);
+        if (uaccess_copy_to_user(cur, edi, stx, sizeof(stx)) != 0)
             return (uint32_t)-1;
         return 0;
     }
