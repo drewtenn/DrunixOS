@@ -727,6 +727,53 @@ int sched_snapshot_pids(uint32_t *pid_out, uint32_t max, int include_zombie)
     return (int)count;
 }
 
+int sched_snapshot_tgids(uint32_t *tgid_out, uint32_t max, int include_zombie)
+{
+    uint32_t count = 0;
+
+    if (!tgid_out || max == 0)
+        return 0;
+
+    for (int i = 0; i < MAX_PROCS && count < max; i++) {
+        uint32_t tgid;
+        int seen = 0;
+
+        if (proc_table[i].state == PROC_UNUSED)
+            continue;
+        if (!include_zombie && proc_table[i].state == PROC_ZOMBIE)
+            continue;
+        tgid = proc_table[i].tgid;
+        if (tgid == 0)
+            continue;
+        for (uint32_t j = 0; j < count; j++) {
+            if (tgid_out[j] == tgid) {
+                seen = 1;
+                break;
+            }
+        }
+        if (!seen)
+            tgid_out[count++] = tgid;
+    }
+
+    return (int)count;
+}
+
+const task_group_t *sched_find_group(uint32_t tgid, int include_zombie)
+{
+    if (tgid == 0)
+        return 0;
+
+    for (int i = 0; i < MAX_PROCS; i++) {
+        if (proc_table[i].tgid != tgid ||
+            proc_table[i].state == PROC_UNUSED)
+            continue;
+        if (!include_zombie && proc_table[i].state == PROC_ZOMBIE)
+            continue;
+        return proc_table[i].group;
+    }
+    return 0;
+}
+
 int sched_session_has_pgid(uint32_t sid, uint32_t pgid)
 {
     if (sid == 0 || pgid == 0) return 0;

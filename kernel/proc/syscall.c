@@ -2896,6 +2896,9 @@ static uint32_t SYSCALL_NOINLINE syscall_case_execve(uint32_t eax, uint32_t ebx,
          *
          * On success this syscall does not return to the old image.
          */
+        process_t *cur = sched_current();
+        if (cur && cur->group && task_group_live_count(cur->group) > 1)
+            return (uint32_t)-1;
 
         return syscall_execve(ebx, ecx, edx);
     }

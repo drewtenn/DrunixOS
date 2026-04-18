@@ -231,6 +231,17 @@ const process_t *sched_find_process(uint32_t pid, int include_zombie);
 int sched_snapshot_pids(uint32_t *pid_out, uint32_t max, int include_zombie);
 
 /*
+ * sched_snapshot_tgids: copy each visible thread-group ID once into tgid_out.
+ */
+int sched_snapshot_tgids(uint32_t *tgid_out, uint32_t max, int include_zombie);
+
+/*
+ * sched_find_group: return the task group with the given TGID, if any member
+ * is visible under the include_zombie policy.
+ */
+const task_group_t *sched_find_group(uint32_t tgid, int include_zombie);
+
+/*
  * sched_session_has_pgid: returns non-zero when `pgid` names a live process
  * group that belongs to session `sid`.
  */

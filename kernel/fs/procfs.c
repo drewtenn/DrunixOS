@@ -102,7 +102,11 @@ static int procfs_parse_u32(const char *s, uint32_t *value_out, const char **end
 
 static const process_t *procfs_lookup_process(uint32_t pid)
 {
-    return sched_find_process(pid, 1);
+    const task_group_t *group = sched_find_group(pid, 1);
+
+    if (!group)
+        return 0;
+    return sched_find_process(task_group_leader_tid(group), 1);
 }
 
 static int procfs_parse_path(const char *relpath, uint32_t *node_type_out,
@@ -261,11 +265,16 @@ static uint32_t procfs_open_fd_count(const process_t *proc)
 
 static void procfs_render_status(render_buf_t *rb, const process_t *proc)
 {
+    uint32_t tgid = proc->tgid ? proc->tgid : proc->pid;
+
     procfs_emitf(rb, "Name:\t%s\n", proc->name[0] ? proc->name : "(unnamed)");
     procfs_emitf(rb, "State:\t%c (%s)\n",
                  procfs_state_code(proc->state),
                  procfs_state_name(proc->state));
-    procfs_emitf(rb, "Pid:\t%u\n", proc->pid);
+    procfs_emitf(rb, "Pid:\t%u\n", tgid);
+    procfs_emitf(rb, "Tgid:\t%u\n", tgid);
+    procfs_emitf(rb, "Threads:\t%u\n",
+                 proc->group ? task_group_live_count(proc->group) : 1u);
     procfs_emitf(rb, "PPid:\t%u\n", proc->parent_pid);
     procfs_emitf(rb, "PGid:\t%u\n", proc->pgid);
     procfs_emitf(rb, "Sid:\t%u\n", proc->sid);
@@ -477,8 +486,8 @@ int procfs_getdents(const char *relpath, char *buf, uint32_t bufsz)
         return -1;
 
     if (!relpath || relpath[0] == '\0') {
-        uint32_t pids[MAX_PROCS];
-        int n = sched_snapshot_pids(pids, MAX_PROCS, 1);
+        uint32_t tgids[MAX_PROCS];
+        int n = sched_snapshot_tgids(tgids, MAX_PROCS, 1);
 
         if (procfs_append_dirent(buf, bufsz, &written, "kmsg", 0) != 0)
             return (int)written;
@@ -488,7 +497,7 @@ int procfs_getdents(const char *relpath, char *buf, uint32_t bufsz)
             return (int)written;
 
         for (int i = 0; i < n; i++) {
-            k_snprintf(name, sizeof(name), "%u", pids[i]);
+            k_snprintf(name, sizeof(name), "%u", tgids[i]);
             if (procfs_append_dirent(buf, bufsz, &written, name, 1) != 0)
                 break;
         }
