@@ -138,6 +138,9 @@ static uint32_t g_sectors_per_block;
 static uint32_t g_bgdt_block;
 static uint32_t g_writable;
 static uint32_t g_needs_recovery;
+static uint32_t g_block_alloc_cursor;
+static uint32_t g_inode_alloc_cursor;
+static uint32_t g_tx_counts_dirty;
 
 typedef struct {
     uint32_t fs_block;
@@ -292,6 +295,7 @@ static void ext3_tx_reset(void)
     g_tx_depth = 0;
     g_tx_failed = 0;
     g_tx_has_snapshot = 0;
+    g_tx_counts_dirty = 0;
 }
 
 static int ext3_read_block(uint32_t block, uint8_t *buf)
@@ -428,6 +432,14 @@ static int ext3_flush_bg(void)
 
 static int ext3_flush_counts(void)
 {
+    /* Inside a transaction, defer the super + BG writes to commit time.
+     * A single mutating syscall may allocate or free many blocks, and each
+     * flush rewrites two full blocks through the tx buffer — quadratic in
+     * the number of allocations. Commit flushes once per transaction. */
+    if (g_tx_depth > 0) {
+        g_tx_counts_dirty = 1;
+        return 0;
+    }
     if (ext3_flush_super() != 0)
         return -1;
     if (ext3_flush_bg() != 0)
@@ -545,8 +557,15 @@ static uint32_t ext3_alloc_block(void)
 {
     uint8_t *map;
     uint32_t block = 0;
+    uint32_t first = g_super.first_data_block;
+    uint32_t last = g_super.blocks_count;
+    uint32_t start;
+    uint32_t scanned = 0;
+    uint32_t total;
 
     if (!ext3_can_mutate())
+        return 0;
+    if (first >= last)
         return 0;
     map = (uint8_t *)kmalloc(g_block_size);
     if (!map)
@@ -554,7 +573,12 @@ static uint32_t ext3_alloc_block(void)
     if (ext3_read_block(g_bg.block_bitmap, map) != 0)
         goto done;
 
-    for (uint32_t b = g_super.first_data_block; b < g_super.blocks_count; b++) {
+    total = last - first;
+    start = g_block_alloc_cursor;
+    if (start < first || start >= last)
+        start = first;
+
+    for (uint32_t b = start; scanned < total; scanned++) {
         if (!ext3_bmap_test(map, b)) {
             ext3_bmap_set(map, b);
             if (ext3_write_block(g_bg.block_bitmap, map) != 0) {
@@ -569,9 +593,13 @@ static uint32_t ext3_alloc_block(void)
                 break;
             if (ext3_write_zeroed_block(b) != 0)
                 break;
+            g_block_alloc_cursor = (b + 1u >= last) ? first : b + 1u;
             block = b;
             break;
         }
+        b++;
+        if (b >= last)
+            b = first;
     }
 
 done:
@@ -600,6 +628,8 @@ static int ext3_free_block(uint32_t block)
         goto done;
     g_super.free_blocks_count++;
     g_bg.free_blocks_count++;
+    if (block < g_block_alloc_cursor)
+        g_block_alloc_cursor = block;
     rc = ext3_flush_counts();
 
 done:
@@ -612,8 +642,14 @@ static uint32_t ext3_alloc_inode(uint32_t is_dir)
     uint8_t *map;
     uint32_t ino = 0;
     uint32_t first = g_super.first_ino ? g_super.first_ino : 11u;
+    uint32_t last = g_super.inodes_count;
+    uint32_t start;
+    uint32_t scanned = 0;
+    uint32_t total;
 
     if (!ext3_can_mutate())
+        return 0;
+    if (first > last)
         return 0;
     map = (uint8_t *)kmalloc(g_block_size);
     if (!map)
@@ -621,7 +657,12 @@ static uint32_t ext3_alloc_inode(uint32_t is_dir)
     if (ext3_read_block(g_bg.inode_bitmap, map) != 0)
         goto done;
 
-    for (uint32_t i = first; i <= g_super.inodes_count; i++) {
+    total = last - first + 1u;
+    start = g_inode_alloc_cursor;
+    if (start < first || start > last)
+        start = first;
+
+    for (uint32_t i = start; scanned < total; scanned++) {
         uint32_t bit = i - 1u;
         if (!ext3_bmap_test(map, bit)) {
             ext3_bmap_set(map, bit);
@@ -635,9 +676,13 @@ static uint32_t ext3_alloc_inode(uint32_t is_dir)
                 g_bg.used_dirs_count++;
             if (ext3_flush_counts() != 0)
                 break;
+            g_inode_alloc_cursor = (i >= last) ? first : i + 1u;
             ino = i;
             break;
         }
+        i++;
+        if (i > last)
+            i = first;
     }
 
 done:
@@ -669,6 +714,8 @@ static int ext3_free_inode(uint32_t ino, uint32_t was_dir)
     g_bg.free_inodes_count++;
     if (was_dir && g_bg.used_dirs_count > 0)
         g_bg.used_dirs_count--;
+    if (ino < g_inode_alloc_cursor)
+        g_inode_alloc_cursor = ino;
     rc = ext3_flush_counts();
 
 done:
@@ -1240,10 +1287,12 @@ static int ext3_dir_add(uint32_t dir_ino, const char *name, uint32_t child_ino,
     uint32_t need;
     uint32_t size;
     uint32_t pos = 0;
-    uint32_t ignored;
+    uint32_t slot_phys = 0;
+    uint32_t slot_off = 0;
+    uint32_t slot_kind = 0; /* 1 = reuse empty, 2 = split spare */
+    uint32_t slot_rec = 0;
 
     if (!ext3_can_mutate() || !name || !name[0] ||
-        ext3_dir_lookup(dir_ino, name, &ignored, 0) == 0 ||
         ext3_read_inode(dir_ino, &dir) != 0 ||
         (dir.mode & EXT3_S_IFMT) != EXT3_S_IFDIR)
         return -1;
@@ -1258,6 +1307,9 @@ static int ext3_dir_add(uint32_t dir_ino, const char *name, uint32_t child_ino,
     if (!blk)
         return -1;
 
+    /* Single pass: check for name collision and remember the first usable
+     * slot. The old code ran ext3_dir_lookup first (full pass) and then
+     * scanned again to place the entry. */
     while (pos < size) {
         uint32_t logical = pos / g_block_size;
         uint32_t phys = ext3_block_index(&dir, logical);
@@ -1275,36 +1327,56 @@ static int ext3_dir_add(uint32_t dir_ino, const char *name, uint32_t child_ino,
             if (de->rec_len < sizeof(ext3_dirent_t) ||
                 off + de->rec_len > g_block_size)
                 break;
-            if (de->inode == 0 && de->rec_len >= need) {
-                ext3_write_dirent(blk + off, child_ino, name, file_type,
-                                  de->rec_len);
-                if (ext3_write_block(phys, blk) != 0)
-                    goto fail;
-                dir.mtime = dir.ctime = clock_unix_time();
-                if (ext3_write_inode(dir_ino, &dir) != 0)
-                    goto fail;
-                kfree(blk);
-                return 0;
-            }
+            if (de->inode != 0 && de->name_len == name_len &&
+                k_memcmp(blk + off + sizeof(ext3_dirent_t), name,
+                         name_len) == 0)
+                goto fail;
 
-            actual = ext3_dir_rec_len(de->name_len);
-            spare = de->rec_len > actual ? de->rec_len - actual : 0;
-            if (de->inode != 0 && spare >= need) {
-                uint16_t new_rec = (uint16_t)spare;
-                de->rec_len = (uint16_t)actual;
-                ext3_write_dirent(blk + off + actual, child_ino, name,
-                                  file_type, new_rec);
-                if (ext3_write_block(phys, blk) != 0)
-                    goto fail;
-                dir.mtime = dir.ctime = clock_unix_time();
-                if (ext3_write_inode(dir_ino, &dir) != 0)
-                    goto fail;
-                kfree(blk);
-                return 0;
+            if (slot_kind == 0) {
+                if (de->inode == 0 && de->rec_len >= need) {
+                    slot_phys = phys;
+                    slot_off = base + off;
+                    slot_rec = de->rec_len;
+                    slot_kind = 1;
+                } else {
+                    actual = ext3_dir_rec_len(de->name_len);
+                    spare = de->rec_len > actual ? de->rec_len - actual : 0;
+                    if (de->inode != 0 && spare >= need) {
+                        slot_phys = phys;
+                        slot_off = base + off;
+                        slot_rec = spare;
+                        slot_kind = 2;
+                    }
+                }
             }
             off += de->rec_len;
         }
         pos = base + g_block_size;
+    }
+
+    if (slot_kind != 0) {
+        uint32_t logical = slot_off / g_block_size;
+        uint32_t off = slot_off - logical * g_block_size;
+
+        if (ext3_read_block(slot_phys, blk) != 0)
+            goto fail;
+        if (slot_kind == 1) {
+            ext3_write_dirent(blk + off, child_ino, name, file_type,
+                              (uint16_t)slot_rec);
+        } else {
+            ext3_dirent_t *de = (ext3_dirent_t *)(blk + off);
+            uint32_t actual = ext3_dir_rec_len(de->name_len);
+            de->rec_len = (uint16_t)actual;
+            ext3_write_dirent(blk + off + actual, child_ino, name, file_type,
+                              (uint16_t)slot_rec);
+        }
+        if (ext3_write_block(slot_phys, blk) != 0)
+            goto fail;
+        dir.mtime = dir.ctime = clock_unix_time();
+        if (ext3_write_inode(dir_ino, &dir) != 0)
+            goto fail;
+        kfree(blk);
+        return 0;
     }
 
     {
@@ -1417,8 +1489,6 @@ static int ext3_write_body(void *ctx, uint32_t inode_num, uint32_t offset,
         if (chunk != g_block_size) {
             if (ext3_read_block(phys, blk) != 0)
                 break;
-        } else {
-            k_memset(blk, 0, g_block_size);
         }
         k_memcpy(blk + block_off, buf + done, chunk);
         if (ext3_write_block(phys, blk) != 0)
@@ -1924,6 +1994,14 @@ static int ext3_commit_tx(void)
 
     if (g_tx_failed)
         return -1;
+    /* Flush the deferred BG counter update into the tx buffer. The super is
+     * flushed below anyway (for the RECOVER flag), so it already picks up
+     * the updated free counts from g_super. */
+    if (g_tx_counts_dirty) {
+        if (ext3_flush_bg() != 0)
+            return -1;
+        g_tx_counts_dirty = 0;
+    }
     if (g_tx_count == 0)
         return 0;
     if (g_super.journal_dev != 0 || g_super.journal_inum == 0)
@@ -2354,6 +2432,9 @@ static int ext3_init(void *ctx)
     g_needs_recovery =
         (g_super.feature_incompat & EXT3_FEATURE_INCOMPAT_RECOVER) != 0;
     g_bgdt_block = (g_block_size == 1024u) ? 2u : 1u;
+    g_block_alloc_cursor = g_super.first_data_block;
+    g_inode_alloc_cursor = g_super.first_ino ? g_super.first_ino : 11u;
+    g_tx_counts_dirty = 0;
     if (ext3_load_bg() != 0)
         return -1;
 

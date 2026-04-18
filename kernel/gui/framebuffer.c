@@ -246,8 +246,7 @@ void framebuffer_fill_rect(const framebuffer_info_t *fb,
     for (int64_t row = top; row < bottom; row++) {
         row_ptr = (uint32_t *)(base + (uintptr_t)row * row_pitch);
         row_ptr += (uintptr_t)left;
-        for (int64_t col = left; col < right; col++)
-            row_ptr[col - left] = color;
+        k_memset32(row_ptr, color, (uint32_t)(right - left));
     }
 }
 
@@ -319,6 +318,10 @@ static void framebuffer_composite_cursor_row(const framebuffer_info_t *fb,
     }
 }
 
+#ifdef KTEST_ENABLED
+static uint32_t g_framebuffer_present_count;
+#endif
+
 void framebuffer_present_rect(const framebuffer_info_t *fb,
                               int x, int y, int w, int h)
 {
@@ -350,6 +353,10 @@ void framebuffer_present_rect(const framebuffer_info_t *fb,
     if (left >= right || top >= bottom)
         return;
 
+#ifdef KTEST_ENABLED
+    g_framebuffer_present_count++;
+#endif
+
     row_bytes = (uint32_t)(right - left) * 4u;
     for (int64_t row = top; row < bottom; row++) {
         uintptr_t src = fb->back_address +
@@ -369,6 +376,18 @@ void framebuffer_present_rect(const framebuffer_info_t *fb,
         framebuffer_composite_cursor_row(fb, dst, row, left, right);
     }
 }
+
+#ifdef KTEST_ENABLED
+void framebuffer_present_count_reset_for_test(void)
+{
+    g_framebuffer_present_count = 0;
+}
+
+uint32_t framebuffer_present_count_for_test(void)
+{
+    return g_framebuffer_present_count;
+}
+#endif
 
 void framebuffer_set_cursor(framebuffer_info_t *fb, int x, int y,
                             uint32_t fg, uint32_t shadow, int visible)

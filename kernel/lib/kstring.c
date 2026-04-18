@@ -12,6 +12,14 @@ void *k_memcpy(void *dst, const void *src, uint32_t n)
 {
     uint8_t       *d = (uint8_t *)dst;
     const uint8_t *s = (const uint8_t *)src;
+    if ((((uintptr_t)d | (uintptr_t)s) & 3u) == 0) {
+        while (n >= sizeof(uint32_t)) {
+            *(uint32_t *)d = *(const uint32_t *)s;
+            d += sizeof(uint32_t);
+            s += sizeof(uint32_t);
+            n -= sizeof(uint32_t);
+        }
+    }
     while (n--) *d++ = *s++;
     return dst;
 }
@@ -19,8 +27,33 @@ void *k_memcpy(void *dst, const void *src, uint32_t n)
 void *k_memset(void *s, int c, uint32_t n)
 {
     uint8_t *p = (uint8_t *)s;
+    uint8_t byte = (uint8_t)c;
+    uint32_t pattern;
+
+    while (n > 0 && ((uintptr_t)p & 3u) != 0) {
+        *p++ = byte;
+        n--;
+    }
+    pattern = (uint32_t)byte;
+    pattern |= pattern << 8;
+    pattern |= pattern << 16;
+    if (n >= sizeof(uint32_t)) {
+        uint32_t words = n / sizeof(uint32_t);
+
+        k_memset32(p, pattern, words);
+        p += words * sizeof(uint32_t);
+        n -= words * sizeof(uint32_t);
+    }
     while (n--) *p++ = (uint8_t)c;
     return s;
+}
+
+void k_memset32(void *s, uint32_t value, uint32_t count)
+{
+    uint32_t *p = (uint32_t *)s;
+
+    while (count--)
+        *p++ = value;
 }
 
 void *k_memmove(void *dst, const void *src, uint32_t n)
@@ -29,11 +62,27 @@ void *k_memmove(void *dst, const void *src, uint32_t n)
     const uint8_t *s = (const uint8_t *)src;
     if (d < s || d >= s + n) {
         /* non-overlapping or dst is before src: forward copy */
+        if ((((uintptr_t)d | (uintptr_t)s) & 3u) == 0) {
+            while (n >= sizeof(uint32_t)) {
+                *(uint32_t *)d = *(const uint32_t *)s;
+                d += sizeof(uint32_t);
+                s += sizeof(uint32_t);
+                n -= sizeof(uint32_t);
+            }
+        }
         while (n--) *d++ = *s++;
     } else {
         /* dst overlaps src from behind: copy backwards */
         d += n;
         s += n;
+        if ((((uintptr_t)d | (uintptr_t)s) & 3u) == 0) {
+            while (n >= sizeof(uint32_t)) {
+                d -= sizeof(uint32_t);
+                s -= sizeof(uint32_t);
+                *(uint32_t *)d = *(const uint32_t *)s;
+                n -= sizeof(uint32_t);
+            }
+        }
         while (n--) *--d = *--s;
     }
     return dst;

@@ -214,15 +214,74 @@ static gui_pixel_rect_t desktop_pixel_rect_union(gui_pixel_rect_t a,
  * the framebuffer present critical section when coordinating multiple
  * flushes into a single visually-atomic update.
  */
-static void desktop_framebuffer_flush_rect(const desktop_state_t *desktop,
+static void desktop_framebuffer_flush_rect(desktop_state_t *desktop,
                                            gui_pixel_rect_t rect)
 {
     if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
         return;
     if (rect.w <= 0 || rect.h <= 0)
         return;
+    if (desktop->framebuffer_batch_depth > 0) {
+        desktop->framebuffer_batch_rect =
+            desktop_pixel_rect_union(desktop->framebuffer_batch_rect, rect);
+        return;
+    }
     framebuffer_present_rect(desktop->framebuffer,
                              rect.x, rect.y, rect.w, rect.h);
+}
+
+void desktop_begin_console_batch(desktop_state_t *desktop)
+{
+    if (!desktop)
+        return;
+
+    if (desktop->framebuffer_batch_depth == 0) {
+        desktop->framebuffer_batch_rect.x = 0;
+        desktop->framebuffer_batch_rect.y = 0;
+        desktop->framebuffer_batch_rect.w = 0;
+        desktop->framebuffer_batch_rect.h = 0;
+        desktop->framebuffer_batch_flags = 0;
+        desktop->framebuffer_batch_present_active = 0;
+        if (desktop->framebuffer_enabled && desktop->framebuffer) {
+            desktop->framebuffer_batch_flags =
+                desktop_framebuffer_present_begin();
+            desktop->framebuffer_batch_present_active = 1;
+        }
+    }
+    desktop->framebuffer_batch_depth++;
+}
+
+void desktop_end_console_batch(desktop_state_t *desktop)
+{
+    gui_pixel_rect_t rect;
+    uint32_t flags;
+    int present_active;
+
+    if (!desktop || desktop->framebuffer_batch_depth <= 0)
+        return;
+
+    desktop->framebuffer_batch_depth--;
+    if (desktop->framebuffer_batch_depth > 0)
+        return;
+
+    rect = desktop->framebuffer_batch_rect;
+    flags = desktop->framebuffer_batch_flags;
+    present_active = desktop->framebuffer_batch_present_active;
+    desktop->framebuffer_batch_rect.x = 0;
+    desktop->framebuffer_batch_rect.y = 0;
+    desktop->framebuffer_batch_rect.w = 0;
+    desktop->framebuffer_batch_rect.h = 0;
+    desktop->framebuffer_batch_flags = 0;
+    desktop->framebuffer_batch_present_active = 0;
+
+    if (desktop->framebuffer_enabled &&
+        desktop->framebuffer &&
+        !desktop_pixel_rect_empty(&rect)) {
+        framebuffer_present_rect(desktop->framebuffer,
+                                 rect.x, rect.y, rect.w, rect.h);
+    }
+    if (present_active)
+        desktop_framebuffer_present_end(flags);
 }
 
 static void desktop_pixel_fill_rect(const framebuffer_info_t *fb,
@@ -1681,6 +1740,39 @@ static int desktop_terminal_cell_pixel_rect(desktop_state_t *desktop,
     return 1;
 }
 
+static void desktop_terminal_dirty_include_row(int *first,
+                                               int *last,
+                                               int row,
+                                               int rows)
+{
+    if (!first || !last || row < 0 || row >= rows)
+        return;
+    if (*last < *first) {
+        *first = row;
+        *last = row;
+        return;
+    }
+    if (row < *first)
+        *first = row;
+    if (row > *last)
+        *last = row;
+}
+
+static void desktop_terminal_dirty_shift_up(int *first,
+                                            int *last)
+{
+    if (!first || !last || *last < *first)
+        return;
+    if (*first > 0)
+        (*first)--;
+    if (*last > 0) {
+        (*last)--;
+    } else {
+        *first = 1;
+        *last = 0;
+    }
+}
+
 static int desktop_render_framebuffer_scroll_dirty(desktop_state_t *desktop,
                                                    const char *buf,
                                                    uint32_t len,
@@ -1701,6 +1793,8 @@ static int desktop_render_framebuffer_scroll_dirty(desktop_state_t *desktop,
     int scroll_rows;
     int scroll_pixels;
     int wrote_cells;
+    int dirty_first;
+    int dirty_last;
     int wrap;
     int x;
     int y;
@@ -1724,6 +1818,8 @@ static int desktop_render_framebuffer_scroll_dirty(desktop_state_t *desktop,
     ansi_val = 0;
     scroll_rows = 0;
     wrote_cells = 0;
+    dirty_first = desktop->shell_terminal.rows;
+    dirty_last = -1;
 
     for (uint32_t i = 0; i < len; i++) {
         ch = (unsigned char)buf[i];
@@ -1774,7 +1870,12 @@ static int desktop_render_framebuffer_scroll_dirty(desktop_state_t *desktop,
             wrap = 0;
             if (y >= desktop->shell_terminal.rows) {
                 scroll_rows++;
+                desktop_terminal_dirty_shift_up(&dirty_first, &dirty_last);
                 y = desktop->shell_terminal.rows - 1;
+                desktop_terminal_dirty_include_row(&dirty_first,
+                                                   &dirty_last,
+                                                   y,
+                                                   desktop->shell_terminal.rows);
             }
             continue;
         }
@@ -1797,7 +1898,12 @@ static int desktop_render_framebuffer_scroll_dirty(desktop_state_t *desktop,
             wrap = 0;
             if (y >= desktop->shell_terminal.rows) {
                 scroll_rows++;
+                desktop_terminal_dirty_shift_up(&dirty_first, &dirty_last);
                 y = desktop->shell_terminal.rows - 1;
+                desktop_terminal_dirty_include_row(&dirty_first,
+                                                   &dirty_last,
+                                                   y,
+                                                   desktop->shell_terminal.rows);
             }
         }
 
@@ -1806,6 +1912,10 @@ static int desktop_render_framebuffer_scroll_dirty(desktop_state_t *desktop,
             y >= desktop->shell_terminal.rows)
             return 0;
         wrote_cells = 1;
+        desktop_terminal_dirty_include_row(&dirty_first,
+                                           &dirty_last,
+                                           y,
+                                           desktop->shell_terminal.rows);
         if (x == desktop->shell_terminal.cols - 1) {
             wrap = 1;
         } else {
@@ -1815,8 +1925,6 @@ static int desktop_render_framebuffer_scroll_dirty(desktop_state_t *desktop,
     }
 
     if (scroll_rows <= 0 || scroll_rows > desktop->shell_terminal.rows)
-        return 0;
-    if (wrote_cells)
         return 0;
     if (ansi_state != 0 || desktop->shell_terminal.ansi_state != 0)
         return 0;
@@ -1852,6 +1960,14 @@ static int desktop_render_framebuffer_scroll_dirty(desktop_state_t *desktop,
     clip.w = content.w;
     clip.h = scroll_pixels;
     desktop_render_framebuffer_region(desktop, &clip);
+
+    if (wrote_cells && dirty_last >= dirty_first) {
+        clip.x = content.x;
+        clip.y = content.y + dirty_first * (int)GUI_FONT_H;
+        clip.w = content.w;
+        clip.h = (dirty_last - dirty_first + 1) * (int)GUI_FONT_H;
+        desktop_render_framebuffer_region(desktop, &clip);
+    }
 
     if (desktop_terminal_cell_pixel_rect(desktop,
                                          before_cursor_x,

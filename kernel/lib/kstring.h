@@ -21,6 +21,7 @@
 
 void    *k_memcpy(void *dst, const void *src, uint32_t n);
 void    *k_memset(void *s, int c, uint32_t n);
+void     k_memset32(void *s, uint32_t value, uint32_t count);
 void    *k_memmove(void *dst, const void *src, uint32_t n);
 int      k_memcmp(const void *a, const void *b, uint32_t n);
 

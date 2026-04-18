@@ -35,6 +35,17 @@ void klog_uint(const char *tag, const char *msg, uint32_t val);
 void klog_hex(const char *tag, const char *msg, uint32_t val);
 
 /*
+ * Silent variants — store to the ring and emit to the QEMU debugcon port,
+ * but never write to the on-screen console. Used by the in-kernel unit
+ * test suite so that a KTEST build's boot screen stays visually identical
+ * to a non-KTEST build.
+ */
+void klog_log_silent(klog_level_t level, const char *tag, const char *msg);
+void klog_silent(const char *tag, const char *msg);
+void klog_silent_uint(const char *tag, const char *msg, uint32_t val);
+void klog_silent_hex(const char *tag, const char *msg, uint32_t val);
+
+/*
  * Snapshot the retained ring buffer into `buf`.
  *
  * Returns the number of rendered bytes via `size_out` even when `buf` is

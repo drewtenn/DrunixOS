@@ -648,7 +648,7 @@ static void test_proc_kmsg_renders_retained_kernel_log(ktest_case_t *tc)
     vfs_node_t node;
 
     KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree_with_proc(), 0u);
-    klog("TESTLOG", "procfs-kmsg-visible");
+    klog_silent("TESTLOG", "procfs-kmsg-visible");
 
     KTEST_EXPECT_EQ(tc, (uint32_t)vfs_resolve("proc/kmsg", &node), 0u);
     KTEST_EXPECT_EQ(tc, node.type, (uint32_t)VFS_NODE_PROCFILE);

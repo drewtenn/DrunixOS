@@ -59,6 +59,11 @@ static void klog_puts(const char *s)
     klog_debugcon_puts(s);
 }
 
+static void klog_puts_silent(const char *s)
+{
+    klog_debugcon_puts(s);
+}
+
 static const char *klog_level_name(klog_level_t level)
 {
     switch (level) {
@@ -126,6 +131,21 @@ static void klog_emit_record(const klog_record_t *rec)
     klog_puts(line);
 }
 
+static void klog_emit_record_silent(const klog_record_t *rec)
+{
+    char line[160];
+
+    if (!rec)
+        return;
+
+    klog_format_line(line, sizeof(line),
+                     rec->ticks,
+                     (klog_level_t)rec->level,
+                     rec->tag,
+                     rec->msg);
+    klog_puts_silent(line);
+}
+
 static void klog_render_into(char *buf, uint32_t cap, uint32_t *size_out)
 {
     uint32_t len = 0;
@@ -190,4 +210,41 @@ int klog_snapshot(char *buf, uint32_t cap, uint32_t *size_out)
         buf[0] = '\0';
     klog_render_into(buf, cap, size_out);
     return 0;
+}
+
+void klog_log_silent(klog_level_t level, const char *tag, const char *msg)
+{
+    klog_record_t rec;
+
+    k_memset(&rec, 0, sizeof(rec));
+    rec.ticks = clock_uptime_ticks();
+    rec.level = (uint8_t)level;
+    k_strncpy(rec.tag, tag ? tag : "KLOG", KLOG_TAG_CAP - 1u);
+    rec.tag[KLOG_TAG_CAP - 1u] = '\0';
+    k_strncpy(rec.msg, msg ? msg : "(null)", KLOG_MSG_CAP - 1u);
+    rec.msg[KLOG_MSG_CAP - 1u] = '\0';
+
+    klog_store_record(&rec);
+    klog_emit_record_silent(&rec);
+}
+
+void klog_silent(const char *tag, const char *msg)
+{
+    klog_log_silent(KLOG_LEVEL_INFO, tag, msg);
+}
+
+void klog_silent_uint(const char *tag, const char *msg, uint32_t val)
+{
+    char line[KLOG_MSG_CAP];
+
+    k_snprintf(line, sizeof(line), "%s: %u", msg ? msg : "(null)", val);
+    klog_log_silent(KLOG_LEVEL_INFO, tag, line);
+}
+
+void klog_silent_hex(const char *tag, const char *msg, uint32_t val)
+{
+    char line[KLOG_MSG_CAP];
+
+    k_snprintf(line, sizeof(line), "%s: 0x%08X", msg ? msg : "(null)", val);
+    klog_log_silent(KLOG_LEVEL_INFO, tag, line);
 }

@@ -106,6 +106,8 @@ void ktest_expect_ge  (ktest_case_t *tc, uint32_t a, uint32_t b,
 /* ── Runner ─────────────────────────────────────────────────────────────── */
 
 void ktest_run_suite(ktest_suite_t *suite);
+void ktest_run_suite_counts(ktest_suite_t *suite,
+                            int *passed_out, int *failed_out);
 void ktest_run_all(void);
 
 /* ── Suite registration — one function per test file ────────────────────── */

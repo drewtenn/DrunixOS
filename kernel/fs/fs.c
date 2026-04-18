@@ -1533,7 +1533,7 @@ static int dufs_vfs_flush(void *ctx, uint32_t inode_num)
     return fs_flush_inode(inode_num);
 }
 
-static const fs_ops_t dufs_ops = {
+static const fs_ops_t dufs_hd0_ops = {
     .ctx      = &g_dufs_hd0,
     .init     = dufs_vfs_init,
     .open     = dufs_vfs_open,
@@ -1554,7 +1554,7 @@ static const fs_ops_t dufs_ops = {
     .flush    = dufs_vfs_flush,
 };
 
-static const fs_ops_t dufs1_ops = {
+static const fs_ops_t dufs_hd1_ops = {
     .ctx      = &g_dufs_hd1,
     .init     = dufs_vfs_init,
     .open     = dufs_vfs_open,
@@ -1575,7 +1575,20 @@ static const fs_ops_t dufs1_ops = {
     .flush    = dufs_vfs_flush,
 };
 
+#ifndef DRUNIX_ROOT_FS
+#define DRUNIX_ROOT_FS "ext3"
+#endif
+
 void dufs_register(void) {
-    vfs_register("dufs", &dufs_ops);
-    vfs_register("dufs1", &dufs1_ops);
+    /*
+     * Bind the "dufs" VFS type to whichever ATA disk actually holds a DUFS
+     * filesystem.  Under ROOT_FS=dufs, hd0 is DUFS and is the root disk;
+     * under ROOT_FS=ext3, hd0 is ext3 and the DUFS scratch image lives on
+     * hd1.  We only register the disk that is genuinely DUFS so the VFS
+     * name never lies about what's on the platter.
+     */
+    const fs_ops_t *ops = (k_strcmp(DRUNIX_ROOT_FS, "dufs") == 0)
+                              ? &dufs_hd0_ops
+                              : &dufs_hd1_ops;
+    vfs_register("dufs", ops);
 }

@@ -56,6 +56,7 @@ typedef struct {
     uint8_t  framebuffer_blue_mask_size;
 } __attribute__((packed)) multiboot_info_t;
 
+#define MULTIBOOT_FLAG_CMDLINE     (1u << 2)
 #define MULTIBOOT_FLAG_MMAP        (1u << 6)
 #define MULTIBOOT_FLAG_FRAMEBUFFER (1u << 12)
 #define MULTIBOOT_FRAMEBUFFER_TYPE_RGB 1u

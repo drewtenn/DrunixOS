@@ -189,6 +189,42 @@ static void format_mtime(unsigned int epoch, char *out, int outsz)
     snprintf(out, outsz, "%s %2u %4u", months[month], day, year);
 }
 
+#define LS_OUTPUT_BUF_SIZE 2048
+#define LS_LINE_BUF_SIZE 512
+
+static void ls_flush_output(char *out, int *len)
+{
+    if (!out || !len || *len <= 0)
+        return;
+    fwrite(out, 1, (size_t)*len, stdout);
+    *len = 0;
+}
+
+static void ls_emit_output(char *out, int *len, const char *text, int text_len)
+{
+    if (!out || !len || !text || text_len <= 0)
+        return;
+    if (text_len >= LS_OUTPUT_BUF_SIZE)
+    {
+        ls_flush_output(out, len);
+        fwrite(text, 1, (size_t)text_len, stdout);
+        return;
+    }
+    if (*len + text_len > LS_OUTPUT_BUF_SIZE)
+        ls_flush_output(out, len);
+    memcpy(out + *len, text, (size_t)text_len);
+    *len += text_len;
+}
+
+static void ls_emit_line(char *out, int *out_len, const char *line, int len)
+{
+    if (len < 0)
+        len = 0;
+    if (len >= LS_LINE_BUF_SIZE)
+        len = LS_LINE_BUF_SIZE - 1;
+    ls_emit_output(out, out_len, line, len);
+}
+
 static void cmd_ls(const char *path)
 {
     /* Strip a trailing '/' so "ls tests/" and "ls tests" both work. */
@@ -211,6 +247,8 @@ static void cmd_ls(const char *path)
     /* If no path: arg stays NULL → kernel uses process cwd for getdents. */
 
     char buf[512];
+    char out[LS_OUTPUT_BUF_SIZE];
+    int out_len = 0;
     int n = sys_getdents(arg, buf, sizeof(buf));
     int i = 0;
     while (i < n)
@@ -239,25 +277,35 @@ static void cmd_ls(const char *path)
             is_dir = (st.type == 2);
             unsigned int links = st.link_count ? st.link_count : 1;
             char mtime[16];
+            char line[LS_LINE_BUF_SIZE];
+            int line_len;
+
             format_mtime(st.mtime, mtime, sizeof(mtime));
-            printf("%s%s  %u root root %6u %s %s\n",
-                   is_dir ? "d" : "-",
-                   is_dir ? "rwxr-xr-x" : "rw-r--r--",
-                   links,
-                   st.size,
-                   mtime,
-                   name);
+            line_len = snprintf(line, sizeof(line),
+                                "%s%s  %u root root %6u %s %s\n",
+                                is_dir ? "d" : "-",
+                                is_dir ? "rwxr-xr-x" : "rw-r--r--",
+                                links,
+                                st.size,
+                                mtime,
+                                name);
+            ls_emit_line(out, &out_len, line, line_len);
         }
         else
         {
+            char line[LS_LINE_BUF_SIZE];
+            int line_len;
+
             /* stat failed — print bare name */
-            printf("%s\n", name);
+            line_len = snprintf(line, sizeof(line), "%s\n", name);
+            ls_emit_line(out, &out_len, line, line_len);
         }
 
         while (i < n && buf[i] != '\0')
             i++;
         i++;
     }
+    ls_flush_output(out, &out_len);
 }
 
 /* ── built-in: cd ───────────────────────────────────────────────────────── */

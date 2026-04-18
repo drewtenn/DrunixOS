@@ -3,12 +3,17 @@
 section .multiboot
 align 4
     MULTIBOOT_MAGIC    equ 0x1BADB002
+%ifdef DRUNIX_VGA_TEXT
+    MULTIBOOT_FLAGS    equ 0x00
+%else
     MULTIBOOT_FLAGS    equ 0x04
+%endif
     MULTIBOOT_CHECKSUM equ -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
 
     dd MULTIBOOT_MAGIC
     dd MULTIBOOT_FLAGS
     dd MULTIBOOT_CHECKSUM
+%ifndef DRUNIX_VGA_TEXT
     ; Reserve Multiboot1 offsets 12-28 so graphics fields begin at offset 32.
     dd 0
     dd 0
@@ -20,6 +25,7 @@ align 4
     dd 1024
     dd 768
     dd 32
+%endif
 
 ; 16 KB kernel stack in BSS
 section .bss

@@ -7,6 +7,7 @@
 *.log
 *.img
 *.iso
+iso/boot/grub/grub.cfg
 /build/
 .worktrees/
 user/date
@@ -43,7 +44,7 @@ user/linuxhello
 user/linuxprobe
 user/linuxabi
 
-core.*
+/core.*
 
 # Python tooling
 __pycache__/

@@ -45,6 +45,23 @@ extern int syscall_console_write_for_test(process_t *proc, const char *buf,
 extern int boot_framebuffer_grid_for_test(const framebuffer_info_t *fb,
                                           int *cols,
                                           int *rows);
+extern void desktop_begin_console_batch(desktop_state_t *desktop);
+extern void desktop_end_console_batch(desktop_state_t *desktop);
+extern void framebuffer_present_count_reset_for_test(void);
+extern uint32_t framebuffer_present_count_for_test(void);
+extern void legacy_console_seed_shadow_for_test(int row,
+                                                int col,
+                                                char ch,
+                                                uint8_t attr);
+extern void legacy_console_set_framebuffer_for_test(framebuffer_info_t *fb);
+extern void legacy_console_disable_framebuffer_for_test(void);
+extern void print_bytes(const char *buf, int n);
+extern void set_cursor(int offset);
+extern int get_cursor(void);
+extern int get_offset(int col, int row);
+extern void boot_parse_cmdline_for_test(const char *cmdline,
+                                        int *nodesktop,
+                                        int *vgatext);
 
 static void desktop_test_destroy(desktop_state_t *desktop)
 {
@@ -765,6 +782,310 @@ static void test_gui_display_presents_cells_to_framebuffer(ktest_case_t *tc)
                     pixels[0 * 16 + 2]);
     KTEST_EXPECT_EQ(tc, framebuffer_pack_rgb(&fb, 0x16, 0x2a, 0x4f),
                     pixels[0 * 16 + 0]);
+}
+
+static void test_legacy_console_output_reaches_framebuffer(ktest_case_t *tc)
+{
+    static uint32_t pixels[16 * 16];
+    framebuffer_info_t fb;
+    uint32_t fg;
+    uint32_t bg;
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 16u * sizeof(uint32_t);
+    fb.width = 16;
+    fb.height = 16;
+    fb.red_pos = 16;
+    fb.red_size = 8;
+    fb.green_pos = 8;
+    fb.green_size = 8;
+    fb.blue_pos = 0;
+    fb.blue_size = 8;
+
+    bg = framebuffer_pack_rgb(&fb, 0x06, 0x08, 0x12);
+    fg = framebuffer_pack_rgb(&fb, 0xf6, 0xf1, 0xde);
+
+    set_cursor(0);
+    legacy_console_set_framebuffer_for_test(&fb);
+    print_bytes("A", 1);
+    legacy_console_disable_framebuffer_for_test();
+
+    KTEST_EXPECT_EQ(tc, pixels[0 * 16 + 0], bg);
+    KTEST_EXPECT_EQ(tc, pixels[0 * 16 + 2], fg);
+}
+
+static void test_framebuffer_console_handoff_blanks_stale_shadow_background(
+    ktest_case_t *tc)
+{
+    static uint32_t pixels[16 * 16];
+    framebuffer_info_t fb;
+    uint32_t bg;
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 16u * sizeof(uint32_t);
+    fb.width = 16;
+    fb.height = 16;
+    fb.red_pos = 16;
+    fb.red_size = 8;
+    fb.green_pos = 8;
+    fb.green_size = 8;
+    fb.blue_pos = 0;
+    fb.blue_size = 8;
+    fb.cell_cols = 2;
+    fb.cell_rows = 1;
+    bg = framebuffer_pack_rgb(&fb, 0x06, 0x08, 0x12);
+
+    legacy_console_seed_shadow_for_test(0, 0, ' ', 0x70);
+    legacy_console_seed_shadow_for_test(0, 1, ' ', 0x70);
+    set_cursor(get_offset(0, 0));
+    legacy_console_set_framebuffer_for_test(&fb);
+    legacy_console_disable_framebuffer_for_test();
+
+    KTEST_EXPECT_EQ(tc, pixels[0 * 16 + 0], bg);
+    KTEST_EXPECT_EQ(tc, pixels[0 * 16 + 8], bg);
+}
+
+static void test_framebuffer_console_handoff_normalizes_imported_text_bg(
+    ktest_case_t *tc)
+{
+    static uint32_t pixels[16 * 16];
+    framebuffer_info_t fb;
+    uint32_t bg;
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 16u * sizeof(uint32_t);
+    fb.width = 16;
+    fb.height = 16;
+    fb.red_pos = 16;
+    fb.red_size = 8;
+    fb.green_pos = 8;
+    fb.green_size = 8;
+    fb.blue_pos = 0;
+    fb.blue_size = 8;
+    fb.cell_cols = 2;
+    fb.cell_rows = 1;
+    bg = framebuffer_pack_rgb(&fb, 0x06, 0x08, 0x12);
+
+    legacy_console_disable_framebuffer_for_test();
+    legacy_console_seed_shadow_for_test(0, 0, 'A', 0x70);
+    set_cursor(get_offset(1, 0));
+    legacy_console_set_framebuffer_for_test(&fb);
+    legacy_console_disable_framebuffer_for_test();
+
+    KTEST_EXPECT_EQ(tc, pixels[0], bg);
+}
+
+static void test_framebuffer_console_handoff_blanks_nonprintable_imports(
+    ktest_case_t *tc)
+{
+    static uint32_t pixels[16 * 16];
+    framebuffer_info_t fb;
+    uint32_t bg;
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 16u * sizeof(uint32_t);
+    fb.width = 16;
+    fb.height = 16;
+    fb.red_pos = 16;
+    fb.red_size = 8;
+    fb.green_pos = 8;
+    fb.green_size = 8;
+    fb.blue_pos = 0;
+    fb.blue_size = 8;
+    fb.cell_cols = 2;
+    fb.cell_rows = 1;
+    bg = framebuffer_pack_rgb(&fb, 0x06, 0x08, 0x12);
+
+    legacy_console_disable_framebuffer_for_test();
+    legacy_console_seed_shadow_for_test(0, 0, (char)0xdb, 0x0f);
+    set_cursor(get_offset(1, 0));
+    legacy_console_set_framebuffer_for_test(&fb);
+    legacy_console_disable_framebuffer_for_test();
+
+    KTEST_EXPECT_EQ(tc, pixels[1 * 16 + 1], bg);
+}
+
+static void test_framebuffer_console_handoff_preserves_vga_cursor(
+    ktest_case_t *tc)
+{
+    static uint32_t pixels[32 * 32];
+    framebuffer_info_t fb;
+    uint32_t bg;
+    uint32_t fg;
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 32u * sizeof(uint32_t);
+    fb.width = 32;
+    fb.height = 32;
+    fb.red_pos = 16;
+    fb.red_size = 8;
+    fb.green_pos = 8;
+    fb.green_size = 8;
+    fb.blue_pos = 0;
+    fb.blue_size = 8;
+    fb.cell_cols = 4;
+    fb.cell_rows = 2;
+    bg = framebuffer_pack_rgb(&fb, 0x06, 0x08, 0x12);
+    fg = framebuffer_pack_rgb(&fb, 0xf6, 0xf1, 0xde);
+
+    legacy_console_disable_framebuffer_for_test();
+    legacy_console_seed_shadow_for_test(0, 0, ' ', 0x0f);
+    set_cursor(get_offset(2, 1));
+    legacy_console_set_framebuffer_for_test(&fb);
+    print_bytes("A", 1);
+    legacy_console_disable_framebuffer_for_test();
+
+    KTEST_EXPECT_EQ(tc, pixels[0 * 32 + 2], bg);
+    KTEST_EXPECT_EQ(tc, pixels[16 * 32 + 2 * 8 + 2], fg);
+}
+
+static void test_framebuffer_console_handoff_carries_vga_end_to_next_row(
+    ktest_case_t *tc)
+{
+    static uint32_t pixels[640 * 416];
+    framebuffer_info_t fb;
+    uint32_t fg;
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 640u * sizeof(uint32_t);
+    fb.width = 640;
+    fb.height = 416;
+    fb.red_pos = 16;
+    fb.red_size = 8;
+    fb.green_pos = 8;
+    fb.green_size = 8;
+    fb.blue_pos = 0;
+    fb.blue_size = 8;
+    fb.cell_cols = 80;
+    fb.cell_rows = 26;
+    fg = framebuffer_pack_rgb(&fb, 0xf6, 0xf1, 0xde);
+
+    legacy_console_disable_framebuffer_for_test();
+    set_cursor(get_offset(0, 25));
+    legacy_console_set_framebuffer_for_test(&fb);
+    print_bytes("A", 1);
+    legacy_console_disable_framebuffer_for_test();
+
+    KTEST_EXPECT_EQ(tc, pixels[25 * 16 * 640 + 2], fg);
+}
+
+static void test_framebuffer_console_handoff_drops_stale_cells_after_cursor(
+    ktest_case_t *tc)
+{
+    static uint32_t pixels[32 * 16];
+    framebuffer_info_t fb;
+    uint32_t bg;
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 32u * sizeof(uint32_t);
+    fb.width = 32;
+    fb.height = 16;
+    fb.red_pos = 16;
+    fb.red_size = 8;
+    fb.green_pos = 8;
+    fb.green_size = 8;
+    fb.blue_pos = 0;
+    fb.blue_size = 8;
+    fb.cell_cols = 4;
+    fb.cell_rows = 1;
+    bg = framebuffer_pack_rgb(&fb, 0x06, 0x08, 0x12);
+
+    legacy_console_disable_framebuffer_for_test();
+    legacy_console_seed_shadow_for_test(0, 2, 'A', 0x0f);
+    set_cursor(get_offset(1, 0));
+    legacy_console_set_framebuffer_for_test(&fb);
+    legacy_console_disable_framebuffer_for_test();
+
+    KTEST_EXPECT_EQ(tc, pixels[0 * 32 + 2 * 8 + 2], bg);
+}
+
+static void test_framebuffer_console_uses_columns_beyond_vga_width(ktest_case_t *tc)
+{
+    static uint32_t pixels[648 * 16];
+    static char text[81];
+    framebuffer_info_t fb;
+    uint32_t fg;
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    k_memset(text, ' ', 80);
+    text[80] = 'A';
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 648u * sizeof(uint32_t);
+    fb.width = 648;
+    fb.height = 16;
+    fb.red_pos = 16;
+    fb.red_size = 8;
+    fb.green_pos = 8;
+    fb.green_size = 8;
+    fb.blue_pos = 0;
+    fb.blue_size = 8;
+    fb.cell_cols = 81;
+    fb.cell_rows = 1;
+    fg = framebuffer_pack_rgb(&fb, 0xf6, 0xf1, 0xde);
+
+    set_cursor(get_offset(0, 0));
+    legacy_console_set_framebuffer_for_test(&fb);
+    print_bytes(text, sizeof(text));
+    legacy_console_disable_framebuffer_for_test();
+
+    KTEST_EXPECT_EQ(tc, pixels[0 * 648 + 80 * 8 + 2], fg);
+}
+
+static void test_framebuffer_console_uses_rows_beyond_vga_height(ktest_case_t *tc)
+{
+    static uint32_t pixels[8 * 416];
+    framebuffer_info_t fb;
+    uint32_t fg;
+
+    k_memset(pixels, 0, sizeof(pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pixels;
+    fb.pitch = 8u * sizeof(uint32_t);
+    fb.width = 8;
+    fb.height = 416;
+    fb.red_pos = 16;
+    fb.red_size = 8;
+    fb.green_pos = 8;
+    fb.green_size = 8;
+    fb.blue_pos = 0;
+    fb.blue_size = 8;
+    fb.cell_cols = 1;
+    fb.cell_rows = 26;
+    fg = framebuffer_pack_rgb(&fb, 0xf6, 0xf1, 0xde);
+
+    legacy_console_set_framebuffer_for_test(&fb);
+    set_cursor(get_offset(0, 25));
+    print_bytes("A", 1);
+    legacy_console_disable_framebuffer_for_test();
+
+    KTEST_EXPECT_EQ(tc, pixels[25 * 16 * 8 + 2], fg);
+}
+
+static void test_boot_cmdline_parses_vgatext_with_nodesktop(ktest_case_t *tc)
+{
+    int nodesktop = 0;
+    int vgatext = 0;
+
+    boot_parse_cmdline_for_test("quiet nodesktop vgatext", &nodesktop,
+                                &vgatext);
+
+    KTEST_EXPECT_EQ(tc, nodesktop, 1);
+    KTEST_EXPECT_EQ(tc, vgatext, 1);
 }
 
 static void test_desktop_boot_layout_opens_shell_window(ktest_case_t *tc)
@@ -2935,6 +3256,117 @@ static void test_framebuffer_terminal_scroll_paints_line_written_before_newline(
     desktop_test_destroy(&desktop);
 }
 
+static void test_framebuffer_mixed_text_scroll_keeps_padding_pixels(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+    uint32_t terminal_fg;
+    uint32_t sentinel = 0x0BADCAFEu;
+    int sentinel_index;
+    int glyph_base_x;
+    int glyph_base_y;
+    int found_fg;
+
+    k_memset(pointer_motion_pixels, 0, sizeof(pointer_motion_pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pointer_motion_pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    desktop_open_shell_window(&desktop);
+    desktop_render(&desktop);
+
+    for (int row = 0; row < desktop.shell_terminal.rows - 1; row++)
+        KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, "\n", 1),
+                        1);
+
+    sentinel_index = (desktop.shell_pixel_rect.y + 2) * 480 +
+                     desktop.shell_pixel_rect.x + 2;
+    pointer_motion_pixels[sentinel_index] = sentinel;
+
+    KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, "Z\n", 2), 2);
+    KTEST_EXPECT_EQ(tc, pointer_motion_pixels[sentinel_index], sentinel);
+
+    terminal_fg = framebuffer_pack_rgb(&fb, 0xf6, 0xf1, 0xde);
+    glyph_base_x = desktop.shell_pixel_rect.x +
+                   desktop.shell_terminal.padding_x;
+    glyph_base_y = desktop.shell_pixel_rect.y +
+                   desktop.shell_terminal.padding_y +
+                   (desktop.shell_terminal.rows - 2) * (int)GUI_FONT_H;
+    found_fg = 0;
+    for (int py = 0; py < (int)GUI_FONT_H; py++) {
+        for (int px = 0; px < (int)GUI_FONT_W; px++) {
+            int index = (glyph_base_y + py) * 480 + glyph_base_x + px;
+
+            if (pointer_motion_pixels[index] == terminal_fg)
+                found_fg = 1;
+        }
+    }
+    KTEST_EXPECT_TRUE(tc, found_fg);
+    desktop_test_destroy(&desktop);
+}
+
+static void test_framebuffer_console_batch_presents_once(ktest_case_t *tc)
+{
+    static uint32_t front_pixels[480 * 400];
+    static uint32_t back_pixels[480 * 400];
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+
+    k_memset(front_pixels, 0, sizeof(front_pixels));
+    k_memset(back_pixels, 0, sizeof(back_pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)front_pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+    KTEST_ASSERT_EQ(tc,
+                    framebuffer_attach_back_buffer(&fb,
+                                                   back_pixels,
+                                                   480u * sizeof(uint32_t),
+                                                   sizeof(back_pixels)),
+                    0);
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    desktop_open_shell_window(&desktop);
+    desktop_render(&desktop);
+
+    framebuffer_present_count_reset_for_test();
+    desktop_begin_console_batch(&desktop);
+    KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, "alpha", 5),
+                    5);
+    KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, "beta", 4),
+                    4);
+    KTEST_EXPECT_EQ(tc, framebuffer_present_count_for_test(), 0u);
+    desktop_end_console_batch(&desktop);
+    KTEST_EXPECT_EQ(tc, framebuffer_present_count_for_test(), 1u);
+
+    desktop_test_destroy(&desktop);
+}
+
 static void test_framebuffer_shell_scroll_keeps_overlapped_window_pixels(
     ktest_case_t *tc)
 {
@@ -3724,6 +4156,20 @@ static void test_framebuffer_pack_rgb_scales_to_mask_size(ktest_case_t *tc)
                     0x3fffffffu);
 }
 
+static void test_k_memset32_fills_words(ktest_case_t *tc)
+{
+    uint32_t words[5];
+
+    k_memset(words, 0, sizeof(words));
+    k_memset32(words + 1, 0xA5A55A5Au, 3);
+
+    KTEST_EXPECT_EQ(tc, words[0], 0u);
+    KTEST_EXPECT_EQ(tc, words[1], 0xA5A55A5Au);
+    KTEST_EXPECT_EQ(tc, words[2], 0xA5A55A5Au);
+    KTEST_EXPECT_EQ(tc, words[3], 0xA5A55A5Au);
+    KTEST_EXPECT_EQ(tc, words[4], 0u);
+}
+
 static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_terminal_write_wraps_and_retains_history),
     KTEST_CASE(test_terminal_render_uses_pixel_padding),
@@ -3742,6 +4188,16 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_gui_display_fill_rect_clips_to_bounds),
     KTEST_CASE(test_gui_display_draw_text_stops_at_region_edge),
     KTEST_CASE(test_gui_display_presents_cells_to_framebuffer),
+    KTEST_CASE(test_legacy_console_output_reaches_framebuffer),
+    KTEST_CASE(test_framebuffer_console_handoff_blanks_stale_shadow_background),
+    KTEST_CASE(test_framebuffer_console_handoff_normalizes_imported_text_bg),
+    KTEST_CASE(test_framebuffer_console_handoff_blanks_nonprintable_imports),
+    KTEST_CASE(test_framebuffer_console_handoff_preserves_vga_cursor),
+    KTEST_CASE(test_framebuffer_console_handoff_carries_vga_end_to_next_row),
+    KTEST_CASE(test_framebuffer_console_handoff_drops_stale_cells_after_cursor),
+    KTEST_CASE(test_framebuffer_console_uses_columns_beyond_vga_width),
+    KTEST_CASE(test_framebuffer_console_uses_rows_beyond_vga_height),
+    KTEST_CASE(test_boot_cmdline_parses_vgatext_with_nodesktop),
     KTEST_CASE(test_desktop_files_app_lists_root_entries),
     KTEST_CASE(test_desktop_files_app_replaces_last_visible_line_when_truncated),
     KTEST_CASE(test_desktop_help_app_has_keyboard_page),
@@ -3819,6 +4275,8 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_framebuffer_terminal_scroll_keeps_padding_pixels),
     KTEST_CASE(test_framebuffer_terminal_scroll_does_not_copy_mouse_pointer),
     KTEST_CASE(test_framebuffer_terminal_scroll_paints_line_written_before_newline),
+    KTEST_CASE(test_framebuffer_mixed_text_scroll_keeps_padding_pixels),
+    KTEST_CASE(test_framebuffer_console_batch_presents_once),
     KTEST_CASE(test_framebuffer_shell_scroll_keeps_overlapped_window_pixels),
     KTEST_CASE(test_framebuffer_terminal_scroll_blocks_mouse_pointer_interleave),
     KTEST_CASE(test_framebuffer_desktop_renders_shell_terminal_background),
@@ -3850,6 +4308,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_framebuffer_draw_glyph_writes_foreground_pixels),
     KTEST_CASE(test_framebuffer_draw_glyph_rejects_overflowing_position),
     KTEST_CASE(test_framebuffer_pack_rgb_scales_to_mask_size),
+    KTEST_CASE(test_k_memset32_fills_words),
 };
 
 ktest_suite_t *ktest_suite_desktop(void)

@@ -57,6 +57,10 @@ typedef struct {
     uintptr_t video_address;
     framebuffer_info_t *framebuffer;
     int framebuffer_enabled;
+    int framebuffer_batch_depth;
+    int framebuffer_batch_present_active;
+    gui_pixel_rect_t framebuffer_batch_rect;
+    uint32_t framebuffer_batch_flags;
     uint32_t shell_pid;
     uint32_t shell_pgid;
     gui_terminal_t shell_terminal;
@@ -109,6 +113,8 @@ int desktop_process_owns_shell(desktop_state_t *desktop,
 int desktop_write_console_output(desktop_state_t *desktop,
                                  const char *buf,
                                  uint32_t len);
+void desktop_begin_console_batch(desktop_state_t *desktop);
+void desktop_end_console_batch(desktop_state_t *desktop);
 int desktop_clear_console(desktop_state_t *desktop);
 int desktop_scroll_console(desktop_state_t *desktop, int rows);
 int desktop_write_process_output(desktop_state_t *desktop,

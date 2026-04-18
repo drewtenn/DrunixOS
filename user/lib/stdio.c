@@ -367,7 +367,7 @@ int vfprintf(FILE *f, const char *fmt, va_list ap)
 {
     if (!f || !(f->flags & _IO_WRITE)) return -1;
 
-    char chunk[256];
+    char chunk[512];
     pf_sink_t s;
     s.buf   = chunk;
     s.cap   = sizeof(chunk);

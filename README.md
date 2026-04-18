@@ -155,26 +155,96 @@ If your distro installs `grub-mkrescue` but not `i686-elf-grub-mkrescue`, add a 
 For a clean first boot, build the kernel, ISO, disk image, and launch QEMU:
 
 ```sh
-make run-fresh
+make fresh
 ```
+
+`make run-fresh` is kept as the longer compatibility name.
 
 On a normal QEMU boot, Drunix opens the shell inside the framebuffer desktop. If the bootloader does not provide a usable 32-bit RGB framebuffer, the kernel falls back to the legacy VGA text presentation path.
 
+The GRUB menu also offers two console-only entries. `Drunix (text console)`
+passes `nodesktop` and uses the full framebuffer text grid when a framebuffer
+is available. `Drunix (VGA text console)` boots `kernel-vga.elf`, whose
+Multiboot header does not request a graphics framebuffer, and passes
+`nodesktop vgatext` so the kernel uses the classic 80x25 VGA text backend.
+Hold SHIFT at boot to interrupt the default, or edit `iso/boot/grub/grub.cfg`
+to change `set default=0` to `set default=1` or `set default=2`.
+
 Useful targets:
 
-- `make all` rebuilds the kernel, ISO, and `disk.img` as needed, then launches QEMU
+Common workflows:
+
+- `make fresh` / `make run-fresh` rebuild `disk.img` as needed, then launch QEMU
 - `make run` rebuilds the kernel and ISO as needed, then launches QEMU without rebuilding `disk.img`
-- `make run-fresh` rebuilds `disk.img`, then launches QEMU
-- `make disk` rebuilds `disk.img`
-- `make kernel` rebuilds `kernel.elf` and `os.iso`
-- `make test` boots with the in-kernel unit tests enabled
-- `make KTEST=1 run` boots with the in-kernel unit tests enabled
-- `make test-all` runs the in-kernel unit tests and halt-inducing tests
+- `make build` builds the bootable ISO and both disk images without launching QEMU
+- `make check` runs the headless in-kernel test suite
+- `make all` defaults to the fresh boot workflow
 - `make rebuild` wipes build outputs, rebuilds the kernel and disk image, and boots from scratch
+- `make clean` removes build outputs
+
+Build-only targets:
+
+- `make kernel` rebuilds `kernel.elf`, `kernel-vga.elf`, and `os.iso`
+- `make iso` rebuilds `os.iso`
+- `make disk` / `make images` rebuild `disk.img` and `dufs.img`
+
+Run and debug targets:
+
+- `make run-stdio` same as `run` but streams QEMU's debug console output to the terminal
+- `make run-grub-menu` boots into the GRUB menu so you can pick `nodesktop` or VGA-text entries by hand
+- `make debug` starts QEMU paused with the GDB remote stub and kernel symbols loaded
+- `make debug-fresh` rebuilds `disk.img` first, then starts `make debug`
+- `make debug-user APP=shell` starts `debug` and loads symbols for `user/shell`
+
+In-kernel tests (KTEST):
+
+- `make test` boots with the in-kernel unit tests enabled. Test output is
+  routed silently to `debugcon.log` and `/proc/kmsg`, so the on-screen
+  desktop is visually identical to `make run` and you can inspect visual
+  bugs while the suite also runs. Grep `debugcon.log` for
+  `KTEST: SUMMARY pass=N fail=M` to see the result.
+- `make test-fresh` same as `test` but rebuilds `disk.img` first
+- `make test-headless` builds with tests enabled, boots QEMU with
+  `-display none`, waits for the summary line in `debugcon-ktest.log`, and
+  exits non-zero if any case failed. Use this in CI / scripted runs.
+- `make check` is a short alias for `make test-headless`
+- `make KTEST=1 run` equivalent to `make test`
+
+Halt-inducing and userland integration tests (all headless):
+
+- `make test-halt` verifies the double-fault path via a dedicated TSS
+- `make test-linux-abi` boots a static Linux/i386 ELF and checks syscall
+  return values and errno-compatible negatives
+- `make test-busybox-compat` runs the unattended BusyBox compatibility suite
+  and extracts the on-disk report
+- `make test-ext3-linux-compat` generates an ext3 root, validates it with
+  host `e2fsprogs`, boots the in-kernel ext3 writer smoke tests, and fscks
+  the mutated image
+- `make test-ext3-host-write-interop` uses host `debugfs` to write into the
+  ext3 image, reads it back, and fscks the result
+- `make validate-ext3-linux` runs the host ext3 validators (`e2fsck`,
+  `dumpe2fs`, and the repo's compat checkers) without booting QEMU
+- `make test-all` runs the in-kernel unit tests, the Linux ABI smoke, and
+  the halt-inducing tests in sequence; exits non-zero if any fail
+
+Documentation:
+
 - `make epub` builds the EPUB edition
 - `make pdf` builds the PDF book from the Markdown sources with Pandoc and Typst
 - `make docs` builds both the EPUB and the PDF
-- `make clean` removes build outputs
+
+### Root filesystem selection
+
+`disk.img` defaults to a Linux-compatible ext3 root. Build with
+`ROOT_FS=dufs` to use the legacy DUFS filesystem as the root instead:
+
+```sh
+make ROOT_FS=dufs run-fresh
+```
+
+`dufs.img` (the primary ATA slave / `hd1`) is always DUFS-formatted. Under
+the default ext3 root, it is mounted at `/dufs` so programs can exercise
+DUFS-specific code paths even when `/` is ext3.
 
 ### Build Options
 
@@ -188,6 +258,28 @@ make MOUSE_SPEED=6 os.iso
 `16`. The option affects framebuffer mouse motion only. VGA text fallback
 pointer motion remains unscaled, at one pixel per raw mouse unit before cell
 coordinates are derived.
+
+To compile out the desktop entirely — useful for text-console-only builds or
+to shave a few KB of `.text` — build with `NO_DESKTOP=1`:
+
+```sh
+make NO_DESKTOP=1 run-fresh
+```
+
+The kernel skips `desktop_init` and boots straight to the console. With a
+framebuffer, this uses the full framebuffer text grid. The runtime `nodesktop`
+GRUB cmdline flag is still honored on a normal build, so you only need
+`NO_DESKTOP=1` when you want the desktop gone at compile time.
+
+To force the 80x25 VGA text backend at build time, use `VGA_TEXT=1`:
+
+```sh
+make VGA_TEXT=1 run-fresh
+```
+
+`VGA_TEXT=1` implies `DRUNIX_NO_DESKTOP` and defines `DRUNIX_VGA_TEXT`, so the
+kernel ignores a Multiboot framebuffer even if one is reported. Lowercase
+aliases `no_desktop=1` and `vga_text=1` are also accepted.
 
 ### Userland C++ Support
 

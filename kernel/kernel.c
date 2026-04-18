@@ -52,10 +52,13 @@
 
 static char scrollback[SCROLLBACK_ROWS][ROW_BYTES];
 static char shadow_vga[MAX_ROWS][ROW_BYTES]; /* mirror of the live screen */
+static gui_cell_t fb_scrollback[SCROLLBACK_ROWS][FB_CELL_COLS];
 static int sb_head = 0;                      /* next write slot in the ring */
 static int sb_count = 0;                     /* rows stored (0..SCROLLBACK_ROWS) */
 static int sb_view = 0;                      /* 0 = live; N = scrolled N rows back */
 static int shadow_cursor = 0;                /* "true" cursor byte-offset */
+static int console_cols = MAX_COLS;
+static int console_rows = MAX_ROWS;
 
 static gui_cell_t boot_vga_cells[MAX_ROWS * MAX_COLS];
 static gui_cell_t boot_fb_cells[FB_CELL_COLS * FB_CELL_ROWS];
@@ -72,6 +75,10 @@ static uint32_t boot_fb_back_buffer[FB_REQUEST_WIDTH * FB_REQUEST_HEIGHT]
     __attribute__((aligned(16)));
 static gui_display_t boot_display;
 static desktop_state_t boot_desktop;
+static int boot_nodesktop;
+static int boot_vgatext;
+static framebuffer_info_t *legacy_console_fb;
+static int legacy_console_cursor_offset = -1;
 
 static unsigned char current_color = WHITE_ON_BLACK;
 static int ansi_state = 0;
@@ -88,6 +95,12 @@ void scroll_up(int n);
 void scroll_down(int n);
 
 static int console_putc_at(int offset, char c);
+static void legacy_console_set_framebuffer(framebuffer_info_t *fb);
+static void legacy_console_disable_framebuffer(void);
+static void boot_parse_cmdline(const char *cmdline,
+                               int *nodesktop,
+                               int *vgatext);
+static uint8_t legacy_console_handoff_attr(char ch, uint8_t attr);
 
 extern void pit_init(void);
 extern void keyboard_init(void);
@@ -149,6 +162,275 @@ static int boot_map_framebuffer(const framebuffer_info_t *fb)
     return 0;
 }
 
+static void boot_parse_cmdline(const char *cmdline,
+                               int *nodesktop,
+                               int *vgatext)
+{
+    const char *p = cmdline;
+
+    if (!p)
+        return;
+    while (*p) {
+        while (*p == ' ' || *p == '\t')
+            p++;
+        if (!*p)
+            break;
+        const char *tok = p;
+        while (*p && *p != ' ' && *p != '\t')
+            p++;
+        uint32_t len = (uint32_t)(p - tok);
+        if (nodesktop && len == 9 &&
+            k_memcmp(tok, "nodesktop", 9) == 0)
+            *nodesktop = 1;
+        if (vgatext && len == 7 &&
+            k_memcmp(tok, "vgatext", 7) == 0)
+            *vgatext = 1;
+    }
+}
+
+#ifdef KTEST_ENABLED
+void boot_parse_cmdline_for_test(const char *cmdline,
+                                 int *nodesktop,
+                                 int *vgatext)
+{
+    if (nodesktop)
+        *nodesktop = 0;
+    if (vgatext)
+        *vgatext = 0;
+    boot_parse_cmdline(cmdline, nodesktop, vgatext);
+}
+#endif
+
+static void legacy_console_vga_color(uint8_t color,
+                                     uint8_t *r,
+                                     uint8_t *g,
+                                     uint8_t *b)
+{
+    static const uint8_t palette[16][3] = {
+        {0x06,0x08,0x12}, {0x16,0x2a,0x4f},
+        {0x1f,0x6f,0x54}, {0x27,0x8d,0x95},
+        {0x84,0x2f,0x3a}, {0x7c,0x3f,0x8f},
+        {0xb8,0x74,0x2a}, {0xc8,0xd1,0xd9},
+        {0x4d,0x5b,0x6a}, {0x4a,0x78,0xc2},
+        {0x67,0xc5,0x8f}, {0x6f,0xd6,0xd2},
+        {0xe0,0x6c,0x75}, {0xc6,0x78,0xdd},
+        {0xf2,0xc9,0x4c}, {0xf6,0xf1,0xde},
+    };
+
+    *r = palette[color & 0x0f][0];
+    *g = palette[color & 0x0f][1];
+    *b = palette[color & 0x0f][2];
+}
+
+static void legacy_console_render_cell(int col,
+                                       int row,
+                                       unsigned char ch,
+                                       uint8_t attr)
+{
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+    uint32_t fg;
+    uint32_t bg;
+
+    if (!legacy_console_fb)
+        return;
+    if (col < 0 || row < 0 || col >= console_cols || row >= console_rows)
+        return;
+
+    legacy_console_vga_color(attr & 0x0f, &r, &g, &b);
+    fg = framebuffer_pack_rgb(legacy_console_fb, r, g, b);
+    legacy_console_vga_color((attr >> 4) & 0x0f, &r, &g, &b);
+    bg = framebuffer_pack_rgb(legacy_console_fb, r, g, b);
+    framebuffer_draw_glyph(legacy_console_fb,
+                           col * (int)GUI_FONT_W,
+                           row * (int)GUI_FONT_H,
+                           ch, fg, bg);
+}
+
+static void legacy_console_render_cursor_at(int offset)
+{
+    int cell;
+    int row;
+    int col;
+    uint32_t color;
+
+    if (!legacy_console_fb || sb_view != 0 || offset < 0)
+        return;
+
+    cell = offset / 2;
+    row = cell / console_cols;
+    col = cell % console_cols;
+    if (col < 0 || row < 0 || col >= console_cols || row >= console_rows)
+        return;
+
+    color = framebuffer_pack_rgb(legacy_console_fb, 0x67, 0xc5, 0x8f);
+    framebuffer_fill_rect(legacy_console_fb,
+                          col * (int)GUI_FONT_W,
+                          row * (int)GUI_FONT_H + (int)GUI_FONT_H - 2,
+                          (int)GUI_FONT_W, 2, color);
+}
+
+static void legacy_console_render_shadow_cell_at_offset(int offset)
+{
+    int cell;
+    int row;
+    int col;
+    gui_cell_t *fb_cell;
+
+    if (!legacy_console_fb || offset < 0)
+        return;
+
+    cell = offset / 2;
+    row = cell / console_cols;
+    col = cell % console_cols;
+    if (col < 0 || row < 0 || col >= console_cols || row >= console_rows)
+        return;
+
+    fb_cell = &boot_fb_cells[row * console_cols + col];
+    legacy_console_render_cell(col, row, (unsigned char)fb_cell->ch,
+                               fb_cell->attr);
+}
+
+static void legacy_console_render_shadow(void)
+{
+    for (int row = 0; row < console_rows; row++) {
+        for (int col = 0; col < console_cols; col++) {
+            gui_cell_t *cell = &boot_fb_cells[row * console_cols + col];
+            legacy_console_render_cell(col, row, (unsigned char)cell->ch,
+                                       cell->attr);
+        }
+    }
+    legacy_console_render_cursor_at(shadow_cursor);
+}
+
+static char legacy_console_handoff_char(char ch)
+{
+    unsigned char uch = (unsigned char)ch;
+
+    if (uch < 0x20 || uch > 0x7e)
+        return ' ';
+    return ch;
+}
+
+static uint8_t legacy_console_handoff_attr(char ch, uint8_t attr)
+{
+    (void)ch;
+    (void)attr;
+    return WHITE_ON_BLACK;
+}
+
+static void legacy_console_set_framebuffer(framebuffer_info_t *fb)
+{
+    uint32_t bg;
+    int cols;
+    int rows;
+    int old_cursor_cell;
+    int old_cursor_row;
+    int old_cursor_col;
+    int copy_limit;
+
+    legacy_console_fb = fb;
+    if (!legacy_console_fb) {
+        console_cols = MAX_COLS;
+        console_rows = MAX_ROWS;
+        legacy_console_cursor_offset = -1;
+        return;
+    }
+
+    cols = fb->cell_cols ? (int)fb->cell_cols
+                         : (int)(fb->width / GUI_FONT_W);
+    rows = fb->cell_rows ? (int)fb->cell_rows
+                         : (int)(fb->height / GUI_FONT_H);
+    if (cols <= 0 || rows <= 0) {
+        legacy_console_disable_framebuffer();
+        return;
+    }
+    if (cols > FB_CELL_COLS)
+        cols = FB_CELL_COLS;
+    if (rows > FB_CELL_ROWS)
+        rows = FB_CELL_ROWS;
+
+    old_cursor_cell = shadow_cursor / 2;
+    if (old_cursor_cell < 0)
+        old_cursor_cell = 0;
+    if (old_cursor_cell > MAX_COLS * MAX_ROWS)
+        old_cursor_cell = MAX_COLS * MAX_ROWS;
+    copy_limit = old_cursor_cell;
+    old_cursor_row = old_cursor_cell / MAX_COLS;
+    old_cursor_col = old_cursor_cell % MAX_COLS;
+    if (old_cursor_row >= rows) {
+        old_cursor_row = rows - 1;
+        old_cursor_col = 0;
+    } else if (old_cursor_col >= cols) {
+        old_cursor_col = cols - 1;
+    }
+
+    console_cols = cols;
+    console_rows = rows;
+    shadow_cursor = get_offset(old_cursor_col, old_cursor_row);
+    legacy_console_cursor_offset = shadow_cursor;
+    sb_head = 0;
+    sb_count = 0;
+    sb_view = 0;
+
+    for (int row = 0; row < console_rows; row++) {
+        for (int col = 0; col < console_cols; col++) {
+            gui_cell_t *cell = &boot_fb_cells[row * console_cols + col];
+            int old_cell = row * MAX_COLS + col;
+            if (row < MAX_ROWS && col < MAX_COLS &&
+                old_cell < copy_limit) {
+                cell->ch = legacy_console_handoff_char(
+                    shadow_vga[row][col * 2]);
+                cell->attr = legacy_console_handoff_attr(
+                    cell->ch, (uint8_t)shadow_vga[row][col * 2 + 1]);
+            } else {
+                cell->ch = ' ';
+                cell->attr = WHITE_ON_BLACK;
+            }
+        }
+    }
+
+    bg = framebuffer_pack_rgb(legacy_console_fb, 0x06, 0x08, 0x12);
+    framebuffer_fill_rect(legacy_console_fb, 0, 0,
+                          (int)legacy_console_fb->width,
+                          (int)legacy_console_fb->height, bg);
+    legacy_console_render_shadow();
+}
+
+static void legacy_console_disable_framebuffer(void)
+{
+    legacy_console_fb = 0;
+    legacy_console_cursor_offset = -1;
+    console_cols = MAX_COLS;
+    console_rows = MAX_ROWS;
+    if (shadow_cursor >= MAX_COLS * MAX_ROWS * 2)
+        shadow_cursor = (MAX_COLS * MAX_ROWS - 1) * 2;
+}
+
+#ifdef KTEST_ENABLED
+void legacy_console_set_framebuffer_for_test(framebuffer_info_t *fb)
+{
+    legacy_console_set_framebuffer(fb);
+}
+
+void legacy_console_disable_framebuffer_for_test(void)
+{
+    legacy_console_disable_framebuffer();
+}
+
+void legacy_console_seed_shadow_for_test(int row,
+                                         int col,
+                                         char ch,
+                                         uint8_t attr)
+{
+    if (row < 0 || row >= MAX_ROWS || col < 0 || col >= MAX_COLS)
+        return;
+    shadow_vga[row][col * 2] = ch;
+    shadow_vga[row][col * 2 + 1] = (char)attr;
+}
+#endif
+
 #ifdef KTEST_ENABLED
 int boot_framebuffer_grid_for_test(const framebuffer_info_t *fb,
                                    int *cols,
@@ -170,10 +452,22 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
     klog("BOOT", "sse state initialized");
 
     /* Save flags before pmm_init, which writes the bitmap at 0x10000 and
-     * may overwrite mbi if GRUB placed it at the same address. */
+     * may overwrite mbi if GRUB placed it at the same address. The cmdline
+     * string also lives in bootloader memory and must be scanned here. */
     uint32_t mbi_flags = mbi ? mbi->flags : 0;
+#ifdef DRUNIX_VGA_TEXT
+    boot_nodesktop = 1;
+    boot_vgatext = 1;
+#endif
+    if (mbi && (mbi_flags & MULTIBOOT_FLAG_CMDLINE) && mbi->cmdline)
+        boot_parse_cmdline((const char *)mbi->cmdline,
+                           &boot_nodesktop,
+                           &boot_vgatext);
     int have_boot_framebuffer =
+        !boot_vgatext &&
         framebuffer_info_from_multiboot(mbi, &boot_framebuffer) == 0;
+    if (boot_vgatext)
+        klog("BOOT", "VGA text console requested");
 
     klog("BOOT", "initializing memory managers");
     pmm_init(mbi);
@@ -261,10 +555,10 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
     klog("FS", "root mounted");
 
     if (k_strcmp(DRUNIX_ROOT_FS, "ext3") == 0) {
-        if (vfs_mount("/dufs", "dufs1") != 0)
-            klog("FS", "dufs1 mount at /dufs failed");
+        if (vfs_mount("/dufs", "dufs") != 0)
+            klog("FS", "dufs mount at /dufs failed");
         else
-            klog("FS", "dufs1 mounted at /dufs");
+            klog("FS", "dufs mounted at /dufs");
     }
 
     if (vfs_mount("/dev", "devfs") != 0)
@@ -302,8 +596,36 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
     }
 
     gui_display_init(&boot_display, cells, cols, rows, WHITE_ON_BLACK);
-    desktop_init(&boot_desktop, &boot_display);
-    if (desktop_is_active()) {
+#ifdef DRUNIX_NO_DESKTOP
+    int desktop_requested = 0;
+#else
+    int desktop_requested = !boot_nodesktop;
+#endif
+
+    if (!desktop_requested && have_boot_framebuffer) {
+        legacy_console_set_framebuffer(&boot_framebuffer);
+        klog("BOOT", "legacy console framebuffer enabled");
+        klog_uint("BOOT", "framebuffer console cols",
+                  (uint32_t)console_cols);
+        klog_uint("BOOT", "framebuffer console rows",
+                  (uint32_t)console_rows);
+    }
+
+#ifdef DRUNIX_NO_DESKTOP
+    klog("BOOT", "desktop disabled at build time (DRUNIX_NO_DESKTOP)");
+#else
+    if (boot_nodesktop)
+        klog("BOOT", "desktop disabled via cmdline (nodesktop)");
+#endif
+#ifdef DRUNIX_VGA_TEXT
+    klog("BOOT", "VGA text console forced at build time (DRUNIX_VGA_TEXT)");
+#else
+    if (boot_vgatext)
+        klog("BOOT", "VGA text console forced via cmdline (vgatext)");
+#endif
+    if (desktop_requested)
+        desktop_init(&boot_desktop, &boot_display);
+    if (desktop_requested && desktop_is_active()) {
         if (!have_boot_framebuffer) {
             desktop_set_presentation_target(&boot_desktop, VIDEO_ADDRESS);
             klog("BOOT", "desktop VGA fallback enabled");
@@ -415,7 +737,7 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
 void clear_screen()
 {
     sb_view = 0;
-    for (int i = 0; i < MAX_COLS * MAX_ROWS; ++i)
+    for (int i = 0; i < console_cols * console_rows; ++i)
     {
         set_char_at_video_memory(' ', i * 2);
     }
@@ -425,37 +747,50 @@ void clear_screen()
 
 int scroll_ln(int offset)
 {
-    /* Save the row being evicted from the top to the scrollback ring. */
-    if (scrollback)
-    {
+    if (legacy_console_fb) {
+        k_memcpy(fb_scrollback[sb_head], boot_fb_cells,
+                 (uint32_t)console_cols * sizeof(gui_cell_t));
+        sb_head = (sb_head + 1) % SCROLLBACK_ROWS;
+        if (sb_count < SCROLLBACK_ROWS)
+            sb_count++;
+
+        k_memmove(boot_fb_cells, boot_fb_cells + console_cols,
+                  (uint32_t)console_cols * (console_rows - 1) *
+                      sizeof(gui_cell_t));
+        for (int col = 0; col < console_cols; col++) {
+            gui_cell_t *cell =
+                &boot_fb_cells[(console_rows - 1) * console_cols + col];
+            cell->ch = ' ';
+            cell->attr = WHITE_ON_BLACK;
+        }
+        legacy_console_render_shadow();
+    } else {
         k_memcpy(scrollback[sb_head], shadow_vga[0], ROW_BYTES);
         sb_head = (sb_head + 1) % SCROLLBACK_ROWS;
         if (sb_count < SCROLLBACK_ROWS)
             sb_count++;
+
+        k_memcpy(shadow_vga[0], shadow_vga[1], (MAX_ROWS - 1) * ROW_BYTES);
+        for (int col = 0; col < MAX_COLS; col++)
+        {
+            shadow_vga[MAX_ROWS - 1][col * 2] = ' ';
+            shadow_vga[MAX_ROWS - 1][col * 2 + 1] = WHITE_ON_BLACK;
+        }
+
+        k_memcpy(
+            (char *)(get_offset(0, 0) + VIDEO_ADDRESS),
+            (char *)(get_offset(0, 1) + VIDEO_ADDRESS),
+            MAX_COLS * (MAX_ROWS - 1) * 2);
+
+        for (int col = 0; col < MAX_COLS; col++)
+        {
+            unsigned char *vidmem = (unsigned char *)VIDEO_ADDRESS;
+            vidmem[get_offset(col, MAX_ROWS - 1)] = ' ';
+            vidmem[get_offset(col, MAX_ROWS - 1) + 1] = WHITE_ON_BLACK;
+        }
     }
 
-    /* Scroll shadow_vga up one row. */
-    k_memcpy(shadow_vga[0], shadow_vga[1], (MAX_ROWS - 1) * ROW_BYTES);
-    for (int col = 0; col < MAX_COLS; col++)
-    {
-        shadow_vga[MAX_ROWS - 1][col * 2] = ' ';
-        shadow_vga[MAX_ROWS - 1][col * 2 + 1] = WHITE_ON_BLACK;
-    }
-
-    /* Scroll VGA up one row. */
-    k_memcpy(
-        (char *)(get_offset(0, 0) + VIDEO_ADDRESS),
-        (char *)(get_offset(0, 1) + VIDEO_ADDRESS),
-        MAX_COLS * (MAX_ROWS - 1) * 2);
-
-    for (int col = 0; col < MAX_COLS; col++)
-    {
-        unsigned char *vidmem = (unsigned char *)VIDEO_ADDRESS;
-        vidmem[get_offset(col, MAX_ROWS - 1)] = ' ';
-        vidmem[get_offset(col, MAX_ROWS - 1) + 1] = WHITE_ON_BLACK;
-    }
-
-    return offset - 2 * MAX_COLS;
+    return offset - 2 * console_cols;
 }
 
 unsigned char port_byte_in(unsigned short port)
@@ -472,12 +807,12 @@ void port_byte_out(unsigned short port, unsigned char data)
 
 int get_row_from_offset(int offset)
 {
-    return offset / (2 * MAX_COLS);
+    return offset / (2 * console_cols);
 }
 
 int get_offset(int col, int row)
 {
-    return 2 * (row * MAX_COLS + col);
+    return 2 * (row * console_cols + col);
 }
 
 int move_offset_to_new_line(int offset)
@@ -496,15 +831,26 @@ static void set_hw_cursor(int offset)
 
 void set_cursor(int offset)
 {
+    if (legacy_console_fb && legacy_console_cursor_offset >= 0)
+        legacy_console_render_shadow_cell_at_offset(
+            legacy_console_cursor_offset);
+
     shadow_cursor = offset;
+    legacy_console_cursor_offset = offset;
     if (sb_view == 0)
     {
-        set_hw_cursor(offset);
+        if (legacy_console_fb)
+            legacy_console_render_cursor_at(offset);
+        else
+            set_hw_cursor(offset);
     }
 }
 
 int get_cursor()
 {
+    if (legacy_console_fb)
+        return shadow_cursor;
+
     port_byte_out(VGA_CTRL_REGISTER, VGA_OFFSET_HIGH);
     int offset = port_byte_in(VGA_DATA_REGISTER) << 8;
     port_byte_out(VGA_CTRL_REGISTER, VGA_OFFSET_LOW);
@@ -535,45 +881,64 @@ void scrollback_init(void)
 static void redraw_screen(void)
 {
     unsigned char *vidmem = (unsigned char *)VIDEO_ADDRESS;
-    for (int r = 0; r < MAX_ROWS; r++)
+    for (int r = 0; r < console_rows; r++)
     {
         int logical = sb_count - sb_view + r;
-        char *src = (char *)0;
 
         if (logical < 0)
         {
             /* Before recorded history — write blank row. */
-            for (int c = 0; c < MAX_COLS; c++)
+            for (int c = 0; c < console_cols; c++)
             {
-                vidmem[get_offset(c, r)] = ' ';
-                vidmem[get_offset(c, r) + 1] = WHITE_ON_BLACK;
+                if (legacy_console_fb) {
+                    legacy_console_render_cell(c, r, ' ', WHITE_ON_BLACK);
+                } else {
+                    vidmem[get_offset(c, r)] = ' ';
+                    vidmem[get_offset(c, r) + 1] = WHITE_ON_BLACK;
+                }
             }
             continue;
         }
-        else if (logical < sb_count)
-        {
-            /* From scrollback ring. */
-            int idx = (sb_head - sb_count + logical + SCROLLBACK_ROWS) % SCROLLBACK_ROWS;
-            src = scrollback[idx];
-        }
-        else
-        {
-            /* From shadow_vga. */
-            int shadow_row = logical - sb_count; /* == r - sb_view */
-            src = shadow_vga[shadow_row];
-        }
 
-        k_memcpy((char *)(vidmem + get_offset(0, r)), src, ROW_BYTES);
+        if (legacy_console_fb) {
+            gui_cell_t *src;
+            if (logical < sb_count) {
+                int idx = (sb_head - sb_count + logical + SCROLLBACK_ROWS) %
+                          SCROLLBACK_ROWS;
+                src = fb_scrollback[idx];
+            } else {
+                int shadow_row = logical - sb_count;
+                src = &boot_fb_cells[shadow_row * console_cols];
+            }
+            for (int c = 0; c < console_cols; c++)
+                legacy_console_render_cell(c, r, (unsigned char)src[c].ch,
+                                           src[c].attr);
+        } else {
+            char *src;
+            if (logical < sb_count) {
+                int idx = (sb_head - sb_count + logical + SCROLLBACK_ROWS) %
+                          SCROLLBACK_ROWS;
+                src = scrollback[idx];
+            } else {
+                int shadow_row = logical - sb_count;
+                src = shadow_vga[shadow_row];
+            }
+            k_memcpy((char *)(vidmem + get_offset(0, r)), src, ROW_BYTES);
+        }
     }
 
     if (sb_view > 0)
     {
         /* Push cursor off-screen to hide it during scrollback. */
-        set_hw_cursor(get_offset(0, MAX_ROWS));
+        if (!legacy_console_fb)
+            set_hw_cursor(get_offset(0, MAX_ROWS));
     }
     else
     {
-        set_hw_cursor(shadow_cursor);
+        if (legacy_console_fb)
+            legacy_console_render_cursor_at(shadow_cursor);
+        else
+            set_hw_cursor(shadow_cursor);
     }
 }
 
@@ -599,8 +964,21 @@ void scroll_down(int n)
 void set_char_at_video_memory(char character, int offset)
 {
     int cell = offset / 2;
-    int row = cell / MAX_COLS;
-    int col = cell % MAX_COLS;
+    int row = cell / console_cols;
+    int col = cell % console_cols;
+
+    if (col < 0 || row < 0 || col >= console_cols || row >= console_rows)
+        return;
+
+    if (legacy_console_fb) {
+        gui_cell_t *fb_cell = &boot_fb_cells[row * console_cols + col];
+        fb_cell->ch = character;
+        fb_cell->attr = current_color;
+        legacy_console_render_cell(col, row, (unsigned char)character,
+                                   current_color);
+        return;
+    }
+
     shadow_vga[row][col * 2] = character;
     shadow_vga[row][col * 2 + 1] = current_color;
 
@@ -611,14 +989,14 @@ void set_char_at_video_memory(char character, int offset)
 
 static int console_putc_at(int offset, char c)
 {
-    if (offset >= MAX_ROWS * MAX_COLS * 2)
+    if (offset >= console_rows * console_cols * 2)
         offset = scroll_ln(offset);
 
     if (c == '\n')
         return move_offset_to_new_line(offset);
 
     if (c == '\r')
-        return get_offset(0, (offset / 2) / MAX_COLS);
+        return get_offset(0, (offset / 2) / console_cols);
 
     if (c == '\b')
     {
@@ -629,11 +1007,11 @@ static int console_putc_at(int offset, char c)
 
     if (c == '\t')
     {
-        int col = (offset / 2) % MAX_COLS;
+        int col = (offset / 2) % console_cols;
         int spaces = TAB_WIDTH - (col % TAB_WIDTH);
         for (int i = 0; i < spaces; i++)
         {
-            if (offset >= MAX_ROWS * MAX_COLS * 2)
+            if (offset >= console_rows * console_cols * 2)
                 offset = scroll_ln(offset);
             set_char_at_video_memory(' ', offset);
             offset += 2;
