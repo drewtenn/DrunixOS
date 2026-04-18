@@ -631,6 +631,56 @@ static void test_proc_namespace_lists_modules_and_pid_dirs(ktest_case_t *tc)
     vfs_reset();
 }
 
+static void test_proc_mounts_reports_dynamic_sources(ktest_case_t *tc)
+{
+    char buf[512];
+    int n;
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree_with_proc(), 0u);
+
+    n = procfs_read_file(PROCFS_FILE_MOUNTS, 0u, 0u, 0u,
+                         buf, sizeof(buf) - 1u);
+    KTEST_ASSERT_TRUE(tc, n > 0);
+    buf[n] = '\0';
+
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "root / root rw 0 0\n") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "sub /mnt sub rw 0 0\n") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "devfs /dev devfs rw,nosuid 0 0\n") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n") != 0);
+    vfs_reset();
+}
+
+static void test_proc_mounts_reports_boot_style_sources(ktest_case_t *tc)
+{
+    char buf[768];
+    int n;
+
+    vfs_reset();
+    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_register("ext3", &mock_root_ops), 0u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_register("dufs", &mock_sub_ops), 0u);
+    KTEST_ASSERT_EQ(tc,
+                    (uint32_t)vfs_mount_with_source("/", "ext3", "/dev/sda1"),
+                    0u);
+    KTEST_ASSERT_EQ(tc,
+                    (uint32_t)vfs_mount_with_source("/dufs", "dufs", "/dev/sdb1"),
+                    0u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_mount("/dev", "devfs"), 0u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_mount("/proc", "procfs"), 0u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_mount("/sys", "sysfs"), 0u);
+
+    n = procfs_read_file(PROCFS_FILE_MOUNTS, 0u, 0u, 0u,
+                         buf, sizeof(buf) - 1u);
+    KTEST_ASSERT_TRUE(tc, n > 0);
+    buf[n] = '\0';
+
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "/dev/sda1 / ext3 rw 0 0\n") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "/dev/sdb1 /dufs dufs rw 0 0\n") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "devfs /dev devfs rw,nosuid 0 0\n") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "sysfs /sys sysfs rw,nosuid,nodev,noexec,relatime 0 0\n") != 0);
+    vfs_reset();
+}
+
 static void test_proc_pid_directory_lists_status_maps_and_fd(ktest_case_t *tc)
 {
     char buf[128];
@@ -855,6 +905,8 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_dev_namespace_lists_and_resolves_devices),
     KTEST_CASE(test_sysfs_block_tree_lists_disks_and_partition_metadata),
     KTEST_CASE(test_proc_namespace_lists_modules_and_pid_dirs),
+    KTEST_CASE(test_proc_mounts_reports_dynamic_sources),
+    KTEST_CASE(test_proc_mounts_reports_boot_style_sources),
     KTEST_CASE(test_proc_pid_directory_lists_status_maps_and_fd),
     KTEST_CASE(test_proc_pid_directory_lists_vmstat_and_fault),
     KTEST_CASE(test_proc_vmstat_reports_image_totals_and_region_count),

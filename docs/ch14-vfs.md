@@ -10,7 +10,7 @@ The call stack for any file operation flows downward through a fixed set of laye
 
 ![](diagrams/ch14-diag01.svg)
 
-By default we mount ext3 at `/`, DUFS on the secondary disk at `/dufs`, a synthetic device filesystem at `/dev`, and a synthetic process-information tree at `/proc`. A `ROOT_FS=dufs` build instead mounts DUFS at `/` for the older root-filesystem path. Path resolution therefore walks a small mount tree rooted at `/`, always choosing the deepest mounted prefix.
+By default we mount ext3 from `/dev/sda1` at `/`, DUFS from `/dev/sdb1` at `/dufs`, a synthetic device filesystem at `/dev`, a synthetic process-information tree at `/proc`, and a narrow sysfs-style block-device tree at `/sys`. A `ROOT_FS=dufs` build instead mounts DUFS from `/dev/sda1` at `/` for the older root-filesystem path. Path resolution therefore walks a small mount tree rooted at `/`, always choosing the deepest mounted prefix.
 
 ### The Ops-Table
 
@@ -73,19 +73,20 @@ The registry is still a tiny fixed array, but the namespace now has two separate
 
 Registering a backend copies the filesystem name into the first free registry slot and stores the ops-table pointer beside it. Mounting then resolves the mount's parent directory through the existing namespace, looks up the backend by name, runs its `init()` hook, and records the resulting mount point in the mount table.
 
-Two backends are special: `"devfs"` and `"procfs"` are synthetic and are handled directly by the VFS layer rather than through registered ops-tables. `devfs` contributes nodes like `stdin` and `tty0` under `/dev`; `procfs` synthesises live process and module state under `/proc`.
+Three backends are special: `"devfs"`, `"procfs"`, and `"sysfs"` are synthetic and are handled directly by the VFS layer rather than through registered ops-tables. `devfs` contributes nodes like `stdin`, `tty0`, `sda`, and `sda1` under `/dev`; `procfs` synthesises live process, module, and mount-table state under `/proc`; `sysfs` exposes the block topology under `/sys/block`.
 
 At boot the sequence is:
 
 1. register DUFS as an available backend,
 2. register ext3 as an available backend,
 3. enable interrupts so ATA I/O is safe,
-4. mount the configured root backend at `/` (`ext3` by default, `dufs` for `ROOT_FS=dufs`),
-5. during an ext3-root boot, mount the secondary DUFS image at `/dufs`,
+4. mount the configured root backend from `/dev/sda1` at `/` (`ext3` by default, `dufs` for `ROOT_FS=dufs`),
+5. during an ext3-root boot, mount the secondary DUFS image from `/dev/sdb1` at `/dufs`,
 6. mount `devfs` at `/dev`,
-7. mount `procfs` at `/proc`.
+7. mount `procfs` at `/proc`,
+8. mount `sysfs` at `/sys`.
 
-The root mount happens only after interrupts are live and ATA reads can complete safely. The optional `/dufs` mount and the synthetic `/dev` and `/proc` subtrees are then layered on top of that root namespace.
+The root mount happens only after interrupts are live and ATA reads can complete safely. The optional `/dufs` mount and the synthetic `/dev`, `/proc`, and `/sys` subtrees are then layered on top of that root namespace. Mount records keep the user-facing source, filesystem type, path, and option string, so `/proc/mounts` can report `/dev/sda1 / ext3 rw 0 0` instead of a hard-coded placeholder.
 
 ### The Public API
 
@@ -109,8 +110,11 @@ The public API is deliberately small:
 - `vfs_stat(path, st)`
 - `vfs_lstat(path, st)`
 - `vfs_mount(path, name)`
+- `vfs_mount_with_source(path, name, source)`
+- `vfs_mount_count()`
+- `vfs_mount_info_at(index, info)`
 
-Path resolution is the core service: it normalises the path, finds the deepest matching mount, and reports whether the result is a regular file, a directory, a character device, a TTY node, or a synthetic procfs file. `SYS_OPEN` uses that richer result to install either a DUFS file descriptor, a device-backed one, or a synthetic procfs-backed one.
+Path resolution is the core service: it normalises the path, finds the deepest matching mount, and reports whether the result is a regular file, a directory, a character device, a TTY node, a block device, or a synthetic procfs/sysfs file. `SYS_OPEN` uses that richer result to install either a filesystem file descriptor, a device-backed one, or a synthetic read-only one.
 
 Mutation helpers first identify the mount that owns the target path. They reject mount points themselves as mutation targets, and renames reject cross-mount moves. Optional operations such as `mkdir`, `rmdir`, `rename`, and `stat` are still checked for `NULL` before the function pointer is called.
 
@@ -166,7 +170,7 @@ static const fs_ops_t ext3_ops = {
 
 So the live kernel supports more than lookup and directory listing. Through VFS, user space can create files, delete them, create and remove directories, rename or move entries when the owning backend implements rename, read symbolic links when the backend exposes them, and fetch metadata. ext3 currently treats rename, hard-link creation, and symlink creation as unsupported mutations while still supporting `readlink` for symlinks already present in the image.
 
-Directory enumeration is where the mount tree shows most clearly. `vfs_getdents` asks the owning backend for the directory's entries, filters out any names shadowed by child mounts, and then appends those child mount points as synthetic directory entries. In the default ext3 boot, listing `/` therefore shows `dufs/`, `dev/`, and `proc/` even though those names are mount points from the VFS table rather than ordinary ext3 directory entries.
+Directory enumeration is where the mount tree shows most clearly. `vfs_getdents` asks the owning backend for the directory's entries, filters out any names shadowed by child mounts, and then appends those child mount points as synthetic directory entries. In the default ext3 boot, listing `/` therefore shows `dufs/`, `dev/`, `proc/`, and `sys/` even though those names are mount points from the VFS table rather than ordinary ext3 directory entries.
 
 `procfs` also shows why the VFS returns richer node types than just "file or directory". `/proc/<pid>/status`, `/proc/<pid>/vmstat`, `/proc/<pid>/fault`, `/proc/<pid>/maps`, `/proc/<pid>/fd/<n>`, `/proc/modules`, and `/proc/kmsg` are openable files, but they do not have DUFS inode numbers. The syscall layer therefore treats them as synthetic read-only files whose contents are rendered on demand from scheduler, page-table, file-descriptor, module-loader, and kernel-log state.
 

@@ -17,6 +17,7 @@
 #define VFS_MAX_FS       4   /* max registered filesystems */
 #define VFS_MAX_MOUNTS   8   /* max mount points in the namespace */
 #define VFS_DEV_NAME_MAX 12  /* max synthetic device name incl. NUL */
+#define VFS_MOUNT_SOURCE_MAX 16
 
 /*
  * File/directory metadata returned by vfs_stat().
@@ -72,6 +73,13 @@ typedef struct {
     uint32_t mount_id;
     uint32_t inode_num;
 } vfs_file_ref_t;
+
+typedef struct {
+    char source[VFS_MOUNT_SOURCE_MAX];
+    char path[128];
+    char fstype[VFS_FS_NAME_MAX];
+    char options[48];
+} vfs_mount_info_t;
 
 typedef struct {
     void *ctx;
@@ -174,6 +182,10 @@ int vfs_register(const char *name, const fs_ops_t *ops);
  * return value on init failure.
  */
 int vfs_mount(const char *mount_path, const char *fs_name);
+int vfs_mount_with_source(const char *mount_path, const char *fs_name,
+                          const char *source);
+uint32_t vfs_mount_count(void);
+int vfs_mount_info_at(uint32_t index, vfs_mount_info_t *out);
 
 /*
  * vfs_reset: clear the VFS registry and mount tree.

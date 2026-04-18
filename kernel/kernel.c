@@ -101,6 +101,7 @@ static void boot_parse_cmdline(const char *cmdline,
                                int *nodesktop,
                                int *vgatext);
 static uint8_t legacy_console_handoff_attr(char ch, uint8_t attr);
+static void boot_register_block_devices(void);
 
 extern void pit_init(void);
 extern void keyboard_init(void);
@@ -125,6 +126,20 @@ static int boot_framebuffer_grid(const framebuffer_info_t *fb,
         ? FB_CELL_ROWS
         : (int)fb->cell_rows;
     return 1;
+}
+
+static void boot_register_block_devices(void)
+{
+    int sda_idx;
+    int sdb_idx;
+
+    ata_register();
+    sda_idx = blkdev_find_index("sda");
+    sdb_idx = blkdev_find_index("sdb");
+    if (sda_idx >= 0)
+        blkdev_scan_mbr((uint32_t)sda_idx);
+    if (sdb_idx >= 0)
+        blkdev_scan_mbr((uint32_t)sdb_idx);
 }
 
 static int boot_map_framebuffer(const framebuffer_info_t *fb)
@@ -504,13 +519,7 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
     klog("IRQ", "PIT handler registered");
 
     ata_init();
-    ata_register();
-    int sda_idx = blkdev_find_index("sda");
-    int sdb_idx = blkdev_find_index("sdb");
-    if (sda_idx >= 0)
-        blkdev_scan_mbr((uint32_t)sda_idx);
-    if (sdb_idx >= 0)
-        blkdev_scan_mbr((uint32_t)sdb_idx);
+    boot_register_block_devices();
     klog("ATA", "disk initialized");
 
     bcache_init();
@@ -530,6 +539,9 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
     klog("BOOT", "running kernel unit tests");
     ktest_run_all();
     klog("BOOT", "kernel unit tests complete");
+    blkdev_reset();
+    boot_register_block_devices();
+    bcache_init();
 #endif
 
     klog("BOOT", "registering DUFS");
@@ -552,7 +564,7 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
 #endif
 
     klog("BOOT", "mounting root namespace");
-    if (vfs_mount("/", DRUNIX_ROOT_FS) != 0)
+    if (vfs_mount_with_source("/", DRUNIX_ROOT_FS, "/dev/sda1") != 0)
     {
         klog("FS", "mount failed");
         for (;;)
@@ -561,7 +573,7 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
     klog("FS", "root mounted");
 
     if (k_strcmp(DRUNIX_ROOT_FS, "ext3") == 0) {
-        if (vfs_mount("/dufs", "dufs") != 0)
+        if (vfs_mount_with_source("/dufs", "dufs", "/dev/sdb1") != 0)
             klog("FS", "dufs mount at /dufs failed");
         else
             klog("FS", "dufs mounted at /dufs");
@@ -582,6 +594,14 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
             __asm__ volatile("hlt");
     }
     klog("FS", "procfs mounted at /proc");
+
+    if (vfs_mount_with_source("/sys", "sysfs", "sysfs") != 0)
+    {
+        klog("FS", "sysfs mount failed");
+        for (;;)
+            __asm__ volatile("hlt");
+    }
+    klog("FS", "sysfs mounted at /sys");
     klog("BOOT", "namespace mounted");
 
     /* Initialise the process scheduler */

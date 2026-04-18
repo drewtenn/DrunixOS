@@ -353,12 +353,17 @@ static void procfs_render_modules(render_buf_t *rb)
 
 static void procfs_render_mounts(render_buf_t *rb)
 {
-    /*
-     * Keep the table intentionally small: enough for BusyBox df and other
-     * simple readers that only need to discover the root filesystem and procfs.
-     */
-    procfs_emitf(rb, "rootfs / rootfs rw 0 0\n");
-    procfs_emitf(rb, "proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n");
+    vfs_mount_info_t info;
+
+    for (uint32_t i = 0; i < vfs_mount_count(); i++) {
+        if (vfs_mount_info_at(i, &info) != 0)
+            continue;
+        procfs_emitf(rb, "%s %s %s %s 0 0\n",
+                     info.source,
+                     info.path[0] ? info.path : "/",
+                     info.fstype,
+                     info.options);
+    }
 }
 
 static int procfs_render_file(uint32_t kind, uint32_t pid, uint32_t index,
