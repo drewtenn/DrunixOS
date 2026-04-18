@@ -468,7 +468,7 @@ static int linux_blockdev_identity(const char *name, uint64_t *ino,
     idx = blkdev_find_index(name);
     if (idx < 0)
         return -1;
-    if (blkdev_info_at((uint32_t)idx, &info) != 0)
+    if (blkdev_info_for_index((uint32_t)idx, &info) != 0)
         return -1;
     if (ino)
         *ino = 0x80000000u + (uint32_t)idx;
