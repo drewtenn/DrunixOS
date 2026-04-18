@@ -5,6 +5,7 @@
 
 #include "ktest.h"
 #include "vfs.h"
+#include "blkdev.h"
 #include "procfs.h"
 #include "process.h"
 #include "paging.h"
@@ -471,21 +472,29 @@ static void test_dev_namespace_lists_and_resolves_devices(ktest_case_t *tc)
     char buf[128];
     int n;
     vfs_node_t node;
-    vfs_stat_t st;
 
     KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree(), 0u);
+    KTEST_EXPECT_TRUE(tc, blkdev_get("sda") != 0);
+    KTEST_EXPECT_TRUE(tc, blkdev_get("sda1") != 0);
 
     n = vfs_getdents("dev", buf, sizeof(buf));
     KTEST_EXPECT_TRUE(tc, n > 0);
     KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "stdin"));
     KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "tty0"));
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "sda"));
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "sda1"));
 
-    KTEST_EXPECT_EQ(tc, (uint32_t)vfs_stat("dev", &st), 0u);
-    KTEST_EXPECT_EQ(tc, st.type, 2u);
-
-    KTEST_EXPECT_EQ(tc, (uint32_t)vfs_resolve("dev/tty0", &node), 0u);
+    KTEST_EXPECT_EQ(tc, (uint32_t)vfs_resolve("/dev/tty0", &node), 0u);
     KTEST_EXPECT_EQ(tc, node.type, (uint32_t)VFS_NODE_TTY);
     KTEST_EXPECT_EQ(tc, node.dev_id, 0u);
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)vfs_resolve("/dev/sda", &node), 0u);
+    KTEST_EXPECT_EQ(tc, node.type, (uint32_t)VFS_NODE_BLOCKDEV);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(node.dev_name, "sda") == 0);
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)vfs_resolve("/dev/sda1", &node), 0u);
+    KTEST_EXPECT_EQ(tc, node.type, (uint32_t)VFS_NODE_BLOCKDEV);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(node.dev_name, "sda1") == 0);
     vfs_reset();
 }
 

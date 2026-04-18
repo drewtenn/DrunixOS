@@ -5,6 +5,7 @@
 
 #include "vfs.h"
 #include "procfs.h"
+#include "blkdev.h"
 #include "kheap.h"
 #include "kstring.h"
 
@@ -44,6 +45,31 @@ static const devfs_entry_t devfs_entries[] = {
     { "stdin", VFS_NODE_TTY, 0, 0 },
     { "tty0",  VFS_NODE_TTY, 0, 0 },
 };
+
+static int devfs_fill_blockdev_node(const char *relpath, vfs_node_t *node_out)
+{
+    blkdev_info_t info;
+    uint32_t count = blkdev_count();
+
+    if (!relpath || !node_out)
+        return -1;
+
+    for (uint32_t i = 0; i < count; i++) {
+        if (blkdev_info_at(i, &info) != 0)
+            continue;
+        if (k_strcmp(relpath, info.name) != 0)
+            continue;
+
+        node_out->type = VFS_NODE_BLOCKDEV;
+        node_out->dev_id = i;
+        node_out->size = info.sectors * info.sector_size;
+        k_strncpy(node_out->dev_name, info.name, VFS_DEV_NAME_MAX - 1);
+        node_out->dev_name[VFS_DEV_NAME_MAX - 1] = '\0';
+        return 0;
+    }
+
+    return -1;
+}
 
 static int vfs_normalize_path(const char *path, char *out, uint32_t outsz)
 {
@@ -205,6 +231,9 @@ static int devfs_fill_node(const char *relpath, vfs_node_t *node_out)
         return 0;
     }
 
+    if (devfs_fill_blockdev_node(relpath, node_out) == 0)
+        return 0;
+
     return -1;
 }
 
@@ -216,8 +245,11 @@ static int devfs_stat(const char *relpath, vfs_stat_t *st)
         return -1;
     if (node.type == VFS_NODE_DIR)
         vfs_dir_stat(st);
-    else
+    else {
         vfs_filelike_stat(st);
+        if (node.type == VFS_NODE_BLOCKDEV)
+            st->size = node.size;
+    }
     return 0;
 }
 
@@ -301,6 +333,14 @@ static int devfs_getdents(const char *relpath, char *buf, uint32_t bufsz)
 
     for (uint32_t i = 0; i < sizeof(devfs_entries) / sizeof(devfs_entries[0]); i++) {
         if (vfs_append_dirent(buf, bufsz, &written, devfs_entries[i].name, 0) != 0)
+            break;
+    }
+    for (uint32_t i = 0; i < blkdev_count(); i++) {
+        blkdev_info_t info;
+
+        if (blkdev_info_at(i, &info) != 0)
+            continue;
+        if (vfs_append_dirent(buf, bufsz, &written, info.name, 0) != 0)
             break;
     }
     return (int)written;

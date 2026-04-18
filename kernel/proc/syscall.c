@@ -8,6 +8,7 @@
 #include "process.h"
 #include "gdt.h"
 #include "pipe.h"
+#include "blkdev.h"
 #include "paging.h"
 #include "pmm.h"
 #include "kheap.h"
@@ -208,6 +209,60 @@ static void syscall_invlpg(uint32_t virt)
     __asm__ volatile("invlpg (%0)" :: "r"(virt) : "memory");
 }
 
+static uint32_t syscall_read_blockdev(process_t *cur, file_handle_t *fh,
+                                      uint32_t user_buf, uint32_t count)
+{
+    const blkdev_ops_t *dev;
+    uint8_t sec[BLKDEV_SECTOR_SIZE];
+    uint32_t copied = 0;
+    uint32_t size;
+    uint32_t offset;
+    uint32_t to_read;
+
+    if (!cur || !fh || count == 0)
+        return 0;
+
+    dev = blkdev_get(fh->u.blockdev.name);
+    if (!dev || !dev->read_sector)
+        return (uint32_t)-1;
+
+    size = fh->u.blockdev.size;
+    offset = fh->u.blockdev.offset;
+    if (offset >= size)
+        return 0;
+
+    to_read = size - offset;
+    if (count < to_read)
+        to_read = count;
+    if (to_read == 0)
+        return 0;
+
+    if (uaccess_prepare(cur, user_buf, to_read, 1) != 0)
+        return (uint32_t)-1;
+
+    while (copied < to_read) {
+        uint32_t abs_off = offset + copied;
+        uint32_t lba = abs_off / BLKDEV_SECTOR_SIZE;
+        uint32_t sec_off = abs_off % BLKDEV_SECTOR_SIZE;
+        uint32_t chunk = BLKDEV_SECTOR_SIZE - sec_off;
+        int rc;
+
+        if (chunk > to_read - copied)
+            chunk = to_read - copied;
+
+        rc = dev->read_sector(lba, sec);
+        if (rc != 0)
+            return copied ? copied : (uint32_t)-1;
+        if (uaccess_copy_to_user(cur, user_buf + copied, sec + sec_off,
+                                 chunk) != 0)
+            return copied ? copied : (uint32_t)-1;
+        copied += chunk;
+    }
+
+    fh->u.blockdev.offset = offset + copied;
+    return copied;
+}
+
 typedef struct {
     uint32_t addr;
     uint32_t length;
@@ -226,6 +281,7 @@ typedef struct {
 
 #define LINUX_S_IFIFO 0010000u
 #define LINUX_S_IFCHR 0020000u
+#define LINUX_S_IFBLK 0060000u
 #define LINUX_S_IFDIR 0040000u
 #define LINUX_S_IFREG 0100000u
 #define LINUX_S_IFLNK 0120000u
@@ -420,6 +476,15 @@ static int linux_fd_stat_metadata(process_t *cur, uint32_t fd,
     case FD_TYPE_STDOUT:
         meta->mode = LINUX_S_IFCHR | 0600u;
         break;
+    case FD_TYPE_BLOCKDEV: {
+        int idx = blkdev_find_index(fh->u.blockdev.name);
+
+        meta->mode = LINUX_S_IFBLK | 0444u;
+        meta->size = fh->u.blockdev.size;
+        if (idx >= 0)
+            meta->ino = 0x80000000u + (uint32_t)idx;
+        break;
+    }
     case FD_TYPE_PIPE_READ:
     case FD_TYPE_PIPE_WRITE:
         meta->mode = LINUX_S_IFIFO | 0600u;
@@ -955,6 +1020,9 @@ static uint32_t syscall_write_fd(uint32_t fd, uint32_t user_buf,
 
     fh = &cur->open_files[fd];
 
+    if (fh->type == FD_TYPE_BLOCKDEV)
+        return (uint32_t)-1;
+
     if (fh->type == FD_TYPE_STDOUT) {
         uint8_t kbuf[USER_IO_CHUNK];
         desktop_state_t *batch_desktop;
@@ -1088,6 +1156,9 @@ static uint32_t syscall_read_fd(uint32_t fd, uint32_t user_buf,
         return (uint32_t)-1;
 
     fh = &cur->open_files[fd];
+
+    if (fh->type == FD_TYPE_BLOCKDEV)
+        return syscall_read_blockdev(cur, fh, user_buf, count);
 
     if (fh->type == FD_TYPE_TTY) {
         char kbuf[TTY_IO_CHUNK];
@@ -1412,6 +1483,9 @@ static uint32_t linux_poll_revents(process_t *cur, int32_t fd,
 
     if (events & LINUX_POLLIN) {
         if (fh->type == FD_TYPE_FILE && fh->u.file.offset < fh->u.file.size)
+            rev |= LINUX_POLLIN;
+        else if (fh->type == FD_TYPE_BLOCKDEV &&
+                 fh->u.blockdev.offset < fh->u.blockdev.size)
             rev |= LINUX_POLLIN;
         else if (fh->type == FD_TYPE_PROCFILE)
             rev |= LINUX_POLLIN;
@@ -1844,6 +1918,22 @@ static int fd_install_vfs_node(process_t *proc, const vfs_node_t *node,
         proc->open_files[fd].u.dir.index = 0;
         return fd;
 
+    case VFS_NODE_BLOCKDEV:
+        if (writable) {
+            proc->open_files[fd].type = FD_TYPE_NONE;
+            proc->open_files[fd].writable = 0;
+            return -1;
+        }
+        proc->open_files[fd].type = FD_TYPE_BLOCKDEV;
+        k_strncpy(proc->open_files[fd].u.blockdev.name,
+                  node->dev_name,
+                  sizeof(proc->open_files[fd].u.blockdev.name) - 1);
+        proc->open_files[fd].u.blockdev
+            .name[sizeof(proc->open_files[fd].u.blockdev.name) - 1] = '\0';
+        proc->open_files[fd].u.blockdev.offset = 0;
+        proc->open_files[fd].u.blockdev.size = node->size;
+        return fd;
+
     case VFS_NODE_TTY:
         proc->open_files[fd].type = FD_TYPE_TTY;
         proc->open_files[fd].u.tty.tty_idx = node->dev_id;
@@ -1922,6 +2012,7 @@ static int syscall_open_resolved_path(process_t *cur, const char *rpath,
 
     if (node.type != VFS_NODE_FILE &&
         node.type != VFS_NODE_DIR &&
+        node.type != VFS_NODE_BLOCKDEV &&
         node.type != VFS_NODE_PROCFILE &&
         node.type != VFS_NODE_TTY &&
         node.type != VFS_NODE_CHARDEV)
