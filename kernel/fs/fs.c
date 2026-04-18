@@ -942,21 +942,46 @@ int fs_write(uint32_t inode_num, uint32_t offset,
     return (int)written;
 }
 
+static int fs_zero_range(uint32_t inode_num, uint32_t start, uint32_t end)
+{
+    uint8_t zeros[128];
+    uint32_t off = start;
+
+    if (end <= start)
+        return 0;
+    k_memset(zeros, 0, sizeof(zeros));
+    while (off < end) {
+        uint32_t chunk = end - off;
+
+        if (chunk > sizeof(zeros))
+            chunk = sizeof(zeros);
+        if (fs_write(inode_num, off, zeros, chunk) != (int)chunk)
+            return -1;
+        off += chunk;
+    }
+    return 0;
+}
+
 int fs_truncate(uint32_t inode_num, uint32_t size)
 {
     dufs_inode_t inode;
+    uint32_t old_size;
 
     if (inode_read(inode_num, &inode) != 0)
         return -1;
     if (inode.type != DUFS_TYPE_FILE)
         return -1;
-    if (inode.size == size)
+    old_size = inode.size;
+    if (old_size == size)
         return 0;
 
-    if (size > inode.size) {
-        uint8_t zero = 0;
-        return fs_write(inode_num, size - 1u, &zero, 1u) == 1 ? 0 : -1;
-    }
+    if (size > old_size)
+        return fs_zero_range(inode_num, old_size, size);
+
+    if (fs_zero_range(inode_num, size, old_size) != 0)
+        return -1;
+    if (inode_read(inode_num, &inode) != 0)
+        return -1;
 
     inode.size = size;
     inode.mtime = clock_unix_time();

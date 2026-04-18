@@ -36,6 +36,10 @@ extern void process_exec_launch(void);
 #define TEST_LINUX_F_SETFD    2u
 #define TEST_LINUX_F_GETFL    3u
 #define TEST_LINUX_TIOCGWINSZ 0x5413u
+#define TEST_LINUX_O_WRONLY   01u
+#define TEST_LINUX_O_RDWR     02u
+#define TEST_LINUX_O_CREAT    0100u
+#define TEST_LINUX_O_APPEND   02000u
 
 static uint32_t test_align_up(uint32_t val, uint32_t align)
 {
@@ -1002,6 +1006,85 @@ static void test_linux_syscalls_support_busybox_stdio_helpers(ktest_case_t *tc)
     stop_syscall_test_process(cur);
 }
 
+static void test_linux_open_create_append_preserves_flags_and_data(ktest_case_t *tc)
+{
+    static const uint8_t original[] = {'a','b','c','d','e','f'};
+    static const uint8_t appended[] = {'a','b','c','d','e','f','Z'};
+    static process_t seed;
+    process_t *cur;
+    uint8_t *page;
+    vfs_file_ref_t ref;
+    uint8_t buf[sizeof(appended)];
+    uint32_t size = 0;
+    uint32_t fd;
+    int ino;
+    int n;
+
+    vfs_reset();
+    dufs_register();
+    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_mount("/", "dufs"), 0u);
+    (void)fs_unlink("_ktopen_");
+
+    ino = vfs_create("_ktopen_");
+    KTEST_ASSERT_TRUE(tc, ino > 0);
+    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_open_file("_ktopen_", &ref, &size), 0u);
+    KTEST_ASSERT_EQ(tc,
+                    (uint32_t)vfs_write(ref, 0, original,
+                                        (uint32_t)sizeof(original)),
+                    (uint32_t)sizeof(original));
+
+    cur = start_syscall_test_process(&seed);
+    KTEST_ASSERT_NOT_NULL(tc, cur);
+    KTEST_ASSERT_EQ(tc, map_test_user_page(cur, 0x00800000u), 0u);
+    page = mapped_alias(cur, 0x00800000u);
+    KTEST_ASSERT_NOT_NULL(tc, page);
+
+    k_strcpy((char *)page, "/_ktopen_");
+    page[0x100] = (uint8_t)'X';
+    page[0x200] = (uint8_t)'Z';
+
+    fd = syscall_handler(SYS_OPEN, 0x00800000u, TEST_LINUX_O_CREAT,
+                         0644u, 0, 0, 0);
+    KTEST_ASSERT_TRUE(tc, fd < MAX_FDS);
+    KTEST_EXPECT_EQ(tc, cur->open_files[fd].writable, 0u);
+    KTEST_EXPECT_EQ(tc, cur->open_files[fd].u.file.size,
+                    (uint32_t)sizeof(original));
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_WRITE, fd, 0x00800100u, 1u,
+                                    0, 0, 0),
+                    (uint32_t)-1);
+    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_CLOSE, fd, 0, 0, 0, 0, 0), 0u);
+
+    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_open_file("_ktopen_", &ref, &size), 0u);
+    KTEST_EXPECT_EQ(tc, size, (uint32_t)sizeof(original));
+    n = vfs_read(ref, 0, buf, (uint32_t)sizeof(original));
+    KTEST_ASSERT_EQ(tc, (uint32_t)n, (uint32_t)sizeof(original));
+    KTEST_EXPECT_TRUE(tc, k_memcmp(buf, original, sizeof(original)) == 0);
+
+    fd = syscall_handler(SYS_OPEN, 0x00800000u,
+                         TEST_LINUX_O_WRONLY | TEST_LINUX_O_APPEND,
+                         0644u, 0, 0, 0);
+    KTEST_ASSERT_TRUE(tc, fd < MAX_FDS);
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_LSEEK, fd, 0, 0, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_WRITE, fd, 0x00800200u, 1u,
+                                    0, 0, 0),
+                    1u);
+    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_CLOSE, fd, 0, 0, 0, 0, 0), 0u);
+
+    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_open_file("_ktopen_", &ref, &size), 0u);
+    KTEST_EXPECT_EQ(tc, size, (uint32_t)sizeof(appended));
+    n = vfs_read(ref, 0, buf, (uint32_t)sizeof(appended));
+    KTEST_ASSERT_EQ(tc, (uint32_t)n, (uint32_t)sizeof(appended));
+    KTEST_EXPECT_TRUE(tc, k_memcmp(buf, appended, sizeof(appended)) == 0);
+
+    stop_syscall_test_process(cur);
+    KTEST_ASSERT_EQ(tc, (uint32_t)fs_unlink("_ktopen_"), 0u);
+    vfs_reset();
+}
+
 static void test_process_restore_user_tls_switches_global_gdt_slot(ktest_case_t *tc)
 {
     static process_t first;
@@ -1117,6 +1200,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_linux_syscalls_fill_uname_time_and_fstat64),
     KTEST_CASE(test_linux_syscalls_support_busybox_identity_and_rt_sigmask),
     KTEST_CASE(test_linux_syscalls_support_busybox_stdio_helpers),
+    KTEST_CASE(test_linux_open_create_append_preserves_flags_and_data),
     KTEST_CASE(test_process_restore_user_tls_switches_global_gdt_slot),
     KTEST_CASE(test_linux_syscalls_install_tls_and_map_mmap2),
 };

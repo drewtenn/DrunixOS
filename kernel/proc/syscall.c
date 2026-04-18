@@ -1042,6 +1042,9 @@ static uint32_t syscall_write_fd(uint32_t fd, uint32_t user_buf,
         if (uaccess_prepare(cur, user_buf, count, 0) != 0)
             return (uint32_t)-1;
 
+        if (fh->append)
+            fh->u.file.offset = fh->u.file.size;
+
         while (written < count) {
             uint32_t chunk = count - written;
             int n;
@@ -1529,11 +1532,17 @@ static int fd_duplicate_from(process_t *proc, uint32_t oldfd, uint32_t minfd)
 
 static uint32_t linux_fd_status_flags(const file_handle_t *fh)
 {
+    uint32_t flags;
+
     if (!fh)
         return 0;
     if (fh->type == FD_TYPE_TTY && fh->writable)
-        return LINUX_O_RDWR;
-    return fh->writable ? LINUX_O_WRONLY : 0u;
+        flags = LINUX_O_RDWR;
+    else
+        flags = fh->writable ? LINUX_O_WRONLY : 0u;
+    if (fh->type == FD_TYPE_FILE && fh->append)
+        flags |= LINUX_O_APPEND;
+    return flags;
 }
 
 static int syscall_seek_handle(process_t *cur, uint32_t fd, int64_t offset,
@@ -1804,7 +1813,7 @@ static int snapshot_user_string_vector(process_t *proc,
 }
 
 static int fd_install_vfs_node(process_t *proc, const vfs_node_t *node,
-                               uint32_t writable)
+                               uint32_t writable, uint32_t append)
 {
     int fd;
 
@@ -1816,10 +1825,12 @@ static int fd_install_vfs_node(process_t *proc, const vfs_node_t *node,
         return -1;
 
     proc->open_files[fd].writable = writable;
+    proc->open_files[fd].append = 0;
 
     switch (node->type) {
     case VFS_NODE_FILE:
         proc->open_files[fd].type = FD_TYPE_FILE;
+        proc->open_files[fd].append = append ? 1u : 0u;
         proc->open_files[fd].u.file.ref.mount_id = node->mount_id;
         proc->open_files[fd].u.file.ref.inode_num = node->inode_num;
         proc->open_files[fd].u.file.inode_num = node->inode_num;
@@ -1859,8 +1870,73 @@ static int fd_install_vfs_node(process_t *proc, const vfs_node_t *node,
     default:
         proc->open_files[fd].type = FD_TYPE_NONE;
         proc->open_files[fd].writable = 0;
+        proc->open_files[fd].append = 0;
         return -1;
     }
+}
+
+static int syscall_open_resolved_path(process_t *cur, const char *rpath,
+                                      uint32_t flags)
+{
+    uint32_t accmode;
+    uint32_t writable;
+    uint32_t append;
+    vfs_node_t node;
+    int rc;
+    int fd;
+
+    if (!cur || !rpath)
+        return -1;
+
+    accmode = flags & (LINUX_O_WRONLY | LINUX_O_RDWR);
+    if (accmode == (LINUX_O_WRONLY | LINUX_O_RDWR))
+        return -1;
+    writable = accmode != 0;
+    append = (flags & LINUX_O_APPEND) != 0;
+
+    if ((flags & LINUX_O_TRUNC) && !writable)
+        return -1;
+
+    rc = vfs_resolve(rpath, &node);
+    if (rc != 0) {
+        if (rc < -1)
+            return rc;
+        if ((flags & LINUX_O_CREAT) == 0)
+            return -2;
+        if (vfs_create(rpath) < 0)
+            return -1;
+        if (vfs_resolve(rpath, &node) != 0)
+            return -1;
+    } else if (flags & LINUX_O_TRUNC) {
+        vfs_file_ref_t ref;
+        uint32_t size = 0;
+
+        if (node.type != VFS_NODE_FILE)
+            return -1;
+        if (vfs_open_file(rpath, &ref, &size) != 0)
+            return -1;
+        if (vfs_truncate(ref, 0) != 0)
+            return -1;
+        node.size = 0;
+    }
+
+    if (node.type != VFS_NODE_FILE &&
+        node.type != VFS_NODE_DIR &&
+        node.type != VFS_NODE_PROCFILE &&
+        node.type != VFS_NODE_TTY &&
+        node.type != VFS_NODE_CHARDEV)
+        return -1;
+
+    fd = fd_install_vfs_node(cur, &node, writable, append);
+    if (fd < 0)
+        return -1;
+    if (node.type == VFS_NODE_DIR) {
+        k_strncpy(cur->open_files[fd].u.dir.path, rpath,
+                  sizeof(cur->open_files[fd].u.dir.path) - 1);
+        cur->open_files[fd].u.dir
+            .path[sizeof(cur->open_files[fd].u.dir.path) - 1] = '\0';
+    }
+    return fd;
 }
 
 static char *copy_user_string_alloc(process_t *proc, uint32_t user_ptr,
@@ -2094,6 +2170,7 @@ static void fd_close_one(process_t *proc, unsigned fd)
 
     fh->type     = FD_TYPE_NONE;
     fh->writable = 0;
+    fh->append   = 0;
 }
 
 
@@ -2242,8 +2319,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_open(uint32_t eax, uint32_t ebx,
          */
         process_t *cur = sched_current();
         uint32_t flags = ecx;
-        uint32_t writable = (flags & (LINUX_O_WRONLY | LINUX_O_RDWR)) != 0;
-        uint32_t append = (flags & LINUX_O_APPEND) != 0;
+        int fd;
         if (!cur)
             return (uint32_t)-1;
 
@@ -2254,67 +2330,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_open(uint32_t eax, uint32_t ebx,
             return (uint32_t)-1;
         }
 
-        vfs_node_t node;
-        if ((flags & (LINUX_O_CREAT | LINUX_O_TRUNC)) != 0) {
-            int ino_c = vfs_create(rpath);
-            vfs_file_ref_t ref_c;
-            uint32_t size_c = 0;
-            if (ino_c < 0) {
-                klog("OPEN", rpath);
-                klog("OPEN", "create failed");
-                kfree(rpath);
-                return (uint32_t)-1;
-            }
-            if (vfs_open_file(rpath, &ref_c, &size_c) != 0) {
-                kfree(rpath);
-                return (uint32_t)-1;
-            }
-
-            int fd = fd_alloc(cur);
-            if (fd < 0) {
-                klog("OPEN", "fd table full");
-                kfree(rpath);
-                return (uint32_t)-1;
-            }
-            cur->open_files[fd].type             = FD_TYPE_FILE;
-            cur->open_files[fd].writable         = 1;
-            cur->open_files[fd].u.file.ref        = ref_c;
-            cur->open_files[fd].u.file.inode_num = (uint32_t)ino_c;
-            cur->open_files[fd].u.file.size      = size_c;
-            cur->open_files[fd].u.file.offset    = 0;
-            kfree(rpath);
-            return (uint32_t)fd;
-        }
-
-        if (vfs_resolve(rpath, &node) != 0) {
-            kfree(rpath);
-            return (uint32_t)-2; /* ENOENT */
-        }
-        if (node.type != VFS_NODE_FILE &&
-            node.type != VFS_NODE_DIR &&
-            node.type != VFS_NODE_PROCFILE &&
-            node.type != VFS_NODE_TTY &&
-            node.type != VFS_NODE_CHARDEV) {
-            klog("OPEN", rpath);
-            klog("OPEN", "path not openable");
-            kfree(rpath);
-            return (uint32_t)-1;
-        }
-
-        int fd = fd_install_vfs_node(cur, &node, writable);
-        if (fd < 0) {
-            klog("OPEN", "fd table full");
-            kfree(rpath);
-            return (uint32_t)-1;
-        }
-        if (append && cur->open_files[fd].type == FD_TYPE_FILE)
-            cur->open_files[fd].u.file.offset = cur->open_files[fd].u.file.size;
-        if (node.type == VFS_NODE_DIR) {
-            k_strncpy(cur->open_files[fd].u.dir.path, rpath,
-                      sizeof(cur->open_files[fd].u.dir.path) - 1);
-            cur->open_files[fd].u.dir
-                .path[sizeof(cur->open_files[fd].u.dir.path) - 1] = '\0';
-        }
+        fd = syscall_open_resolved_path(cur, rpath, flags);
         kfree(rpath);
         return (uint32_t)fd;
     }
@@ -2328,10 +2344,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_openat(uint32_t eax, uint32_t ebx,
     {
         process_t *cur = sched_current();
         uint32_t flags = edx;
-        uint32_t writable = (flags & (LINUX_O_WRONLY | LINUX_O_RDWR)) != 0;
-        uint32_t append = (flags & LINUX_O_APPEND) != 0;
         char *rpath;
-        vfs_node_t node;
         int fd;
 
         (void)eax;
@@ -2349,63 +2362,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_openat(uint32_t eax, uint32_t ebx,
             return (uint32_t)-1;
         }
 
-        if ((flags & (LINUX_O_CREAT | LINUX_O_TRUNC)) != 0) {
-            int ino_c = vfs_create(rpath);
-            vfs_file_ref_t ref_c;
-            uint32_t size_c = 0;
-            if (ino_c < 0) {
-                kfree(rpath);
-                return (uint32_t)-1;
-            }
-            if (vfs_open_file(rpath, &ref_c, &size_c) != 0) {
-                kfree(rpath);
-                return (uint32_t)-1;
-            }
-
-            fd = fd_alloc(cur);
-            if (fd < 0) {
-                kfree(rpath);
-                return (uint32_t)-1;
-            }
-            cur->open_files[fd].type             = FD_TYPE_FILE;
-            cur->open_files[fd].writable         = 1;
-            cur->open_files[fd].u.file.ref        = ref_c;
-            cur->open_files[fd].u.file.inode_num = (uint32_t)ino_c;
-            cur->open_files[fd].u.file.size      = size_c;
-            cur->open_files[fd].u.file.offset    = 0;
-            kfree(rpath);
-            return (uint32_t)fd;
-        }
-
-        {
-            int rc = vfs_resolve(rpath, &node);
-            if (rc != 0) {
-                kfree(rpath);
-                return (uint32_t)(rc < -1 ? rc : -2);
-            }
-        }
-        if (node.type != VFS_NODE_FILE &&
-            node.type != VFS_NODE_DIR &&
-            node.type != VFS_NODE_PROCFILE &&
-            node.type != VFS_NODE_TTY &&
-            node.type != VFS_NODE_CHARDEV) {
-            kfree(rpath);
-            return (uint32_t)-1;
-        }
-
-        fd = fd_install_vfs_node(cur, &node, writable);
-        if (fd < 0) {
-            kfree(rpath);
-            return (uint32_t)-1;
-        }
-        if (append && cur->open_files[fd].type == FD_TYPE_FILE)
-            cur->open_files[fd].u.file.offset = cur->open_files[fd].u.file.size;
-        if (node.type == VFS_NODE_DIR) {
-            k_strncpy(cur->open_files[fd].u.dir.path, rpath,
-                      sizeof(cur->open_files[fd].u.dir.path) - 1);
-            cur->open_files[fd].u.dir
-                .path[sizeof(cur->open_files[fd].u.dir.path) - 1] = '\0';
-        }
+        fd = syscall_open_resolved_path(cur, rpath, flags);
         kfree(rpath);
         return (uint32_t)fd;
     }
@@ -2901,6 +2858,9 @@ static uint32_t SYSCALL_NOINLINE syscall_case_fcntl64(uint32_t eax, uint32_t ebx
         case LINUX_F_GETFL:
             return linux_fd_status_flags(&cur->open_files[ebx]);
         case LINUX_F_SETFL:
+            cur->open_files[ebx].append =
+                (cur->open_files[ebx].type == FD_TYPE_FILE &&
+                 (edx & LINUX_O_APPEND)) ? 1u : 0u;
             return 0;
         default:
             return (uint32_t)-1;
@@ -2976,6 +2936,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_creat(uint32_t eax, uint32_t ebx,
         }
         cur->open_files[fd].type             = FD_TYPE_FILE;
         cur->open_files[fd].writable         = 1;
+        cur->open_files[fd].append           = 0;
         cur->open_files[fd].u.file.ref        = ref_c;
         cur->open_files[fd].u.file.inode_num = (uint32_t)ino_c;
         cur->open_files[fd].u.file.size      = size_c;
@@ -4257,6 +4218,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_pipe(uint32_t eax, uint32_t ebx,
         }
         cur->open_files[rfd].type           = FD_TYPE_PIPE_READ;
         cur->open_files[rfd].writable       = 0;
+        cur->open_files[rfd].append         = 0;
         cur->open_files[rfd].u.pipe.pipe_idx = (uint32_t)pipe_idx;
 
         int wfd = fd_alloc(cur);
@@ -4267,6 +4229,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_pipe(uint32_t eax, uint32_t ebx,
         }
         cur->open_files[wfd].type           = FD_TYPE_PIPE_WRITE;
         cur->open_files[wfd].writable       = 1;
+        cur->open_files[wfd].append         = 0;
         cur->open_files[wfd].u.pipe.pipe_idx = (uint32_t)pipe_idx;
 
         {

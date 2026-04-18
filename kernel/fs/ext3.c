@@ -1054,12 +1054,105 @@ static int ext3_dir_lookup(uint32_t dir_ino, const char *name,
     return -1;
 }
 
-static int ext3_resolve(const char *path, uint32_t follow_final,
-                        uint32_t *ino_out)
+static int ext3_read_symlink_target_ino(uint32_t ino, char *out,
+                                        uint32_t outsz)
 {
-    uint32_t ino = EXT3_ROOT_INO;
-    char part[EXT3_NAME_MAX + 1];
-    uint32_t i = 0;
+    ext3_inode_t in;
+    uint32_t size;
+    int n;
+
+    if (!out || outsz == 0)
+        return -1;
+    if (ext3_read_inode(ino, &in) != 0 ||
+        (in.mode & EXT3_S_IFMT) != EXT3_S_IFLNK)
+        return -1;
+    size = ext3_inode_size(&in);
+    if (size + 1u > outsz)
+        return -1;
+    if (size <= 60u) {
+        k_memcpy(out, in.block, size);
+        out[size] = '\0';
+        return (int)size;
+    }
+    n = ext3_read(0, ino, 0, (uint8_t *)out, size);
+    if (n != (int)size)
+        return -1;
+    out[size] = '\0';
+    return n;
+}
+
+static int ext3_symlink_target_path(const char *link_path,
+                                    const char *target,
+                                    char *out, uint32_t outsz)
+{
+    const char *slash;
+    uint32_t len;
+    uint32_t parent_len;
+    uint32_t target_len;
+
+    if (!link_path || !target || !out || outsz == 0 || target[0] == '\0')
+        return -1;
+    if (target[0] == '/') {
+        len = k_strlen(target);
+        if (len + 1u > outsz)
+            return -1;
+        k_memcpy(out, target, len + 1u);
+        return 0;
+    }
+
+    slash = k_strrchr(link_path, '/');
+    if (!slash) {
+        len = k_strlen(target);
+        if (len + 1u > outsz)
+            return -1;
+        k_memcpy(out, target, len + 1u);
+        return 0;
+    }
+
+    parent_len = (uint32_t)(slash - link_path);
+    target_len = k_strlen(target);
+    if (parent_len + 1u + target_len + 1u > outsz)
+        return -1;
+    k_memcpy(out, link_path, parent_len);
+    out[parent_len] = '/';
+    k_memcpy(out + parent_len + 1u, target, target_len + 1u);
+    return 0;
+}
+
+static int ext3_symlink_target_path_with_tail(const char *link_path,
+                                              const char *target,
+                                              const char *tail,
+                                              char *out, uint32_t outsz)
+{
+    uint32_t base_len;
+    uint32_t tail_len;
+    uint32_t need_sep = 1;
+
+    if (ext3_symlink_target_path(link_path, target, out, outsz) != 0)
+        return -1;
+    while (tail && tail[0] == '/')
+        tail++;
+    if (!tail || tail[0] == '\0')
+        return 0;
+
+    base_len = k_strlen(out);
+    tail_len = k_strlen(tail);
+    if (base_len == 1 && out[0] == '/')
+        need_sep = 0;
+    if (base_len + need_sep + tail_len + 1u > outsz)
+        return -1;
+    if (need_sep)
+        out[base_len++] = '/';
+    k_memcpy(out + base_len, tail, tail_len + 1u);
+    return 0;
+}
+
+static int ext3_resolve_follow(const char *path, uint32_t follow_final,
+                               uint32_t depth, uint32_t *ino_out)
+{
+    uint32_t cur_dir = EXT3_ROOT_INO;
+    const char *p;
+    const char *path_start;
 
     if (!ino_out)
         return -1;
@@ -1067,26 +1160,107 @@ static int ext3_resolve(const char *path, uint32_t follow_final,
         *ino_out = EXT3_ROOT_INO;
         return 0;
     }
+    if (depth > 8)
+        return -40;
 
-    while (path[i]) {
-        uint32_t n = 0;
-        while (path[i] == '/')
-            i++;
-        if (!path[i])
-            break;
-        while (path[i] && path[i] != '/') {
-            if (n >= EXT3_NAME_MAX)
-                return -1;
-            part[n++] = path[i++];
-        }
-        part[n] = '\0';
-        if (ext3_dir_lookup(ino, part, &ino, 0) != 0)
-            return -1;
+    p = path;
+    while (*p == '/')
+        p++;
+    if (*p == '\0') {
+        *ino_out = EXT3_ROOT_INO;
+        return 0;
     }
+    path_start = p;
 
-    (void)follow_final;
-    *ino_out = ino;
-    return 0;
+    for (;;) {
+        const char *slash = 0;
+        const char *tail = "";
+        uint32_t comp_len;
+        uint32_t child_ino;
+        ext3_inode_t child;
+        char part[EXT3_NAME_MAX + 1];
+
+        while (*p == '/')
+            p++;
+        if (*p == '\0') {
+            *ino_out = cur_dir;
+            return 0;
+        }
+        for (const char *q = p; *q; q++) {
+            if (*q == '/') {
+                slash = q;
+                break;
+            }
+        }
+        comp_len = slash ? (uint32_t)(slash - p) : k_strlen(p);
+        if (comp_len == 0 || comp_len > EXT3_NAME_MAX)
+            return -1;
+        k_memcpy(part, p, comp_len);
+        part[comp_len] = '\0';
+
+        if (ext3_dir_lookup(cur_dir, part, &child_ino, 0) != 0 ||
+            ext3_read_inode(child_ino, &child) != 0)
+            return -1;
+
+        if ((child.mode & EXT3_S_IFMT) == EXT3_S_IFLNK &&
+            (slash || follow_final)) {
+            char *link_path = (char *)kmalloc(4096);
+            char *target = (char *)kmalloc(4096);
+            char *next = (char *)kmalloc(4096);
+            uint32_t link_len;
+            int rc;
+
+            if (!link_path || !target || !next) {
+                if (link_path) kfree(link_path);
+                if (target) kfree(target);
+                if (next) kfree(next);
+                return -1;
+            }
+
+            link_len = slash ? (uint32_t)(slash - path_start)
+                             : (uint32_t)((p + comp_len) - path_start);
+            if (link_len == 0 || link_len + 1u > 4096u) {
+                kfree(link_path);
+                kfree(target);
+                kfree(next);
+                return -1;
+            }
+            k_memcpy(link_path, path_start, link_len);
+            link_path[link_len] = '\0';
+            if (slash)
+                tail = slash + 1;
+
+            if (ext3_read_symlink_target_ino(child_ino, target, 4096) < 0 ||
+                ext3_symlink_target_path_with_tail(link_path, target, tail,
+                                                   next, 4096) != 0) {
+                kfree(link_path);
+                kfree(target);
+                kfree(next);
+                return -1;
+            }
+            rc = ext3_resolve_follow(next, follow_final, depth + 1u,
+                                     ino_out);
+            kfree(link_path);
+            kfree(target);
+            kfree(next);
+            return rc;
+        }
+
+        if (!slash) {
+            *ino_out = child_ino;
+            return 0;
+        }
+        if ((child.mode & EXT3_S_IFMT) != EXT3_S_IFDIR)
+            return -1;
+        cur_dir = child_ino;
+        p = slash + 1;
+    }
+}
+
+static int ext3_resolve(const char *path, uint32_t follow_final,
+                        uint32_t *ino_out)
+{
+    return ext3_resolve_follow(path, follow_final, 0, ino_out);
 }
 
 static void ext3_stat_from_inode(const ext3_inode_t *in, vfs_stat_t *st)
@@ -1105,7 +1279,6 @@ static int ext3_stat_common(const char *path, vfs_stat_t *st, uint32_t follow)
     uint32_t ino;
     ext3_inode_t in;
 
-    (void)follow;
     if (!st || ext3_resolve(path, follow, &ino) != 0)
         return -1;
     if (ext3_read_inode(ino, &in) != 0)
@@ -1490,6 +1663,8 @@ static int ext3_write_body(void *ctx, uint32_t inode_num, uint32_t offset,
         if (chunk != g_block_size) {
             if (ext3_read_block(phys, blk) != 0)
                 break;
+        } else {
+            k_memset(blk, 0, g_block_size);
         }
         k_memcpy(blk + block_off, buf + done, chunk);
         if (ext3_write_block(phys, blk) != 0)
@@ -1519,6 +1694,27 @@ static int ext3_write(void *ctx, uint32_t inode_num, uint32_t offset,
     return ext3_tx_end(rc);
 }
 
+static int ext3_zero_range_body(void *ctx, uint32_t inode_num,
+                                uint32_t start, uint32_t end)
+{
+    uint8_t zeros[128];
+    uint32_t off = start;
+
+    if (end <= start)
+        return 0;
+    k_memset(zeros, 0, sizeof(zeros));
+    while (off < end) {
+        uint32_t chunk = end - off;
+
+        if (chunk > sizeof(zeros))
+            chunk = sizeof(zeros);
+        if (ext3_write_body(ctx, inode_num, off, zeros, chunk) != (int)chunk)
+            return -1;
+        off += chunk;
+    }
+    return 0;
+}
+
 static int ext3_truncate_body(void *ctx, uint32_t inode_num, uint32_t size)
 {
     ext3_inode_t in;
@@ -1532,10 +1728,13 @@ static int ext3_truncate_body(void *ctx, uint32_t inode_num, uint32_t size)
     old_size = ext3_inode_size(&in);
     if (old_size == size)
         return 0;
-    if (size > old_size) {
-        uint8_t zero = 0;
-        return ext3_write(ctx, inode_num, size - 1u, &zero, 1u) == 1 ? 0 : -1;
-    }
+    if (size > old_size)
+        return ext3_zero_range_body(ctx, inode_num, old_size, size);
+
+    if (ext3_zero_range_body(ctx, inode_num, size, old_size) != 0)
+        return -1;
+    if (ext3_read_inode(inode_num, &in) != 0)
+        return -1;
 
     keep_blocks = (size + g_block_size - 1u) / g_block_size;
     if (ext3_truncate_blocks(&in, keep_blocks) != 0)
@@ -2438,6 +2637,11 @@ static int ext3_init(void *ctx)
     g_sectors_per_block = g_block_size / BLKDEV_SECTOR_SIZE;
     if (g_super.inode_size < sizeof(ext3_inode_t))
         return -1;
+    if (g_super.blocks_count > g_super.blocks_per_group ||
+        g_super.inodes_count > g_super.inodes_per_group) {
+        klog("EXT3", "multi-group filesystems unsupported");
+        return -1;
+    }
 
     allowed_incompat = EXT3_FEATURE_INCOMPAT_FILETYPE |
                        EXT3_FEATURE_INCOMPAT_RECOVER;
@@ -2468,9 +2672,7 @@ static int ext3_init(void *ctx)
     if (g_overlay_count != 0 && ext3_checkpoint_replay() != 0)
         klog("EXT3", "journal checkpoint failed; keeping writes disabled");
 
-    if (!g_needs_recovery && g_overlay_count == 0 && g_dev->write_sector &&
-        g_super.blocks_count <= g_super.blocks_per_group &&
-        g_super.inodes_count <= g_super.inodes_per_group) {
+    if (!g_needs_recovery && g_overlay_count == 0 && g_dev->write_sector) {
         g_writable = 1;
     } else {
         klog("EXT3", "write support disabled for this image");

@@ -468,6 +468,7 @@ int process_create_file(process_t *proc, vfs_file_ref_t file_ref,
         for (unsigned i = 0; i < MAX_FDS; i++) {
             proc->open_files[i].type     = FD_TYPE_NONE;
             proc->open_files[i].writable = 0;
+            proc->open_files[i].append   = 0;
         }
 
         /* fd 0 — stdin: TTY line discipline on the inherited controlling TTY. */
@@ -642,6 +643,7 @@ void process_close_all_fds(process_t *proc)
 
         fh->type = FD_TYPE_NONE;
         fh->writable = 0;
+        fh->append = 0;
     }
 }
 

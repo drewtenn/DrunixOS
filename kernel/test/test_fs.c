@@ -108,6 +108,36 @@ static void test_fs_open_after_write(ktest_case_t *tc)
     fs_unlink(TEST_FILE);
 }
 
+static void test_fs_truncate_shrink_then_extend_zero_fills_gap(ktest_case_t *tc)
+{
+    static const uint8_t data[] = {'a','b','c','d','e','f'};
+    static const uint8_t want[] = {'a','b',0,0,0,0};
+    uint8_t buf[sizeof(data)];
+    int ino;
+    int n;
+
+    KTEST_ASSERT_EQ(tc, (uint32_t)fs_test_init(), 0u);
+
+    ino = fs_create(TEST_FILE);
+    KTEST_ASSERT_TRUE(tc, ino > 0);
+    KTEST_ASSERT_EQ(tc,
+                    (uint32_t)fs_write((uint32_t)ino, 0, data,
+                                       (uint32_t)sizeof(data)),
+                    (uint32_t)sizeof(data));
+
+    KTEST_ASSERT_EQ(tc, (uint32_t)fs_truncate((uint32_t)ino, 2u), 0u);
+    KTEST_ASSERT_EQ(tc,
+                    (uint32_t)fs_truncate((uint32_t)ino,
+                                          (uint32_t)sizeof(data)),
+                    0u);
+
+    n = fs_read((uint32_t)ino, 0, buf, (uint32_t)sizeof(buf));
+    KTEST_EXPECT_EQ(tc, (uint32_t)n, (uint32_t)sizeof(buf));
+    KTEST_EXPECT_TRUE(tc, mem_eq(buf, want, (uint32_t)sizeof(want)));
+
+    fs_unlink(TEST_FILE);
+}
+
 static void test_fs_unlink_removes_file(ktest_case_t *tc)
 {
     KTEST_ASSERT_EQ(tc, (uint32_t)fs_test_init(), 0u);
@@ -217,6 +247,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_fs_create_and_unlink),
     KTEST_CASE(test_fs_write_and_readback),
     KTEST_CASE(test_fs_open_after_write),
+    KTEST_CASE(test_fs_truncate_shrink_then_extend_zero_fills_gap),
     KTEST_CASE(test_fs_unlink_removes_file),
     KTEST_CASE(test_fs_mkdir_creates_entry),
     KTEST_CASE(test_fs_create_in_subdir),

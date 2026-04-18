@@ -96,6 +96,7 @@ typedef enum {
 typedef struct {
     uint32_t  type;      /* fd_type_t — uint32_t for alignment         */
     uint32_t  writable;  /* 1 if the fd is open for writing            */
+    uint32_t  append;    /* 1 if writes append at end of file          */
     union {
         struct {
             vfs_file_ref_t ref; /* owning mount and backend inode      */
