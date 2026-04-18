@@ -898,30 +898,21 @@ int vfs_getdents(const char *path, char *buf, uint32_t bufsz)
 static int vfs_mutation_mount(const char *path, char **norm_out,
                               const vfs_mount_t **mnt_out, const char **rel_out)
 {
-    char *norm = vfs_normalize_alloc(path);
-    int mount_idx;
+    vfs_lookup_ctx_t ctx;
 
-    if (!norm)
+    ctx.norm = 0;
+    if (!norm_out || !mnt_out || !rel_out)
         return -1;
-    if (norm[0] == '\0' || vfs_find_mount_exact(norm) >= 0) {
-        kfree(norm);
-        return -1;
-    }
-
-    mount_idx = vfs_find_mount_for_path(norm);
-    if (mount_idx < 0) {
-        kfree(norm);
+    if (vfs_mutation_lookup_ctx_init(&ctx, path) != 0) {
+        vfs_lookup_ctx_clear(&ctx);
         return -1;
     }
 
-    if (norm_out)
-        *norm_out = norm;
-    else
-        kfree(norm);
-    if (mnt_out)
-        *mnt_out = &vfs_mounts[mount_idx];
-    if (rel_out)
-        *rel_out = vfs_relpath(&vfs_mounts[mount_idx], norm);
+    *norm_out = ctx.norm;
+    *mnt_out = ctx.mnt;
+    *rel_out = ctx.rel;
+    ctx.norm = 0;
+    vfs_lookup_ctx_clear(&ctx);
     return 0;
 }
 
@@ -1108,78 +1099,70 @@ int vfs_readlink(const char *path, char *buf, uint32_t bufsz)
 
 static int vfs_stat_common(const char *path, vfs_stat_t *st, uint32_t follow)
 {
-    char *norm = vfs_normalize_alloc(path);
-    int mount_idx;
-    const vfs_mount_t *mnt;
-    const char *rel;
+    vfs_lookup_ctx_t ctx;
+    int rc;
 
-    if (!norm || !st)
+    ctx.norm = 0;
+    if (!st)
         return -1;
 
-    if (norm[0] == '\0') {
-        if (!vfs_has_mounts()) {
-            kfree(norm);
-            return -1;
+    if (vfs_lookup_ctx_init(&ctx, path) != 0) {
+        if (ctx.norm && ctx.norm[0] == '\0' && vfs_has_mounts()) {
+            vfs_dir_stat(st);
+            vfs_lookup_ctx_clear(&ctx);
+            return 0;
         }
-        vfs_dir_stat(st);
-        kfree(norm);
-        return 0;
-    }
-
-    if (vfs_find_mount_exact(norm) >= 0) {
-        vfs_dir_stat(st);
-        kfree(norm);
-        return 0;
-    }
-
-    mount_idx = vfs_find_mount_for_path(norm);
-    if (mount_idx < 0) {
-        kfree(norm);
+        vfs_lookup_ctx_clear(&ctx);
         return -1;
     }
 
-    mnt = &vfs_mounts[mount_idx];
-    rel = vfs_relpath(mnt, norm);
+    if (ctx.norm[0] == '\0' || vfs_find_mount_exact(ctx.norm) >= 0) {
+        vfs_dir_stat(st);
+        vfs_lookup_ctx_clear(&ctx);
+        return 0;
+    }
 
-    if (mnt->kind == VFS_MOUNT_KIND_DEVFS) {
-        int rc = devfs_stat(rel, st);
-        kfree(norm);
+    if (ctx.mnt->kind == VFS_MOUNT_KIND_DEVFS) {
+        rc = devfs_stat(ctx.rel, st);
+        vfs_lookup_ctx_clear(&ctx);
         return rc;
     }
 
-    if (mnt->kind == VFS_MOUNT_KIND_PROCFS) {
-        int rc = procfs_stat(rel, st);
-        kfree(norm);
+    if (ctx.mnt->kind == VFS_MOUNT_KIND_PROCFS) {
+        rc = procfs_stat(ctx.rel, st);
+        vfs_lookup_ctx_clear(&ctx);
         return rc;
     }
 
-    if (mnt->kind == VFS_MOUNT_KIND_SYSFS) {
-        int rc = sysfs_stat(rel, st);
-        kfree(norm);
+    if (ctx.mnt->kind == VFS_MOUNT_KIND_SYSFS) {
+        rc = sysfs_stat(ctx.rel, st);
+        vfs_lookup_ctx_clear(&ctx);
         return rc;
     }
 
-    if (!follow && mnt->ops->lstat) {
-        int rc = mnt->ops->lstat(mnt->ops->ctx, rel, st);
-        kfree(norm);
+    if (!follow && ctx.mnt->ops->lstat) {
+        rc = ctx.mnt->ops->lstat(ctx.mnt->ops->ctx, ctx.rel, st);
+        vfs_lookup_ctx_clear(&ctx);
         return rc;
     }
 
-    if (mnt->ops->stat) {
-        int rc = mnt->ops->stat(mnt->ops->ctx, rel, st);
-        kfree(norm);
+    if (ctx.mnt->ops->stat) {
+        rc = ctx.mnt->ops->stat(ctx.mnt->ops->ctx, ctx.rel, st);
+        vfs_lookup_ctx_clear(&ctx);
         return rc;
     }
 
     {
-        uint32_t ino, sz;
-        int rc = mnt->ops->open ?
-                 mnt->ops->open(mnt->ops->ctx, rel, &ino, &sz) : -1;
+        uint32_t ino;
+        uint32_t sz;
+
+        rc = ctx.mnt->ops->open ?
+             ctx.mnt->ops->open(ctx.mnt->ops->ctx, ctx.rel, &ino, &sz) : -1;
         if (rc == 0) {
             vfs_filelike_stat(st);
             st->size = sz;
         }
-        kfree(norm);
+        vfs_lookup_ctx_clear(&ctx);
         return rc;
     }
 }
