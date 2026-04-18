@@ -5,39 +5,47 @@
 
 #include <stdint.h>
 
-/*
- * Block device registry.
- *
- * Drivers call blkdev_register() once during init to publish their
- * read/write ops-table under a short name (e.g. "hd0").  Consumers
- * (filesystems, ELF loader, syscall layer) call blkdev_get() to
- * retrieve the ops-table rather than calling driver functions directly.
- */
-
-#define BLKDEV_NAME_MAX  8    /* max name length including NUL */
-#define BLKDEV_MAX       4    /* max registered block devices */
+#define BLKDEV_NAME_MAX  12
+#define BLKDEV_MAX       16
 #define BLKDEV_SECTOR_SIZE 512
+#define BLKDEV_NO_PARENT 0xFFFFFFFFu
+
+typedef enum {
+    BLKDEV_KIND_DISK = 1,
+    BLKDEV_KIND_PART = 2,
+} blkdev_kind_t;
 
 typedef struct {
-    /* Read one BLKDEV_SECTOR_SIZE-byte sector from the device.
-     * Returns 0 on success, non-zero on error. */
     int (*read_sector)(uint32_t lba, uint8_t *buf);
-
-    /* Write one BLKDEV_SECTOR_SIZE-byte sector to the device.
-     * Returns 0 on success, non-zero on error. */
     int (*write_sector)(uint32_t lba, const uint8_t *buf);
 } blkdev_ops_t;
 
-/*
- * Register a device.  name is copied internally (up to BLKDEV_NAME_MAX-1
- * bytes).  Returns 0 on success, -1 if the registry is full.
- */
-int blkdev_register(const char *name, const blkdev_ops_t *ops);
+typedef struct {
+    char     name[BLKDEV_NAME_MAX];
+    uint32_t kind;
+    uint32_t sector_size;
+    uint32_t sectors;
+    uint32_t readonly;
+    uint32_t major;
+    uint32_t minor;
+    uint32_t parent_index;
+    uint32_t start_sector;
+    uint32_t partition_number;
+} blkdev_info_t;
 
-/*
- * Look up a device by name.  Returns a pointer to the ops-table, or NULL
- * if no device with that name has been registered.
- */
+void blkdev_reset(void);
+int blkdev_register_disk(const char *name, uint32_t major, uint32_t minor,
+                         uint32_t sectors, const blkdev_ops_t *ops);
+int blkdev_register_part(const char *name, uint32_t parent_index,
+                         uint32_t partition_number, uint32_t start_sector,
+                         uint32_t sectors);
+int blkdev_register(const char *name, const blkdev_ops_t *ops);
+int blkdev_scan_mbr(uint32_t disk_index);
 const blkdev_ops_t *blkdev_get(const char *name);
+const blkdev_ops_t *blkdev_ops_at(uint32_t index);
+uint32_t blkdev_count(void);
+int blkdev_info_at(uint32_t index, blkdev_info_t *out);
+int blkdev_info_for_index(uint32_t index, blkdev_info_t *out);
+int blkdev_find_index(const char *name);
 
 #endif

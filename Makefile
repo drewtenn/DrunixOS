@@ -58,7 +58,8 @@ KTOBJS  = kernel/test/ktest.o \
            kernel/test/test_sched.o \
            kernel/test/test_fs.o \
            kernel/test/test_uaccess.o \
-           kernel/test/test_desktop.o
+           kernel/test/test_desktop.o \
+           kernel/test/test_blkdev.o
 else
 KLOG_TO_DEBUGCON ?= 0
 KTOBJS  =
@@ -109,7 +110,9 @@ GRUB_MKRESCUE := i686-elf-grub-mkrescue
 ISO_KERNEL    := iso/boot/kernel.elf
 ISO_KERNEL_VGA := iso/boot/kernel-vga.elf
 DISK_SECTORS  := 102400
-USER_PROGS    := shell chello hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello linuxhello linuxprobe linuxabi busybox bbcompat dufstest redirtest ext3wtest
+PARTITION_START ?= 2048
+FS_SECTORS     := $(shell expr $(DISK_SECTORS) - $(PARTITION_START))
+USER_PROGS    := shell chello hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello lsblk linuxhello linuxprobe linuxabi busybox bbcompat dufstest redirtest ext3wtest
 USER_BINS     := $(addprefix user/,$(USER_PROGS))
 DISK_FILES    := $(foreach prog,$(USER_PROGS),user/$(prog) bin/$(prog)) \
                  tools/hello.txt hello.txt \
@@ -180,13 +183,13 @@ KOBJS = kernel/kernel-entry.o kernel/kernel.o \
         kernel/arch/idt.o kernel/arch/isr.o kernel/arch/sse.o kernel/arch/df_test.o \
         kernel/arch/irq.o kernel/arch/pit.o kernel/arch/clock.o \
         kernel/drivers/keyboard.o kernel/drivers/mouse.o kernel/drivers/ata.o \
-        kernel/drivers/blkdev.o kernel/blk/bcache.o kernel/drivers/chardev.o kernel/drivers/tty.o \
+        kernel/drivers/blkdev.o kernel/drivers/blkdev_part.o kernel/blk/bcache.o kernel/drivers/chardev.o kernel/drivers/tty.o \
         kernel/gui/display.o kernel/gui/framebuffer.o kernel/gui/font8x16.o kernel/gui/desktop.o kernel/gui/desktop_apps.o kernel/gui/terminal.o \
         kernel/mm/pmm.o kernel/mm/paging.o kernel/mm/paging_asm.o kernel/mm/fault.o kernel/mm/vma.o kernel/mm/kheap.o kernel/mm/slab.o \
         kernel/proc/elf.o kernel/proc/process.o kernel/proc/process_asm.o \
         kernel/proc/sched.o kernel/proc/syscall.o kernel/proc/core.o kernel/proc/mem_forensics.o kernel/proc/pipe.o kernel/proc/switch.o \
         kernel/proc/uaccess.o \
-        kernel/fs/fs.o kernel/fs/vfs.o kernel/fs/procfs.o kernel/fs/ext3.o
+        kernel/fs/fs.o kernel/fs/vfs.o kernel/fs/procfs.o kernel/fs/sysfs.o kernel/fs/ext3.o
 
 $(KOBJS): .ktest-flag
 
@@ -210,20 +213,27 @@ $(USER_BINS):
 	$(MAKE) -C user $(@F)
 
 # ─── Hard-disk images ────────────────────────────────────────────────────────
-# disk.img is the primary ATA master (hd0).  By default it is a deterministic
-# Linux-compatible ext3 root.  ROOT_FS=dufs builds hd0 as DUFS instead.
+# disk.img is the primary ATA master (sda).  By default it is a deterministic
+# Linux-compatible ext3 root partition.  ROOT_FS=dufs builds sda as DUFS
+# instead.
 ifeq ($(ROOT_FS),dufs)
-disk.img: $(USER_BINS) tools/hello.txt tools/readme.txt tools/mkfs.py
-	$(PYTHON) tools/mkfs.py $@ $(DISK_SECTORS) $(DISK_FILES)
+disk.fs: $(USER_BINS) tools/hello.txt tools/readme.txt tools/mkfs.py
+	$(PYTHON) tools/mkfs.py $@ $(FS_SECTORS) $(DISK_FILES)
+disk.img: disk.fs tools/wrap_mbr.py
+	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0xDA
 else
-disk.img: $(USER_BINS) tools/hello.txt tools/readme.txt tools/mkext3.py
-	$(PYTHON) tools/mkext3.py $@ $(DISK_SECTORS) $(DISK_FILES)
+disk.fs: $(USER_BINS) tools/hello.txt tools/readme.txt tools/mkext3.py
+	$(PYTHON) tools/mkext3.py $@ $(FS_SECTORS) $(DISK_FILES)
+disk.img: disk.fs tools/wrap_mbr.py
+	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0x83
 endif
 
-# dufs.img is the primary ATA slave (hd1), mounted at /dufs during ext3-root
+# dufs.img is the primary ATA slave (sdb), mounted at /dufs during ext3-root
 # boots.  It is intentionally not rebuilt by run-fresh when it already exists.
-dufs.img: tools/mkfs.py
-	$(PYTHON) tools/mkfs.py $@ $(DISK_SECTORS)
+dufs.fs: tools/mkfs.py
+	$(PYTHON) tools/mkfs.py $@ $(FS_SECTORS)
+dufs.img: dufs.fs tools/wrap_mbr.py
+	$(PYTHON) tools/wrap_mbr.py dufs.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0xDA
 
 # ─── Documentation ───────────────────────────────────────────────────────────
 DOCS_SRC := docs/partI-firmware-to-kernel.md \
@@ -381,9 +391,9 @@ check: test-headless
 
 validate-ext3-linux: disk.img tools/check_ext3_linux_compat.py tools/check_ext3_journal_activity.py
 	$(PYTHON) tools/check_ext3_linux_compat.py disk.img
-	$(E2FSCK) -fn disk.img
-	$(DUMPE2FS) -h disk.img | grep -q 'Filesystem features:.*has_journal'
-	$(DUMPE2FS) -h disk.img | grep -q 'Journal inode:[[:space:]]*8'
+	$(E2FSCK) -fn disk.fs
+	$(DUMPE2FS) -h disk.fs | grep -q 'Filesystem features:.*has_journal'
+	$(DUMPE2FS) -h disk.fs | grep -q 'Journal inode:[[:space:]]*8'
 
 # `pdf`    — render the PDF book from the markdown chapter sources.
 pdf: docs/Drunix\ OS.pdf
@@ -530,24 +540,26 @@ test-ext3-linux-compat:
 	$(PYTHON) tools/dufs_extract.py dufs-ext3w.img ext3wtest.log ext3wtest.log
 	cat ext3wtest.log
 	grep -q "EXT3WTEST PASS" ext3wtest.log
+	dd if=disk-ext3w.img of=disk-ext3w.fs bs=512 skip=$(PARTITION_START) count=$(FS_SECTORS) 2>/dev/null
 	$(PYTHON) tools/check_ext3_linux_compat.py disk-ext3w.img
 	$(PYTHON) tools/check_ext3_journal_activity.py disk-ext3w.img 1
-	$(E2FSCK) -fn disk-ext3w.img
+	$(E2FSCK) -fn disk-ext3w.fs
 
 # `test-ext3-host-write-interop` — use e2fsprogs debugfs to write into the
 #                                  generated ext3 image, then read it back and
 #                                  fsck the host-mutated image.
 test-ext3-host-write-interop:
 	$(MAKE) validate-ext3-linux
-	rm -f disk-ext3-host.img build/ext3-host.txt ext3-host-readback.txt
+	rm -f disk-ext3-host.img disk-ext3-host.fs build/ext3-host.txt ext3-host-readback.txt
 	mkdir -p build
 	printf 'linux-host\n' > build/ext3-host.txt
-	cp -f disk.img disk-ext3-host.img
-	$(DEBUGFS) -w -R 'write build/ext3-host.txt linux-host.txt' disk-ext3-host.img
-	$(DEBUGFS) -R 'cat linux-host.txt' disk-ext3-host.img > ext3-host-readback.txt
+	cp -f disk.fs disk-ext3-host.fs
+	$(DEBUGFS) -w -R 'write build/ext3-host.txt linux-host.txt' disk-ext3-host.fs
+	$(DEBUGFS) -R 'cat linux-host.txt' disk-ext3-host.fs > ext3-host-readback.txt
 	grep -q '^linux-host$$' ext3-host-readback.txt
+	$(PYTHON) tools/wrap_mbr.py disk-ext3-host.fs disk-ext3-host.img $(PARTITION_START) $(DISK_SECTORS) 0x83
 	$(PYTHON) tools/check_ext3_linux_compat.py disk-ext3-host.img
-	$(E2FSCK) -fn disk-ext3-host.img
+	$(E2FSCK) -fn disk-ext3-host.fs
 
 # `test-all` — run every test suite: in-kernel unit tests (KTEST, headless)
 #              followed by all halt-inducing tests.  Exits non-zero if any
@@ -576,7 +588,7 @@ rebuild:
 clean:
 	find kernel -name '*.o' -delete
 	find kernel -name '*.d' -delete
-	$(RM) *.elf core.* disk.img dufs.img $(TEST_IMAGES) os.iso $(ISO_KERNEL) $(ISO_KERNEL_VGA) iso/boot/grub/grub.cfg "$(PDF)" "$(EPUB)" $(SENTINELS)
+	$(RM) *.elf core.* disk.img dufs.img disk.fs dufs.fs disk-ext3w.fs disk-ext3-host.fs $(TEST_IMAGES) os.iso $(ISO_KERNEL) $(ISO_KERNEL_VGA) iso/boot/grub/grub.cfg "$(PDF)" "$(EPUB)" $(SENTINELS)
 	$(RM) $(RUN_LOGS) $(TEST_LOGS) build/ext3-host.txt
 	rm -rf build/busybox
 	$(RM) docs/diagrams/*.png

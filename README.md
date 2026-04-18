@@ -2,7 +2,7 @@
 
 ## Project Summary
 
-Drunix is a 32-bit x86 hobby operating system that boots through GRUB2 with the Multiboot1 protocol and runs a freestanding C kernel. The kernel provides protected-mode interrupt handling, paging, a physical and heap allocator, ATA disk I/O, a DUFS filesystem, a mount-tree VFS with synthetic `/dev` and `/proc` namespaces, preemptive scheduling built around generic wait queues, signals, a TTY subsystem with job control, an ELF user-program loader, and per-process virtual-memory bookkeeping for demand-paged heaps, grow-down stacks, copy-on-write fork, and anonymous `mmap` regions. User programs can be written in C or in a small freestanding C++ subset backed by the repo-owned user runtime.
+Drunix is a 32-bit x86 hobby operating system that boots through GRUB2 with the Multiboot1 protocol and runs a freestanding C kernel. The kernel provides protected-mode interrupt handling, paging, a physical and heap allocator, ATA disk I/O, a DUFS filesystem, a mount-tree VFS with synthetic `/dev`, `/proc`, and `/sys` namespaces, preemptive scheduling built around generic wait queues, signals, a TTY subsystem with job control, an ELF user-program loader, and per-process virtual-memory bookkeeping for demand-paged heaps, grow-down stacks, copy-on-write fork, and anonymous `mmap` regions. User programs can be written in C or in a small freestanding C++ subset backed by the repo-owned user runtime.
 
 The normal boot path asks GRUB for a 1024x768x32 linear framebuffer and starts a simple GUI desktop. The boot shell is opened as the main desktop app inside that GUI shell, with keyboard input, PS/2 mouse pointer support, taskbar/menu launching, framebuffer text rendering, double-buffered flicker-free compositing with an overlay mouse cursor, and a VGA text-mode fallback when a suitable framebuffer is unavailable. The disk image includes a small mixed-language userland: the shell and `chello` exercise the C runtime path, while the utility programs exercise the C++ runtime path.
 
@@ -235,16 +235,17 @@ Documentation:
 
 ### Root filesystem selection
 
-`disk.img` defaults to a Linux-compatible ext3 root. Build with
-`ROOT_FS=dufs` to use the legacy DUFS filesystem as the root instead:
+`disk.img` is an MBR disk image. Its first primary partition appears as
+`/dev/sda1` inside Drunix and holds the configured root filesystem. The default
+root is ext3. `dufs.img` is the secondary MBR disk image; its first primary
+partition appears as `/dev/sdb1` and is mounted at `/dufs` during ext3-root
+boots.
+
+Build with `ROOT_FS=dufs` to use the legacy DUFS filesystem as the root instead:
 
 ```sh
 make ROOT_FS=dufs run-fresh
 ```
-
-`dufs.img` (the primary ATA slave / `hd1`) is always DUFS-formatted. Under
-the default ext3 root, it is mounted at `/dufs` so programs can exercise
-DUFS-specific code paths even when `/` is ext3.
 
 ### Build Options
 

@@ -664,7 +664,7 @@ int main(void)
 {
     int passed = 0;
 
-    log_fd = sys_create("bbcompat.log");
+    log_fd = sys_create("/dufs/bbcompat.log");
     emit("BBCOMPAT BEGIN\n");
 
     for (int i = 0; i < BBCOMPAT_TOTAL; i++) {

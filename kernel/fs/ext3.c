@@ -2617,7 +2617,7 @@ static int ext3_init(void *ctx)
     g_writable = 0;
     g_needs_recovery = 0;
     g_overlay_count = 0;
-    g_dev = blkdev_get("hd0");
+    g_dev = blkdev_get("sda1");
     if (!g_dev)
         return -1;
     if (ext3_read_bytes(EXT3_SUPER_OFFSET, (uint8_t *)&g_super,

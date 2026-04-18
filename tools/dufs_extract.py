@@ -35,16 +35,32 @@ class DUFSError(RuntimeError):
     pass
 
 
+def mbr_partition_offset(image_path: pathlib.Path) -> int:
+    with image_path.open("rb") as f:
+        mbr = f.read(DUFS_SECTOR_SIZE)
+    if len(mbr) != DUFS_SECTOR_SIZE or mbr[510:512] != b"\x55\xaa":
+        return 0
+    entry = mbr[446:462]
+    if len(entry) != 16 or entry[4] == 0:
+        return 0
+    start = int.from_bytes(entry[8:12], "little")
+    sectors = int.from_bytes(entry[12:16], "little")
+    if start == 0 or sectors == 0:
+        return 0
+    return start * DUFS_SECTOR_SIZE
+
+
 class DUFSImage:
     def __init__(self, image_path: pathlib.Path) -> None:
         self._fp = image_path.open("rb")
+        self._base = mbr_partition_offset(image_path)
         self.super = self._read_super()
 
     def close(self) -> None:
         self._fp.close()
 
     def _read_super(self) -> dict[str, int]:
-        self._fp.seek(DUFS_SECTOR_SIZE)
+        self._fp.seek(self._base + DUFS_SECTOR_SIZE)
         raw = self._fp.read(DUFS_SECTOR_SIZE)
         if len(raw) != DUFS_SECTOR_SIZE:
             raise DUFSError("short read on superblock")
@@ -65,14 +81,14 @@ class DUFSImage:
         }
 
     def _read_sector(self, lba: int) -> bytes:
-        self._fp.seek(lba * DUFS_SECTOR_SIZE)
+        self._fp.seek(self._base + lba * DUFS_SECTOR_SIZE)
         raw = self._fp.read(DUFS_SECTOR_SIZE)
         if len(raw) != DUFS_SECTOR_SIZE:
             raise DUFSError(f"short read on sector {lba}")
         return raw
 
     def _read_block(self, lba: int) -> bytes:
-        self._fp.seek(lba * DUFS_SECTOR_SIZE)
+        self._fp.seek(self._base + lba * DUFS_SECTOR_SIZE)
         raw = self._fp.read(DUFS_BLOCK_SIZE)
         if len(raw) != DUFS_BLOCK_SIZE:
             raise DUFSError(f"short read on block starting at LBA {lba}")

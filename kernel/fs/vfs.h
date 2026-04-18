@@ -17,12 +17,19 @@
 #define VFS_MAX_FS       4   /* max registered filesystems */
 #define VFS_MAX_MOUNTS   8   /* max mount points in the namespace */
 #define VFS_DEV_NAME_MAX 12  /* max synthetic device name incl. NUL */
+#define VFS_MOUNT_SOURCE_MAX 16
 
 /*
  * File/directory metadata returned by vfs_stat().
- * type: 1 = regular file or file-like node, 2 = directory, 3 = symlink.
+ * type: 1 = regular file or file-like node, 2 = directory, 3 = symlink,
+ *       4 = block device.
  * mtime is a Unix timestamp in UTC seconds.
  */
+#define VFS_STAT_TYPE_FILE     1u
+#define VFS_STAT_TYPE_DIR      2u
+#define VFS_STAT_TYPE_SYMLINK  3u
+#define VFS_STAT_TYPE_BLOCKDEV 4u
+
 typedef struct {
     uint32_t type;
     uint32_t size;
@@ -38,13 +45,16 @@ typedef enum {
     VFS_NODE_TTY     = 4,
     VFS_NODE_PROCFILE = 5,
     VFS_NODE_SYMLINK = 6,
+    VFS_NODE_BLOCKDEV = 7,
+    VFS_NODE_SYSFILE = 8,
 } vfs_node_type_t;
 
 /*
  * Result of resolving a path through the VFS mount tree.
  *
- * For VFS_NODE_FILE, inode_num and size are valid.
- * For VFS_NODE_CHARDEV, dev_name names the registered character device.
+ * For VFS_NODE_FILE and VFS_NODE_SYSFILE, inode_num and size are valid.
+ * For VFS_NODE_CHARDEV and VFS_NODE_BLOCKDEV, dev_name names the registered
+ * kernel device entry (for example, "stdin" or "sda1").
  * For VFS_NODE_TTY, dev_id is the tty_table[] index.
  */
 typedef struct {
@@ -63,6 +73,13 @@ typedef struct {
     uint32_t mount_id;
     uint32_t inode_num;
 } vfs_file_ref_t;
+
+typedef struct {
+    char source[VFS_MOUNT_SOURCE_MAX];
+    char path[128];
+    char fstype[VFS_FS_NAME_MAX];
+    char options[48];
+} vfs_mount_info_t;
 
 typedef struct {
     void *ctx;
@@ -165,6 +182,10 @@ int vfs_register(const char *name, const fs_ops_t *ops);
  * return value on init failure.
  */
 int vfs_mount(const char *mount_path, const char *fs_name);
+int vfs_mount_with_source(const char *mount_path, const char *fs_name,
+                          const char *source);
+uint32_t vfs_mount_count(void);
+int vfs_mount_info_at(uint32_t index, vfs_mount_info_t *out);
 
 /*
  * vfs_reset: clear the VFS registry and mount tree.

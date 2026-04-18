@@ -6,6 +6,7 @@
 *.dis
 *.log
 *.img
+*.fs
 *.iso
 iso/boot/grub/grub.cfg
 /build/
@@ -27,6 +28,7 @@ user/kill
 user/printenv
 user/reader
 user/cpphello
+user/lsblk
 user/shell
 user/sleeper
 user/sleep

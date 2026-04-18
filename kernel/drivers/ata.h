@@ -41,6 +41,6 @@
 void ata_init(void);
 int  ata_read_sector(uint32_t lba, uint8_t *buf);
 int  ata_write_sector(uint32_t lba, const uint8_t *buf);
-void ata_register(void);   /* register "hd0" with the blkdev registry */
+void ata_register(void);   /* register "sda" and "sdb" with the blkdev registry */
 
 #endif

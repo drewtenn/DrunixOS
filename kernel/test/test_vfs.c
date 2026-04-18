@@ -5,6 +5,7 @@
 
 #include "ktest.h"
 #include "vfs.h"
+#include "blkdev.h"
 #include "procfs.h"
 #include "process.h"
 #include "paging.h"
@@ -250,6 +251,31 @@ static int setup_mount_tree_with_proc(void)
     return 0;
 }
 
+static int setup_mount_tree_with_sys(void)
+{
+    if (setup_mount_tree() != 0)
+        return -1;
+    if (vfs_mount("/sys", "sysfs") != 0)
+        return -1;
+    return 0;
+}
+
+static int read_vfs_text_path(const char *path, char *buf, uint32_t cap)
+{
+    vfs_file_ref_t ref;
+    uint32_t size = 0;
+    int n;
+
+    if (!buf || cap == 0)
+        return -1;
+    if (vfs_open_file(path, &ref, &size) != 0)
+        return -1;
+    n = vfs_read(ref, 0, (uint8_t *)buf, cap - 1u);
+    if (n >= 0)
+        buf[n] = '\0';
+    return n;
+}
+
 static int add_procfs_test_process(void)
 {
     static process_t proc;
@@ -471,21 +497,119 @@ static void test_dev_namespace_lists_and_resolves_devices(ktest_case_t *tc)
     char buf[128];
     int n;
     vfs_node_t node;
-    vfs_stat_t st;
 
     KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree(), 0u);
+    KTEST_EXPECT_TRUE(tc, blkdev_get("sda") != 0);
+    KTEST_EXPECT_TRUE(tc, blkdev_get("sda1") != 0);
+    KTEST_EXPECT_TRUE(tc, blkdev_get("sdb") != 0);
+    KTEST_EXPECT_TRUE(tc, blkdev_get("sdb1") != 0);
 
     n = vfs_getdents("dev", buf, sizeof(buf));
     KTEST_EXPECT_TRUE(tc, n > 0);
     KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "stdin"));
     KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "tty0"));
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "sda"));
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "sda1"));
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "sdb"));
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "sdb1"));
 
-    KTEST_EXPECT_EQ(tc, (uint32_t)vfs_stat("dev", &st), 0u);
-    KTEST_EXPECT_EQ(tc, st.type, 2u);
-
-    KTEST_EXPECT_EQ(tc, (uint32_t)vfs_resolve("dev/tty0", &node), 0u);
+    KTEST_EXPECT_EQ(tc, (uint32_t)vfs_resolve("/dev/tty0", &node), 0u);
     KTEST_EXPECT_EQ(tc, node.type, (uint32_t)VFS_NODE_TTY);
     KTEST_EXPECT_EQ(tc, node.dev_id, 0u);
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)vfs_resolve("/dev/sda", &node), 0u);
+    KTEST_EXPECT_EQ(tc, node.type, (uint32_t)VFS_NODE_BLOCKDEV);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(node.dev_name, "sda") == 0);
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)vfs_resolve("/dev/sda1", &node), 0u);
+    KTEST_EXPECT_EQ(tc, node.type, (uint32_t)VFS_NODE_BLOCKDEV);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(node.dev_name, "sda1") == 0);
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)vfs_resolve("/dev/sdb", &node), 0u);
+    KTEST_EXPECT_EQ(tc, node.type, (uint32_t)VFS_NODE_BLOCKDEV);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(node.dev_name, "sdb") == 0);
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)vfs_resolve("/dev/sdb1", &node), 0u);
+    KTEST_EXPECT_EQ(tc, node.type, (uint32_t)VFS_NODE_BLOCKDEV);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(node.dev_name, "sdb1") == 0);
+    vfs_reset();
+}
+
+static void test_sysfs_block_tree_lists_disks_and_partition_metadata(ktest_case_t *tc)
+{
+    char buf[256];
+    char text[64];
+    int n;
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree_with_sys(), 0u);
+
+    n = vfs_getdents("/sys", buf, sizeof(buf));
+    KTEST_ASSERT_TRUE(tc, n > 0);
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "block/"));
+
+    n = vfs_getdents("/sys/block", buf, sizeof(buf));
+    KTEST_ASSERT_TRUE(tc, n > 0);
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "sda/"));
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "sdb/"));
+    KTEST_EXPECT_TRUE(tc, !has_entry(buf, n, "sda1/"));
+
+    n = vfs_getdents("/sys/block/sda", buf, sizeof(buf));
+    KTEST_ASSERT_TRUE(tc, n > 0);
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "size"));
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "dev"));
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "type"));
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "sda1/"));
+
+    n = vfs_getdents("/sys/block/sda/sda1", buf, sizeof(buf));
+    KTEST_ASSERT_TRUE(tc, n > 0);
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "size"));
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "dev"));
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "type"));
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "partition"));
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "start"));
+
+    KTEST_ASSERT_TRUE(tc,
+                      read_vfs_text_path("/sys/block/sda/size",
+                                         text, sizeof(text)) > 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(text, "102400\n") == 0);
+    KTEST_ASSERT_TRUE(tc,
+                      read_vfs_text_path("/sys/block/sda/dev",
+                                         text, sizeof(text)) > 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(text, "8:0\n") == 0);
+    KTEST_ASSERT_TRUE(tc,
+                      read_vfs_text_path("/sys/block/sda/type",
+                                         text, sizeof(text)) > 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(text, "disk\n") == 0);
+
+    KTEST_ASSERT_TRUE(tc,
+                      read_vfs_text_path("/sys/block/sda/sda1/size",
+                                         text, sizeof(text)) > 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(text, "100352\n") == 0);
+    KTEST_ASSERT_TRUE(tc,
+                      read_vfs_text_path("/sys/block/sda/sda1/dev",
+                                         text, sizeof(text)) > 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(text, "8:1\n") == 0);
+    KTEST_ASSERT_TRUE(tc,
+                      read_vfs_text_path("/sys/block/sda/sda1/type",
+                                         text, sizeof(text)) > 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(text, "part\n") == 0);
+    KTEST_ASSERT_TRUE(tc,
+                      read_vfs_text_path("/sys/block/sda/sda1/partition",
+                                         text, sizeof(text)) > 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(text, "1\n") == 0);
+    KTEST_ASSERT_TRUE(tc,
+                      read_vfs_text_path("/sys/block/sda/sda1/start",
+                                         text, sizeof(text)) > 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(text, "2048\n") == 0);
+
+    KTEST_ASSERT_TRUE(tc,
+                      read_vfs_text_path("/sys/block/sdb/dev",
+                                         text, sizeof(text)) > 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(text, "8:16\n") == 0);
+    KTEST_ASSERT_TRUE(tc,
+                      read_vfs_text_path("/sys/block/sdb/sdb1/dev",
+                                         text, sizeof(text)) > 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(text, "8:17\n") == 0);
     vfs_reset();
 }
 
@@ -504,6 +628,56 @@ static void test_proc_namespace_lists_modules_and_pid_dirs(ktest_case_t *tc)
     KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "kmsg"));
     KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "modules"));
     KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "1/"));
+    vfs_reset();
+}
+
+static void test_proc_mounts_reports_dynamic_sources(ktest_case_t *tc)
+{
+    char buf[512];
+    int n;
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree_with_proc(), 0u);
+
+    n = procfs_read_file(PROCFS_FILE_MOUNTS, 0u, 0u, 0u,
+                         buf, sizeof(buf) - 1u);
+    KTEST_ASSERT_TRUE(tc, n > 0);
+    buf[n] = '\0';
+
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "root / root rw 0 0\n") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "sub /mnt sub rw 0 0\n") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "devfs /dev devfs rw,nosuid 0 0\n") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n") != 0);
+    vfs_reset();
+}
+
+static void test_proc_mounts_reports_boot_style_sources(ktest_case_t *tc)
+{
+    char buf[768];
+    int n;
+
+    vfs_reset();
+    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_register("ext3", &mock_root_ops), 0u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_register("dufs", &mock_sub_ops), 0u);
+    KTEST_ASSERT_EQ(tc,
+                    (uint32_t)vfs_mount_with_source("/", "ext3", "/dev/sda1"),
+                    0u);
+    KTEST_ASSERT_EQ(tc,
+                    (uint32_t)vfs_mount_with_source("/dufs", "dufs", "/dev/sdb1"),
+                    0u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_mount("/dev", "devfs"), 0u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_mount("/proc", "procfs"), 0u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_mount("/sys", "sysfs"), 0u);
+
+    n = procfs_read_file(PROCFS_FILE_MOUNTS, 0u, 0u, 0u,
+                         buf, sizeof(buf) - 1u);
+    KTEST_ASSERT_TRUE(tc, n > 0);
+    buf[n] = '\0';
+
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "/dev/sda1 / ext3 rw 0 0\n") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "/dev/sdb1 /dufs dufs rw 0 0\n") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "devfs /dev devfs rw,nosuid 0 0\n") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n") != 0);
+    KTEST_EXPECT_TRUE(tc, k_strstr(buf, "sysfs /sys sysfs rw,nosuid,nodev,noexec,relatime 0 0\n") != 0);
     vfs_reset();
 }
 
@@ -729,7 +903,10 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_root_listing_includes_mount_points_once),
     KTEST_CASE(test_mount_root_stat_reports_directory),
     KTEST_CASE(test_dev_namespace_lists_and_resolves_devices),
+    KTEST_CASE(test_sysfs_block_tree_lists_disks_and_partition_metadata),
     KTEST_CASE(test_proc_namespace_lists_modules_and_pid_dirs),
+    KTEST_CASE(test_proc_mounts_reports_dynamic_sources),
+    KTEST_CASE(test_proc_mounts_reports_boot_style_sources),
     KTEST_CASE(test_proc_pid_directory_lists_status_maps_and_fd),
     KTEST_CASE(test_proc_pid_directory_lists_vmstat_and_fault),
     KTEST_CASE(test_proc_vmstat_reports_image_totals_and_region_count),

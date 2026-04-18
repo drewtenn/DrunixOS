@@ -8,6 +8,7 @@
 #include "process.h"
 #include "gdt.h"
 #include "pipe.h"
+#include "blkdev.h"
 #include "paging.h"
 #include "pmm.h"
 #include "kheap.h"
@@ -208,6 +209,65 @@ static void syscall_invlpg(uint32_t virt)
     __asm__ volatile("invlpg (%0)" :: "r"(virt) : "memory");
 }
 
+static uint32_t syscall_read_blockdev(process_t *cur, file_handle_t *fh,
+                                      uint32_t user_buf, uint32_t count)
+{
+    const blkdev_ops_t *dev;
+    uint8_t sec[BLKDEV_SECTOR_SIZE];
+    uint32_t copied = 0;
+    uint32_t size;
+    uint32_t offset;
+    uint32_t to_read;
+
+    if (!cur || !fh || count == 0)
+        return 0;
+
+    dev = blkdev_get(fh->u.blockdev.name);
+    if (!dev || !dev->read_sector)
+        return (uint32_t)-1;
+
+    size = fh->u.blockdev.size;
+    offset = fh->u.blockdev.offset;
+    if (offset >= size)
+        return 0;
+
+    to_read = size - offset;
+    if (count < to_read)
+        to_read = count;
+    if (to_read == 0)
+        return 0;
+
+    if (uaccess_prepare(cur, user_buf, to_read, 1) != 0)
+        return (uint32_t)-1;
+
+    while (copied < to_read) {
+        uint32_t abs_off = offset + copied;
+        uint32_t lba = abs_off / BLKDEV_SECTOR_SIZE;
+        uint32_t sec_off = abs_off % BLKDEV_SECTOR_SIZE;
+        uint32_t chunk = BLKDEV_SECTOR_SIZE - sec_off;
+        int rc;
+
+        if (chunk > to_read - copied)
+            chunk = to_read - copied;
+
+        rc = dev->read_sector(lba, sec);
+        if (rc != 0)
+            goto partial_fail;
+        if (uaccess_copy_to_user(cur, user_buf + copied, sec + sec_off,
+                                 chunk) != 0)
+            goto partial_fail;
+        copied += chunk;
+    }
+
+    fh->u.blockdev.offset = offset + copied;
+    return copied;
+
+partial_fail:
+    if (copied != 0)
+        fh->u.blockdev.offset = offset + copied;
+    return copied ? copied : (uint32_t)-1;
+}
+
 typedef struct {
     uint32_t addr;
     uint32_t length;
@@ -226,6 +286,7 @@ typedef struct {
 
 #define LINUX_S_IFIFO 0010000u
 #define LINUX_S_IFCHR 0020000u
+#define LINUX_S_IFBLK 0060000u
 #define LINUX_S_IFDIR 0040000u
 #define LINUX_S_IFREG 0100000u
 #define LINUX_S_IFLNK 0120000u
@@ -269,6 +330,8 @@ typedef struct {
     uint32_t nlink;
     uint32_t size;
     uint32_t mtime;
+    uint32_t rdev_major;
+    uint32_t rdev_minor;
     uint64_t ino;
 } linux_fd_stat_t;
 
@@ -313,6 +376,11 @@ static void linux_put_u64(uint8_t *buf, uint32_t off, uint64_t value)
     linux_put_u32(buf, off + 4u, (uint32_t)(value >> 32));
 }
 
+static uint64_t linux_encode_dev(uint32_t major, uint32_t minor)
+{
+    return ((uint64_t)major << 8) | (uint64_t)minor;
+}
+
 static void linux_copy_field(char *dst, uint32_t off, uint32_t len,
                              const char *src)
 {
@@ -332,6 +400,8 @@ static void linux_fill_stat64(uint8_t *st,
                               uint32_t nlink,
                               uint32_t size,
                               uint32_t mtime,
+                              uint32_t rdev_major,
+                              uint32_t rdev_minor,
                               uint64_t ino)
 {
     uint32_t blocks;
@@ -344,7 +414,7 @@ static void linux_fill_stat64(uint8_t *st,
     linux_put_u32(st, 20u, nlink);      /* st_nlink */
     linux_put_u32(st, 24u, 0u);         /* st_uid */
     linux_put_u32(st, 28u, 0u);         /* st_gid */
-    linux_put_u64(st, 32u, 1u);         /* st_rdev */
+    linux_put_u64(st, 32u, linux_encode_dev(rdev_major, rdev_minor));
     linux_put_u64(st, 44u, size);       /* st_size */
     linux_put_u32(st, 52u, 4096u);      /* st_blksize */
     linux_put_u64(st, 56u, blocks);     /* st_blocks */
@@ -381,7 +451,32 @@ static void linux_fill_statx(uint8_t *stx, const linux_fd_stat_t *meta)
     linux_fill_statx_timestamp(stx, 64u, meta->mtime);
     linux_fill_statx_timestamp(stx, 96u, meta->mtime);
     linux_fill_statx_timestamp(stx, 112u, meta->mtime);
+    linux_put_u32(stx, 128u, meta->rdev_major);      /* stx_rdev_major */
+    linux_put_u32(stx, 132u, meta->rdev_minor);      /* stx_rdev_minor */
     linux_put_u32(stx, 136u, 1u);                    /* stx_dev_major */
+    linux_put_u32(stx, 140u, 0u);                    /* stx_dev_minor */
+}
+
+static int linux_blockdev_identity(const char *name, uint64_t *ino,
+                                   uint32_t *major, uint32_t *minor)
+{
+    blkdev_info_t info;
+    int idx;
+
+    if (!name)
+        return -1;
+    idx = blkdev_find_index(name);
+    if (idx < 0)
+        return -1;
+    if (blkdev_info_for_index((uint32_t)idx, &info) != 0)
+        return -1;
+    if (ino)
+        *ino = 0x80000000u + (uint32_t)idx;
+    if (major)
+        *major = info.major;
+    if (minor)
+        *minor = info.minor;
+    return 0;
 }
 
 static int linux_fd_stat_metadata(process_t *cur, uint32_t fd,
@@ -393,6 +488,7 @@ static int linux_fd_stat_metadata(process_t *cur, uint32_t fd,
         return -1;
 
     fh = &cur->open_files[fd];
+    k_memset(meta, 0, sizeof(*meta));
     meta->nlink = 1;
     meta->size = 0;
     meta->mtime = clock_unix_time();
@@ -401,6 +497,11 @@ static int linux_fd_stat_metadata(process_t *cur, uint32_t fd,
     switch (fh->type) {
     case FD_TYPE_FILE:
         meta->mode = LINUX_S_IFREG | 0644u;
+        meta->size = fh->u.file.size;
+        meta->ino = fh->u.file.inode_num;
+        break;
+    case FD_TYPE_SYSFILE:
+        meta->mode = LINUX_S_IFREG | 0444u;
         meta->size = fh->u.file.size;
         meta->ino = fh->u.file.inode_num;
         break;
@@ -420,6 +521,13 @@ static int linux_fd_stat_metadata(process_t *cur, uint32_t fd,
     case FD_TYPE_STDOUT:
         meta->mode = LINUX_S_IFCHR | 0600u;
         break;
+    case FD_TYPE_BLOCKDEV: {
+        meta->mode = LINUX_S_IFBLK | 0444u;
+        meta->size = fh->u.blockdev.size;
+        (void)linux_blockdev_identity(fh->u.blockdev.name, &meta->ino,
+                                      &meta->rdev_major, &meta->rdev_minor);
+        break;
+    }
     case FD_TYPE_PIPE_READ:
     case FD_TYPE_PIPE_WRITE:
         meta->mode = LINUX_S_IFIFO | 0600u;
@@ -434,16 +542,51 @@ static int linux_fd_stat_metadata(process_t *cur, uint32_t fd,
 static void linux_metadata_from_vfs_stat(const vfs_stat_t *st,
                                          linux_fd_stat_t *meta)
 {
-    if (st->type == 2)
+    if (st->type == VFS_STAT_TYPE_DIR)
         meta->mode = LINUX_S_IFDIR | 0755u;
-    else if (st->type == 3)
+    else if (st->type == VFS_STAT_TYPE_SYMLINK)
         meta->mode = LINUX_S_IFLNK | 0777u;
+    else if (st->type == VFS_STAT_TYPE_BLOCKDEV)
+        meta->mode = LINUX_S_IFBLK | 0444u;
     else
         meta->mode = LINUX_S_IFREG | 0644u;
-    meta->nlink = st->type == 2 ? 2u : st->link_count;
+    meta->nlink = st->type == VFS_STAT_TYPE_DIR ? 2u : st->link_count;
     meta->size = st->size;
     meta->mtime = st->mtime;
     meta->ino = 1u;
+}
+
+static void linux_metadata_fix_blockdev_identity(const char *path,
+                                                 const vfs_stat_t *st,
+                                                 linux_fd_stat_t *meta)
+{
+    const char *base;
+
+    if (!path || !st || !meta || st->type != VFS_STAT_TYPE_BLOCKDEV)
+        return;
+
+    base = k_strrchr(path, '/');
+    base = base ? base + 1 : path;
+    if (!base[0])
+        return;
+
+    (void)linux_blockdev_identity(base, &meta->ino, &meta->rdev_major,
+                                  &meta->rdev_minor);
+}
+
+static void linux_metadata_fix_sysfile_identity(const char *path,
+                                                linux_fd_stat_t *meta)
+{
+    vfs_node_t node;
+
+    if (!path || !meta)
+        return;
+    if (vfs_resolve(path, &node) != 0 || node.type != VFS_NODE_SYSFILE)
+        return;
+
+    meta->mode = LINUX_S_IFREG | 0444u;
+    meta->size = node.size;
+    meta->ino = node.inode_num;
 }
 
 static int linux_path_stat_metadata(process_t *cur, uint32_t user_path,
@@ -455,6 +598,7 @@ static int linux_path_stat_metadata(process_t *cur, uint32_t user_path,
     if (!cur || !meta || user_path == 0)
         return -1;
 
+    k_memset(meta, 0, sizeof(*meta));
     rpath = (char *)kmalloc(4096);
     if (!rpath)
         return -1;
@@ -468,6 +612,8 @@ static int linux_path_stat_metadata(process_t *cur, uint32_t user_path,
     }
 
     linux_metadata_from_vfs_stat(&st, meta);
+    linux_metadata_fix_sysfile_identity(rpath, meta);
+    linux_metadata_fix_blockdev_identity(rpath, &st, meta);
 
     kfree(rpath);
     return 0;
@@ -482,6 +628,7 @@ static int linux_path_lstat_metadata(process_t *cur, uint32_t user_path,
     if (!cur || !meta || user_path == 0)
         return -1;
 
+    k_memset(meta, 0, sizeof(*meta));
     rpath = (char *)kmalloc(4096);
     if (!rpath)
         return -1;
@@ -495,6 +642,9 @@ static int linux_path_lstat_metadata(process_t *cur, uint32_t user_path,
     }
 
     linux_metadata_from_vfs_stat(&st, meta);
+    if (st.type != VFS_STAT_TYPE_SYMLINK)
+        linux_metadata_fix_sysfile_identity(rpath, meta);
+    linux_metadata_fix_blockdev_identity(rpath, &st, meta);
 
     kfree(rpath);
     return 0;
@@ -512,6 +662,7 @@ static int linux_path_stat_metadata_at_flags(process_t *cur, uint32_t dirfd,
     if (!cur || !meta || user_path == 0)
         return -1;
 
+    k_memset(meta, 0, sizeof(*meta));
     raw = copy_user_string_alloc(cur, user_path, 4096);
     if (!raw)
         return -1;
@@ -548,6 +699,9 @@ static int linux_path_stat_metadata_at_flags(process_t *cur, uint32_t dirfd,
     }
 
     linux_metadata_from_vfs_stat(&st, meta);
+    if (st.type != VFS_STAT_TYPE_SYMLINK)
+        linux_metadata_fix_sysfile_identity(rpath, meta);
+    linux_metadata_fix_blockdev_identity(rpath, &st, meta);
 
     kfree(rpath);
     kfree(raw);
@@ -859,8 +1013,9 @@ static uint32_t syscall_stat64_path_common(uint32_t user_path,
                     linux_path_stat_metadata(cur, user_path, &meta)) != 0)
         return (uint32_t)-1;
 
-    linux_fill_stat64(st64, meta.mode, meta.nlink, meta.size,
-                      meta.mtime, meta.ino);
+        linux_fill_stat64(st64, meta.mode, meta.nlink, meta.size,
+                          meta.mtime, meta.rdev_major, meta.rdev_minor,
+                          meta.ino);
     if (uaccess_copy_to_user(cur, user_stat, st64, sizeof(st64)) != 0)
         return (uint32_t)-1;
     return 0;
@@ -881,8 +1036,9 @@ static uint32_t syscall_fstat64(uint32_t fd, uint32_t user_stat)
         linux_fd_stat_metadata(cur, fd, &meta) != 0)
         return (uint32_t)-1;
 
-    linux_fill_stat64(st64, meta.mode, meta.nlink, meta.size,
-                      meta.mtime, meta.ino);
+        linux_fill_stat64(st64, meta.mode, meta.nlink, meta.size,
+                          meta.mtime, meta.rdev_major, meta.rdev_minor,
+                          meta.ino);
     if (uaccess_copy_to_user(cur, user_stat, st64, sizeof(st64)) != 0)
         return (uint32_t)-1;
     return 0;
@@ -954,6 +1110,9 @@ static uint32_t syscall_write_fd(uint32_t fd, uint32_t user_buf,
         return (uint32_t)-1;
 
     fh = &cur->open_files[fd];
+
+    if (fh->type == FD_TYPE_BLOCKDEV)
+        return (uint32_t)-1;
 
     if (fh->type == FD_TYPE_STDOUT) {
         uint8_t kbuf[USER_IO_CHUNK];
@@ -1030,7 +1189,7 @@ static uint32_t syscall_write_fd(uint32_t fd, uint32_t user_buf,
         return copied;
     }
 
-    if (fh->type == FD_TYPE_FILE) {
+    if (fh->type == FD_TYPE_FILE || fh->type == FD_TYPE_SYSFILE) {
         uint8_t kbuf[USER_IO_CHUNK];
         uint32_t written = 0;
 
@@ -1088,6 +1247,9 @@ static uint32_t syscall_read_fd(uint32_t fd, uint32_t user_buf,
         return (uint32_t)-1;
 
     fh = &cur->open_files[fd];
+
+    if (fh->type == FD_TYPE_BLOCKDEV)
+        return syscall_read_blockdev(cur, fh, user_buf, count);
 
     if (fh->type == FD_TYPE_TTY) {
         char kbuf[TTY_IO_CHUNK];
@@ -1156,7 +1318,7 @@ static uint32_t syscall_read_fd(uint32_t fd, uint32_t user_buf,
         return to_read;
     }
 
-    if (fh->type == FD_TYPE_FILE) {
+    if (fh->type == FD_TYPE_FILE || fh->type == FD_TYPE_SYSFILE) {
         uint32_t remaining;
         uint32_t to_read;
         uint32_t copied = 0;
@@ -1411,7 +1573,11 @@ static uint32_t linux_poll_revents(process_t *cur, int32_t fd,
     }
 
     if (events & LINUX_POLLIN) {
-        if (fh->type == FD_TYPE_FILE && fh->u.file.offset < fh->u.file.size)
+        if ((fh->type == FD_TYPE_FILE || fh->type == FD_TYPE_SYSFILE) &&
+            fh->u.file.offset < fh->u.file.size)
+            rev |= LINUX_POLLIN;
+        else if (fh->type == FD_TYPE_BLOCKDEV &&
+                 fh->u.blockdev.offset < fh->u.blockdev.size)
             rev |= LINUX_POLLIN;
         else if (fh->type == FD_TYPE_PROCFILE)
             rev |= LINUX_POLLIN;
@@ -1461,7 +1627,7 @@ static uint32_t syscall_ioctl(uint32_t fd, uint32_t request, uint32_t argp)
             if (!pb)
                 return (uint32_t)-1;
             available = pb->count;
-        } else if (fh->type == FD_TYPE_FILE) {
+        } else if (fh->type == FD_TYPE_FILE || fh->type == FD_TYPE_SYSFILE) {
             if (fh->u.file.offset < fh->u.file.size)
                 available = fh->u.file.size - fh->u.file.offset;
         } else if (fh->type == FD_TYPE_PROCFILE) {
@@ -1557,10 +1723,11 @@ static int syscall_seek_handle(process_t *cur, uint32_t fd, int64_t offset,
     if (!cur || fd >= MAX_FDS)
         return -1;
     fh = &cur->open_files[fd];
-    if (fh->type != FD_TYPE_FILE && fh->type != FD_TYPE_PROCFILE)
+    if (fh->type != FD_TYPE_FILE && fh->type != FD_TYPE_SYSFILE &&
+        fh->type != FD_TYPE_PROCFILE)
         return -1;
 
-    if (fh->type == FD_TYPE_FILE) {
+    if (fh->type == FD_TYPE_FILE || fh->type == FD_TYPE_SYSFILE) {
         size = fh->u.file.size;
         current = fh->u.file.offset;
     } else {
@@ -1583,7 +1750,7 @@ static int syscall_seek_handle(process_t *cur, uint32_t fd, int64_t offset,
     if (new_off < 0 || new_off > UINT32_MAX)
         return -1;
 
-    if (fh->type == FD_TYPE_FILE)
+    if (fh->type == FD_TYPE_FILE || fh->type == FD_TYPE_SYSFILE)
         fh->u.file.offset = (uint32_t)new_off;
     else
         fh->u.proc.offset = (uint32_t)new_off;
@@ -1610,7 +1777,8 @@ static uint32_t syscall_sendfile64(process_t *cur, uint32_t out_fd,
     in = &cur->open_files[in_fd];
     if (out->type != FD_TYPE_STDOUT)
         return (uint32_t)-1;
-    if (in->type != FD_TYPE_FILE && in->type != FD_TYPE_PROCFILE)
+    if (in->type != FD_TYPE_FILE && in->type != FD_TYPE_SYSFILE &&
+        in->type != FD_TYPE_PROCFILE)
         return (uint32_t)-1;
 
     if (offset_ptr) {
@@ -1620,13 +1788,13 @@ static uint32_t syscall_sendfile64(process_t *cur, uint32_t out_fd,
         if (off_words[1] != 0)
             return (uint32_t)-1;
         read_off = off_words[0];
-    } else if (in->type == FD_TYPE_FILE) {
+    } else if (in->type == FD_TYPE_FILE || in->type == FD_TYPE_SYSFILE) {
         read_off = in->u.file.offset;
     } else {
         read_off = in->u.proc.offset;
     }
 
-    if (in->type == FD_TYPE_FILE) {
+    if (in->type == FD_TYPE_FILE || in->type == FD_TYPE_SYSFILE) {
         size = in->u.file.size;
     } else {
         if (procfs_file_size(in->u.proc.kind, in->u.proc.pid,
@@ -1644,7 +1812,7 @@ static uint32_t syscall_sendfile64(process_t *cur, uint32_t out_fd,
         if (chunk > size - read_off)
             chunk = size - read_off;
 
-        if (in->type == FD_TYPE_FILE) {
+        if (in->type == FD_TYPE_FILE || in->type == FD_TYPE_SYSFILE) {
             n = vfs_read(in->u.file.ref, read_off, kbuf, chunk);
         } else {
             n = procfs_read_file(in->u.proc.kind, in->u.proc.pid,
@@ -1671,7 +1839,7 @@ static uint32_t syscall_sendfile64(process_t *cur, uint32_t out_fd,
         if (uaccess_copy_to_user(cur, offset_ptr, off_words,
                                  sizeof(off_words)) != 0)
             return copied ? copied : (uint32_t)-1;
-    } else if (in->type == FD_TYPE_FILE) {
+    } else if (in->type == FD_TYPE_FILE || in->type == FD_TYPE_SYSFILE) {
         in->u.file.offset = read_off;
     } else {
         in->u.proc.offset = read_off;
@@ -1838,10 +2006,41 @@ static int fd_install_vfs_node(process_t *proc, const vfs_node_t *node,
         proc->open_files[fd].u.file.offset = 0;
         return fd;
 
+    case VFS_NODE_SYSFILE:
+        if (writable) {
+            proc->open_files[fd].type = FD_TYPE_NONE;
+            proc->open_files[fd].writable = 0;
+            return -1;
+        }
+        proc->open_files[fd].type = FD_TYPE_SYSFILE;
+        proc->open_files[fd].append = 0;
+        proc->open_files[fd].u.file.ref.mount_id = node->mount_id;
+        proc->open_files[fd].u.file.ref.inode_num = node->inode_num;
+        proc->open_files[fd].u.file.inode_num = node->inode_num;
+        proc->open_files[fd].u.file.size = node->size;
+        proc->open_files[fd].u.file.offset = 0;
+        return fd;
+
     case VFS_NODE_DIR:
         proc->open_files[fd].type = FD_TYPE_DIR;
         proc->open_files[fd].u.dir.path[0] = '\0';
         proc->open_files[fd].u.dir.index = 0;
+        return fd;
+
+    case VFS_NODE_BLOCKDEV:
+        if (writable) {
+            proc->open_files[fd].type = FD_TYPE_NONE;
+            proc->open_files[fd].writable = 0;
+            return -1;
+        }
+        proc->open_files[fd].type = FD_TYPE_BLOCKDEV;
+        k_strncpy(proc->open_files[fd].u.blockdev.name,
+                  node->dev_name,
+                  sizeof(proc->open_files[fd].u.blockdev.name) - 1);
+        proc->open_files[fd].u.blockdev
+            .name[sizeof(proc->open_files[fd].u.blockdev.name) - 1] = '\0';
+        proc->open_files[fd].u.blockdev.offset = 0;
+        proc->open_files[fd].u.blockdev.size = node->size;
         return fd;
 
     case VFS_NODE_TTY:
@@ -1922,6 +2121,8 @@ static int syscall_open_resolved_path(process_t *cur, const char *rpath,
 
     if (node.type != VFS_NODE_FILE &&
         node.type != VFS_NODE_DIR &&
+        node.type != VFS_NODE_BLOCKDEV &&
+        node.type != VFS_NODE_SYSFILE &&
         node.type != VFS_NODE_PROCFILE &&
         node.type != VFS_NODE_TTY &&
         node.type != VFS_NODE_CHARDEV)
@@ -3687,8 +3888,9 @@ static uint32_t SYSCALL_NOINLINE syscall_case_fstatat64(uint32_t eax, uint32_t e
                 return (uint32_t)-2;
         }
 
-        linux_fill_stat64(st64, meta.mode, meta.nlink, meta.size,
-                          meta.mtime, meta.ino);
+    linux_fill_stat64(st64, meta.mode, meta.nlink, meta.size,
+                      meta.mtime, meta.rdev_major, meta.rdev_minor,
+                      meta.ino);
         if (uaccess_copy_to_user(cur, edx, st64, sizeof(st64)) != 0)
             return (uint32_t)-1;
         return 0;

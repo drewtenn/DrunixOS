@@ -41,9 +41,12 @@ def main() -> int:
     require(r"INIT_PROGRAM\s*\?=", makefile, "Makefile must expose INIT_PROGRAM")
     require(r"\.init-program-flag", makefile, "kernel.o must rebuild when INIT_PROGRAM changes")
     require(r"test-busybox-compat\s*:", makefile, "Makefile must provide test-busybox-compat target")
-    require(r"dufs_extract\.py\s+disk-bbcompat\.img\s+bbcompat\.log",
+    require(r"dufs_extract\.py\s+dufs-bbcompat\.img\s+bbcompat\.log",
             makefile,
-            "test-busybox-compat must extract bbcompat.log from the test disk")
+            "test-busybox-compat must extract bbcompat.log from the DUFS side disk")
+    require(r"sys_create\(\"/dufs/bbcompat\.log\"\)",
+            runner,
+            "runner must write bbcompat.log to the mounted DUFS side disk")
     total_match = re.search(r"#define\s+BBCOMPAT_TOTAL\s+([0-9]+)", runner)
     if not total_match:
         fail("runner must define BBCOMPAT_TOTAL")

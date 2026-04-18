@@ -5,6 +5,8 @@
 
 #include "vfs.h"
 #include "procfs.h"
+#include "sysfs.h"
+#include "blkdev.h"
 #include "kheap.h"
 #include "kstring.h"
 
@@ -20,12 +22,16 @@ typedef enum {
     VFS_MOUNT_KIND_FS     = 1,
     VFS_MOUNT_KIND_DEVFS  = 2,
     VFS_MOUNT_KIND_PROCFS = 3,
+    VFS_MOUNT_KIND_SYSFS  = 4,
 } vfs_mount_kind_t;
 
 typedef struct {
     uint32_t        in_use;
     uint32_t        kind;
     const fs_ops_t *ops;
+    char            source[VFS_MOUNT_SOURCE_MAX];
+    char            fstype[VFS_FS_NAME_MAX];
+    char            options[48];
     char            path[VFS_MOUNT_PATH_MAX];
     uint32_t        path_len;
 } vfs_mount_t;
@@ -44,6 +50,31 @@ static const devfs_entry_t devfs_entries[] = {
     { "stdin", VFS_NODE_TTY, 0, 0 },
     { "tty0",  VFS_NODE_TTY, 0, 0 },
 };
+
+static int devfs_fill_blockdev_node(const char *relpath, vfs_node_t *node_out)
+{
+    blkdev_info_t info;
+    uint32_t count = blkdev_count();
+
+    if (!relpath || !node_out)
+        return -1;
+
+    for (uint32_t i = 0; i < count; i++) {
+        if (blkdev_info_at(i, &info) != 0)
+            continue;
+        if (k_strcmp(relpath, info.name) != 0)
+            continue;
+
+        node_out->type = VFS_NODE_BLOCKDEV;
+        node_out->dev_id = i;
+        node_out->size = info.sectors * info.sector_size;
+        k_strncpy(node_out->dev_name, info.name, VFS_DEV_NAME_MAX - 1);
+        node_out->dev_name[VFS_DEV_NAME_MAX - 1] = '\0';
+        return 0;
+    }
+
+    return -1;
+}
 
 static int vfs_normalize_path(const char *path, char *out, uint32_t outsz)
 {
@@ -158,7 +189,7 @@ static const char *vfs_relpath(const vfs_mount_t *mnt, const char *norm_path)
 
 static void vfs_dir_stat(vfs_stat_t *st)
 {
-    st->type = 2;
+    st->type = VFS_STAT_TYPE_DIR;
     st->size = 0;
     st->link_count = 1;
     st->mtime = 0;
@@ -166,8 +197,16 @@ static void vfs_dir_stat(vfs_stat_t *st)
 
 static void vfs_filelike_stat(vfs_stat_t *st)
 {
-    st->type = 1;
+    st->type = VFS_STAT_TYPE_FILE;
     st->size = 0;
+    st->link_count = 1;
+    st->mtime = 0;
+}
+
+static void vfs_blockdev_stat(vfs_stat_t *st, uint32_t size)
+{
+    st->type = VFS_STAT_TYPE_BLOCKDEV;
+    st->size = size;
     st->link_count = 1;
     st->mtime = 0;
 }
@@ -205,6 +244,9 @@ static int devfs_fill_node(const char *relpath, vfs_node_t *node_out)
         return 0;
     }
 
+    if (devfs_fill_blockdev_node(relpath, node_out) == 0)
+        return 0;
+
     return -1;
 }
 
@@ -216,8 +258,11 @@ static int devfs_stat(const char *relpath, vfs_stat_t *st)
         return -1;
     if (node.type == VFS_NODE_DIR)
         vfs_dir_stat(st);
-    else
+    else if (node.type == VFS_NODE_BLOCKDEV)
+        vfs_blockdev_stat(st, node.size);
+    else {
         vfs_filelike_stat(st);
+    }
     return 0;
 }
 
@@ -303,6 +348,14 @@ static int devfs_getdents(const char *relpath, char *buf, uint32_t bufsz)
         if (vfs_append_dirent(buf, bufsz, &written, devfs_entries[i].name, 0) != 0)
             break;
     }
+    for (uint32_t i = 0; i < blkdev_count(); i++) {
+        blkdev_info_t info;
+
+        if (blkdev_info_at(i, &info) != 0)
+            continue;
+        if (vfs_append_dirent(buf, bufsz, &written, info.name, 0) != 0)
+            break;
+    }
     return (int)written;
 }
 
@@ -320,6 +373,12 @@ static const fs_ops_t *vfs_lookup_fs(const char *name, uint32_t *kind_out)
         return 0;
     }
 
+    if (k_strcmp(name, "sysfs") == 0) {
+        if (kind_out)
+            *kind_out = VFS_MOUNT_KIND_SYSFS;
+        return 0;
+    }
+
     for (int i = 0; i < VFS_MAX_FS; i++) {
         if (vfs_table[i].name[0] == '\0')
             continue;
@@ -331,6 +390,37 @@ static const fs_ops_t *vfs_lookup_fs(const char *name, uint32_t *kind_out)
     }
 
     return 0;
+}
+
+static const char *vfs_default_source_for_kind(uint32_t kind, const char *fs_name)
+{
+    if (kind == VFS_MOUNT_KIND_PROCFS)
+        return "proc";
+    if (kind == VFS_MOUNT_KIND_SYSFS)
+        return "sysfs";
+    if (kind == VFS_MOUNT_KIND_DEVFS)
+        return "devfs";
+    return fs_name;
+}
+
+static const char *vfs_fstype_for_kind(uint32_t kind, const char *fs_name)
+{
+    if (kind == VFS_MOUNT_KIND_PROCFS)
+        return "proc";
+    if (kind == VFS_MOUNT_KIND_SYSFS)
+        return "sysfs";
+    if (kind == VFS_MOUNT_KIND_DEVFS)
+        return "devfs";
+    return fs_name;
+}
+
+static const char *vfs_options_for_kind(uint32_t kind)
+{
+    if (kind == VFS_MOUNT_KIND_DEVFS)
+        return "rw,nosuid";
+    if (kind == VFS_MOUNT_KIND_PROCFS || kind == VFS_MOUNT_KIND_SYSFS)
+        return "rw,nosuid,nodev,noexec,relatime";
+    return "rw";
 }
 
 void vfs_reset(void)
@@ -365,6 +455,12 @@ int vfs_register(const char *name, const fs_ops_t *ops)
 
 int vfs_mount(const char *mount_path, const char *fs_name)
 {
+    return vfs_mount_with_source(mount_path, fs_name, 0);
+}
+
+int vfs_mount_with_source(const char *mount_path, const char *fs_name,
+                          const char *source)
+{
     char norm[VFS_MOUNT_PATH_MAX];
     char parent[VFS_MOUNT_PATH_MAX];
     uint32_t kind = VFS_MOUNT_KIND_NONE;
@@ -381,7 +477,8 @@ int vfs_mount(const char *mount_path, const char *fs_name)
     ops = vfs_lookup_fs(fs_name, &kind);
     if (!ops &&
         kind != VFS_MOUNT_KIND_DEVFS &&
-        kind != VFS_MOUNT_KIND_PROCFS)
+        kind != VFS_MOUNT_KIND_PROCFS &&
+        kind != VFS_MOUNT_KIND_SYSFS)
         return -1;
 
     if (norm[0] != '\0') {
@@ -411,12 +508,67 @@ int vfs_mount(const char *mount_path, const char *fs_name)
         vfs_mounts[i].in_use = 1;
         vfs_mounts[i].kind = kind;
         vfs_mounts[i].ops = ops;
+        k_strncpy(vfs_mounts[i].source,
+                  source ? source : vfs_default_source_for_kind(kind, fs_name),
+                  sizeof(vfs_mounts[i].source) - 1);
+        vfs_mounts[i].source[sizeof(vfs_mounts[i].source) - 1] = '\0';
+        k_strncpy(vfs_mounts[i].fstype, vfs_fstype_for_kind(kind, fs_name),
+                  sizeof(vfs_mounts[i].fstype) - 1);
+        vfs_mounts[i].fstype[sizeof(vfs_mounts[i].fstype) - 1] = '\0';
+        k_strncpy(vfs_mounts[i].options, vfs_options_for_kind(kind),
+                  sizeof(vfs_mounts[i].options) - 1);
+        vfs_mounts[i].options[sizeof(vfs_mounts[i].options) - 1] = '\0';
         k_strncpy(vfs_mounts[i].path, norm, sizeof(vfs_mounts[i].path) - 1);
         vfs_mounts[i].path[sizeof(vfs_mounts[i].path) - 1] = '\0';
         vfs_mounts[i].path_len = k_strlen(vfs_mounts[i].path);
         return 0;
     }
 
+    return -1;
+}
+
+uint32_t vfs_mount_count(void)
+{
+    uint32_t count = 0;
+
+    for (int i = 0; i < VFS_MAX_MOUNTS; i++) {
+        if (vfs_mounts[i].in_use)
+            count++;
+    }
+    return count;
+}
+
+int vfs_mount_info_at(uint32_t index, vfs_mount_info_t *out)
+{
+    uint32_t seen = 0;
+
+    if (!out)
+        return -1;
+
+    for (int i = 0; i < VFS_MAX_MOUNTS; i++) {
+        if (!vfs_mounts[i].in_use)
+            continue;
+        if (seen == index) {
+            k_memset(out, 0, sizeof(*out));
+            k_strncpy(out->source, vfs_mounts[i].source,
+                      sizeof(out->source) - 1);
+            if (vfs_mounts[i].path[0] == '\0') {
+                out->path[0] = '/';
+                out->path[1] = '\0';
+            } else {
+                out->path[0] = '/';
+                k_strncpy(out->path + 1, vfs_mounts[i].path,
+                          sizeof(out->path) - 2);
+                out->path[sizeof(out->path) - 1] = '\0';
+            }
+            k_strncpy(out->fstype, vfs_mounts[i].fstype,
+                      sizeof(out->fstype) - 1);
+            k_strncpy(out->options, vfs_mounts[i].options,
+                      sizeof(out->options) - 1);
+            return 0;
+        }
+        seen++;
+    }
     return -1;
 }
 
@@ -479,6 +631,15 @@ int vfs_resolve(const char *path, vfs_node_t *node_out)
         return rc;
     }
 
+    if (mnt->kind == VFS_MOUNT_KIND_SYSFS) {
+        int rc = sysfs_fill_node(rel, node_out);
+
+        if (rc == 0 && node_out->type == VFS_NODE_SYSFILE)
+            node_out->mount_id = (uint32_t)mount_idx + 1u;
+        kfree(norm);
+        return rc;
+    }
+
     if (mnt->ops->stat) {
         rc = mnt->ops->stat(mnt->ops->ctx, rel, &st);
         if (rc == 0 && st.type == 2) {
@@ -513,7 +674,8 @@ int vfs_open_file(const char *path, vfs_file_ref_t *ref_out,
 
     if (!ref_out || !size_out)
         return -1;
-    if (vfs_resolve(path, &node) != 0 || node.type != VFS_NODE_FILE)
+    if (vfs_resolve(path, &node) != 0 ||
+        (node.type != VFS_NODE_FILE && node.type != VFS_NODE_SYSFILE))
         return -1;
 
     ref_out->mount_id = node.mount_id;
@@ -541,6 +703,14 @@ int vfs_read(vfs_file_ref_t ref, uint32_t offset,
              uint8_t *buf, uint32_t count)
 {
     const fs_ops_t *ops = vfs_ops_for_file_ref(ref);
+
+    if (ref.mount_id != 0) {
+        uint32_t idx = ref.mount_id - 1u;
+
+        if (idx < VFS_MAX_MOUNTS && vfs_mounts[idx].in_use &&
+            vfs_mounts[idx].kind == VFS_MOUNT_KIND_SYSFS)
+            return sysfs_read_file(ref.inode_num, offset, (char *)buf, count);
+    }
 
     if (!ops || !ops->read)
         return -1;
@@ -604,6 +774,13 @@ int vfs_getdents(const char *path, char *buf, uint32_t bufsz)
             written = (uint32_t)n;
         } else if (mnt->kind == VFS_MOUNT_KIND_PROCFS) {
             n = procfs_getdents(rel, buf, bufsz);
+            if (n < 0) {
+                kfree(norm);
+                return -1;
+            }
+            written = (uint32_t)n;
+        } else if (mnt->kind == VFS_MOUNT_KIND_SYSFS) {
+            n = sysfs_getdents(rel, buf, bufsz);
             if (n < 0) {
                 kfree(norm);
                 return -1;
@@ -922,6 +1099,12 @@ static int vfs_stat_common(const char *path, vfs_stat_t *st, uint32_t follow)
 
     if (mnt->kind == VFS_MOUNT_KIND_PROCFS) {
         int rc = procfs_stat(rel, st);
+        kfree(norm);
+        return rc;
+    }
+
+    if (mnt->kind == VFS_MOUNT_KIND_SYSFS) {
+        int rc = sysfs_stat(rel, st);
         kfree(norm);
         return rc;
     }

@@ -156,6 +156,6 @@ static const blkdev_ops_t ata_slave_ops = {
 };
 
 void ata_register(void) {
-    blkdev_register("hd0", &ata_master_ops);
-    blkdev_register("hd1", &ata_slave_ops);
+    blkdev_register_disk("sda", 8u, 0u, 102400u, &ata_master_ops);
+    blkdev_register_disk("sdb", 8u, 16u, 102400u, &ata_slave_ops);
 }

@@ -85,6 +85,8 @@ typedef enum {
     FD_TYPE_TTY        = 6,  /* TTY line discipline (stdin)           */
     FD_TYPE_PROCFILE   = 7,  /* synthetic procfs file                 */
     FD_TYPE_DIR        = 8,  /* directory fd for Linux getdents64     */
+    FD_TYPE_BLOCKDEV   = 9,  /* read-only block device fd             */
+    FD_TYPE_SYSFILE    = 10, /* synthetic sysfs file                  */
 } fd_type_t;
 
 /*
@@ -107,6 +109,11 @@ typedef struct {
         struct {
             char name[12];      /* chardev name (e.g. "stdin")         */
         } chardev;
+        struct {
+            char name[VFS_DEV_NAME_MAX]; /* blkdev name (e.g. "sda1") */
+            uint32_t offset;    /* current byte offset within device     */
+            uint32_t size;      /* cached device size in bytes           */
+        } blockdev;
         struct {
             uint32_t pipe_idx;  /* index into global pipe_table[]      */
         } pipe;
