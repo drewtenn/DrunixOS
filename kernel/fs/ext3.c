@@ -6,6 +6,7 @@
 #include "ext3.h"
 #include "vfs.h"
 #include "blkdev.h"
+#include "bcache.h"
 #include "clock.h"
 #include "kheap.h"
 #include "klog.h"
@@ -205,8 +206,10 @@ static int ext3_write_bytes(uint32_t byte_off, const uint8_t *buf,
 {
     uint8_t sec[BLKDEV_SECTOR_SIZE];
     uint32_t done = 0;
+    uint32_t first_block;
+    uint32_t last_block;
 
-    if (!g_dev || !g_dev->write_sector || !buf)
+    if (!g_dev || !g_dev->write_sector || !buf || count == 0)
         return -1;
     while (done < count) {
         uint32_t off = byte_off + done;
@@ -224,37 +227,33 @@ static int ext3_write_bytes(uint32_t byte_off, const uint8_t *buf,
             return -1;
         done += chunk;
     }
+
+    /* This function touched the device directly, bypassing the block cache.
+     * Any 4 KB block whose contents we just changed on disk must be dropped
+     * from the cache, otherwise a later bcache_read of the same range would
+     * return pre-write bytes. The cache is keyed by the starting LBA of
+     * each 4 KB range, so walk in 8-sector strides. */
+    first_block = (byte_off / BCACHE_BLOCK_SIZE) * BCACHE_SECS_PER_BLK;
+    last_block  = ((byte_off + count - 1u) / BCACHE_BLOCK_SIZE) *
+                  BCACHE_SECS_PER_BLK;
+    for (uint32_t lba = first_block; lba <= last_block;
+         lba += BCACHE_SECS_PER_BLK)
+        bcache_invalidate(g_dev, lba);
     return 0;
 }
 
 static int ext3_read_disk_block(uint32_t block, uint8_t *buf)
 {
-    uint32_t lba;
-
     if (!g_dev || !buf || g_block_size == 0)
         return -1;
-    lba = block * g_sectors_per_block;
-    for (uint32_t i = 0; i < g_sectors_per_block; i++) {
-        if (g_dev->read_sector(lba + i,
-                               buf + i * BLKDEV_SECTOR_SIZE) != 0)
-            return -1;
-    }
-    return 0;
+    return bcache_read(g_dev, block * g_sectors_per_block, buf);
 }
 
 static int ext3_write_disk_block(uint32_t block, const uint8_t *buf)
 {
-    uint32_t lba;
-
     if (!g_dev || !g_dev->write_sector || !buf || g_block_size == 0)
         return -1;
-    lba = block * g_sectors_per_block;
-    for (uint32_t i = 0; i < g_sectors_per_block; i++) {
-        if (g_dev->write_sector(lba + i,
-                                buf + i * BLKDEV_SECTOR_SIZE) != 0)
-            return -1;
-    }
-    return 0;
+    return bcache_write(g_dev, block * g_sectors_per_block, buf);
 }
 
 static int ext3_write_block(uint32_t block, const uint8_t *buf);
@@ -1808,9 +1807,13 @@ static int ext3_journal_write_block(const ext3_inode_t *journal,
 {
     uint32_t phys = ext3_block_index(journal, logical);
 
-    if (phys == 0)
+    if (phys == 0 || !g_dev || !g_dev->write_sector)
         return -1;
-    return ext3_write_disk_block(phys, buf);
+    /* Journal blocks bypass the cache's write-back queue: the whole point of
+     * the JBD protocol is that descriptor/data/commit blocks are on the
+     * platter before we act on them. bcache_write_through writes the sectors
+     * and keeps any existing cached copy coherent with the new contents. */
+    return bcache_write_through(g_dev, phys * g_sectors_per_block, buf);
 }
 
 static void jbd_write_header(uint8_t *blk, uint32_t type, uint32_t seq)
@@ -1954,6 +1957,12 @@ static int ext3_commit_tx(void)
         return -1;
     if (ext3_checkpoint_tx() != 0)
         return -1;
+    /* Checkpoint writes land in the cache as dirty entries. They must be on
+     * the platter before we clear the journal's start field — otherwise a
+     * crash here would leave the journal saying "no recovery needed" while
+     * the home blocks still hold their pre-transaction contents. */
+    if (bcache_sync(g_dev) != 0)
+        return -1;
     if (jbd_update_super(&journal, 0u, seq + 1u) != 0)
         return -1;
     g_super.feature_incompat &= ~EXT3_FEATURE_INCOMPAT_RECOVER;
@@ -2020,6 +2029,12 @@ static int ext3_checkpoint_replay(void)
                                   g_overlay[i].data) != 0)
             return -1;
     }
+    /* Replay writes go through the cache like any other home-location
+     * write. Flush them before advancing the journal superblock so that a
+     * crash immediately after replay does not leave committed-but-not-home
+     * blocks lost in dirty cache entries. */
+    if (bcache_sync(g_dev) != 0)
+        return -1;
     if (g_super.journal_inum == 0 ||
         ext3_read_inode(g_super.journal_inum, &journal) != 0)
         return -1;

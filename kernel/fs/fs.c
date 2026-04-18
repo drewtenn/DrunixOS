@@ -6,6 +6,7 @@
 #include "fs.h"
 #include "vfs.h"
 #include "blkdev.h"
+#include "bcache.h"
 #include "kheap.h"
 #include "klog.h"
 #include "kstring.h"
@@ -75,21 +76,20 @@ static void bmap_clr(uint8_t *bm, uint32_t bit)
 /*
  * read_block / write_block: read or write one 4096-byte data block,
  * which spans 8 consecutive 512-byte ATA sectors starting at `lba`.
+ * Reads are routed through the shared buffer cache; inode-table and
+ * superblock sectors are accessed directly and never appear as cached
+ * blocks. DUFS has no journal, so writes go through write-through:
+ * metadata durability matches the pre-cache behaviour, and any cached
+ * copy is kept coherent with what hits the platter.
  */
 static int read_block(uint32_t lba, uint8_t *buf)
 {
-    for (uint32_t i = 0; i < DUFS_SECS_PER_BLOCK; i++) {
-        if (g_blkdev->read_sector(lba + i, buf + i * 512) != 0) return -1;
-    }
-    return 0;
+    return bcache_read(g_blkdev, lba, buf);
 }
 
 static int write_block(uint32_t lba, const uint8_t *buf)
 {
-    for (uint32_t i = 0; i < DUFS_SECS_PER_BLOCK; i++) {
-        if (g_blkdev->write_sector(lba + i, buf + i * 512) != 0) return -1;
-    }
-    return 0;
+    return bcache_write_through(g_blkdev, lba, buf);
 }
 
 /* Write a zeroed 4096-byte block — used when allocating new directory or

@@ -8,6 +8,7 @@
 #include "kheap.h"
 #include "ata.h"
 #include "blkdev.h"
+#include "bcache.h"
 #include "gdt.h"
 #include "idt.h"
 #include "sse.h"
@@ -211,6 +212,8 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
     ata_init();
     ata_register();
     klog("ATA", "disk initialized");
+
+    bcache_init();
 
     tty_init();
     klog("TTY", "tty0 initialized");
