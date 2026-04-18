@@ -300,15 +300,15 @@ DIAGRAMS_SVG := $(wildcard docs/diagrams/*.svg)
 DIAGRAMS_PNG := $(DIAGRAMS_SVG:.svg=.png)
 
 # Convert SVG diagrams to 2× PNG for the epub (Apple Books requires raster
-# images for tap-to-zoom). Prefer cairosvg, but fall back to rsvg-convert
-# when the Python package is not installed.
+# images for tap-to-zoom). Prefer librsvg's rsvg-convert; fall back to
+# CairoSVG only when rsvg-convert is not installed.
 docs/diagrams/%.png: docs/diagrams/%.svg
-	@if $(PYTHON) -c "import cairosvg" >/dev/null 2>&1; then \
-		$(PYTHON) -c "import cairosvg; cairosvg.svg2png(url='$<', write_to='$@', scale=2)"; \
-	elif command -v rsvg-convert >/dev/null 2>&1; then \
+	@if command -v rsvg-convert >/dev/null 2>&1; then \
 		rsvg-convert -f png -z 2 -o "$@" "$<"; \
+	elif $(PYTHON) -c "import cairosvg" >/dev/null 2>&1; then \
+		$(PYTHON) -c "import cairosvg; cairosvg.svg2png(url='$<', write_to='$@', scale=2)"; \
 	else \
-		echo "error: need Python package 'cairosvg' or the 'rsvg-convert' binary to build EPUB diagrams" >&2; \
+		echo "error: need the 'rsvg-convert' binary from librsvg or Python package 'cairosvg' to build EPUB diagrams" >&2; \
 		exit 1; \
 	fi
 

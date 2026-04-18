@@ -30,7 +30,7 @@ Optional:
 - `i386-elf-gdb` for `make debug`
 - `pandoc` for `make epub`, `make pdf`, and `make docs`
 - `typst` for `make pdf` and `make docs`
-- `cairosvg` (Python package) or `rsvg-convert` for `make epub` and `make docs` — converts SVG diagrams to PNG
+- `rsvg-convert` from `librsvg` for `make epub` and `make docs` — converts SVG diagrams to PNG
 - `zip`, `unzip`, and `perl` for `make epub` and `make docs` — used to repackage the EPUB after post-processing
 
 ## Install Dependencies
@@ -42,8 +42,7 @@ Install Homebrew first, then:
 ```sh
 brew install make nasm python qemu x86_64-elf-gcc i686-elf-grub xorriso
 brew install i386-elf-gdb pandoc typst
-pip3 install cairosvg
-# or: brew install librsvg
+brew install librsvg
 ```
 Verify the compiler tools you need are on `PATH`:
 
@@ -72,8 +71,7 @@ The simplest supported setup is WSL2 with Ubuntu. Inside the WSL shell:
 
 ```sh
 sudo apt update
-sudo apt install -y build-essential python3 curl nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl
-pip3 install cairosvg
+sudo apt install -y build-essential python3 curl nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl librsvg2-bin
 ```
 
 You still need an `x86_64-elf` cross toolchain and `i386-elf-gdb` on your `PATH`. If your package set does not provide them directly, build and install the usual OSDev cross toolchain, then verify these commands exist:
@@ -108,22 +106,19 @@ Ubuntu / Debian:
 
 ```sh
 sudo apt update
-sudo apt install -y build-essential python3 curl nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl
-pip3 install cairosvg
+sudo apt install -y build-essential python3 curl nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl librsvg2-bin
 ```
 
 Fedora:
 
 ```sh
-sudo dnf install -y make python3 curl nasm qemu-system-i386 xorriso grub2-tools-extra mtools pandoc typst zip unzip perl
-pip3 install cairosvg
+sudo dnf install -y make python3 curl nasm qemu-system-i386 xorriso grub2-tools-extra mtools pandoc typst zip unzip perl librsvg2-tools
 ```
 
 Arch:
 
 ```sh
-sudo pacman -S --needed make python curl nasm qemu-desktop xorriso grub mtools pandoc typst zip unzip perl
-pip3 install cairosvg
+sudo pacman -S --needed make python curl nasm qemu-desktop xorriso grub mtools pandoc typst zip unzip perl librsvg
 ```
 
 As on Windows, make sure the `x86_64-elf` cross compiler/linker and optional `i386-elf-gdb` are installed and visible on `PATH`.
