@@ -253,6 +253,130 @@ static void process_fork_rollback_child(process_t *child_out)
     k_memset(child_out, 0, sizeof(*child_out));
 }
 
+void process_clone_rollback(process_t *child)
+{
+    if (!child)
+        return;
+
+    proc_resource_put_all(child);
+    process_release_kstack(child);
+    k_memset(child, 0, sizeof(*child));
+}
+
+static int process_clone_duplicate_as(process_t *child_out,
+                                      const process_t *parent)
+{
+    uint32_t new_pd = paging_clone_user_space(parent->pd_phys);
+    if (!new_pd) {
+        klog_uint("CLONE", "pmm free pages", pmm_free_page_count());
+        return -1;
+    }
+
+    child_out->pd_phys = new_pd;
+    child_out->as = (proc_address_space_t *)kmalloc(sizeof(*child_out->as));
+    if (!child_out->as) {
+        process_release_user_space(child_out);
+        return -1;
+    }
+
+    k_memcpy(child_out->as, parent->as, sizeof(*child_out->as));
+    child_out->as->refs = 1;
+    child_out->as->pd_phys = new_pd;
+    return 0;
+}
+
+static int process_clone_resources(process_t *child_out,
+                                   const process_t *parent,
+                                   uint32_t flags)
+{
+    if (!child_out || !parent || !parent->as || !parent->files ||
+        !parent->fs_state || !parent->sig_actions)
+        return -1;
+
+    child_out->as = 0;
+    child_out->files = 0;
+    child_out->fs_state = 0;
+    child_out->sig_actions = 0;
+
+    if (flags & CLONE_VM) {
+        child_out->as = parent->as;
+        child_out->pd_phys = parent->pd_phys;
+        child_out->as->refs++;
+    } else if (process_clone_duplicate_as(child_out, parent) != 0) {
+        return -1;
+    }
+
+    if (flags & CLONE_FILES) {
+        child_out->files = parent->files;
+        child_out->files->refs++;
+    } else if (proc_fd_table_dup(&child_out->files, parent->files) != 0) {
+        process_clone_rollback(child_out);
+        return -1;
+    }
+
+    if (flags & CLONE_FS) {
+        child_out->fs_state = parent->fs_state;
+        child_out->fs_state->refs++;
+    } else if (proc_fs_state_dup(&child_out->fs_state,
+                                 parent->fs_state) != 0) {
+        process_clone_rollback(child_out);
+        return -1;
+    }
+
+    if (flags & CLONE_SIGHAND) {
+        child_out->sig_actions = parent->sig_actions;
+        child_out->sig_actions->refs++;
+    } else if (proc_sig_actions_dup(&child_out->sig_actions,
+                                    parent->sig_actions) != 0) {
+        process_clone_rollback(child_out);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int process_clone_kernel_stack(process_t *child_out,
+                                      const process_t *parent,
+                                      uint32_t child_stack)
+{
+    uint8_t *kstack_raw =
+        (uint8_t *)kmalloc(0x1000u + KSTACK_SIZE + 0xFFFu);
+    if (!kstack_raw) {
+        klog_uint("CLONE", "heap free bytes", kheap_free_bytes());
+        return -1;
+    }
+
+    uint8_t *kguard = (uint8_t *)(((uint32_t)kstack_raw + 0xFFFu) & ~0xFFFu);
+    paging_guard_page((uint32_t)kguard);
+    child_out->kstack_bottom = (uint32_t)kstack_raw;
+    child_out->kstack_top = (uint32_t)(kguard + 0x1000u + KSTACK_SIZE);
+
+    if (!parent->kstack_top) {
+        if (child_stack)
+            child_out->user_stack = child_stack;
+        process_build_initial_frame(child_out);
+        return 0;
+    }
+
+    uint32_t parent_frame = parent->kstack_top - 76u;
+    uint32_t child_frame = child_out->kstack_top - 76u;
+
+    k_memcpy((void *)child_frame, (void *)parent_frame, 76);
+    ((uint32_t *)child_frame)[11] = 0;
+    if (child_stack)
+        ((uint32_t *)child_frame)[17] = child_stack;
+
+    uint32_t *ksp = (uint32_t *)child_frame;
+    *--ksp = (uint32_t)process_initial_launch;
+    *--ksp = 0;
+    *--ksp = 0;
+    *--ksp = 0;
+    *--ksp = 0;
+
+    child_out->saved_esp = (uint32_t)ksp;
+    return 0;
+}
+
 void process_build_initial_frame(process_t *proc)
 {
     if (!proc)
@@ -615,6 +739,61 @@ int process_fork(process_t *child_out, process_t *parent)
             pipe_buf_t *pb = pipe_get((int)child_out->open_files[i].u.pipe.pipe_idx);
             if (pb) pb->write_open++;
         }
+    }
+
+    return 0;
+}
+
+int process_clone(process_t *child_out, process_t *parent,
+                  uint32_t flags, uint32_t child_stack,
+                  uint32_t parent_tidptr, uint32_t tls,
+                  uint32_t child_tidptr)
+{
+    (void)parent_tidptr;
+
+    if (!child_out || !parent)
+        return -1;
+
+    __asm__ volatile ("fxsave %0" : "=m"(*parent->fpu_state));
+
+    *child_out = *parent;
+    child_out->tid = 0;
+    child_out->pid = 0;
+    child_out->tgid = (flags & CLONE_THREAD) ? parent->tgid : 0;
+    child_out->group = (flags & CLONE_THREAD) ? parent->group : 0;
+    child_out->parent_pid =
+        (flags & CLONE_THREAD) ? parent->parent_pid : parent->tgid;
+    child_out->state = PROC_UNUSED;
+    child_out->wait_queue = 0;
+    child_out->wait_next = 0;
+    child_out->wait_deadline = 0;
+    child_out->wait_deadline_set = 0;
+    child_out->exit_status = 0;
+    child_out->sig_pending = 0;
+    child_out->sig_blocked = parent->sig_blocked;
+    child_out->clear_child_tid =
+        (flags & CLONE_CHILD_CLEARTID) ? child_tidptr : 0;
+    child_out->crash.valid = 0;
+    child_out->crash.signum = 0;
+    child_out->crash.cr2 = 0;
+    child_out->kstack_bottom = 0;
+    child_out->kstack_top = 0;
+    child_out->saved_esp = 0;
+    sched_wait_queue_init(&child_out->state_waiters);
+
+    if (process_clone_resources(child_out, parent, flags) != 0)
+        return -1;
+
+    if (flags & CLONE_SETTLS) {
+        child_out->user_tls_base = tls;
+        child_out->user_tls_limit = 0xFFFFFu;
+        child_out->user_tls_limit_in_pages = 1;
+        child_out->user_tls_present = 1;
+    }
+
+    if (process_clone_kernel_stack(child_out, parent, child_stack) != 0) {
+        process_clone_rollback(child_out);
+        return -1;
     }
 
     return 0;

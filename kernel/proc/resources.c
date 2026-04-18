@@ -15,6 +15,26 @@ static void *alloc_zero(uint32_t size)
     return ptr;
 }
 
+static void proc_fd_table_bump_pipe_refs(proc_fd_table_t *files)
+{
+    if (!files)
+        return;
+
+    for (unsigned i = 0; i < MAX_FDS; i++) {
+        file_handle_t *fh = &files->open_files[i];
+
+        if (fh->type == FD_TYPE_PIPE_READ) {
+            pipe_buf_t *pb = pipe_get((int)fh->u.pipe.pipe_idx);
+            if (pb)
+                pb->read_open++;
+        } else if (fh->type == FD_TYPE_PIPE_WRITE) {
+            pipe_buf_t *pb = pipe_get((int)fh->u.pipe.pipe_idx);
+            if (pb)
+                pb->write_open++;
+        }
+    }
+}
+
 int proc_resource_init_fresh(process_t *proc)
 {
     if (!proc)
@@ -85,6 +105,7 @@ int proc_fd_table_dup(proc_fd_table_t **out, const proc_fd_table_t *src)
 
     k_memcpy(dup, src, sizeof(*dup));
     dup->refs = 1;
+    proc_fd_table_bump_pipe_refs(dup);
     *out = dup;
     return 0;
 }

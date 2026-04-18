@@ -35,6 +35,19 @@ process_t *sched_bootstrap(void);
 int sched_add(process_t *proc);
 
 /*
+ * sched_peek_next_tid: return the task ID that the next successful sched_add()
+ * will assign, without consuming it.
+ */
+uint32_t sched_peek_next_tid(void);
+
+/*
+ * sched_force_remove_task: remove a READY task that has not run yet and
+ * release the resources acquired for it. Used to roll back clone setup after
+ * sched_add() has made the child visible.
+ */
+int sched_force_remove_task(uint32_t tid);
+
+/*
  * sched_exec_current: replace the currently running process descriptor with
  * `replacement` and immediately context-switch onto its freshly built kernel
  * stack. Does not return.

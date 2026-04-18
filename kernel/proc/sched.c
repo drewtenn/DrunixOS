@@ -5,6 +5,7 @@
 
 #include "sched.h"
 #include "process.h"
+#include "resources.h"
 #include "gdt.h"
 #include "paging.h"
 #include "kheap.h"
@@ -290,6 +291,27 @@ int sched_add(process_t *proc)
         }
     }
     return -1;
+}
+
+uint32_t sched_peek_next_tid(void)
+{
+    return g_next_pid;
+}
+
+int sched_force_remove_task(uint32_t tid)
+{
+    process_t *proc = sched_find_slot(tid);
+
+    if (!proc || proc->state != PROC_READY)
+        return -1;
+
+    sched_clear_wait(proc);
+    proc_resource_put_all(proc);
+    process_release_kstack(proc);
+    task_group_remove_task(proc->group);
+    task_group_put(proc->group);
+    k_memset(proc, 0, sizeof(*proc));
+    return 0;
 }
 
 process_t *sched_current(void)

@@ -3037,15 +3037,53 @@ static uint32_t SYSCALL_NOINLINE syscall_case_clone(uint32_t eax, uint32_t ebx,
                               uint32_t edi, uint32_t ebp)
 {
     (void)eax;
-    (void)ecx;
-    (void)edx;
-    (void)esi;
-    (void)edi;
     (void)ebp;
-    if (syscall_clone_validate_flags(ebx) != 0)
+    process_t *parent = sched_current();
+    process_t *child;
+    int ctid;
+
+    if (!parent || syscall_clone_validate_flags(ebx) != 0)
         return (uint32_t)-1;
-    klog_hex("CLONE", "not yet creating child for flags", ebx);
-    return (uint32_t)-1;
+
+    child = (process_t *)kmalloc(sizeof(*child));
+    if (!child)
+        return (uint32_t)-1;
+
+    if (process_clone(child, parent, ebx, ecx, edx, esi, edi) != 0) {
+        kfree(child);
+        return (uint32_t)-1;
+    }
+
+    if ((ebx & CLONE_PARENT_SETTID) && edx != 0) {
+        uint32_t child_tid_preview = sched_peek_next_tid();
+        if (uaccess_copy_to_user(parent, edx, &child_tid_preview,
+                                 sizeof(child_tid_preview)) != 0) {
+            process_clone_rollback(child);
+            kfree(child);
+            return (uint32_t)-1;
+        }
+    }
+
+    ctid = sched_add(child);
+    if (ctid < 0) {
+        process_clone_rollback(child);
+        kfree(child);
+        return (uint32_t)-1;
+    }
+    kfree(child);
+
+    if ((ebx & CLONE_CHILD_SETTID) && edi != 0) {
+        process_t *slot = sched_find_pid((uint32_t)ctid);
+        uint32_t tid_value = (uint32_t)ctid;
+
+        if (!slot || uaccess_copy_to_user(slot, edi, &tid_value,
+                                          sizeof(tid_value)) != 0) {
+            sched_force_remove_task((uint32_t)ctid);
+            return (uint32_t)-1;
+        }
+    }
+
+    return (uint32_t)ctid;
 }
 
 static uint32_t SYSCALL_NOINLINE syscall_case_fork_vfork(uint32_t eax, uint32_t ebx,

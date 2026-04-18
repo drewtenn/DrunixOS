@@ -66,6 +66,17 @@
 #define SIGSTOP  19   /* uncatchable stop                — default: stop      */
 #define SIGTSTP  20   /* terminal stop (Ctrl-Z)          — default: stop      */
 
+/* Linux clone(2) sharing flags used by process_clone(). */
+#define CLONE_VM             0x00000100u
+#define CLONE_FS             0x00000200u
+#define CLONE_FILES          0x00000400u
+#define CLONE_SIGHAND        0x00000800u
+#define CLONE_THREAD         0x00010000u
+#define CLONE_SETTLS         0x00080000u
+#define CLONE_PARENT_SETTID  0x00100000u
+#define CLONE_CHILD_CLEARTID 0x00200000u
+#define CLONE_CHILD_SETTID   0x01000000u
+
 /*
  * Per-process open-file table.  Every fd — including 0 (stdin), 1 (stdout),
  * and 2 (stderr) — is stored as a typed entry in this array.  The type field
@@ -231,6 +242,7 @@ typedef struct process {
     uint32_t     user_tls_limit; /* Linux i386 set_thread_area descriptor limit */
     uint32_t     user_tls_limit_in_pages; /* nonzero when descriptor uses 4 KiB pages */
     uint32_t     user_tls_present; /* nonzero when the per-process TLS slot is valid */
+    uint32_t     clear_child_tid; /* user address cleared on thread exit */
     wait_queue_t state_waiters; /* waitpid waiters for exit/stop transitions */
     vm_area_t    vmas[PROCESS_MAX_VMAS]; /* sorted by ascending start address */
     uint32_t     vma_count;
@@ -381,6 +393,23 @@ void process_launch(process_t *proc);
  * sched_add subsequently fails.
  */
 int process_fork(process_t *child_out, process_t *parent);
+
+/*
+ * process_clone: create a child task from parent using Linux clone(2)
+ * resource sharing flags. The caller owns the returned descriptor until it is
+ * handed to sched_add().
+ */
+int process_clone(process_t *child_out, process_t *parent,
+                  uint32_t flags, uint32_t child_stack,
+                  uint32_t parent_tidptr, uint32_t tls,
+                  uint32_t child_tidptr);
+
+/*
+ * process_clone_rollback: release resources acquired by process_clone() for a
+ * child descriptor that has not become runnable or must be removed before it
+ * can run.
+ */
+void process_clone_rollback(process_t *child);
 
 /*
  * process_close_all_fds: close every open fd in the process table entry.

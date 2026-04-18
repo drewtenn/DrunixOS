@@ -977,6 +977,52 @@ static void test_clone_rejects_thread_without_sighand(ktest_case_t *tc)
     stop_syscall_test_process(cur);
 }
 
+static void test_clone_thread_shares_group_and_selected_resources(ktest_case_t *tc)
+{
+    static process_t seed;
+    process_t *parent = start_syscall_test_process(&seed);
+    uint32_t flags = TEST_CLONE_VM | TEST_CLONE_FS | TEST_CLONE_FILES |
+                     TEST_CLONE_SIGHAND | TEST_CLONE_THREAD | SIGCHLD;
+    KTEST_ASSERT_NOT_NULL(tc, parent);
+
+    uint32_t tid = syscall_handler(SYS_CLONE, flags,
+                                   USER_STACK_TOP - 0x1000u,
+                                   0, 0, 0, 0);
+    KTEST_ASSERT_NE(tc, tid, (uint32_t)-1);
+
+    process_t *child = sched_find_pid(tid);
+    KTEST_ASSERT_NOT_NULL(tc, child);
+    KTEST_EXPECT_EQ(tc, child->tgid, parent->tgid);
+    KTEST_EXPECT_EQ(tc, child->group, parent->group);
+    KTEST_EXPECT_EQ(tc, child->as, parent->as);
+    KTEST_EXPECT_EQ(tc, child->files, parent->files);
+    KTEST_EXPECT_EQ(tc, child->fs_state, parent->fs_state);
+    KTEST_EXPECT_EQ(tc, child->sig_actions, parent->sig_actions);
+    KTEST_EXPECT_EQ(tc, parent->as->refs, 2u);
+
+    sched_init();
+}
+
+static void test_clone_process_without_vm_gets_distinct_group_and_as(ktest_case_t *tc)
+{
+    static process_t seed;
+    process_t *parent = start_syscall_test_process(&seed);
+    KTEST_ASSERT_NOT_NULL(tc, parent);
+
+    uint32_t tid = syscall_handler(SYS_CLONE, SIGCHLD,
+                                   USER_STACK_TOP - 0x1000u,
+                                   0, 0, 0, 0);
+    KTEST_ASSERT_NE(tc, tid, (uint32_t)-1);
+
+    process_t *child = sched_find_pid(tid);
+    KTEST_ASSERT_NOT_NULL(tc, child);
+    KTEST_EXPECT_EQ(tc, child->tgid, child->tid);
+    KTEST_EXPECT_NE(tc, child->group, parent->group);
+    KTEST_EXPECT_NE(tc, child->as, parent->as);
+
+    sched_init();
+}
+
 static void test_linux_syscalls_fill_uname_time_and_fstat64(ktest_case_t *tc)
 {
     static process_t seed;
@@ -1372,6 +1418,8 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_rt_sigaction_reads_resource_handlers),
     KTEST_CASE(test_clone_rejects_sighand_without_vm),
     KTEST_CASE(test_clone_rejects_thread_without_sighand),
+    KTEST_CASE(test_clone_thread_shares_group_and_selected_resources),
+    KTEST_CASE(test_clone_process_without_vm_gets_distinct_group_and_as),
     KTEST_CASE(test_linux_syscalls_fill_uname_time_and_fstat64),
     KTEST_CASE(test_linux_syscalls_support_busybox_identity_and_rt_sigmask),
     KTEST_CASE(test_linux_syscalls_support_busybox_stdio_helpers),
