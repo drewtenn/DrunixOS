@@ -22,10 +22,10 @@ static int blkdev_name_is_valid(const char *name)
 {
     uint32_t len;
 
-    if (!name || name[0] == '\0')
+    if (!name)
         return 0;
-    len = k_strlen(name);
-    return len < BLKDEV_NAME_MAX;
+    len = k_strnlen(name, BLKDEV_NAME_MAX);
+    return len != 0 && len < BLKDEV_NAME_MAX;
 }
 
 void blkdev_reset(void)
