@@ -622,39 +622,8 @@ int process_fork(process_t *child_out, process_t *parent)
 
 void process_close_all_fds(process_t *proc)
 {
-    if (!proc) return;
-
-    for (unsigned i = 0; i < MAX_FDS; i++) {
-        file_handle_t *fh = &proc->open_files[i];
-
-        if (fh->type == FD_TYPE_NONE)
-            continue;
-
-        if (fh->type == FD_TYPE_FILE && fh->writable)
-            vfs_flush(fh->u.file.ref);
-
-        if (fh->type == FD_TYPE_PIPE_READ) {
-            pipe_buf_t *pb = pipe_get((int)fh->u.pipe.pipe_idx);
-            if (pb) {
-                if (pb->read_open > 0) pb->read_open--;
-                sched_wake_all(&pb->waiters);
-                if (pb->read_open == 0 && pb->write_open == 0)
-                    pipe_free((int)fh->u.pipe.pipe_idx);
-            }
-        } else if (fh->type == FD_TYPE_PIPE_WRITE) {
-            pipe_buf_t *pb = pipe_get((int)fh->u.pipe.pipe_idx);
-            if (pb) {
-                if (pb->write_open > 0) pb->write_open--;
-                sched_wake_all(&pb->waiters);
-                if (pb->read_open == 0 && pb->write_open == 0)
-                    pipe_free((int)fh->u.pipe.pipe_idx);
-            }
-        }
-
-        fh->type = FD_TYPE_NONE;
-        fh->writable = 0;
-        fh->append = 0;
-    }
+    if (proc && proc->files)
+        proc_fd_table_close_all(proc->files);
 }
 
 void process_release_user_space(process_t *proc)
