@@ -112,6 +112,7 @@ void ktest_run_all(void) {
     run_and_tally(ktest_suite_fs(),      &total_pass, &total_fail);
     run_and_tally(ktest_suite_uaccess(), &total_pass, &total_fail);
     run_and_tally(ktest_suite_desktop(), &total_pass, &total_fail);
+    run_and_tally(ktest_suite_blkdev(),  &total_pass, &total_fail);
 
     klog_silent("KTEST", "=== kernel unit tests end ===");
 

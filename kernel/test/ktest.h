@@ -120,5 +120,6 @@ ktest_suite_t *ktest_suite_sched(void);
 ktest_suite_t *ktest_suite_fs(void);
 ktest_suite_t *ktest_suite_uaccess(void);
 ktest_suite_t *ktest_suite_desktop(void);
+ktest_suite_t *ktest_suite_blkdev(void);
 
 #endif /* KTEST_H */
