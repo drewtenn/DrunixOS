@@ -9,7 +9,7 @@
 /*
  * DUFS v2 filesystem tests.
  *
- * ATA and the "hd0" blkdev are initialized before ktest_run_all() runs, but
+ * ATA and the "sdb1" blkdev are initialized before ktest_run_all() runs, but
  * dufs_register() and vfs_mount() have not yet been called.  Each test calls
  * fs_init() on its own to load the superblock and bitmaps directly, then
  * exercises the public fs_* API.  Every test that creates a file unlinks it
@@ -25,7 +25,7 @@
 
 static int fs_test_init(void)
 {
-    if (dufs_use_device("hd1") != 0)
+    if (dufs_use_device("sdb1") != 0)
         return -1;
     return fs_init();
 }

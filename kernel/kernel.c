@@ -505,6 +505,12 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
 
     ata_init();
     ata_register();
+    int sda_idx = blkdev_find_index("sda");
+    int sdb_idx = blkdev_find_index("sdb");
+    if (sda_idx >= 0)
+        blkdev_scan_mbr((uint32_t)sda_idx);
+    if (sdb_idx >= 0)
+        blkdev_scan_mbr((uint32_t)sdb_idx);
     klog("ATA", "disk initialized");
 
     bcache_init();
