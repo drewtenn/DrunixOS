@@ -57,11 +57,27 @@ static void lru_push_front(bcache_slot_t *s)
     if (!g_lru_tail) g_lru_tail = s;
 }
 
+static void lru_push_back(bcache_slot_t *s)
+{
+    s->prev = g_lru_tail;
+    s->next = 0;
+    if (g_lru_tail) g_lru_tail->next = s;
+    g_lru_tail = s;
+    if (!g_lru_head) g_lru_head = s;
+}
+
 static void lru_touch(bcache_slot_t *s)
 {
     if (g_lru_head == s) return;
     lru_detach(s);
     lru_push_front(s);
+}
+
+static void lru_demote(bcache_slot_t *s)
+{
+    if (g_lru_tail == s) return;
+    lru_detach(s);
+    lru_push_back(s);
 }
 
 /* ── Slot lookup and disk I/O helpers ───────────────────────────────────── */
@@ -122,21 +138,39 @@ static bcache_slot_t *acquire_slot(const blkdev_ops_t *dev, uint32_t lba)
         return s;
     }
 
-    s = g_lru_tail;
-    if (s->valid) {
-        if (s->dirty) {
-            if (slot_writeback(s) != 0)
-                return 0;
+    /* Walk from the LRU tail toward the head looking for a usable victim.
+     * Invalid and clean slots reuse for free; dirty slots need a successful
+     * writeback. If writeback fails we'd otherwise leave a dirty slot pinned
+     * at the tail and repeat the same failing write on every subsequent
+     * miss — move it toward the head so the next candidate gets a turn. A
+     * later bcache_sync, invalidate, or remount can still retry it. */
+    bcache_slot_t *victim = 0;
+    bcache_slot_t *c = g_lru_tail;
+    while (c) {
+        bcache_slot_t *prev = c->prev;
+        if (!c->valid || !c->dirty) {
+            victim = c;
+            break;
         }
-        g_stats.evictions++;
+        if (slot_writeback(c) == 0) {
+            victim = c;
+            break;
+        }
+        lru_touch(c);
+        c = prev;
     }
+    if (!victim)
+        return 0;
 
-    s->dev   = dev;
-    s->lba   = lba;
-    s->valid = 0; /* caller must populate and set valid=1 */
-    s->dirty = 0;
-    lru_touch(s);
-    return s;
+    if (victim->valid)
+        g_stats.evictions++;
+
+    victim->dev   = dev;
+    victim->lba   = lba;
+    victim->valid = 0; /* caller must populate and set valid=1 */
+    victim->dirty = 0;
+    lru_touch(victim);
+    return victim;
 }
 
 /* ── Public API ─────────────────────────────────────────────────────────── */
@@ -175,6 +209,11 @@ int bcache_read(const blkdev_ops_t *dev, uint32_t lba, uint8_t *buf)
     if (disk_read_block(dev, lba, s->data) != 0) {
         s->dev = 0;
         s->valid = 0;
+        s->dirty = 0;
+        /* acquire_slot moved this to the head. A failed read leaves it empty
+         * but taking a prime cache slot — demote so the next miss reuses it
+         * before evicting live data. */
+        lru_demote(s);
         return -1;
     }
     s->valid = 1;
@@ -236,12 +275,7 @@ void bcache_invalidate(const blkdev_ops_t *dev, uint32_t lba)
     s->dirty = 0;
     s->dev = 0;
     /* Move to the eviction end so a future miss reuses it first. */
-    lru_detach(s);
-    s->prev = g_lru_tail;
-    s->next = 0;
-    if (g_lru_tail) g_lru_tail->next = s;
-    g_lru_tail = s;
-    if (!g_lru_head) g_lru_head = s;
+    lru_demote(s);
 }
 
 void bcache_get_stats(bcache_stats_t *out)

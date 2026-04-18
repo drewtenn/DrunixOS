@@ -359,6 +359,7 @@ static int ext3_can_mutate(void)
 
 static int ext3_tx_begin(void);
 static int ext3_tx_end(int rc);
+static int ext3_load_bg(void);
 
 static uint32_t ext3_dir_rec_len(uint32_t name_len)
 {
@@ -1913,7 +1914,8 @@ static int jbd_update_super(const ext3_inode_t *journal, uint32_t start,
     return rc;
 }
 
-static int jbd_write_transaction(const ext3_inode_t *journal, uint32_t seq)
+static int jbd_write_transaction(const ext3_inode_t *journal, uint32_t seq,
+                                 uint32_t maxlen)
 {
     uint8_t *desc;
     uint8_t *data;
@@ -1921,7 +1923,10 @@ static int jbd_write_transaction(const ext3_inode_t *journal, uint32_t seq)
 
     if (g_tx_count == 0)
         return 0;
-    if (g_tx_count + 2u >= (uint32_t)(journal->size / g_block_size))
+    /* Bound against the JBD superblock's s_maxlen — the inode size can round
+     * up past the journal's logical length on some mke2fs images, and writing
+     * beyond maxlen stomps whatever follows the journal on disk. */
+    if (maxlen < 3u || g_tx_count + 2u >= maxlen)
         return -1;
     if (12u + g_tx_count * 8u > g_block_size)
         return -1;
@@ -1991,6 +1996,7 @@ static int ext3_commit_tx(void)
     ext3_super_t recover_super;
     uint8_t *jsb;
     uint32_t seq;
+    uint32_t jmaxlen;
 
     if (g_tx_failed)
         return -1;
@@ -2019,7 +2025,10 @@ static int ext3_commit_tx(void)
     seq = be32(jsb + 24u);
     if (seq == 0)
         seq = 1u;
+    jmaxlen = be32(jsb + 16u);
     kfree(jsb);
+    if (jmaxlen == 0)
+        return -1;
 
     recover_super = g_tx_has_snapshot ? g_tx_super_before : g_super;
     recover_super.feature_incompat |= EXT3_FEATURE_INCOMPAT_RECOVER;
@@ -2031,7 +2040,7 @@ static int ext3_commit_tx(void)
         return -1;
     if (jbd_update_super(&journal, 1u, seq) != 0)
         return -1;
-    if (jbd_write_transaction(&journal, seq) != 0)
+    if (jbd_write_transaction(&journal, seq, jmaxlen) != 0)
         return -1;
     if (ext3_checkpoint_tx() != 0)
         return -1;
@@ -2073,9 +2082,25 @@ static int ext3_tx_end(int rc)
 
     if (rc == 0 || rc > 0)
         commit_rc = ext3_commit_tx();
-    if (commit_rc != 0)
+    if (commit_rc != 0) {
+        /* Commit may have stopped at any step: before the descriptor, between
+         * descriptor and commit record, mid-checkpoint, or after checkpoint
+         * but before the final RECOVER-clear. Disk state is handled by replay
+         * on the next mount, but in-memory g_super and g_bg have already
+         * absorbed the aborted tx's allocations/frees. Restore them from the
+         * snapshot (and reload g_bg from disk once the tx buffer is cleared)
+         * and force the FS read-only so subsequent calls surface the failure
+         * rather than proceeding from drifted free counts. */
+        if (g_tx_has_snapshot)
+            g_super = g_tx_super_before;
         rc = -1;
+    }
     ext3_tx_reset();
+    if (commit_rc != 0) {
+        (void)ext3_load_bg();
+        g_writable = 0;
+        klog("EXT3", "commit failed, filesystem forced read-only");
+    }
     return rc;
 }
 
