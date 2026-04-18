@@ -120,12 +120,17 @@ int blkdev_scan_mbr(uint32_t disk_index)
         uint32_t start = le32(ent + 8);
         uint32_t sectors = le32(ent + 12);
         char name[BLKDEV_NAME_MAX];
+        int name_len;
 
         if (type == 0 || sectors == 0)
             continue;
+        if (type == 0x05u || type == 0x0Fu)
+            continue;
         if (start >= disk.sectors || sectors > disk.sectors - start)
             continue;
-        k_snprintf(name, sizeof(name), "%s%u", disk.name, slot + 1u);
+        name_len = k_snprintf(name, sizeof(name), "%s%u", disk.name, slot + 1u);
+        if (name_len < 0 || (uint32_t)name_len >= sizeof(name))
+            continue;
         if (blkdev_register_part(name, disk_index, slot + 1u, start, sectors) == 0)
             registered++;
     }

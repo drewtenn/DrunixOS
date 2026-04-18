@@ -188,6 +188,116 @@ static void test_blkdev_scan_mbr_registers_primary_partition(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, info.sectors, 7u);
 }
 
+static void test_blkdev_scan_mbr_rejects_bad_signature(ktest_case_t *tc)
+{
+    int disk;
+
+    blkdev_reset();
+    k_memset(fake_disk, 0, sizeof(fake_disk));
+    fake_disk[0][510] = 0x00;
+    fake_disk[0][511] = 0xAA;
+    write_mbr_entry(fake_disk[0], 0u, 0x83u, 1u, 7u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)blkdev_register_disk("sda", 8u, 0u, 16u, &fake_ops), 0u);
+    disk = blkdev_find_index("sda");
+    KTEST_ASSERT_TRUE(tc, disk >= 0);
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)blkdev_scan_mbr((uint32_t)disk), 0u);
+    KTEST_EXPECT_EQ(tc, blkdev_count(), 1u);
+    KTEST_EXPECT_EQ(tc, blkdev_find_index("sda1"), -1);
+}
+
+static void test_blkdev_scan_mbr_skips_empty_slots_and_registers_valid_entries(ktest_case_t *tc)
+{
+    blkdev_info_t info;
+    int disk;
+
+    blkdev_reset();
+    k_memset(fake_disk, 0, sizeof(fake_disk));
+    fake_disk[0][510] = 0x55;
+    fake_disk[0][511] = 0xAA;
+    write_mbr_entry(fake_disk[0], 1u, 0x83u, 1u, 7u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)blkdev_register_disk("sda", 8u, 0u, 16u, &fake_ops), 0u);
+    disk = blkdev_find_index("sda");
+    KTEST_ASSERT_TRUE(tc, disk >= 0);
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)blkdev_scan_mbr((uint32_t)disk), 1u);
+    KTEST_EXPECT_EQ(tc, blkdev_count(), 2u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)blkdev_info_at(1u, &info), 0u);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(info.name, "sda2") == 0);
+    KTEST_EXPECT_EQ(tc, info.kind, BLKDEV_KIND_PART);
+    KTEST_EXPECT_EQ(tc, info.start_sector, 1u);
+    KTEST_EXPECT_EQ(tc, info.sectors, 7u);
+}
+
+static void test_blkdev_scan_mbr_skips_out_of_range_entries(ktest_case_t *tc)
+{
+    blkdev_info_t info;
+    int disk;
+
+    blkdev_reset();
+    k_memset(fake_disk, 0, sizeof(fake_disk));
+    fake_disk[0][510] = 0x55;
+    fake_disk[0][511] = 0xAA;
+    write_mbr_entry(fake_disk[0], 0u, 0x83u, 16u, 1u);
+    write_mbr_entry(fake_disk[0], 1u, 0x83u, 10u, 8u);
+    write_mbr_entry(fake_disk[0], 2u, 0x83u, 1u, 7u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)blkdev_register_disk("sda", 8u, 0u, 16u, &fake_ops), 0u);
+    disk = blkdev_find_index("sda");
+    KTEST_ASSERT_TRUE(tc, disk >= 0);
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)blkdev_scan_mbr((uint32_t)disk), 1u);
+    KTEST_EXPECT_EQ(tc, blkdev_count(), 2u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)blkdev_info_at(1u, &info), 0u);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(info.name, "sda3") == 0);
+    KTEST_EXPECT_EQ(tc, info.start_sector, 1u);
+    KTEST_EXPECT_EQ(tc, info.sectors, 7u);
+}
+
+static void test_blkdev_scan_mbr_skips_extended_partition_types(ktest_case_t *tc)
+{
+    blkdev_info_t info;
+    int disk;
+
+    blkdev_reset();
+    k_memset(fake_disk, 0, sizeof(fake_disk));
+    fake_disk[0][510] = 0x55;
+    fake_disk[0][511] = 0xAA;
+    write_mbr_entry(fake_disk[0], 0u, 0x05u, 1u, 7u);
+    write_mbr_entry(fake_disk[0], 1u, 0x0Fu, 1u, 7u);
+    write_mbr_entry(fake_disk[0], 2u, 0x83u, 2u, 6u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)blkdev_register_disk("sda", 8u, 0u, 16u, &fake_ops), 0u);
+    disk = blkdev_find_index("sda");
+    KTEST_ASSERT_TRUE(tc, disk >= 0);
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)blkdev_scan_mbr((uint32_t)disk), 1u);
+    KTEST_EXPECT_EQ(tc, blkdev_count(), 2u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)blkdev_info_at(1u, &info), 0u);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(info.name, "sda3") == 0);
+    KTEST_EXPECT_EQ(tc, info.start_sector, 2u);
+    KTEST_EXPECT_EQ(tc, info.sectors, 6u);
+}
+
+static void test_blkdev_scan_mbr_skips_truncated_partition_names(ktest_case_t *tc)
+{
+    blkdev_info_t info;
+    int disk;
+
+    blkdev_reset();
+    k_memset(fake_disk, 0, sizeof(fake_disk));
+    fake_disk[0][510] = 0x55;
+    fake_disk[0][511] = 0xAA;
+    write_mbr_entry(fake_disk[0], 0u, 0x83u, 1u, 7u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)blkdev_register_disk("abcdefghijk", 8u, 0u, 16u, &fake_ops), 0u);
+    disk = blkdev_find_index("abcdefghijk");
+    KTEST_ASSERT_TRUE(tc, disk >= 0);
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)blkdev_scan_mbr((uint32_t)disk), 0u);
+    KTEST_EXPECT_EQ(tc, blkdev_count(), 1u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)blkdev_info_at(0u, &info), 0u);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(info.name, "abcdefghijk") == 0);
+    KTEST_EXPECT_EQ(tc, blkdev_find_index("abcdefghijk1"), -1);
+}
+
 static ktest_case_t cases[] = {
     KTEST_CASE(test_blkdev_enumerates_disks),
     KTEST_CASE(test_blkdev_enforces_unique_disk_name_and_count),
@@ -196,6 +306,11 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_blkdev_register_and_partition_stub_inheritance),
     KTEST_CASE(test_blkdev_partition_translates_lba),
     KTEST_CASE(test_blkdev_scan_mbr_registers_primary_partition),
+    KTEST_CASE(test_blkdev_scan_mbr_rejects_bad_signature),
+    KTEST_CASE(test_blkdev_scan_mbr_skips_empty_slots_and_registers_valid_entries),
+    KTEST_CASE(test_blkdev_scan_mbr_skips_out_of_range_entries),
+    KTEST_CASE(test_blkdev_scan_mbr_skips_extended_partition_types),
+    KTEST_CASE(test_blkdev_scan_mbr_skips_truncated_partition_names),
 };
 
 static ktest_suite_t suite = KTEST_SUITE("blkdev", cases);
