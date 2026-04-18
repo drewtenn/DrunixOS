@@ -21,17 +21,17 @@ Linux defines signals using a standard numbering. We adopt the same numbers for 
 
 Every process can choose to handle or ignore each signal (except SIGKILL and SIGSTOP, which cannot be caught, blocked, or ignored). Our signal subsystem has four jobs: recording that a signal is pending, choosing the moment to deliver it, killing the process or handing control to its handler, and — for the stop/continue pair — suspending or resuming execution.
 
-### Signal State in the Process Descriptor
+### Signal State In Tasks And Thread Groups
 
-Each process tracks three signal-related fields in its descriptor:
+Signal state is split between task-local fields and resources that may be shared by a thread group:
 
 ```c
-uint32_t  sig_pending;           /* bitmask: bit N = signal N is pending */
-uint32_t  sig_blocked;           /* bitmask: bit N = signal N is masked  */
-uint32_t  sig_handlers[NSIG];    /* per-signal disposition               */
+uint32_t  sig_pending;           /* task-directed pending signals        */
+uint32_t  sig_blocked;           /* task-local signal mask               */
+uint32_t  sig_handlers[NSIG];    /* disposition table, shareable by clone */
 ```
 
-`NSIG` is 32 — the size of a `uint32_t` bitmask. Bit N in `sig_pending` means signal N has been sent to this process but not yet delivered. Bit N in `sig_blocked` means delivery of signal N is postponed until the bit is cleared.
+`NSIG` is 32 — the size of a `uint32_t` bitmask. Bit N in a task's `sig_pending` means signal N has been sent to that specific task but not yet delivered. Bit N in the thread group's process-directed pending mask means signal N was sent to the process identity, the TGID, rather than to a particular TID. Bit N in `sig_blocked` means delivery of signal N is postponed for the current task until the bit is cleared.
 
 Each entry in `sig_handlers` holds one of three values:
 
@@ -39,11 +39,11 @@ Each entry in `sig_handlers` holds one of three values:
 - `SIG_IGN` (1) — silently discard the signal.
 - Any other value — the virtual address of a user-space function with signature `void handler(int signum)`.
 
-Signal state is initialized to all-zero in `process_create` (no pending signals, nothing blocked, every disposition SIG_DFL). `process_fork` copies `sig_handlers` from the parent so installed handlers survive across `fork`, but clears `sig_pending` in the child — POSIX specifies that pending signals are not inherited.
+Signal state is initialized to all-zero in `process_create` (no pending signals, nothing blocked, every disposition SIG_DFL). `process_fork` copies `sig_handlers` from the parent so installed handlers survive across `fork`, but clears `sig_pending` in the child — POSIX specifies that pending signals are not inherited. `clone` with `CLONE_SIGHAND` shares the signal-disposition resource with the caller, while each task keeps its own signal mask and task-directed pending set.
 
 ### Sending a Signal
 
-`sched_send_signal(pid, signum)` is the universal signal-sending function. It locates the target process in the process table, sets the appropriate bit in `sig_pending`, and if the process is in the generic `PROC_BLOCKED` state it calls the same wakeup helper the rest of the scheduler uses, transitioning the process back to `PROC_READY` and clearing its wait-queue linkage or timeout. Setting `g_need_switch = 1` ensures the scheduler runs at the next opportunity. This is why a sleeping process woken by a signal returns from `SYS_SLEEP` early, with the number of remaining seconds as its return value.
+`sched_send_signal(pid, signum)` is the universal signal-sending function. If `pid` names a thread group, the signal becomes process-directed and is queued on the group; if it names an individual task, the signal is queued on that task. Waking uses the same helper as the rest of the scheduler, transitioning blocked tasks back to `PROC_READY` and clearing wait-queue linkage or timeout. Setting `g_need_switch = 1` ensures the scheduler runs at the next opportunity. This is why a sleeping process woken by a signal returns from `SYS_SLEEP` early, with the number of remaining seconds as its return value.
 
 Two signals receive special treatment inside `sched_send_signal`:
 
@@ -55,6 +55,8 @@ SIGKILL also receives special handling: if the target is stopped (`PROC_STOPPED`
 From the keyboard driver, Ctrl+C and Ctrl+Z now flow through the TTY layer rather than through a foreground heuristic. `tty_ctrl_c(0)` sends `SIGINT` to `tty0`'s foreground process group; `tty_ctrl_z(0)` sends `SIGTSTP` to that same group. While the shell owns the foreground TTY, those signals are delivered to the shell itself and its prompt-time handlers redraw the prompt. While a job owns the foreground TTY, the entire foreground process group receives the signal, including both sides of a pipeline.
 
 User programs send signals through `SYS_KILL` by passing either a positive PID or a negative process-group ID and a signal number. The call returns zero on success and −1 if the signal number is out of range.
+
+`SYS_EXIT_GROUP` terminates the current thread group. The scheduler marks the group as exiting, wakes group waiters, and causes every live task in that group to observe the group-exit state before it returns to user mode. Plain `SYS_EXIT` exits only the calling task; the group becomes waitable after the last task leaves.
 
 ### The Delivery Window
 
@@ -68,7 +70,7 @@ This is the only safe point for delivery because it is the only moment when the 
 
 Both `syscall_common` and `irq_common` call `sched_signal_check` immediately before their final restore-and-`iret` sequence. They pass the current stack pointer as an argument; `sched_signal_check` returns the stack pointer to use for the restore — unchanged if no signal is delivered, or adjusted to point at a newly built signal frame if one was pushed onto the user stack. The trampoline loads the returned value into ESP, then falls through to the same register-pop and `iret` it would have executed anyway. The signal delivery mechanism is therefore invisible to the rest of the trampoline — it sees only "here is the frame to restore."
 
-`sched_signal_check` computes `sig_pending & ~sig_blocked` to find deliverable signals. It picks the lowest-numbered one, clears its pending bit, and looks up the handler:
+`sched_signal_check` first checks task-directed pending bits and then the thread group's process-directed pending bits, always applying the current task's `sig_blocked` mask. It picks the lowest-numbered deliverable signal, clears the pending bit from its source, and looks up the handler:
 
 - **SIG_IGN**: nothing to do; returns unchanged `frame_esp`.
 - **SIG_DFL** and fatal: calls `sched_mark_signaled(signum, dumped_core)` to encode a signal-style wait status, then calls `schedule()` to switch immediately to the next READY process. The trampoline eventually restores some other process's register frame and `iret`s to it.

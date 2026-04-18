@@ -44,6 +44,8 @@ The implementation is intentionally narrow for now. `SYS_MMAP` accepts only anon
 
 `SYS_FORK` takes the opposite approach: it clones the calling process's register frame, FPU state, open-file table, and paging structures, but it shares the existing user frames copy-on-write rather than copying them eagerly. Parent and child resume at the same instruction; the parent's return value is the child's PID, and the child's return value is 0. Fork plus exec together form the classic Unix process-creation idiom that every shell relies on.
 
+`SYS_CLONE` exposes the Linux i386 `clone(2)` subset used by raw user-space threading. Drunix accepts `CLONE_VM`, `CLONE_FS`, `CLONE_FILES`, `CLONE_SIGHAND`, `CLONE_THREAD`, `CLONE_SETTLS`, `CLONE_PARENT_SETTID`, `CLONE_CHILD_SETTID`, and `CLONE_CHILD_CLEARTID`. `CLONE_SIGHAND` requires `CLONE_VM`, and `CLONE_THREAD` requires `CLONE_SIGHAND`. Namespace flags, ptrace events, `vfork` parent suspension, robust futex lists, futex wakeups for joins, and SMP behavior are intentionally outside this subset.
+
 `SYS_EXIT` stores the exit code in the process descriptor, marks the process `PROC_ZOMBIE`, and transfers to the scheduler. The zombie slot is kept alive until the parent calls `SYS_WAITPID` to collect the exit status, at which point the slot is freed.
 
 ### Syscall Reference
@@ -79,6 +81,7 @@ The complete syscall table:
 | 91 | `SYS_MUNMAP`        | Remove an anonymous mapping range |
 | 106| `SYS_STAT`          | Retrieve file or directory metadata |
 | 119| `SYS_SIGRETURN`     | Return from a user-space signal handler |
+| 120| `SYS_CLONE`         | Create a process-shaped child or thread-group task |
 | 125| `SYS_MPROTECT`      | Change protections on an anonymous mapping range |
 | 126| `SYS_SIGPROCMASK`   | Modify the signal blocking mask |
 | 132| `SYS_GETPGID`       | Return a process's process group |

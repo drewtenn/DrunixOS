@@ -2,7 +2,7 @@
 
 ## Project Summary
 
-Drunix is a 32-bit x86 hobby operating system that boots through GRUB2 with the Multiboot1 protocol and runs a freestanding C kernel. The kernel provides protected-mode interrupt handling, paging, a physical and heap allocator, ATA disk I/O, a DUFS filesystem, a mount-tree VFS with synthetic `/dev` and `/proc` namespaces, preemptive scheduling built around generic wait queues, signals, a TTY subsystem with job control, an ELF user-program loader, and per-process virtual-memory bookkeeping for demand-paged heaps, grow-down stacks, copy-on-write fork, and anonymous `mmap` regions. User programs can be written in C or in a small freestanding C++ subset backed by the repo-owned user runtime.
+Drunix is a 32-bit x86 hobby operating system that boots through GRUB2 with the Multiboot1 protocol and runs a freestanding C kernel. The kernel provides protected-mode interrupt handling, paging, a physical and heap allocator, ATA disk I/O, a DUFS filesystem, a mount-tree VFS with synthetic `/dev` and `/proc` namespaces, preemptive scheduling built around generic wait queues, Linux-style `clone` user threads, signals, a TTY subsystem with job control, an ELF user-program loader, and per-process virtual-memory bookkeeping for demand-paged heaps, grow-down stacks, copy-on-write fork, and anonymous `mmap` regions. User programs can be written in C or in a small freestanding C++ subset backed by the repo-owned user runtime.
 
 The normal boot path asks GRUB for a 1024x768x32 linear framebuffer and starts a simple GUI desktop. The boot shell is opened as the main desktop app inside that GUI shell, with keyboard input, PS/2 mouse pointer support, taskbar/menu launching, framebuffer text rendering, double-buffered flicker-free compositing with an overlay mouse cursor, and a VGA text-mode fallback when a suitable framebuffer is unavailable. The disk image includes a small mixed-language userland: the shell and `chello` exercise the C runtime path, while the utility programs exercise the C++ runtime path.
 
@@ -215,6 +215,8 @@ Halt-inducing and userland integration tests (all headless):
 - `make test-halt` verifies the double-fault path via a dedicated TSS
 - `make test-linux-abi` boots a static Linux/i386 ELF and checks syscall
   return values and errno-compatible negatives
+- `make test-threadtest` boots a raw `clone(2)` threading smoke test and
+  checks shared memory, TID writes, and clear-child-TID cleanup
 - `make test-busybox-compat` runs the unattended BusyBox compatibility suite
   and extracts the on-disk report
 - `make test-ext3-linux-compat` generates an ext3 root, validates it with
