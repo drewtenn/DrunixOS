@@ -206,6 +206,7 @@ static void vfs_lookup_ctx_clear(vfs_lookup_ctx_t *ctx)
     ctx->rel = 0;
 }
 
+/* Callers that keep the context after init must clear it, even on failure. */
 static int vfs_lookup_ctx_init(vfs_lookup_ctx_t *ctx, const char *path)
 {
     if (!ctx)
@@ -231,10 +232,14 @@ static int vfs_lookup_ctx_init(vfs_lookup_ctx_t *ctx, const char *path)
 static int vfs_mutation_lookup_ctx_init(vfs_lookup_ctx_t *ctx,
                                         const char *path)
 {
-    if (vfs_lookup_ctx_init(ctx, path) != 0)
+    if (vfs_lookup_ctx_init(ctx, path) != 0) {
+        vfs_lookup_ctx_clear(ctx);
         return -1;
-    if (ctx->norm[0] == '\0' || vfs_find_mount_exact(ctx->norm) >= 0)
+    }
+    if (ctx->norm[0] == '\0' || vfs_find_mount_exact(ctx->norm) >= 0) {
+        vfs_lookup_ctx_clear(ctx);
         return -1;
+    }
     return 0;
 }
 
