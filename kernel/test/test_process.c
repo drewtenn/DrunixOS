@@ -55,6 +55,12 @@ static uint32_t test_read_u32_le(const uint8_t *buf, uint32_t off)
            ((uint32_t)buf[off + 3] << 24);
 }
 
+static uint64_t test_read_u64_le(const uint8_t *buf, uint32_t off)
+{
+    return (uint64_t)test_read_u32_le(buf, off) |
+           ((uint64_t)test_read_u32_le(buf, off + 4u) << 32);
+}
+
 static void init_frame_proc(process_t *proc, uint32_t *kstack_words,
                             uint32_t entry, uint32_t user_stack)
 {
@@ -878,6 +884,7 @@ static void test_linux_syscalls_cover_blockdev_fd_path(ktest_case_t *tc)
     process_t *cur;
     uint8_t *page;
     int32_t fd;
+    int32_t fd_part;
     uint8_t *stat_base;
     uint8_t *fstat_base;
     uint8_t *poll_base;
@@ -916,6 +923,14 @@ static void test_linux_syscalls_cover_blockdev_fd_path(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, stat_mode, 0x00006124u);
     KTEST_EXPECT_TRUE(tc, stat_size != 0u);
     stat_ino = test_read_u32_le(stat_base, 88u);
+    KTEST_EXPECT_EQ(tc, test_read_u64_le(stat_base, 32u), 0x800u);
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_STATX, 0, 0x00800000u,
+                                    0, TEST_LINUX_STATX_BASIC_STATS,
+                                    0x00800180u, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc, test_read_u32_le(fstat_base, 0x80u), 0x8u);
+    KTEST_EXPECT_EQ(tc, test_read_u32_le(fstat_base, 0x84u), 0u);
 
     fd = (int32_t)syscall_handler(SYS_OPEN, 0x00800000u, 0u, 0, 0, 0, 0);
     KTEST_ASSERT_TRUE(tc, fd >= 0);
@@ -930,6 +945,31 @@ static void test_linux_syscalls_cover_blockdev_fd_path(ktest_case_t *tc)
     fstat_ino = test_read_u32_le(fstat_base, 88u);
     KTEST_EXPECT_EQ(tc, fstat_mode, stat_mode);
     KTEST_EXPECT_EQ(tc, fstat_ino, stat_ino);
+    KTEST_EXPECT_EQ(tc, test_read_u64_le(fstat_base, 32u), test_read_u64_le(stat_base, 32u));
+
+    k_strcpy((char *)page, "/dev/sda1");
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_STAT64, 0x00800000u,
+                                    0x00800100u, 0, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc, test_read_u64_le(stat_base, 32u), 0x801u);
+    fd_part = (int32_t)syscall_handler(SYS_OPEN, 0x00800000u, 0u, 0, 0, 0, 0);
+    KTEST_ASSERT_TRUE(tc, fd_part >= 0);
+    KTEST_EXPECT_EQ(tc, cur->open_files[(uint32_t)fd_part].type,
+                    (uint32_t)FD_TYPE_BLOCKDEV);
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_FSTAT64, (uint32_t)fd_part,
+                                    0x00800180u, 0, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc, test_read_u64_le(fstat_base, 32u), 0x801u);
+
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_STATX, 0, 0x00800000u,
+                                    0, TEST_LINUX_STATX_BASIC_STATS,
+                                    0x00800180u, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc, test_read_u32_le(fstat_base, 0x80u), 0x8u);
+    KTEST_EXPECT_EQ(tc, test_read_u32_le(fstat_base, 0x84u), 0x1u);
 
     ((uint32_t *)poll_base)[0] = (uint32_t)fd;
     ((uint32_t *)poll_base)[1] = TEST_LINUX_POLLIN;

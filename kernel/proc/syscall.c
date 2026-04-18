@@ -330,6 +330,8 @@ typedef struct {
     uint32_t nlink;
     uint32_t size;
     uint32_t mtime;
+    uint32_t rdev_major;
+    uint32_t rdev_minor;
     uint64_t ino;
 } linux_fd_stat_t;
 
@@ -374,6 +376,11 @@ static void linux_put_u64(uint8_t *buf, uint32_t off, uint64_t value)
     linux_put_u32(buf, off + 4u, (uint32_t)(value >> 32));
 }
 
+static uint64_t linux_encode_dev(uint32_t major, uint32_t minor)
+{
+    return ((uint64_t)major << 8) | (uint64_t)minor;
+}
+
 static void linux_copy_field(char *dst, uint32_t off, uint32_t len,
                              const char *src)
 {
@@ -393,6 +400,8 @@ static void linux_fill_stat64(uint8_t *st,
                               uint32_t nlink,
                               uint32_t size,
                               uint32_t mtime,
+                              uint32_t rdev_major,
+                              uint32_t rdev_minor,
                               uint64_t ino)
 {
     uint32_t blocks;
@@ -405,7 +414,7 @@ static void linux_fill_stat64(uint8_t *st,
     linux_put_u32(st, 20u, nlink);      /* st_nlink */
     linux_put_u32(st, 24u, 0u);         /* st_uid */
     linux_put_u32(st, 28u, 0u);         /* st_gid */
-    linux_put_u64(st, 32u, 1u);         /* st_rdev */
+    linux_put_u64(st, 32u, linux_encode_dev(rdev_major, rdev_minor));
     linux_put_u64(st, 44u, size);       /* st_size */
     linux_put_u32(st, 52u, 4096u);      /* st_blksize */
     linux_put_u64(st, 56u, blocks);     /* st_blocks */
@@ -442,7 +451,32 @@ static void linux_fill_statx(uint8_t *stx, const linux_fd_stat_t *meta)
     linux_fill_statx_timestamp(stx, 64u, meta->mtime);
     linux_fill_statx_timestamp(stx, 96u, meta->mtime);
     linux_fill_statx_timestamp(stx, 112u, meta->mtime);
+    linux_put_u32(stx, 128u, meta->rdev_major);      /* stx_rdev_major */
+    linux_put_u32(stx, 132u, meta->rdev_minor);      /* stx_rdev_minor */
     linux_put_u32(stx, 136u, 1u);                    /* stx_dev_major */
+    linux_put_u32(stx, 140u, 0u);                    /* stx_dev_minor */
+}
+
+static int linux_blockdev_identity(const char *name, uint64_t *ino,
+                                   uint32_t *major, uint32_t *minor)
+{
+    blkdev_info_t info;
+    int idx;
+
+    if (!name)
+        return -1;
+    idx = blkdev_find_index(name);
+    if (idx < 0)
+        return -1;
+    if (blkdev_info_at((uint32_t)idx, &info) != 0)
+        return -1;
+    if (ino)
+        *ino = 0x80000000u + (uint32_t)idx;
+    if (major)
+        *major = info.major;
+    if (minor)
+        *minor = info.minor;
+    return 0;
 }
 
 static int linux_fd_stat_metadata(process_t *cur, uint32_t fd,
@@ -454,6 +488,7 @@ static int linux_fd_stat_metadata(process_t *cur, uint32_t fd,
         return -1;
 
     fh = &cur->open_files[fd];
+    k_memset(meta, 0, sizeof(*meta));
     meta->nlink = 1;
     meta->size = 0;
     meta->mtime = clock_unix_time();
@@ -482,12 +517,10 @@ static int linux_fd_stat_metadata(process_t *cur, uint32_t fd,
         meta->mode = LINUX_S_IFCHR | 0600u;
         break;
     case FD_TYPE_BLOCKDEV: {
-        int idx = blkdev_find_index(fh->u.blockdev.name);
-
         meta->mode = LINUX_S_IFBLK | 0444u;
         meta->size = fh->u.blockdev.size;
-        if (idx >= 0)
-            meta->ino = 0x80000000u + (uint32_t)idx;
+        (void)linux_blockdev_identity(fh->u.blockdev.name, &meta->ino,
+                                      &meta->rdev_major, &meta->rdev_minor);
         break;
     }
     case FD_TYPE_PIPE_READ:
@@ -518,12 +551,11 @@ static void linux_metadata_from_vfs_stat(const vfs_stat_t *st,
     meta->ino = 1u;
 }
 
-static void linux_metadata_fix_blockdev_ino(const char *path,
-                                            const vfs_stat_t *st,
-                                            linux_fd_stat_t *meta)
+static void linux_metadata_fix_blockdev_identity(const char *path,
+                                                 const vfs_stat_t *st,
+                                                 linux_fd_stat_t *meta)
 {
     const char *base;
-    int idx;
 
     if (!path || !st || !meta || st->type != VFS_STAT_TYPE_BLOCKDEV)
         return;
@@ -533,9 +565,8 @@ static void linux_metadata_fix_blockdev_ino(const char *path,
     if (!base[0])
         return;
 
-    idx = blkdev_find_index(base);
-    if (idx >= 0)
-        meta->ino = 0x80000000u + (uint32_t)idx;
+    (void)linux_blockdev_identity(base, &meta->ino, &meta->rdev_major,
+                                  &meta->rdev_minor);
 }
 
 static int linux_path_stat_metadata(process_t *cur, uint32_t user_path,
@@ -547,6 +578,7 @@ static int linux_path_stat_metadata(process_t *cur, uint32_t user_path,
     if (!cur || !meta || user_path == 0)
         return -1;
 
+    k_memset(meta, 0, sizeof(*meta));
     rpath = (char *)kmalloc(4096);
     if (!rpath)
         return -1;
@@ -560,7 +592,7 @@ static int linux_path_stat_metadata(process_t *cur, uint32_t user_path,
     }
 
     linux_metadata_from_vfs_stat(&st, meta);
-    linux_metadata_fix_blockdev_ino(rpath, &st, meta);
+    linux_metadata_fix_blockdev_identity(rpath, &st, meta);
 
     kfree(rpath);
     return 0;
@@ -575,6 +607,7 @@ static int linux_path_lstat_metadata(process_t *cur, uint32_t user_path,
     if (!cur || !meta || user_path == 0)
         return -1;
 
+    k_memset(meta, 0, sizeof(*meta));
     rpath = (char *)kmalloc(4096);
     if (!rpath)
         return -1;
@@ -588,7 +621,7 @@ static int linux_path_lstat_metadata(process_t *cur, uint32_t user_path,
     }
 
     linux_metadata_from_vfs_stat(&st, meta);
-    linux_metadata_fix_blockdev_ino(rpath, &st, meta);
+    linux_metadata_fix_blockdev_identity(rpath, &st, meta);
 
     kfree(rpath);
     return 0;
@@ -606,6 +639,7 @@ static int linux_path_stat_metadata_at_flags(process_t *cur, uint32_t dirfd,
     if (!cur || !meta || user_path == 0)
         return -1;
 
+    k_memset(meta, 0, sizeof(*meta));
     raw = copy_user_string_alloc(cur, user_path, 4096);
     if (!raw)
         return -1;
@@ -642,7 +676,7 @@ static int linux_path_stat_metadata_at_flags(process_t *cur, uint32_t dirfd,
     }
 
     linux_metadata_from_vfs_stat(&st, meta);
-    linux_metadata_fix_blockdev_ino(rpath, &st, meta);
+    linux_metadata_fix_blockdev_identity(rpath, &st, meta);
 
     kfree(rpath);
     kfree(raw);
@@ -954,8 +988,9 @@ static uint32_t syscall_stat64_path_common(uint32_t user_path,
                     linux_path_stat_metadata(cur, user_path, &meta)) != 0)
         return (uint32_t)-1;
 
-    linux_fill_stat64(st64, meta.mode, meta.nlink, meta.size,
-                      meta.mtime, meta.ino);
+        linux_fill_stat64(st64, meta.mode, meta.nlink, meta.size,
+                          meta.mtime, meta.rdev_major, meta.rdev_minor,
+                          meta.ino);
     if (uaccess_copy_to_user(cur, user_stat, st64, sizeof(st64)) != 0)
         return (uint32_t)-1;
     return 0;
@@ -976,8 +1011,9 @@ static uint32_t syscall_fstat64(uint32_t fd, uint32_t user_stat)
         linux_fd_stat_metadata(cur, fd, &meta) != 0)
         return (uint32_t)-1;
 
-    linux_fill_stat64(st64, meta.mode, meta.nlink, meta.size,
-                      meta.mtime, meta.ino);
+        linux_fill_stat64(st64, meta.mode, meta.nlink, meta.size,
+                          meta.mtime, meta.rdev_major, meta.rdev_minor,
+                          meta.ino);
     if (uaccess_copy_to_user(cur, user_stat, st64, sizeof(st64)) != 0)
         return (uint32_t)-1;
     return 0;
@@ -3808,8 +3844,9 @@ static uint32_t SYSCALL_NOINLINE syscall_case_fstatat64(uint32_t eax, uint32_t e
                 return (uint32_t)-2;
         }
 
-        linux_fill_stat64(st64, meta.mode, meta.nlink, meta.size,
-                          meta.mtime, meta.ino);
+    linux_fill_stat64(st64, meta.mode, meta.nlink, meta.size,
+                      meta.mtime, meta.rdev_major, meta.rdev_minor,
+                      meta.ino);
         if (uaccess_copy_to_user(cur, edx, st64, sizeof(st64)) != 0)
             return (uint32_t)-1;
         return 0;
