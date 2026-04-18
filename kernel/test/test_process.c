@@ -4,6 +4,7 @@
  */
 
 #include "ktest.h"
+#include "blkdev.h"
 #include "core.h"
 #include "elf.h"
 #include "fs.h"
@@ -894,11 +895,16 @@ static void test_linux_syscalls_cover_blockdev_fd_path(ktest_case_t *tc)
     uint32_t stat_size;
     uint32_t fstat_mode;
     uint32_t fstat_ino;
+    const blkdev_ops_t *sda_ops;
+    uint8_t sector1[BLKDEV_SECTOR_SIZE];
 
     vfs_reset();
     dufs_register();
     KTEST_ASSERT_EQ(tc, (uint32_t)vfs_mount("/", "dufs"), 0u);
     KTEST_ASSERT_EQ(tc, (uint32_t)vfs_mount("/dev", "devfs"), 0u);
+    sda_ops = blkdev_get("sda");
+    KTEST_ASSERT_NOT_NULL(tc, sda_ops);
+    KTEST_ASSERT_EQ(tc, (uint32_t)sda_ops->read_sector(1u, sector1), 0u);
 
     cur = start_syscall_test_process(&seed);
     KTEST_ASSERT_NOT_NULL(tc, cur);
@@ -986,6 +992,15 @@ static void test_linux_syscalls_cover_blockdev_fd_path(ktest_case_t *tc)
                     513u);
     KTEST_EXPECT_EQ(tc, read_base[510u], 0x55u);
     KTEST_EXPECT_EQ(tc, read_base[511u], 0xAAu);
+    KTEST_EXPECT_EQ(tc, read_base[512u], sector1[0]);
+    KTEST_EXPECT_EQ(tc, cur->open_files[(uint32_t)fd].u.blockdev.offset, 513u);
+    read_base[0] = 0xEEu;
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_READ, (uint32_t)fd, 0x00800300u,
+                                    1u, 0, 0, 0),
+                    1u);
+    KTEST_EXPECT_EQ(tc, read_base[0], sector1[1]);
+    KTEST_EXPECT_EQ(tc, cur->open_files[(uint32_t)fd].u.blockdev.offset, 514u);
 
     KTEST_EXPECT_EQ(tc,
                     syscall_handler(SYS_WRITE, (uint32_t)fd, 0x00800100u,
