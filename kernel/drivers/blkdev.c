@@ -133,6 +133,14 @@ uint32_t blkdev_count(void)
     return count;
 }
 
+int blkdev_info_for_index(uint32_t index, blkdev_info_t *out)
+{
+    if (!out || index >= BLKDEV_MAX || blkdev_table[index].info.name[0] == '\0')
+        return -1;
+    *out = blkdev_table[index].info;
+    return 0;
+}
+
 int blkdev_info_at(uint32_t index, blkdev_info_t *out)
 {
     uint32_t seen = 0;

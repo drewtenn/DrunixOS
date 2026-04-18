@@ -21,7 +21,7 @@ static int part_translate(uint32_t part_index, uint32_t lba, blkdev_info_t *info
 {
     blkdev_info_t info;
 
-    if (blkdev_info_at(part_index, &info) != 0 ||
+    if (blkdev_info_for_index(part_index, &info) != 0 ||
         info.kind != BLKDEV_KIND_PART ||
         lba >= info.sectors)
         return -1;
@@ -106,7 +106,7 @@ int blkdev_scan_mbr(uint32_t disk_index)
     uint8_t mbr[BLKDEV_SECTOR_SIZE];
     int registered = 0;
 
-    if (blkdev_info_at(disk_index, &disk) != 0 || disk.kind != BLKDEV_KIND_DISK)
+    if (blkdev_info_for_index(disk_index, &disk) != 0 || disk.kind != BLKDEV_KIND_DISK)
         return -1;
     ops = blkdev_ops_at(disk_index);
     if (!ops || ops->read_sector(0, mbr) != 0)

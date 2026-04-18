@@ -144,6 +144,7 @@ static void test_blkdev_register_and_partition_stub_inheritance(ktest_case_t *tc
 static void test_blkdev_partition_translates_lba(ktest_case_t *tc)
 {
     uint8_t buf[BLKDEV_SECTOR_SIZE];
+    uint8_t write_buf[BLKDEV_SECTOR_SIZE];
     int disk;
 
     blkdev_reset();
@@ -156,6 +157,13 @@ static void test_blkdev_partition_translates_lba(ktest_case_t *tc)
     KTEST_ASSERT_EQ(tc, (uint32_t)blkdev_get("sda1")->read_sector(2u, buf), 0u);
     KTEST_EXPECT_EQ(tc, last_read_lba, 6u);
     KTEST_EXPECT_TRUE(tc, blkdev_get("sda1")->read_sector(8u, buf) < 0);
+
+    for (uint32_t i = 0; i < BLKDEV_SECTOR_SIZE; i++)
+        write_buf[i] = (uint8_t)(i & 0xFFu);
+    KTEST_ASSERT_EQ(tc, (uint32_t)blkdev_get("sda1")->write_sector(3u, write_buf), 0u);
+    KTEST_EXPECT_EQ(tc, last_write_lba, 7u);
+    KTEST_EXPECT_EQ(tc, (uint32_t)k_memcmp(fake_disk[7], write_buf, BLKDEV_SECTOR_SIZE), 0u);
+    KTEST_EXPECT_TRUE(tc, blkdev_get("sda1")->write_sector(8u, write_buf) < 0);
 }
 
 static void test_blkdev_scan_mbr_registers_primary_partition(ktest_case_t *tc)

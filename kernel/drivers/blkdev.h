@@ -45,6 +45,7 @@ const blkdev_ops_t *blkdev_get(const char *name);
 const blkdev_ops_t *blkdev_ops_at(uint32_t index);
 uint32_t blkdev_count(void);
 int blkdev_info_at(uint32_t index, blkdev_info_t *out);
+int blkdev_info_for_index(uint32_t index, blkdev_info_t *out);
 int blkdev_find_index(const char *name);
 
 #endif
