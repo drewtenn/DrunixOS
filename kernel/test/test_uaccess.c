@@ -775,6 +775,101 @@ static void test_process_fork_child_gets_fresh_task_group_slot(ktest_case_t *tc)
     sched_init();
 }
 
+/*
+ * End-to-end regression for the abacc35 fork/execve interaction: after
+ * fork() clears the child's tid/tgid/group and sched_add() assigns a fresh
+ * task group, the execve guard at syscall.c's SYS_EXECVE dispatch
+ *   (cur->group && task_group_live_count(cur->group) > 1)
+ * must return false for the child. Before the fix the child inherited the
+ * parent's group pointer, so at fork+sched_add time the parent's group
+ * had live_tasks == 2 and execve was rejected. This test mirrors the shell
+ * path: add the parent to the scheduler, fork, add the child, and verify
+ * both sides independently pass the guard.
+ */
+static void test_process_fork_then_sched_add_child_clears_exec_guard(ktest_case_t *tc)
+{
+    static process_t parent;
+    static process_t child;
+    static uint32_t parent_kstack_words[64];
+    process_t *parent_slot;
+    process_t *child_slot;
+    uint32_t parent_pd;
+    uint32_t child_pd;
+
+    sched_init();
+    if (init_fork_test_proc(&parent, parent_kstack_words, 64u) != 0) {
+        KTEST_EXPECT_TRUE(tc, 0);
+        return;
+    }
+    /* Skip initial-frame construction; this test never context-switches. */
+    parent.saved_esp = 1;
+
+    if (sched_add(&parent) < 1) {
+        KTEST_EXPECT_TRUE(tc, 0);
+        destroy_test_proc(&parent);
+        sched_init();
+        return;
+    }
+    parent_slot = sched_find_pid(parent.pid);
+    KTEST_ASSERT_NOT_NULL(tc, parent_slot);
+    KTEST_ASSERT_NOT_NULL(tc, parent_slot->group);
+    KTEST_EXPECT_EQ(tc, task_group_live_count(parent_slot->group), 1u);
+
+    k_memset(&child, 0, sizeof(child));
+    if (process_fork(&child, parent_slot) != 0) {
+        KTEST_EXPECT_TRUE(tc, 0);
+        sched_force_remove_task(parent.pid);
+        destroy_test_proc(&parent);
+        sched_init();
+        return;
+    }
+
+    KTEST_EXPECT_NULL(tc, child.group);
+
+    if (sched_add(&child) < 1) {
+        KTEST_EXPECT_TRUE(tc, 0);
+        destroy_forked_child(&child);
+        sched_force_remove_task(parent.pid);
+        destroy_test_proc(&parent);
+        sched_init();
+        return;
+    }
+    child_slot = sched_find_pid(child.pid);
+    KTEST_ASSERT_NOT_NULL(tc, child_slot);
+    KTEST_ASSERT_NOT_NULL(tc, child_slot->group);
+
+    /* The fix: child must land in its own task group, not the parent's. */
+    KTEST_EXPECT_TRUE(tc, child_slot->group != parent_slot->group);
+    KTEST_EXPECT_EQ(tc, task_group_live_count(child_slot->group), 1u);
+    KTEST_EXPECT_EQ(tc, task_group_live_count(parent_slot->group), 1u);
+
+    /* Simulate the SYS_EXECVE guard for both tasks — neither must trip it. */
+    KTEST_EXPECT_TRUE(tc,
+                      !(child_slot->group &&
+                        task_group_live_count(child_slot->group) > 1u));
+    KTEST_EXPECT_TRUE(tc,
+                      !(parent_slot->group &&
+                        task_group_live_count(parent_slot->group) > 1u));
+
+    /* sched_force_remove_task does not release pd_phys (there is no
+     * address-space struct in this test harness), so capture and free it
+     * manually to avoid leaking physical pages across test cases. */
+    child_pd = child_slot->pd_phys;
+    parent_pd = parent_slot->pd_phys;
+    child_slot->pd_phys = 0;
+    parent_slot->pd_phys = 0;
+
+    sched_force_remove_task(child.pid);
+    sched_force_remove_task(parent.pid);
+
+    child.pd_phys = child_pd;
+    parent.pd_phys = parent_pd;
+    child.kstack_bottom = 0; /* already freed by sched_force_remove_task */
+    process_release_user_space(&child);
+    destroy_test_proc(&parent);
+    sched_init();
+}
+
 static void test_repeated_fork_exec_cleanup_preserves_parent_refs(ktest_case_t *tc)
 {
     static process_t parent;
@@ -1088,6 +1183,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_process_fork_child_survives_parent_exit_and_reuses_last_cow_ref),
     KTEST_CASE(test_process_fork_child_stack_growth_is_private),
     KTEST_CASE(test_process_fork_child_gets_fresh_task_group_slot),
+    KTEST_CASE(test_process_fork_then_sched_add_child_clears_exec_guard),
     KTEST_CASE(test_repeated_fork_exec_cleanup_preserves_parent_refs),
     KTEST_CASE(test_copy_to_user_handles_three_way_cow_sharing),
     KTEST_CASE(test_process_fork_rolls_back_when_kstack_alloc_fails),

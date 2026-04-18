@@ -8,6 +8,7 @@
 #include "core.h"
 #include "elf.h"
 #include "fs.h"
+#include "kheap.h"
 #include "process.h"
 #include "resources.h"
 #include "sched.h"
@@ -908,6 +909,62 @@ static void test_process_resource_get_put_tracks_refs(ktest_case_t *tc)
     stop_syscall_test_process(cur);
 }
 
+static void test_proc_resource_put_exec_owner_releases_solo_owner(ktest_case_t *tc)
+{
+    /*
+     * Single-owner execve path: every resource struct has refs == 1, so
+     * put_exec_owner() must drop them all to zero, kfree the structs, and
+     * NULL the pointers. If a future refactor reintroduces the pre-abacc35
+     * exec leak (silently overwriting the fields without dropping refs),
+     * this test fails immediately.
+     */
+    static process_t proc;
+
+    k_memset(&proc, 0, sizeof(proc));
+    KTEST_ASSERT_EQ(tc, (uint32_t)proc_resource_init_fresh(&proc), 0u);
+    KTEST_ASSERT_NOT_NULL(tc, proc.as);
+    KTEST_ASSERT_NOT_NULL(tc, proc.files);
+    KTEST_ASSERT_NOT_NULL(tc, proc.fs_state);
+    KTEST_ASSERT_NOT_NULL(tc, proc.sig_actions);
+    KTEST_EXPECT_EQ(tc, proc.as->refs, 1u);
+    KTEST_EXPECT_EQ(tc, proc.files->refs, 1u);
+    KTEST_EXPECT_EQ(tc, proc.fs_state->refs, 1u);
+    KTEST_EXPECT_EQ(tc, proc.sig_actions->refs, 1u);
+
+    proc_resource_put_exec_owner(&proc);
+
+    KTEST_EXPECT_NULL(tc, proc.as);
+    KTEST_EXPECT_NULL(tc, proc.files);
+    KTEST_EXPECT_NULL(tc, proc.fs_state);
+    KTEST_EXPECT_NULL(tc, proc.sig_actions);
+}
+
+static void test_repeated_exec_owner_put_preserves_heap(ktest_case_t *tc)
+{
+    /*
+     * Regression guard for the execve refcount leak: repeat the
+     * init_fresh -> put_exec_owner cycle many times and verify the kernel
+     * heap returns to at least its starting free-byte count. Before the
+     * fix, each execve silently leaked four proc_*_t structs, so this loop
+     * would bleed ~128 bytes per iteration and the final kheap_free_bytes()
+     * would be lower than free_before.
+     */
+    static process_t proc;
+    uint32_t free_before = kheap_free_bytes();
+
+    for (uint32_t i = 0; i < 64u; i++) {
+        k_memset(&proc, 0, sizeof(proc));
+        KTEST_ASSERT_EQ(tc, (uint32_t)proc_resource_init_fresh(&proc), 0u);
+        proc_resource_put_exec_owner(&proc);
+        KTEST_EXPECT_NULL(tc, proc.as);
+        KTEST_EXPECT_NULL(tc, proc.files);
+        KTEST_EXPECT_NULL(tc, proc.fs_state);
+        KTEST_EXPECT_NULL(tc, proc.sig_actions);
+    }
+
+    KTEST_EXPECT_GE(tc, kheap_free_bytes(), free_before);
+}
+
 static void test_syscall_fstat_reads_resource_fd_table(ktest_case_t *tc)
 {
     static process_t proc;
@@ -1691,6 +1748,8 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_mem_forensics_counts_present_heap_pages),
     KTEST_CASE(test_process_resources_start_with_single_refs),
     KTEST_CASE(test_process_resource_get_put_tracks_refs),
+    KTEST_CASE(test_proc_resource_put_exec_owner_releases_solo_owner),
+    KTEST_CASE(test_repeated_exec_owner_put_preserves_heap),
     KTEST_CASE(test_syscall_fstat_reads_resource_fd_table),
     KTEST_CASE(test_syscall_getcwd_reads_resource_fs_state),
     KTEST_CASE(test_syscall_chdir_updates_resource_fs_state),

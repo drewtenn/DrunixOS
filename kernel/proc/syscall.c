@@ -69,6 +69,16 @@ static void kcwd_resolve(const char *cwd, const char *name,
         k_snprintf(out, (uint32_t)outsz, "%s/%s", cwd, name); /* prepend cwd */
 }
 
+/*
+ * cwd accessors: route reads/writes through fs_state when present, otherwise
+ * fall back to the inline proc->cwd buffer (used by early boot processes
+ * created before fs_state was allocated, and by the test harness).
+ *
+ * The null-proc sentinel differs by form: the const reader returns "" so
+ * callers can safely pass it to k_snprintf/format strings without a null
+ * check; the mutable form returns 0 because there is no safe buffer to hand
+ * back — callers must check before writing.
+ */
 static const char *syscall_process_cwd(const process_t *proc)
 {
     if (!proc)

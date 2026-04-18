@@ -131,11 +131,12 @@ void pmm_init(multiboot_info_t *mbi) {
     /* Page directory + 32 page tables (1 + 32 = 33 pages) */
     pmm_mark_used(0x00011000, 0x21000);
 
-    /* Kernel heap (0x32000–0x8FFFF); 0x90000–0xFFFFF is unused low RAM.
-     * The boot kernel stack is a 16 KB BSS region inside the kernel image
-     * and is already covered by the kernel-image reservation below.  Kept
-     * explicit for documentation even though the first-MiB reservation
-     * above already pins these pages. */
+    /* Kernel heap (HEAP_START..HEAP_END, currently 0x32000–0x9EFFF, see
+     * kheap.h); 0x9F000–0xFFFFF is unused low RAM that stops below the VGA
+     * hole at 0xA0000. The boot kernel stack is a 16 KB BSS region inside
+     * the kernel image and is already covered by the kernel-image
+     * reservation below. Kept explicit for documentation even though the
+     * first-MiB reservation above already pins these pages. */
     pmm_mark_used(0x00032000, 0x000CE000);  /* 0x32000 – 0xFFFFF */
 
     /* VGA/ROM hole */

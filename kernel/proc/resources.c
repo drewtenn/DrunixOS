@@ -273,6 +273,34 @@ void proc_resource_put_all(process_t *proc)
     }
 }
 
+/*
+ * execve resource release helpers.
+ *
+ * syscall_execve() builds a brand-new process_t for the replacement image and
+ * then must drop the outgoing process's per-process resources before
+ * sched_exec_current() swaps the two descriptors. We split the drop so the
+ * outgoing page directory and kernel stack stay mapped until
+ * process_exec_cleanup() runs under the new descriptor:
+ *
+ *   proc_resource_put_exec_nonfiles()
+ *     Drops the address-space, fs-state, and sig-actions refs only. It does
+ *     NOT call process_release_user_space(), because exec_cur->pd_phys and
+ *     exec_cur->kstack_bottom must still be valid when we pass them into
+ *     process_build_exec_frame() / sched_exec_current(). The user-space pages
+ *     get freed later by process_exec_cleanup(), which runs on the NEW
+ *     kernel stack after the switch.
+ *
+ *   proc_resource_put_exec_owner()
+ *     Also drops the fd table. Pipe refcounts balance out across exec:
+ *     process_create_file() inherits the fd table and bumps pipe refs +1 per
+ *     open pipe end, and the proc_fd_table_close_all() inside this helper
+ *     balances them -1.
+ *
+ * In the normal exec path every ref count starts at 1 (the outgoing process
+ * is the sole owner of its resources), so these puts are effectively free
+ * paths — but the refs>0 guards keep them safe if a future CLONE_VM thread
+ * ever reaches execve with shared resources.
+ */
 void proc_resource_put_exec_nonfiles(process_t *proc)
 {
     if (!proc)
