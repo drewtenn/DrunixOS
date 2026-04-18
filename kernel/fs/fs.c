@@ -23,9 +23,9 @@ typedef struct {
     uint8_t             block_bitmap[4096];  /* 32,768 block bits */
 } dufs_mount_t;
 
-static dufs_mount_t g_dufs_hd0 = { .blkdev_name = "hd0" };
-static dufs_mount_t g_dufs_hd1 = { .blkdev_name = "hd1" };
-static dufs_mount_t *g_dufs = &g_dufs_hd0;
+static dufs_mount_t g_dufs_sda1 = { .blkdev_name = "sda1" };
+static dufs_mount_t g_dufs_sdb1 = { .blkdev_name = "sdb1" };
+static dufs_mount_t *g_dufs = &g_dufs_sda1;
 
 #define g_blkdev       (g_dufs->blkdev)
 #define g_super        (g_dufs->super)
@@ -42,12 +42,12 @@ int dufs_use_device(const char *blkdev_name)
 {
     if (!blkdev_name)
         return -1;
-    if (k_strcmp(blkdev_name, "hd0") == 0) {
-        dufs_select(&g_dufs_hd0);
+    if (k_strcmp(blkdev_name, "sda1") == 0) {
+        dufs_select(&g_dufs_sda1);
         return 0;
     }
-    if (k_strcmp(blkdev_name, "hd1") == 0) {
-        dufs_select(&g_dufs_hd1);
+    if (k_strcmp(blkdev_name, "sdb1") == 0) {
+        dufs_select(&g_dufs_sdb1);
         return 0;
     }
     return -1;
@@ -770,7 +770,7 @@ static void zero_inode(dufs_inode_t *inode)
 int fs_init(void)
 {
     if (!g_dufs)
-        dufs_select(&g_dufs_hd0);
+        dufs_select(&g_dufs_sda1);
 
     g_blkdev = blkdev_get(g_dufs->blkdev_name);
     if (!g_blkdev) return -1;
@@ -1445,7 +1445,7 @@ int fs_lstat(const char *path, vfs_stat_t *st)
 
 static dufs_mount_t *dufs_mount_from_ctx(void *ctx)
 {
-    return ctx ? (dufs_mount_t *)ctx : &g_dufs_hd0;
+    return ctx ? (dufs_mount_t *)ctx : &g_dufs_sda1;
 }
 
 static int dufs_vfs_init(void *ctx)
@@ -1558,8 +1558,8 @@ static int dufs_vfs_flush(void *ctx, uint32_t inode_num)
     return fs_flush_inode(inode_num);
 }
 
-static const fs_ops_t dufs_hd0_ops = {
-    .ctx      = &g_dufs_hd0,
+static const fs_ops_t dufs_sda1_ops = {
+    .ctx      = &g_dufs_sda1,
     .init     = dufs_vfs_init,
     .open     = dufs_vfs_open,
     .getdents = dufs_vfs_list,
@@ -1579,8 +1579,8 @@ static const fs_ops_t dufs_hd0_ops = {
     .flush    = dufs_vfs_flush,
 };
 
-static const fs_ops_t dufs_hd1_ops = {
-    .ctx      = &g_dufs_hd1,
+static const fs_ops_t dufs_sdb1_ops = {
+    .ctx      = &g_dufs_sdb1,
     .init     = dufs_vfs_init,
     .open     = dufs_vfs_open,
     .getdents = dufs_vfs_list,
@@ -1607,13 +1607,13 @@ static const fs_ops_t dufs_hd1_ops = {
 void dufs_register(void) {
     /*
      * Bind the "dufs" VFS type to whichever ATA disk actually holds a DUFS
-     * filesystem.  Under ROOT_FS=dufs, hd0 is DUFS and is the root disk;
-     * under ROOT_FS=ext3, hd0 is ext3 and the DUFS scratch image lives on
-     * hd1.  We only register the disk that is genuinely DUFS so the VFS
+     * filesystem.  Under ROOT_FS=dufs, sda1 is DUFS and is the root disk;
+     * under ROOT_FS=ext3, sda1 is ext3 and the DUFS scratch image lives on
+     * sdb1.  We only register the disk that is genuinely DUFS so the VFS
      * name never lies about what's on the platter.
      */
     const fs_ops_t *ops = (k_strcmp(DRUNIX_ROOT_FS, "dufs") == 0)
-                              ? &dufs_hd0_ops
-                              : &dufs_hd1_ops;
+                              ? &dufs_sda1_ops
+                              : &dufs_sdb1_ops;
     vfs_register("dufs", ops);
 }

@@ -39,6 +39,11 @@ static int mem_eq(const uint8_t *a, const uint8_t *b, uint32_t n)
 
 /* ── Test cases ─────────────────────────────────────────────────────────── */
 
+static void test_fs_use_device_sdb1(ktest_case_t *tc)
+{
+    KTEST_EXPECT_EQ(tc, (uint32_t)dufs_use_device("sdb1"), 0u);
+}
+
 static void test_fs_init_ok(ktest_case_t *tc)
 {
     int rc = fs_test_init();
@@ -243,6 +248,7 @@ static void test_fs_create_in_subdir(ktest_case_t *tc)
 /* ── Suite ──────────────────────────────────────────────────────────────── */
 
 static ktest_case_t cases[] = {
+    KTEST_CASE(test_fs_use_device_sdb1),
     KTEST_CASE(test_fs_init_ok),
     KTEST_CASE(test_fs_create_and_unlink),
     KTEST_CASE(test_fs_write_and_readback),
