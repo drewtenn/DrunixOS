@@ -892,6 +892,10 @@ static void test_linux_syscalls_support_busybox_identity_and_rt_sigmask(ktest_ca
     KTEST_EXPECT_EQ(tc,
                     syscall_handler(SYS_SETUID32, 0, 0, 0, 0, 0, 0),
                     0u);
+    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_GETPID, 0, 0, 0, 0, 0, 0),
+                    cur->tgid);
+    KTEST_EXPECT_EQ(tc, syscall_handler(SYS_GETTID, 0, 0, 0, 0, 0, 0),
+                    cur->tid);
 
     page[0x100] = (uint8_t)(1u << 2);  /* block signal 2 */
     page[0x101] = 0;

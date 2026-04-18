@@ -4704,7 +4704,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_getpid(uint32_t eax, uint32_t ebx,
                               uint32_t edx, uint32_t esi,
                               uint32_t edi, uint32_t ebp)
 {
-        return sched_current_pid();
+        return sched_current_tgid();
 }
 
 static uint32_t SYSCALL_NOINLINE syscall_case_gettid(uint32_t eax, uint32_t ebx,
@@ -4712,7 +4712,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_gettid(uint32_t eax, uint32_t ebx,
                               uint32_t edx, uint32_t esi,
                               uint32_t edi, uint32_t ebp)
 {
-        return sched_current_pid();
+        return sched_current_tid();
 }
 
 static uint32_t SYSCALL_NOINLINE syscall_case_getppid(uint32_t eax, uint32_t ebx,

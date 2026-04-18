@@ -212,8 +212,13 @@ static void sched_reap(process_t *zombie)
     sched_wait_queue_init(&zombie->state_waiters);
     process_release_user_space(zombie);
     process_release_kstack(zombie);
+    task_group_remove_task(zombie->group);
+    task_group_put(zombie->group);
+    zombie->group = 0;
     zombie->state = PROC_UNUSED;
     zombie->pid = 0;
+    zombie->tid = 0;
+    zombie->tgid = 0;
 }
 
 /* ── Public API ─────────────────────────────────────────────────────────── */
@@ -222,6 +227,7 @@ void sched_init(void)
 {
     for (int i = 0; i < MAX_PROCS; i++)
         proc_table[i].state = PROC_UNUSED;
+    task_group_table_init();
     g_current     = 0;
     g_need_switch = 0;
     g_next_pid    = 1;
@@ -245,11 +251,30 @@ int sched_add(process_t *proc)
     /* Find a free slot. Zombie slots are reaped by the waiter in waitpid(). */
     for (int i = 0; i < MAX_PROCS; i++) {
         if (proc_table[i].state == PROC_UNUSED) {
-            proc->pid   = g_next_pid++;
+            proc->tid = g_next_pid++;
+            proc->pid = proc->tid;
+            if (proc->tgid == 0)
+                proc->tgid = proc->tid;
+            if (proc->pgid == 0)
+                proc->pgid = proc->tgid;
+            if (proc->sid == 0)
+                proc->sid = proc->tgid;
+            if (!proc->group) {
+                proc->group = task_group_create(proc->tgid, proc->tid,
+                                                proc->parent_pid,
+                                                proc->pgid, proc->sid,
+                                                proc->tty_id, SIGCHLD);
+                if (!proc->group)
+                    return -1;
+            } else {
+                task_group_get(proc->group);
+                proc->tgid = task_group_tgid(proc->group);
+                proc->pgid = proc->group->pgid;
+                proc->sid = proc->group->sid;
+                proc->tty_id = proc->group->tty_id;
+            }
+            task_group_add_task(proc->group);
             proc->state = PROC_READY;
-            /* If pgid/sid were not set by the caller, default to own pid. */
-            if (proc->pgid == 0) proc->pgid = proc->pid;
-            if (proc->sid  == 0) proc->sid  = proc->pid;
             proc_table[i] = *proc;
 
             /* Build the initial kernel stack frame for a new (non-forked)
@@ -274,11 +299,25 @@ process_t *sched_current(void)
 
 void sched_exec_current(process_t *replacement)
 {
+    uint32_t tid;
+    uint32_t tgid;
+    uint32_t pid;
+    task_group_t *group;
+
     if (!g_current || !replacement)
         return;
 
+    tid = g_current->tid;
+    tgid = g_current->tgid;
+    pid = g_current->pid;
+    group = g_current->group;
+
     *g_current = *replacement;
     kfree(replacement);
+    g_current->tid = tid;
+    g_current->tgid = tgid;
+    g_current->pid = pid;
+    g_current->group = group;
     g_current->state = PROC_RUNNING;
 
     gdt_set_tss_esp0(g_current->kstack_top);
@@ -293,6 +332,21 @@ void sched_exec_current(process_t *replacement)
 uint32_t sched_current_pid(void)
 {
     return g_current ? g_current->pid : 0;
+}
+
+uint32_t sched_current_tid(void)
+{
+    return g_current ? g_current->tid : 0;
+}
+
+uint32_t sched_current_tgid(void)
+{
+    return g_current ? g_current->tgid : 0;
+}
+
+task_group_t *sched_current_group(void)
+{
+    return g_current ? g_current->group : 0;
 }
 
 uint32_t sched_current_ppid(void)

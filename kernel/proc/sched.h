@@ -54,6 +54,18 @@ process_t *sched_current(void);
 uint32_t sched_current_pid(void);
 
 /*
+ * sched_current_tid / sched_current_tgid: return the task ID and thread-group
+ * ID of the running task, or 0 when no task is running.
+ */
+uint32_t sched_current_tid(void);
+uint32_t sched_current_tgid(void);
+
+/*
+ * sched_current_group: return the running task's thread group, or NULL.
+ */
+task_group_t *sched_current_group(void);
+
+/*
  * sched_current_ppid: return the parent PID of the running process, or 0.
  */
 uint32_t sched_current_ppid(void);

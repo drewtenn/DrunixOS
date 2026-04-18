@@ -3,6 +3,7 @@
 #ifndef PROCESS_H
 #define PROCESS_H
 
+#include "task_group.h"
 #include "wait.h"
 #include "vma.h"
 #include "vfs.h"
@@ -170,6 +171,9 @@ typedef struct process {
     uint32_t     kstack_top;    /* top of the per-process kernel stack (TSS.ESP0) */
     uint32_t     kstack_bottom; /* base of the heap-allocated kernel stack block */
     uint32_t     saved_esp;     /* kernel ESP saved at last preemption; 0 = never run */
+    uint32_t     tid;           /* scheduler task ID */
+    uint32_t     tgid;          /* thread-group ID returned by getpid */
+    task_group_t *group;        /* owning thread group */
     uint32_t     pid;           /* process ID (1-based, assigned by scheduler) */
     uint32_t     state;         /* proc_state_t — uint32_t to keep struct size aligned */
     wait_queue_t *wait_queue;   /* queue this process is blocked on, or NULL       */

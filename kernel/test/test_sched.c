@@ -70,6 +70,38 @@ static void test_add_two_pids_are_unique(ktest_case_t *tc) {
     KTEST_EXPECT_NE(tc, (uint32_t)pid1, (uint32_t)pid2);
 }
 
+static void test_sched_add_assigns_tid_and_default_tgid(ktest_case_t *tc)
+{
+    sched_init();
+    static process_t proc;
+    init_dummy_proc(&proc);
+
+    int tid = sched_add(&proc);
+    KTEST_ASSERT_TRUE(tc, tid >= 1);
+
+    process_t *slot = sched_find_pid((uint32_t)tid);
+    KTEST_ASSERT_NOT_NULL(tc, slot);
+    KTEST_EXPECT_EQ(tc, slot->tid, (uint32_t)tid);
+    KTEST_EXPECT_EQ(tc, slot->tgid, (uint32_t)tid);
+    KTEST_ASSERT_NOT_NULL(tc, slot->group);
+    KTEST_EXPECT_EQ(tc, task_group_tgid(slot->group), (uint32_t)tid);
+    KTEST_EXPECT_EQ(tc, task_group_live_count(slot->group), 1u);
+}
+
+static void test_sched_current_tid_and_tgid_split(ktest_case_t *tc)
+{
+    sched_init();
+    static process_t leader;
+    init_dummy_proc(&leader);
+
+    int tid = sched_add(&leader);
+    KTEST_ASSERT_TRUE(tc, tid >= 1);
+    KTEST_ASSERT_NOT_NULL(tc, sched_bootstrap());
+
+    KTEST_EXPECT_EQ(tc, sched_current_tid(), (uint32_t)tid);
+    KTEST_EXPECT_EQ(tc, sched_current_tgid(), (uint32_t)tid);
+}
+
 static void test_table_full_returns_error(ktest_case_t *tc) {
     sched_init();
     /* Fill every slot. */
@@ -307,6 +339,8 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_no_running_process_after_init),
     KTEST_CASE(test_add_returns_valid_pid),
     KTEST_CASE(test_add_two_pids_are_unique),
+    KTEST_CASE(test_sched_add_assigns_tid_and_default_tgid),
+    KTEST_CASE(test_sched_current_tid_and_tgid_split),
     KTEST_CASE(test_table_full_returns_error),
     KTEST_CASE(test_current_pid_zero_after_init),
     KTEST_CASE(test_sched_bootstrap_null_when_empty),
