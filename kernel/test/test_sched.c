@@ -267,7 +267,8 @@ static void test_sched_send_signal_wakes_blocked_process_and_unqueues_it(ktest_c
     sched_send_signal((uint32_t)pid, SIGTERM);
 
     KTEST_EXPECT_EQ(tc, slot->state, PROC_READY);
-    KTEST_EXPECT_TRUE(tc, (slot->sig_pending & (1u << SIGTERM)) != 0);
+    KTEST_ASSERT_NOT_NULL(tc, slot->group);
+    KTEST_EXPECT_TRUE(tc, (slot->group->sig_pending & (1u << SIGTERM)) != 0);
     KTEST_EXPECT_NULL(tc, slot->wait_queue);
     KTEST_EXPECT_NULL(tc, slot->wait_next);
     KTEST_EXPECT_EQ(tc, slot->wait_deadline, 0u);
@@ -333,6 +334,54 @@ static void test_sched_mark_exit_wakes_child_state_waiters(ktest_case_t *tc)
     KTEST_EXPECT_NULL(tc, running->state_waiters.tail);
 }
 
+static void test_thread_exit_keeps_group_alive_until_last_task(ktest_case_t *tc)
+{
+    sched_init();
+    static process_t leader, worker;
+    init_dummy_proc(&leader);
+    int leader_tid = sched_add(&leader);
+    KTEST_ASSERT_TRUE(tc, leader_tid >= 1);
+    process_t *leader_slot = sched_find_pid((uint32_t)leader_tid);
+    KTEST_ASSERT_NOT_NULL(tc, leader_slot);
+
+    init_dummy_proc(&worker);
+    worker.group = leader_slot->group;
+    worker.tgid = leader_slot->tgid;
+    int worker_tid = sched_add(&worker);
+    KTEST_ASSERT_TRUE(tc, worker_tid >= 1);
+    KTEST_EXPECT_EQ(tc, task_group_live_count(leader_slot->group), 2u);
+
+    KTEST_ASSERT_NOT_NULL(tc, sched_bootstrap());
+    sched_mark_exit();
+    KTEST_EXPECT_EQ(tc, task_group_live_count(leader_slot->group), 1u);
+    KTEST_EXPECT_TRUE(tc, leader_slot->group->group_exit == 0);
+}
+
+static void test_exit_group_marks_all_group_tasks(ktest_case_t *tc)
+{
+    sched_init();
+    static process_t leader, worker;
+    init_dummy_proc(&leader);
+    int leader_tid = sched_add(&leader);
+    KTEST_ASSERT_TRUE(tc, leader_tid >= 1);
+    process_t *leader_slot = sched_find_pid((uint32_t)leader_tid);
+    KTEST_ASSERT_NOT_NULL(tc, leader_slot);
+
+    init_dummy_proc(&worker);
+    worker.group = leader_slot->group;
+    worker.tgid = leader_slot->tgid;
+    int worker_tid = sched_add(&worker);
+    KTEST_ASSERT_TRUE(tc, worker_tid >= 1);
+
+    KTEST_ASSERT_NOT_NULL(tc, sched_bootstrap());
+    sched_mark_group_exit(7);
+
+    process_t *worker_slot = sched_find_pid((uint32_t)worker_tid);
+    KTEST_ASSERT_NOT_NULL(tc, worker_slot);
+    KTEST_EXPECT_TRUE(tc, leader_slot->group->group_exit != 0);
+    KTEST_EXPECT_EQ(tc, worker_slot->state, PROC_READY);
+}
+
 /* ── Suite ──────────────────────────────────────────────────────────────── */
 
 static ktest_case_t cases[] = {
@@ -352,6 +401,8 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_sched_send_signal_wakes_blocked_process_and_unqueues_it),
     KTEST_CASE(test_sched_tick_wakes_timed_blocked_process),
     KTEST_CASE(test_sched_mark_exit_wakes_child_state_waiters),
+    KTEST_CASE(test_thread_exit_keeps_group_alive_until_last_task),
+    KTEST_CASE(test_exit_group_marks_all_group_tasks),
 };
 
 static ktest_suite_t suite = KTEST_SUITE("sched", cases);

@@ -206,20 +206,96 @@ void sched_wake_all(wait_queue_t *queue)
 
 static void sched_reap(process_t *zombie)
 {
+    int had_resources;
+
     if (!zombie || zombie->state != PROC_ZOMBIE)
         return;
 
+    had_resources = zombie->as || zombie->files ||
+                    zombie->fs_state || zombie->sig_actions;
     sched_clear_wait(zombie);
     sched_wait_queue_init(&zombie->state_waiters);
-    process_release_user_space(zombie);
+    proc_resource_put_all(zombie);
+    if (!had_resources)
+        process_release_user_space(zombie);
     process_release_kstack(zombie);
-    task_group_remove_task(zombie->group);
     task_group_put(zombie->group);
     zombie->group = 0;
     zombie->state = PROC_UNUSED;
     zombie->pid = 0;
     zombie->tid = 0;
     zombie->tgid = 0;
+}
+
+static void sched_reap_group(task_group_t *group)
+{
+    if (!group)
+        return;
+
+    for (int i = 0; i < MAX_PROCS; i++) {
+        if (proc_table[i].group == group &&
+            proc_table[i].state == PROC_ZOMBIE)
+            sched_reap(&proc_table[i]);
+    }
+}
+
+static int sched_group_has_live_slots(task_group_t *group)
+{
+    if (!group)
+        return 0;
+
+    for (int i = 0; i < MAX_PROCS; i++) {
+        if (proc_table[i].group == group &&
+            proc_table[i].state != PROC_UNUSED &&
+            proc_table[i].state != PROC_ZOMBIE)
+            return 1;
+    }
+    return 0;
+}
+
+static void sched_wake_group_waiters(task_group_t *group)
+{
+    if (!group)
+        return;
+
+    sched_wake_all(&group->state_waiters);
+    for (int i = 0; i < MAX_PROCS; i++) {
+        if (proc_table[i].group == group &&
+            proc_table[i].state == PROC_ZOMBIE)
+            sched_wake_all(&proc_table[i].state_waiters);
+    }
+}
+
+static process_t *sched_find_group_member(uint32_t tgid)
+{
+    for (int i = 0; i < MAX_PROCS; i++) {
+        if (proc_table[i].tgid == tgid &&
+            proc_table[i].state != PROC_UNUSED)
+            return &proc_table[i];
+    }
+    return 0;
+}
+
+static process_t *sched_find_group_signal_recipient(task_group_t *group,
+                                                    int signum)
+{
+    uint32_t bit = 1u << signum;
+
+    if (!group)
+        return 0;
+
+    for (int i = 0; i < MAX_PROCS; i++) {
+        process_t *proc = &proc_table[i];
+
+        if (proc->group != group ||
+            proc->state == PROC_UNUSED ||
+            proc->state == PROC_ZOMBIE)
+            continue;
+        if ((proc->sig_blocked & bit) != 0 && signum != SIGKILL)
+            continue;
+        return proc;
+    }
+    return 0;
 }
 
 /* ── Public API ─────────────────────────────────────────────────────────── */
@@ -386,10 +462,46 @@ void sched_mark_exit(void)
 {
     if (!g_current) return;
     uint32_t exiting_pid = g_current->pid;
-    process_close_all_fds(g_current);
+    task_group_t *group = g_current->group;
+    uint32_t zero = 0;
+
+    if (group && group->group_exit)
+        g_current->exit_status = group->exit_status;
+    if (g_current->clear_child_tid != 0)
+        (void)uaccess_copy_to_user(g_current, g_current->clear_child_tid,
+                                   &zero, sizeof(zero));
+    task_group_remove_task(group);
+    if (group && task_group_live_count(group) == 0) {
+        if (!group->group_exit)
+            group->exit_status = g_current->exit_status;
+        sched_wake_group_waiters(group);
+    }
     g_current->state = PROC_ZOMBIE;
     klog_uint("SCHED", "process exited, pid", exiting_pid);
-    sched_wake_all(&g_current->state_waiters);
+    if (!group || task_group_live_count(group) == 0)
+        sched_wake_all(&g_current->state_waiters);
+}
+
+void sched_mark_group_exit(uint32_t status)
+{
+    if (!g_current || !g_current->group)
+        return;
+
+    task_group_t *group = g_current->group;
+    group->group_exit = 1;
+    group->exit_status = (status & 0xFFu) << 8;
+
+    for (int i = 0; i < MAX_PROCS; i++) {
+        if (proc_table[i].state != PROC_UNUSED &&
+            proc_table[i].state != PROC_ZOMBIE &&
+            proc_table[i].group == group) {
+            if (&proc_table[i] != g_current) {
+                sched_clear_wait(&proc_table[i]);
+                proc_table[i].state = PROC_READY;
+            }
+        }
+    }
+    sched_mark_exit();
 }
 
 void sched_mark_signaled(int sig, int dumped_core)
@@ -397,14 +509,12 @@ void sched_mark_signaled(int sig, int dumped_core)
     if (!g_current) return;
 
     uint32_t exiting_pid = g_current->pid;
-    process_close_all_fds(g_current);
     g_current->exit_status = (uint32_t)(sig & 0x7F);
     if (dumped_core)
         g_current->exit_status |= 0x80u;
 
-    g_current->state = PROC_ZOMBIE;
+    sched_mark_exit();
     klog_uint("SCHED", "process signaled, pid", exiting_pid);
-    sched_wake_all(&g_current->state_waiters);
 }
 
 void sched_mark_stopped(int sig)
@@ -431,13 +541,25 @@ int sched_waitpid(uint32_t pid, int options)
      */
     for (;;) {
         process_t *target = sched_find_slot(pid);
+        task_group_t *group;
         if (!target)
-            return -1;  /* no such process */
+            target = sched_find_group_member(pid);
+        if (!target)
+            return -1;  /* no such process or group */
+        if (target->tgid != target->tid)
+            return -1;  /* non-leader clone thread */
+        group = target->group;
 
         /* Zombie: return its encoded exit status */
-        if (target->state == PROC_ZOMBIE) {
-            int status = (int)target->exit_status;
-            sched_reap(target);
+        if (target->state == PROC_ZOMBIE &&
+            (!group || !sched_group_has_live_slots(group))) {
+            int status = (group && group->group_exit)
+                ? (int)group->exit_status
+                : (int)target->exit_status;
+            if (group)
+                sched_reap_group(group);
+            else
+                sched_reap(target);
             return status;
         }
 
@@ -450,7 +572,10 @@ int sched_waitpid(uint32_t pid, int options)
         if (options & WNOHANG) return 0;
 
         /* Target is still alive — block until it exits or stops. */
-        sched_block(&target->state_waiters);
+        if (group)
+            sched_block(&group->state_waiters);
+        else
+            sched_block(&target->state_waiters);
         /* Re-check the target's state after waking. */
     }
 }
@@ -620,21 +745,44 @@ int sched_session_has_pgid(uint32_t sid, uint32_t pgid)
 
 void sched_send_signal(uint32_t pid, int signum)
 {
+    task_group_t *group = 0;
+    process_t *recipient = 0;
+
     if (signum < 1 || signum >= NSIG) return;
 
     for (int i = 0; i < MAX_PROCS; i++) {
         if (proc_table[i].pid == pid &&
             proc_table[i].state != PROC_UNUSED &&
             proc_table[i].state != PROC_ZOMBIE) {
+            if (proc_table[i].tgid == pid)
+                group = proc_table[i].group;
+            else
+                recipient = &proc_table[i];
+            break;
+        }
+    }
+
+    if (!group && !recipient) {
+        recipient = sched_find_group_member(pid);
+        if (recipient)
+            group = recipient->group;
+    }
+
+    if (group) {
+        task_group_set_process_signal(group, signum);
+        recipient = sched_find_group_signal_recipient(group, signum);
+    }
+
+    if (recipient) {
 
             /*
              * SIGCONT: if the process is stopped, wake it immediately.
              * Clear any pending stop signals (they would re-stop it).
              */
             if (signum == SIGCONT) {
-                proc_table[i].sig_pending &= ~((1u << SIGSTOP) | (1u << SIGTSTP));
-                if (proc_table[i].state == PROC_STOPPED) {
-                    proc_table[i].state = PROC_READY;
+                recipient->sig_pending &= ~((1u << SIGSTOP) | (1u << SIGTSTP));
+                if (recipient->state == PROC_STOPPED) {
+                    recipient->state = PROC_READY;
                     klog_uint("SCHED", "process continued, pid", pid);
                 }
             }
@@ -644,26 +792,26 @@ void sched_send_signal(uint32_t pid, int signum)
              * stop and continue cancel each other while pending).
              */
             if (signum == SIGSTOP || signum == SIGTSTP) {
-                proc_table[i].sig_pending &= ~(1u << SIGCONT);
+                recipient->sig_pending &= ~(1u << SIGCONT);
             }
 
-            proc_table[i].sig_pending |= (1u << signum);
+            if (!group)
+                recipient->sig_pending |= (1u << signum);
 
             /* Wake blocked processes so they get a chance to receive it. */
-            if (proc_table[i].state == PROC_BLOCKED ||
-                proc_table[i].state == PROC_STOPPED) {
+            if (recipient->state == PROC_BLOCKED ||
+                recipient->state == PROC_STOPPED) {
                 /* PROC_STOPPED can only be woken by SIGCONT (above) or
                  * a fatal signal like SIGKILL.  For SIGKILL, force wake. */
-                if (proc_table[i].state == PROC_STOPPED && signum != SIGCONT)
-                    proc_table[i].state = (signum == SIGKILL) ? PROC_READY
-                                                               : PROC_STOPPED;
-                else if (proc_table[i].state == PROC_BLOCKED)
-                    sched_make_ready(&proc_table[i]);
+                if (recipient->state == PROC_STOPPED && signum != SIGCONT)
+                    recipient->state = (signum == SIGKILL) ? PROC_READY
+                                                            : PROC_STOPPED;
+                else if (recipient->state == PROC_BLOCKED)
+                    sched_make_ready(recipient);
             }
 
             g_need_switch = 1;
             return;
-        }
     }
 }
 
@@ -798,11 +946,17 @@ uint32_t sched_signal_check(uint32_t frame_esp)
      */
     if ((frame[15] & 3) != 3) return frame_esp;
 
+    if (g_current->group && g_current->group->group_exit) {
+        sched_mark_exit();
+        schedule();
+        return frame_esp;
+    }
+
     uint32_t deliverable = g_current->sig_pending & ~g_current->sig_blocked;
-    if (!deliverable) return frame_esp;
 
     /* Synchronous faults take precedence over older async pending signals. */
     int signum = -1;
+    int group_signal = 0;
     if (g_current->crash.valid &&
         g_current->crash.signum < NSIG &&
         (deliverable & (1u << g_current->crash.signum))) {
@@ -813,10 +967,20 @@ uint32_t sched_signal_check(uint32_t frame_esp)
             if (deliverable & (1u << i)) { signum = i; break; }
         }
     }
+    if (signum < 0) {
+        uint32_t group_signum =
+            task_group_take_process_signal(g_current->group,
+                                           g_current->sig_blocked);
+        if (group_signum != 0) {
+            signum = (int)group_signum;
+            group_signal = 1;
+        }
+    }
     if (signum < 0) return frame_esp;
 
     /* Clear the pending bit before delivery. */
-    g_current->sig_pending &= ~(1u << signum);
+    if (!group_signal)
+        g_current->sig_pending &= ~(1u << signum);
 
     int from_crash = g_current->crash.valid &&
                      g_current->crash.signum == (uint32_t)signum;

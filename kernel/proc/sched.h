@@ -92,6 +92,12 @@ uint32_t sched_current_ppid(void);
 void sched_mark_exit(void);
 
 /*
+ * sched_mark_group_exit: request exit for every task in the current task's
+ * thread group, then exit the current task with the supplied status code.
+ */
+void sched_mark_group_exit(uint32_t status);
+
+/*
  * sched_mark_signaled: mark the current process as a zombie due to signal
  * termination.  `dumped_core` sets the Linux-compatible 0x80 core bit in the
  * stored wait status when non-zero.

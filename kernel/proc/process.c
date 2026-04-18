@@ -248,6 +248,7 @@ static void process_fork_rollback_child(process_t *child_out)
     if (!child_out)
         return;
 
+    proc_resource_put_all(child_out);
     process_release_user_space(child_out);
     process_release_kstack(child_out);
     k_memset(child_out, 0, sizeof(*child_out));
@@ -684,6 +685,18 @@ int process_fork(process_t *child_out, process_t *parent)
     child_out->crash.valid  = 0;
     child_out->crash.signum = 0;
     child_out->crash.cr2    = 0;
+    if (parent->as || parent->files || parent->fs_state ||
+        parent->sig_actions) {
+        if (proc_resource_clone_for_fork(child_out, parent) != 0) {
+            process_fork_rollback_child(child_out);
+            return -1;
+        }
+    } else {
+        child_out->as = 0;
+        child_out->files = 0;
+        child_out->fs_state = 0;
+        child_out->sig_actions = 0;
+    }
 
     /* Allocate an independent kernel stack for the child, with guard page.
      * Same page-aligned layout as process_create: over-allocate by one page

@@ -4082,8 +4082,12 @@ static uint32_t SYSCALL_NOINLINE syscall_case_exit_exit_group(uint32_t eax, uint
          * away.  schedule() never returns here — the zombie's kernel stack
          * is abandoned and will be freed when the slot is reused.
          */
-        sched_set_exit_status(ebx);
-        sched_mark_exit();
+        if (eax == SYS_EXIT_GROUP) {
+            sched_mark_group_exit(ebx);
+        } else {
+            sched_set_exit_status(ebx);
+            sched_mark_exit();
+        }
         schedule();
         __builtin_unreachable();
 }
