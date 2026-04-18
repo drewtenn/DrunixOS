@@ -35,10 +35,10 @@ typedef enum {
     VFS_NODE_FILE    = 1,
     VFS_NODE_DIR     = 2,
     VFS_NODE_CHARDEV = 3,
-    VFS_NODE_BLOCKDEV = 4,
-    VFS_NODE_TTY     = 5,
-    VFS_NODE_PROCFILE = 6,
-    VFS_NODE_SYMLINK = 7,
+    VFS_NODE_TTY     = 4,
+    VFS_NODE_PROCFILE = 5,
+    VFS_NODE_SYMLINK = 6,
+    VFS_NODE_BLOCKDEV = 7,
 } vfs_node_type_t;
 
 /*

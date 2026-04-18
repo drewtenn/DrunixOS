@@ -6,6 +6,7 @@
 *.dis
 *.log
 *.img
+*.fs
 *.iso
 iso/boot/grub/grub.cfg
 /build/
