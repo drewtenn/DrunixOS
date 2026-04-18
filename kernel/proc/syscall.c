@@ -500,6 +500,11 @@ static int linux_fd_stat_metadata(process_t *cur, uint32_t fd,
         meta->size = fh->u.file.size;
         meta->ino = fh->u.file.inode_num;
         break;
+    case FD_TYPE_SYSFILE:
+        meta->mode = LINUX_S_IFREG | 0444u;
+        meta->size = fh->u.file.size;
+        meta->ino = fh->u.file.inode_num;
+        break;
     case FD_TYPE_PROCFILE:
         meta->mode = LINUX_S_IFREG | 0444u;
         meta->size = fh->u.proc.size;
@@ -569,6 +574,21 @@ static void linux_metadata_fix_blockdev_identity(const char *path,
                                   &meta->rdev_minor);
 }
 
+static void linux_metadata_fix_sysfile_identity(const char *path,
+                                                linux_fd_stat_t *meta)
+{
+    vfs_node_t node;
+
+    if (!path || !meta)
+        return;
+    if (vfs_resolve(path, &node) != 0 || node.type != VFS_NODE_SYSFILE)
+        return;
+
+    meta->mode = LINUX_S_IFREG | 0444u;
+    meta->size = node.size;
+    meta->ino = node.inode_num;
+}
+
 static int linux_path_stat_metadata(process_t *cur, uint32_t user_path,
                                     linux_fd_stat_t *meta)
 {
@@ -592,6 +612,7 @@ static int linux_path_stat_metadata(process_t *cur, uint32_t user_path,
     }
 
     linux_metadata_from_vfs_stat(&st, meta);
+    linux_metadata_fix_sysfile_identity(rpath, meta);
     linux_metadata_fix_blockdev_identity(rpath, &st, meta);
 
     kfree(rpath);
@@ -621,6 +642,8 @@ static int linux_path_lstat_metadata(process_t *cur, uint32_t user_path,
     }
 
     linux_metadata_from_vfs_stat(&st, meta);
+    if (st.type != VFS_STAT_TYPE_SYMLINK)
+        linux_metadata_fix_sysfile_identity(rpath, meta);
     linux_metadata_fix_blockdev_identity(rpath, &st, meta);
 
     kfree(rpath);
@@ -676,6 +699,8 @@ static int linux_path_stat_metadata_at_flags(process_t *cur, uint32_t dirfd,
     }
 
     linux_metadata_from_vfs_stat(&st, meta);
+    if (st.type != VFS_STAT_TYPE_SYMLINK)
+        linux_metadata_fix_sysfile_identity(rpath, meta);
     linux_metadata_fix_blockdev_identity(rpath, &st, meta);
 
     kfree(rpath);
@@ -1164,7 +1189,7 @@ static uint32_t syscall_write_fd(uint32_t fd, uint32_t user_buf,
         return copied;
     }
 
-    if (fh->type == FD_TYPE_FILE) {
+    if (fh->type == FD_TYPE_FILE || fh->type == FD_TYPE_SYSFILE) {
         uint8_t kbuf[USER_IO_CHUNK];
         uint32_t written = 0;
 
@@ -1293,7 +1318,7 @@ static uint32_t syscall_read_fd(uint32_t fd, uint32_t user_buf,
         return to_read;
     }
 
-    if (fh->type == FD_TYPE_FILE) {
+    if (fh->type == FD_TYPE_FILE || fh->type == FD_TYPE_SYSFILE) {
         uint32_t remaining;
         uint32_t to_read;
         uint32_t copied = 0;
@@ -1548,7 +1573,8 @@ static uint32_t linux_poll_revents(process_t *cur, int32_t fd,
     }
 
     if (events & LINUX_POLLIN) {
-        if (fh->type == FD_TYPE_FILE && fh->u.file.offset < fh->u.file.size)
+        if ((fh->type == FD_TYPE_FILE || fh->type == FD_TYPE_SYSFILE) &&
+            fh->u.file.offset < fh->u.file.size)
             rev |= LINUX_POLLIN;
         else if (fh->type == FD_TYPE_BLOCKDEV &&
                  fh->u.blockdev.offset < fh->u.blockdev.size)
@@ -1601,7 +1627,7 @@ static uint32_t syscall_ioctl(uint32_t fd, uint32_t request, uint32_t argp)
             if (!pb)
                 return (uint32_t)-1;
             available = pb->count;
-        } else if (fh->type == FD_TYPE_FILE) {
+        } else if (fh->type == FD_TYPE_FILE || fh->type == FD_TYPE_SYSFILE) {
             if (fh->u.file.offset < fh->u.file.size)
                 available = fh->u.file.size - fh->u.file.offset;
         } else if (fh->type == FD_TYPE_PROCFILE) {
@@ -1697,10 +1723,11 @@ static int syscall_seek_handle(process_t *cur, uint32_t fd, int64_t offset,
     if (!cur || fd >= MAX_FDS)
         return -1;
     fh = &cur->open_files[fd];
-    if (fh->type != FD_TYPE_FILE && fh->type != FD_TYPE_PROCFILE)
+    if (fh->type != FD_TYPE_FILE && fh->type != FD_TYPE_SYSFILE &&
+        fh->type != FD_TYPE_PROCFILE)
         return -1;
 
-    if (fh->type == FD_TYPE_FILE) {
+    if (fh->type == FD_TYPE_FILE || fh->type == FD_TYPE_SYSFILE) {
         size = fh->u.file.size;
         current = fh->u.file.offset;
     } else {
@@ -1723,7 +1750,7 @@ static int syscall_seek_handle(process_t *cur, uint32_t fd, int64_t offset,
     if (new_off < 0 || new_off > UINT32_MAX)
         return -1;
 
-    if (fh->type == FD_TYPE_FILE)
+    if (fh->type == FD_TYPE_FILE || fh->type == FD_TYPE_SYSFILE)
         fh->u.file.offset = (uint32_t)new_off;
     else
         fh->u.proc.offset = (uint32_t)new_off;
@@ -1750,7 +1777,8 @@ static uint32_t syscall_sendfile64(process_t *cur, uint32_t out_fd,
     in = &cur->open_files[in_fd];
     if (out->type != FD_TYPE_STDOUT)
         return (uint32_t)-1;
-    if (in->type != FD_TYPE_FILE && in->type != FD_TYPE_PROCFILE)
+    if (in->type != FD_TYPE_FILE && in->type != FD_TYPE_SYSFILE &&
+        in->type != FD_TYPE_PROCFILE)
         return (uint32_t)-1;
 
     if (offset_ptr) {
@@ -1760,13 +1788,13 @@ static uint32_t syscall_sendfile64(process_t *cur, uint32_t out_fd,
         if (off_words[1] != 0)
             return (uint32_t)-1;
         read_off = off_words[0];
-    } else if (in->type == FD_TYPE_FILE) {
+    } else if (in->type == FD_TYPE_FILE || in->type == FD_TYPE_SYSFILE) {
         read_off = in->u.file.offset;
     } else {
         read_off = in->u.proc.offset;
     }
 
-    if (in->type == FD_TYPE_FILE) {
+    if (in->type == FD_TYPE_FILE || in->type == FD_TYPE_SYSFILE) {
         size = in->u.file.size;
     } else {
         if (procfs_file_size(in->u.proc.kind, in->u.proc.pid,
@@ -1784,7 +1812,7 @@ static uint32_t syscall_sendfile64(process_t *cur, uint32_t out_fd,
         if (chunk > size - read_off)
             chunk = size - read_off;
 
-        if (in->type == FD_TYPE_FILE) {
+        if (in->type == FD_TYPE_FILE || in->type == FD_TYPE_SYSFILE) {
             n = vfs_read(in->u.file.ref, read_off, kbuf, chunk);
         } else {
             n = procfs_read_file(in->u.proc.kind, in->u.proc.pid,
@@ -1811,7 +1839,7 @@ static uint32_t syscall_sendfile64(process_t *cur, uint32_t out_fd,
         if (uaccess_copy_to_user(cur, offset_ptr, off_words,
                                  sizeof(off_words)) != 0)
             return copied ? copied : (uint32_t)-1;
-    } else if (in->type == FD_TYPE_FILE) {
+    } else if (in->type == FD_TYPE_FILE || in->type == FD_TYPE_SYSFILE) {
         in->u.file.offset = read_off;
     } else {
         in->u.proc.offset = read_off;
@@ -1978,6 +2006,21 @@ static int fd_install_vfs_node(process_t *proc, const vfs_node_t *node,
         proc->open_files[fd].u.file.offset = 0;
         return fd;
 
+    case VFS_NODE_SYSFILE:
+        if (writable) {
+            proc->open_files[fd].type = FD_TYPE_NONE;
+            proc->open_files[fd].writable = 0;
+            return -1;
+        }
+        proc->open_files[fd].type = FD_TYPE_SYSFILE;
+        proc->open_files[fd].append = 0;
+        proc->open_files[fd].u.file.ref.mount_id = node->mount_id;
+        proc->open_files[fd].u.file.ref.inode_num = node->inode_num;
+        proc->open_files[fd].u.file.inode_num = node->inode_num;
+        proc->open_files[fd].u.file.size = node->size;
+        proc->open_files[fd].u.file.offset = 0;
+        return fd;
+
     case VFS_NODE_DIR:
         proc->open_files[fd].type = FD_TYPE_DIR;
         proc->open_files[fd].u.dir.path[0] = '\0';
@@ -2079,6 +2122,7 @@ static int syscall_open_resolved_path(process_t *cur, const char *rpath,
     if (node.type != VFS_NODE_FILE &&
         node.type != VFS_NODE_DIR &&
         node.type != VFS_NODE_BLOCKDEV &&
+        node.type != VFS_NODE_SYSFILE &&
         node.type != VFS_NODE_PROCFILE &&
         node.type != VFS_NODE_TTY &&
         node.type != VFS_NODE_CHARDEV)

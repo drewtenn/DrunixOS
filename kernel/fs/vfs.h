@@ -45,12 +45,13 @@ typedef enum {
     VFS_NODE_PROCFILE = 5,
     VFS_NODE_SYMLINK = 6,
     VFS_NODE_BLOCKDEV = 7,
+    VFS_NODE_SYSFILE = 8,
 } vfs_node_type_t;
 
 /*
  * Result of resolving a path through the VFS mount tree.
  *
- * For VFS_NODE_FILE, inode_num and size are valid.
+ * For VFS_NODE_FILE and VFS_NODE_SYSFILE, inode_num and size are valid.
  * For VFS_NODE_CHARDEV and VFS_NODE_BLOCKDEV, dev_name names the registered
  * kernel device entry (for example, "stdin" or "sda1").
  * For VFS_NODE_TTY, dev_id is the tty_table[] index.

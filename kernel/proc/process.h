@@ -86,6 +86,7 @@ typedef enum {
     FD_TYPE_PROCFILE   = 7,  /* synthetic procfs file                 */
     FD_TYPE_DIR        = 8,  /* directory fd for Linux getdents64     */
     FD_TYPE_BLOCKDEV   = 9,  /* read-only block device fd             */
+    FD_TYPE_SYSFILE    = 10, /* synthetic sysfs file                  */
 } fd_type_t;
 
 /*

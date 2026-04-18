@@ -189,7 +189,7 @@ KOBJS = kernel/kernel-entry.o kernel/kernel.o \
         kernel/proc/elf.o kernel/proc/process.o kernel/proc/process_asm.o \
         kernel/proc/sched.o kernel/proc/syscall.o kernel/proc/core.o kernel/proc/mem_forensics.o kernel/proc/pipe.o kernel/proc/switch.o \
         kernel/proc/uaccess.o \
-        kernel/fs/fs.o kernel/fs/vfs.o kernel/fs/procfs.o kernel/fs/ext3.o
+        kernel/fs/fs.o kernel/fs/vfs.o kernel/fs/procfs.o kernel/fs/sysfs.o kernel/fs/ext3.o
 
 $(KOBJS): .ktest-flag
 
