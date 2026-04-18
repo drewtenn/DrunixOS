@@ -37,6 +37,13 @@ typedef struct {
 } vfs_mount_t;
 
 typedef struct {
+    char *norm;
+    int mount_idx;
+    const vfs_mount_t *mnt;
+    const char *rel;
+} vfs_lookup_ctx_t;
+
+typedef struct {
     const char *name;
     uint32_t    type;
     uint32_t    dev_id;
@@ -185,6 +192,50 @@ static const char *vfs_relpath(const vfs_mount_t *mnt, const char *norm_path)
     if (norm_path[mnt->path_len] == '\0')
         return norm_path + mnt->path_len;
     return norm_path + mnt->path_len + 1;
+}
+
+static void vfs_lookup_ctx_clear(vfs_lookup_ctx_t *ctx)
+{
+    if (!ctx)
+        return;
+    if (ctx->norm)
+        kfree(ctx->norm);
+    ctx->norm = 0;
+    ctx->mount_idx = -1;
+    ctx->mnt = 0;
+    ctx->rel = 0;
+}
+
+static int vfs_lookup_ctx_init(vfs_lookup_ctx_t *ctx, const char *path)
+{
+    if (!ctx)
+        return -1;
+
+    ctx->norm = vfs_normalize_alloc(path);
+    ctx->mount_idx = -1;
+    ctx->mnt = 0;
+    ctx->rel = 0;
+
+    if (!ctx->norm)
+        return -1;
+
+    ctx->mount_idx = vfs_find_mount_for_path(ctx->norm);
+    if (ctx->mount_idx < 0)
+        return -1;
+
+    ctx->mnt = &vfs_mounts[ctx->mount_idx];
+    ctx->rel = vfs_relpath(ctx->mnt, ctx->norm);
+    return 0;
+}
+
+static int vfs_mutation_lookup_ctx_init(vfs_lookup_ctx_t *ctx,
+                                        const char *path)
+{
+    if (vfs_lookup_ctx_init(ctx, path) != 0)
+        return -1;
+    if (ctx->norm[0] == '\0' || vfs_find_mount_exact(ctx->norm) >= 0)
+        return -1;
+    return 0;
 }
 
 static void vfs_dir_stat(vfs_stat_t *st)
@@ -1025,34 +1076,28 @@ int vfs_symlink(const char *target, const char *linkpath)
 
 int vfs_readlink(const char *path, char *buf, uint32_t bufsz)
 {
-    char *norm = vfs_normalize_alloc(path);
-    int mount_idx;
-    const vfs_mount_t *mnt;
-    const char *rel;
+    vfs_lookup_ctx_t ctx;
     int rc;
 
-    if (!norm || !buf || bufsz == 0)
+    ctx.norm = 0;
+    if (!buf || bufsz == 0)
         return -22;
-    if (norm[0] == '\0' || vfs_find_mount_exact(norm) >= 0) {
-        kfree(norm);
+    if (vfs_lookup_ctx_init(&ctx, path) != 0) {
+        rc = (!ctx.norm || ctx.norm[0] == '\0') ? -22 : -2;
+        vfs_lookup_ctx_clear(&ctx);
+        return rc;
+    }
+    if (ctx.norm[0] == '\0' || vfs_find_mount_exact(ctx.norm) >= 0) {
+        vfs_lookup_ctx_clear(&ctx);
         return -22;
     }
-
-    mount_idx = vfs_find_mount_for_path(norm);
-    if (mount_idx < 0) {
-        kfree(norm);
-        return -2;
-    }
-
-    mnt = &vfs_mounts[mount_idx];
-    rel = vfs_relpath(mnt, norm);
-    if (mnt->kind != VFS_MOUNT_KIND_FS || !mnt->ops->readlink) {
-        kfree(norm);
+    if (ctx.mnt->kind != VFS_MOUNT_KIND_FS || !ctx.mnt->ops->readlink) {
+        vfs_lookup_ctx_clear(&ctx);
         return -22;
     }
 
-    rc = mnt->ops->readlink(mnt->ops->ctx, rel, buf, bufsz);
-    kfree(norm);
+    rc = ctx.mnt->ops->readlink(ctx.mnt->ops->ctx, ctx.rel, buf, bufsz);
+    vfs_lookup_ctx_clear(&ctx);
     return rc;
 }
 
