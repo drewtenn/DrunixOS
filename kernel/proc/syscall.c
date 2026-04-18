@@ -2277,9 +2277,9 @@ static int resolve_user_path_at(process_t *proc, uint32_t dirfd,
     return 0;
 }
 
-typedef uint32_t (*syscall_resolved_path_op_t)(const char *path);
-typedef uint32_t (*syscall_resolved_path2_op_t)(const char *oldpath,
-                                                const char *newpath);
+typedef uint32_t (*syscall_one_path_op_t)(const char *path);
+typedef uint32_t (*syscall_two_path_op_t)(const char *oldpath,
+                                          const char *newpath);
 typedef int (*syscall_path_resolver_t)(process_t *proc, uint32_t resolver_arg,
                                        uint32_t user_ptr, char *resolved,
                                        uint32_t resolved_sz);
@@ -2291,7 +2291,7 @@ typedef struct {
 
 static uint32_t syscall_with_resolved_path(process_t *cur,
                                            uint32_t user_path,
-                                           syscall_resolved_path_op_t op)
+                                           syscall_one_path_op_t op)
 {
     char *rpath;
     uint32_t ret;
@@ -2316,7 +2316,7 @@ static uint32_t syscall_with_resolved_path(process_t *cur,
 static uint32_t syscall_with_resolved_path_at(process_t *cur,
                                               uint32_t dirfd,
                                               uint32_t user_path,
-                                              syscall_resolved_path_op_t op)
+                                              syscall_one_path_op_t op)
 {
     char *rpath;
     uint32_t ret;
@@ -2360,7 +2360,7 @@ static uint32_t syscall_with_two_resolved_paths_common(
     uint32_t new_user_path,
     const syscall_path_spec_t *old_spec,
     const syscall_path_spec_t *new_spec,
-    syscall_resolved_path2_op_t op)
+    syscall_two_path_op_t op)
 {
     char *oldpath;
     char *newpath;
@@ -2398,7 +2398,7 @@ static uint32_t syscall_with_two_resolved_paths_common(
 static uint32_t syscall_with_two_resolved_paths(process_t *cur,
                                                 uint32_t old_user_path,
                                                 uint32_t new_user_path,
-                                                syscall_resolved_path2_op_t op)
+                                                syscall_two_path_op_t op)
 {
     syscall_path_spec_t old_spec = {
         syscall_resolve_user_path,
@@ -2419,7 +2419,7 @@ static uint32_t syscall_with_two_resolved_paths_at(process_t *cur,
                                                    uint32_t old_user_path,
                                                    uint32_t new_dirfd,
                                                    uint32_t new_user_path,
-                                                   syscall_resolved_path2_op_t op)
+                                                   syscall_two_path_op_t op)
 {
     syscall_path_spec_t old_spec = {
         syscall_resolve_user_path_at,
@@ -3926,7 +3926,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_linkat(uint32_t eax, uint32_t ebx,
                               uint32_t edi, uint32_t ebp)
 {
     process_t *cur = sched_current();
-    syscall_resolved_path2_op_t op;
+    syscall_two_path_op_t op;
 
     (void)eax;
     (void)ebp;
