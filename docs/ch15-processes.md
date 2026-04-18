@@ -226,6 +226,16 @@ The next time the scheduler chooses the child, the normal return-from-kernel pat
 
 One additional detail: before the kernel copies the process descriptor, it forces a fresh save of the parent's floating-point and SSE state. Otherwise the child would inherit whatever stale snapshot happened to be left from the last preemption rather than the parent's actual live FPU state.
 
+### Tasks, Thread Groups, And Clone
+
+The scheduler now treats `process_t` as the runnable task descriptor. Its `tid` is the scheduler identity: every runnable task has a distinct TID, and `gettid()` returns that value. Its `tgid` is the process identity: all tasks in the same thread group share one TGID, and `getpid()` returns that group ID.
+
+`fork` always creates a new thread group. The child starts as the leader of that group, with `tid == tgid`, a private kernel stack, and a copy-on-write user address space. `clone` is more flexible. With `CLONE_THREAD`, it creates another task in the caller's thread group, so the new task gets a fresh TID but keeps the caller's TGID. Without `CLONE_THREAD`, `clone` behaves like a process-shaped child and creates a separate group.
+
+The resource flags decide which process-shaped state is shared. `CLONE_VM` shares the address-space object and page directory; without it, the child gets the same copy-on-write address-space behavior as `fork`. `CLONE_FILES`, `CLONE_FS`, and `CLONE_SIGHAND` share the fd table, cwd/umask state, and signal-disposition table respectively. Each task still keeps its own kernel stack, signal mask, pending task-directed signals, clear-child-TID pointer, and scheduler state.
+
+Thread groups also change the visible process model. `/proc` lists TGIDs rather than every TID, `waitpid` reaps a whole group through its leader, and `exit_group` marks every live task in the group for termination. Plain `exit` ends only the calling task; the group remains waitable after its last live task exits.
+
 ### Where the Machine Is by the End of Chapter 15
 
 We can now:
@@ -236,5 +246,6 @@ We can now:
 - Preempt running processes every ten milliseconds via the PIT and round-robin schedule up to eight concurrent processes, saving and restoring register state, page directories, kernel stacks, and FPU/SSE state on every switch.
 - Wait for a child process to exit with `SYS_WAIT`, parking the caller until the scheduler wakes it.
 - Fork a running process via `SYS_FORK`, duplicating its page tables, sharing its user frames copy-on-write, and arranging for the parent and child to see different return values at the same return address.
+- Create Linux-style user threads with `SYS_CLONE`, sharing VM, fd, filesystem, and signal-disposition resources according to clone flags while preserving per-task TIDs.
 
 With this machinery in place, the first user program runs as a ring-3 process, can launch any ELF file on the DUFS disk, and waits for each child to exit before returning to the prompt.

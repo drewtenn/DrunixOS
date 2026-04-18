@@ -112,13 +112,13 @@ ISO_KERNEL_VGA := iso/boot/kernel-vga.elf
 DISK_SECTORS  := 102400
 PARTITION_START ?= 2048
 FS_SECTORS     := $(shell expr $(DISK_SECTORS) - $(PARTITION_START))
-USER_PROGS    := shell chello hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello lsblk linuxhello linuxprobe linuxabi busybox bbcompat dufstest redirtest ext3wtest
+USER_PROGS    := shell chello hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello lsblk linuxhello linuxprobe linuxabi busybox bbcompat dufstest redirtest ext3wtest threadtest
 USER_BINS     := $(addprefix user/,$(USER_PROGS))
 DISK_FILES    := $(foreach prog,$(USER_PROGS),user/$(prog) bin/$(prog)) \
                  tools/hello.txt hello.txt \
                  tools/readme.txt readme.txt
 RUN_LOGS      := serial.log debugcon.log
-TEST_SUFFIXES := ktest df bbcompat linuxabi ext3w
+TEST_SUFFIXES := ktest df bbcompat linuxabi ext3w threadtest
 TEST_IMAGES   := $(foreach suffix,$(TEST_SUFFIXES),disk-$(suffix).img dufs-$(suffix).img) disk-ext3-host.img
 TEST_LOGS     := $(foreach suffix,$(TEST_SUFFIXES),serial-$(suffix).log debugcon-$(suffix).log) \
                  bbcompat.log linuxabi.log ext3wtest.log ext3-host-readback.txt
@@ -186,7 +186,7 @@ KOBJS = kernel/kernel-entry.o kernel/kernel.o \
         kernel/drivers/blkdev.o kernel/drivers/blkdev_part.o kernel/blk/bcache.o kernel/drivers/chardev.o kernel/drivers/tty.o \
         kernel/gui/display.o kernel/gui/framebuffer.o kernel/gui/font8x16.o kernel/gui/desktop.o kernel/gui/desktop_apps.o kernel/gui/terminal.o \
         kernel/mm/pmm.o kernel/mm/paging.o kernel/mm/paging_asm.o kernel/mm/fault.o kernel/mm/vma.o kernel/mm/kheap.o kernel/mm/slab.o \
-        kernel/proc/elf.o kernel/proc/process.o kernel/proc/process_asm.o \
+        kernel/proc/elf.o kernel/proc/process.o kernel/proc/process_asm.o kernel/proc/task_group.o kernel/proc/resources.o \
         kernel/proc/sched.o kernel/proc/syscall.o kernel/proc/core.o kernel/proc/mem_forensics.o kernel/proc/pipe.o kernel/proc/switch.o \
         kernel/proc/uaccess.o \
         kernel/fs/fs.o kernel/fs/vfs.o kernel/fs/procfs.o kernel/fs/sysfs.o kernel/fs/ext3.o
@@ -525,9 +525,19 @@ test-linux-abi:
 	$(call qemu_headless_for,linuxabi,30)
 	$(PYTHON) tools/dufs_extract.py dufs-linuxabi.img linuxabi.log linuxabi.log
 	cat linuxabi.log
-	grep -q "LINUXABI SUMMARY passed 355/355" linuxabi.log
+	grep -q "LINUXABI SUMMARY passed 357/357" linuxabi.log
 	! grep -q "LINUXABI FAIL" linuxabi.log
 	! grep -Eq "unknown syscall|Unhandled syscall" debugcon-linuxabi.log
+
+test-threadtest:
+	$(MAKE) KLOG_TO_DEBUGCON=1 INIT_PROGRAM=bin/threadtest INIT_ARG0=threadtest kernel disk
+	$(call prepare_test_images,threadtest,threadtest.log)
+	$(call qemu_headless_for,threadtest,30)
+	$(PYTHON) tools/dufs_extract.py dufs-threadtest.img threadtest.log threadtest.log
+	cat threadtest.log
+	grep -q "THREADTEST PASS" threadtest.log
+	! grep -q "THREADTEST FAIL" threadtest.log
+	! grep -Eq "unknown syscall|Unhandled syscall" debugcon-threadtest.log
 
 # `test-ext3-linux-compat` — verify a freshly generated ext3 root with host
 #                            e2fsprogs, then boot Drunix writable ext3 smoke
@@ -597,7 +607,7 @@ clean:
 .PHONY: all build kernel iso images disk fresh check \
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
-        test test-fresh test-headless test-halt test-busybox-compat test-linux-abi test-ext3-linux-compat test-ext3-host-write-interop test-all \
+        test test-fresh test-headless test-halt test-busybox-compat test-linux-abi test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean

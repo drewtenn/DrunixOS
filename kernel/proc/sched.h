@@ -35,6 +35,19 @@ process_t *sched_bootstrap(void);
 int sched_add(process_t *proc);
 
 /*
+ * sched_peek_next_tid: return the task ID that the next successful sched_add()
+ * will assign, without consuming it.
+ */
+uint32_t sched_peek_next_tid(void);
+
+/*
+ * sched_force_remove_task: remove a READY task that has not run yet and
+ * release the resources acquired for it. Used to roll back clone setup after
+ * sched_add() has made the child visible.
+ */
+int sched_force_remove_task(uint32_t tid);
+
+/*
  * sched_exec_current: replace the currently running process descriptor with
  * `replacement` and immediately context-switch onto its freshly built kernel
  * stack. Does not return.
@@ -54,6 +67,18 @@ process_t *sched_current(void);
 uint32_t sched_current_pid(void);
 
 /*
+ * sched_current_tid / sched_current_tgid: return the task ID and thread-group
+ * ID of the running task, or 0 when no task is running.
+ */
+uint32_t sched_current_tid(void);
+uint32_t sched_current_tgid(void);
+
+/*
+ * sched_current_group: return the running task's thread group, or NULL.
+ */
+task_group_t *sched_current_group(void);
+
+/*
  * sched_current_ppid: return the parent PID of the running process, or 0.
  */
 uint32_t sched_current_ppid(void);
@@ -65,6 +90,12 @@ uint32_t sched_current_ppid(void);
  * switched away from that stack).
  */
 void sched_mark_exit(void);
+
+/*
+ * sched_mark_group_exit: request exit for every task in the current task's
+ * thread group, then exit the current task with the supplied status code.
+ */
+void sched_mark_group_exit(uint32_t status);
 
 /*
  * sched_mark_signaled: mark the current process as a zombie due to signal
@@ -198,6 +229,17 @@ const process_t *sched_find_process(uint32_t pid, int include_zombie);
  * include_zombie is non-zero.
  */
 int sched_snapshot_pids(uint32_t *pid_out, uint32_t max, int include_zombie);
+
+/*
+ * sched_snapshot_tgids: copy each visible thread-group ID once into tgid_out.
+ */
+int sched_snapshot_tgids(uint32_t *tgid_out, uint32_t max, int include_zombie);
+
+/*
+ * sched_find_group: return the task group with the given TGID, if any member
+ * is visible under the include_zombie policy.
+ */
+const task_group_t *sched_find_group(uint32_t tgid, int include_zombie);
 
 /*
  * sched_session_has_pgid: returns non-zero when `pgid` names a live process

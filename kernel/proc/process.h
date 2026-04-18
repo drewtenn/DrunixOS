@@ -3,6 +3,7 @@
 #ifndef PROCESS_H
 #define PROCESS_H
 
+#include "task_group.h"
 #include "wait.h"
 #include "vma.h"
 #include "vfs.h"
@@ -64,6 +65,17 @@
 #define SIGCONT  18   /* continue a stopped process      — default: continue  */
 #define SIGSTOP  19   /* uncatchable stop                — default: stop      */
 #define SIGTSTP  20   /* terminal stop (Ctrl-Z)          — default: stop      */
+
+/* Linux clone(2) sharing flags used by process_clone(). */
+#define CLONE_VM             0x00000100u
+#define CLONE_FS             0x00000200u
+#define CLONE_FILES          0x00000400u
+#define CLONE_SIGHAND        0x00000800u
+#define CLONE_THREAD         0x00010000u
+#define CLONE_SETTLS         0x00080000u
+#define CLONE_PARENT_SETTID  0x00100000u
+#define CLONE_CHILD_CLEARTID 0x00200000u
+#define CLONE_CHILD_SETTID   0x01000000u
 
 /*
  * Per-process open-file table.  Every fd — including 0 (stdin), 1 (stdout),
@@ -134,6 +146,38 @@ typedef struct {
     } u;
 } file_handle_t;
 
+typedef struct proc_address_space {
+    uint32_t refs;
+    uint32_t pd_phys;
+    uint32_t entry;
+    uint32_t user_stack;
+    uint32_t heap_start;
+    uint32_t brk;
+    uint32_t image_start;
+    uint32_t image_end;
+    uint32_t stack_low_limit;
+    vm_area_t vmas[PROCESS_MAX_VMAS];
+    uint32_t vma_count;
+    char name[16];
+    char psargs[80];
+} proc_address_space_t;
+
+typedef struct proc_fd_table {
+    uint32_t refs;
+    file_handle_t open_files[MAX_FDS];
+} proc_fd_table_t;
+
+typedef struct proc_fs_state {
+    uint32_t refs;
+    uint32_t umask;
+    char cwd[4096];
+} proc_fs_state_t;
+
+typedef struct proc_sig_actions {
+    uint32_t refs;
+    uint32_t handlers[NSIG];
+} proc_sig_actions_t;
+
 typedef enum {
     PROC_UNUSED   = 0,  /* slot is free */
     PROC_READY    = 1,  /* runnable, not currently on CPU */
@@ -171,12 +215,19 @@ typedef struct {
 } crash_info_t;
 
 typedef struct process {
+    proc_address_space_t *as;
+    proc_fd_table_t      *files;
+    proc_fs_state_t      *fs_state;
+    proc_sig_actions_t   *sig_actions;
     uint32_t     pd_phys;       /* physical address of the process page directory */
     uint32_t     entry;         /* ELF entry point virtual address */
     uint32_t     user_stack;    /* user stack top (initial ESP, grows down) */
     uint32_t     kstack_top;    /* top of the per-process kernel stack (TSS.ESP0) */
     uint32_t     kstack_bottom; /* base of the heap-allocated kernel stack block */
     uint32_t     saved_esp;     /* kernel ESP saved at last preemption; 0 = never run */
+    uint32_t     tid;           /* scheduler task ID */
+    uint32_t     tgid;          /* thread-group ID returned by getpid */
+    task_group_t *group;        /* owning thread group */
     uint32_t     pid;           /* process ID (1-based, assigned by scheduler) */
     uint32_t     state;         /* proc_state_t — uint32_t to keep struct size aligned */
     wait_queue_t *wait_queue;   /* queue this process is blocked on, or NULL       */
@@ -198,6 +249,7 @@ typedef struct process {
     uint32_t     user_tls_limit; /* Linux i386 set_thread_area descriptor limit */
     uint32_t     user_tls_limit_in_pages; /* nonzero when descriptor uses 4 KiB pages */
     uint32_t     user_tls_present; /* nonzero when the per-process TLS slot is valid */
+    uint32_t     clear_child_tid; /* user address cleared on thread exit */
     wait_queue_t state_waiters; /* waitpid waiters for exit/stop transitions */
     vm_area_t    vmas[PROCESS_MAX_VMAS]; /* sorted by ascending start address */
     uint32_t     vma_count;
@@ -348,6 +400,23 @@ void process_launch(process_t *proc);
  * sched_add subsequently fails.
  */
 int process_fork(process_t *child_out, process_t *parent);
+
+/*
+ * process_clone: create a child task from parent using Linux clone(2)
+ * resource sharing flags. The caller owns the returned descriptor until it is
+ * handed to sched_add().
+ */
+int process_clone(process_t *child_out, process_t *parent,
+                  uint32_t flags, uint32_t child_stack,
+                  uint32_t parent_tidptr, uint32_t tls,
+                  uint32_t child_tidptr);
+
+/*
+ * process_clone_rollback: release resources acquired by process_clone() for a
+ * child descriptor that has not become runnable or must be removed before it
+ * can run.
+ */
+void process_clone_rollback(process_t *child);
 
 /*
  * process_close_all_fds: close every open fd in the process table entry.

@@ -370,6 +370,8 @@ int mem_forensics_render_fault(const struct process *proc,
     }
 
     mem_forensics_emitf(&rb, "Signal:\t%u\n", report.fault.signum);
+    mem_forensics_emitf(&rb, "Tid:\t%u\n", proc->tid);
+    mem_forensics_emitf(&rb, "Tgid:\t%u\n", proc->tgid);
     mem_forensics_emitf(&rb, "CR2:\t0x%08x\n", report.fault.cr2);
     mem_forensics_emitf(&rb, "EIP:\t0x%08x\n", report.fault.eip);
     mem_forensics_emitf(&rb, "Err:\t0x%08x\n", report.fault.error_code);

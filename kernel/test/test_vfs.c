@@ -681,6 +681,38 @@ static void test_proc_mounts_reports_boot_style_sources(ktest_case_t *tc)
     vfs_reset();
 }
 
+static void test_proc_namespace_lists_thread_group_once(ktest_case_t *tc)
+{
+    static process_t leader;
+    static process_t worker;
+    char buf[512];
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree_with_proc(), 0u);
+
+    sched_init();
+    init_procfs_layout_process(&leader, 1);
+    leader.saved_esp = 1;
+    int leader_tid = sched_add(&leader);
+    KTEST_ASSERT_TRUE(tc, leader_tid >= 1);
+    process_t *leader_slot = sched_find_pid((uint32_t)leader_tid);
+    KTEST_ASSERT_NOT_NULL(tc, leader_slot);
+
+    init_procfs_layout_process(&worker, 1);
+    worker.saved_esp = 1;
+    worker.group = leader_slot->group;
+    worker.tgid = leader_slot->tgid;
+    int worker_tid = sched_add(&worker);
+    KTEST_ASSERT_TRUE(tc, worker_tid >= 1);
+
+    int n = vfs_getdents("proc", buf, sizeof(buf));
+    KTEST_ASSERT_TRUE(tc, n > 0);
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "1/"));
+    KTEST_EXPECT_TRUE(tc, !has_entry(buf, n, "2/"));
+
+    sched_init();
+    vfs_reset();
+}
+
 static void test_proc_pid_directory_lists_status_maps_and_fd(ktest_case_t *tc)
 {
     char buf[128];
@@ -907,6 +939,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_proc_namespace_lists_modules_and_pid_dirs),
     KTEST_CASE(test_proc_mounts_reports_dynamic_sources),
     KTEST_CASE(test_proc_mounts_reports_boot_style_sources),
+    KTEST_CASE(test_proc_namespace_lists_thread_group_once),
     KTEST_CASE(test_proc_pid_directory_lists_status_maps_and_fd),
     KTEST_CASE(test_proc_pid_directory_lists_vmstat_and_fault),
     KTEST_CASE(test_proc_vmstat_reports_image_totals_and_region_count),

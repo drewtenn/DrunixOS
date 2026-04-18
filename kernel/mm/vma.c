@@ -8,13 +8,43 @@
 #include "pmm.h"
 #include "kstring.h"
 
+static vm_area_t *vma_table(struct process *proc)
+{
+    return proc && proc->as ? proc->as->vmas : proc->vmas;
+}
+
+static const vm_area_t *vma_table_const(const struct process *proc)
+{
+    return proc && proc->as ? proc->as->vmas : proc->vmas;
+}
+
+static uint32_t *vma_count_ptr(struct process *proc)
+{
+    return proc && proc->as ? &proc->as->vma_count : &proc->vma_count;
+}
+
+static uint32_t vma_count_const(const struct process *proc)
+{
+    return proc && proc->as ? proc->as->vma_count : proc->vma_count;
+}
+
+static uint32_t vma_brk_const(const struct process *proc)
+{
+    return proc && proc->as ? proc->as->brk : proc->brk;
+}
+
 void vma_init(struct process *proc)
 {
+    vm_area_t *vmas;
+    uint32_t *count;
+
     if (!proc)
         return;
 
-    proc->vma_count = 0;
-    k_memset(proc->vmas, 0, sizeof(proc->vmas));
+    vmas = vma_table(proc);
+    count = vma_count_ptr(proc);
+    *count = 0;
+    k_memset(vmas, 0, sizeof(proc->vmas));
 }
 
 static int vma_overlaps(const vm_area_t *lhs, uint32_t start, uint32_t end)
@@ -37,34 +67,38 @@ static int vma_can_merge(const vm_area_t *lhs, const vm_area_t *rhs)
 
 static void vma_coalesce(struct process *proc)
 {
+    vm_area_t *vmas;
+    uint32_t *count;
     uint32_t out = 0;
 
     if (!proc)
         return;
 
-    for (uint32_t i = 0; i < proc->vma_count; i++) {
-        if (out > 0 && vma_can_merge(&proc->vmas[out - 1], &proc->vmas[i])) {
-            proc->vmas[out - 1].end = proc->vmas[i].end;
+    vmas = vma_table(proc);
+    count = vma_count_ptr(proc);
+    for (uint32_t i = 0; i < *count; i++) {
+        if (out > 0 && vma_can_merge(&vmas[out - 1], &vmas[i])) {
+            vmas[out - 1].end = vmas[i].end;
             continue;
         }
 
         if (out != i)
-            proc->vmas[out] = proc->vmas[i];
+            vmas[out] = vmas[i];
         out++;
     }
 
-    while (out < proc->vma_count) {
-        k_memset(&proc->vmas[out], 0, sizeof(proc->vmas[out]));
+    while (out < *count) {
+        k_memset(&vmas[out], 0, sizeof(vmas[out]));
         out++;
     }
 
-    proc->vma_count = 0;
-    while (proc->vma_count < PROCESS_MAX_VMAS &&
-           (proc->vmas[proc->vma_count].start != 0 ||
-            proc->vmas[proc->vma_count].end != 0 ||
-            proc->vmas[proc->vma_count].flags != 0 ||
-            proc->vmas[proc->vma_count].kind != 0)) {
-        proc->vma_count++;
+    *count = 0;
+    while (*count < PROCESS_MAX_VMAS &&
+           (vmas[*count].start != 0 ||
+            vmas[*count].end != 0 ||
+            vmas[*count].flags != 0 ||
+            vmas[*count].kind != 0)) {
+        (*count)++;
     }
 }
 
@@ -97,11 +131,16 @@ static int vma_append(vm_area_t *dst, uint32_t *count,
 static int vma_range_is_free(const struct process *proc,
                              uint32_t start, uint32_t end)
 {
+    const vm_area_t *vmas;
+    uint32_t count;
+
     if (!proc || start >= end)
         return 0;
 
-    for (uint32_t i = 0; i < proc->vma_count; i++) {
-        if (vma_overlaps(&proc->vmas[i], start, end))
+    vmas = vma_table_const(proc);
+    count = vma_count_const(proc);
+    for (uint32_t i = 0; i < count; i++) {
+        if (vma_overlaps(&vmas[i], start, end))
             return 0;
     }
 
@@ -111,44 +150,53 @@ static int vma_range_is_free(const struct process *proc,
 int vma_add(struct process *proc, uint32_t start, uint32_t end,
             uint32_t flags, uint32_t kind)
 {
+    vm_area_t *vmas;
+    uint32_t *count;
     uint32_t insert_at = 0;
 
-    if (!proc || start > end || proc->vma_count >= PROCESS_MAX_VMAS)
+    if (!proc || start > end)
         return -1;
 
-    while (insert_at < proc->vma_count &&
-           proc->vmas[insert_at].start <= start) {
-        if (vma_overlaps(&proc->vmas[insert_at], start, end))
+    vmas = vma_table(proc);
+    count = vma_count_ptr(proc);
+    if (*count >= PROCESS_MAX_VMAS)
+        return -1;
+
+    while (insert_at < *count && vmas[insert_at].start <= start) {
+        if (vma_overlaps(&vmas[insert_at], start, end))
             return -1;
         insert_at++;
     }
 
-    if (insert_at < proc->vma_count &&
-        vma_overlaps(&proc->vmas[insert_at], start, end))
+    if (insert_at < *count && vma_overlaps(&vmas[insert_at], start, end))
         return -1;
 
-    if (insert_at < proc->vma_count) {
-        k_memmove(&proc->vmas[insert_at + 1],
-                  &proc->vmas[insert_at],
-                  (proc->vma_count - insert_at) * sizeof(proc->vmas[0]));
+    if (insert_at < *count) {
+        k_memmove(&vmas[insert_at + 1], &vmas[insert_at],
+                  (*count - insert_at) * sizeof(vmas[0]));
     }
 
-    proc->vmas[insert_at].start = start;
-    proc->vmas[insert_at].end = end;
-    proc->vmas[insert_at].flags = flags;
-    proc->vmas[insert_at].kind = kind;
-    proc->vma_count++;
+    vmas[insert_at].start = start;
+    vmas[insert_at].end = end;
+    vmas[insert_at].flags = flags;
+    vmas[insert_at].kind = kind;
+    (*count)++;
     vma_coalesce(proc);
     return 0;
 }
 
 vm_area_t *vma_find(struct process *proc, uint32_t addr)
 {
+    vm_area_t *vmas;
+    uint32_t count;
+
     if (!proc)
         return 0;
 
-    for (uint32_t i = 0; i < proc->vma_count; i++) {
-        vm_area_t *vma = &proc->vmas[i];
+    vmas = vma_table(proc);
+    count = vma_count_const(proc);
+    for (uint32_t i = 0; i < count; i++) {
+        vm_area_t *vma = &vmas[i];
         if (addr >= vma->start && addr < vma->end)
             return vma;
     }
@@ -158,11 +206,16 @@ vm_area_t *vma_find(struct process *proc, uint32_t addr)
 
 const vm_area_t *vma_find_const(const struct process *proc, uint32_t addr)
 {
+    const vm_area_t *vmas;
+    uint32_t count;
+
     if (!proc)
         return 0;
 
-    for (uint32_t i = 0; i < proc->vma_count; i++) {
-        const vm_area_t *vma = &proc->vmas[i];
+    vmas = vma_table_const(proc);
+    count = vma_count_const(proc);
+    for (uint32_t i = 0; i < count; i++) {
+        const vm_area_t *vma = &vmas[i];
         if (addr >= vma->start && addr < vma->end)
             return vma;
     }
@@ -172,12 +225,17 @@ const vm_area_t *vma_find_const(const struct process *proc, uint32_t addr)
 
 vm_area_t *vma_find_kind(struct process *proc, uint32_t kind)
 {
+    vm_area_t *vmas;
+    uint32_t count;
+
     if (!proc)
         return 0;
 
-    for (uint32_t i = 0; i < proc->vma_count; i++) {
-        if (proc->vmas[i].kind == kind)
-            return &proc->vmas[i];
+    vmas = vma_table(proc);
+    count = vma_count_const(proc);
+    for (uint32_t i = 0; i < count; i++) {
+        if (vmas[i].kind == kind)
+            return &vmas[i];
     }
 
     return 0;
@@ -185,12 +243,17 @@ vm_area_t *vma_find_kind(struct process *proc, uint32_t kind)
 
 const vm_area_t *vma_find_kind_const(const struct process *proc, uint32_t kind)
 {
+    const vm_area_t *vmas;
+    uint32_t count;
+
     if (!proc)
         return 0;
 
-    for (uint32_t i = 0; i < proc->vma_count; i++) {
-        if (proc->vmas[i].kind == kind)
-            return &proc->vmas[i];
+    vmas = vma_table_const(proc);
+    count = vma_count_const(proc);
+    for (uint32_t i = 0; i < count; i++) {
+        if (vmas[i].kind == kind)
+            return &vmas[i];
     }
 
     return 0;
@@ -216,7 +279,7 @@ int vma_map_anonymous(struct process *proc, uint32_t hint, uint32_t length,
     if (!stack_vma)
         return -1;
 
-    low = (proc->brk + PAGE_SIZE - 1u) & ~(PAGE_SIZE - 1u);
+    low = (vma_brk_const(proc) + PAGE_SIZE - 1u) & ~(PAGE_SIZE - 1u);
     if (low < USER_MMAP_MIN)
         low = USER_MMAP_MIN;
     high = stack_vma->start;
@@ -236,8 +299,11 @@ int vma_map_anonymous(struct process *proc, uint32_t hint, uint32_t length,
     }
 
     scan_end = high;
-    for (uint32_t i = proc->vma_count; i > 0; i--) {
-        const vm_area_t *vma = &proc->vmas[i - 1];
+    {
+    const vm_area_t *vmas = vma_table_const(proc);
+    uint32_t count = vma_count_const(proc);
+    for (uint32_t i = count; i > 0; i--) {
+        const vm_area_t *vma = &vmas[i - 1];
         uint32_t gap_start;
 
         if (vma->start >= scan_end)
@@ -254,6 +320,7 @@ int vma_map_anonymous(struct process *proc, uint32_t hint, uint32_t length,
 
         scan_end = vma->start;
     }
+    }
 
     if (scan_end > low && scan_end - low >= len) {
         uint32_t start = scan_end - len;
@@ -269,15 +336,19 @@ int vma_map_anonymous(struct process *proc, uint32_t hint, uint32_t length,
 int vma_unmap_range(struct process *proc, uint32_t start, uint32_t end)
 {
     vm_area_t rebuilt[PROCESS_MAX_VMAS];
+    vm_area_t *vmas;
+    uint32_t *count;
     uint32_t rebuilt_count = 0;
 
     if (!proc || start >= end)
         return -1;
 
+    vmas = vma_table(proc);
+    count = vma_count_ptr(proc);
     k_memset(rebuilt, 0, sizeof(rebuilt));
 
-    for (uint32_t i = 0; i < proc->vma_count; i++) {
-        const vm_area_t *vma = &proc->vmas[i];
+    for (uint32_t i = 0; i < *count; i++) {
+        const vm_area_t *vma = &vmas[i];
         uint32_t overlap_start;
         uint32_t overlap_end;
 
@@ -308,9 +379,9 @@ int vma_unmap_range(struct process *proc, uint32_t start, uint32_t end)
             return -1;
     }
 
-    k_memset(proc->vmas, 0, sizeof(proc->vmas));
-    k_memcpy(proc->vmas, rebuilt, sizeof(rebuilt));
-    proc->vma_count = rebuilt_count;
+    k_memset(vmas, 0, sizeof(proc->vmas));
+    k_memcpy(vmas, rebuilt, sizeof(rebuilt));
+    *count = rebuilt_count;
     return 0;
 }
 
@@ -318,16 +389,20 @@ int vma_protect_range(struct process *proc, uint32_t start, uint32_t end,
                       uint32_t new_flags)
 {
     vm_area_t rebuilt[PROCESS_MAX_VMAS];
+    vm_area_t *vmas;
+    uint32_t *count;
     uint32_t rebuilt_count = 0;
     uint32_t cursor = start;
 
     if (!proc || start >= end)
         return -1;
 
+    vmas = vma_table(proc);
+    count = vma_count_ptr(proc);
     k_memset(rebuilt, 0, sizeof(rebuilt));
 
-    for (uint32_t i = 0; i < proc->vma_count; i++) {
-        const vm_area_t *vma = &proc->vmas[i];
+    for (uint32_t i = 0; i < *count; i++) {
+        const vm_area_t *vma = &vmas[i];
         uint32_t overlap_start;
         uint32_t overlap_end;
 
@@ -370,8 +445,8 @@ int vma_protect_range(struct process *proc, uint32_t start, uint32_t end,
     if (cursor != end)
         return -1;
 
-    k_memset(proc->vmas, 0, sizeof(proc->vmas));
-    k_memcpy(proc->vmas, rebuilt, sizeof(rebuilt));
-    proc->vma_count = rebuilt_count;
+    k_memset(vmas, 0, sizeof(proc->vmas));
+    k_memcpy(vmas, rebuilt, sizeof(rebuilt));
+    *count = rebuilt_count;
     return 0;
 }

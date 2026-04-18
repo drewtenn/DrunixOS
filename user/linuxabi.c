@@ -46,6 +46,7 @@
 #define SYS_SETPRIORITY 97
 #define SYS_WAIT4       114
 #define SYS_SYSINFO     116
+#define SYS_CLONE       120
 #define SYS_UNAME       122
 #define SYS_MPROTECT   125
 #define SYS_SIGPROCMASK 126
@@ -121,6 +122,16 @@
 #define MAP_PRIVATE 0x02
 #define MAP_ANONYMOUS 0x20
 
+#define CLONE_VM             0x00000100u
+#define CLONE_FS             0x00000200u
+#define CLONE_FILES          0x00000400u
+#define CLONE_SIGHAND        0x00000800u
+#define CLONE_THREAD         0x00010000u
+#define CLONE_SETTLS         0x00080000u
+#define CLONE_PARENT_SETTID  0x00100000u
+#define CLONE_CHILD_CLEARTID 0x00200000u
+#define CLONE_CHILD_SETTID   0x01000000u
+
 #define AT_FDCWD ((long)-100)
 #define AT_SYMLINK_NOFOLLOW 0x100
 #define AT_REMOVEDIR 0x200
@@ -155,6 +166,7 @@
 #define SIG_DFL 0
 #define SIG_IGN 1
 #define SIGKILL 9
+#define SIGCHLD 17
 #define SIGTERM 15
 #define SIGSTOP 19
 
@@ -416,6 +428,10 @@ static void test_identity(void)
     check_eq("getuid32 remains root after rejected setuid", sc0(SYS_GETUID32), 0);
     check_eq("set_tid_address returns current tid", sc1(SYS_SET_TID_ADDRESS, (long)&tid_slot), pid);
     check_eq("set_tid_address accepts null pointer", sc1(SYS_SET_TID_ADDRESS, 0), pid);
+    check_eq("clone rejects CLONE_SIGHAND without CLONE_VM",
+             sc5(SYS_CLONE, CLONE_SIGHAND | SIGCHLD, 0, 0, 0, 0), -1);
+    check_eq("clone rejects CLONE_THREAD without CLONE_SIGHAND",
+             sc5(SYS_CLONE, CLONE_THREAD | CLONE_VM | SIGCHLD, 0, 0, 0, 0), -1);
 
     user_desc[0] = 0xFFFFFFFFu;
     user_desc[1] = (uint32_t)&tid_slot;

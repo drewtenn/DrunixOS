@@ -62,6 +62,7 @@
 #define SYS_WAIT4     114
 #define SYS_SYSINFO   116
 #define SYS_SIGRETURN 119
+#define SYS_CLONE     120
 #define SYS_UNAME     122
 #define SYS_MPROTECT  125
 #define SYS_SIGPROCMASK 126
@@ -135,6 +136,16 @@
 
 #define MAP_PRIVATE    0x02u
 #define MAP_ANONYMOUS  0x20u
+
+#define CLONE_VM             0x00000100u
+#define CLONE_FS             0x00000200u
+#define CLONE_FILES          0x00000400u
+#define CLONE_SIGHAND        0x00000800u
+#define CLONE_THREAD         0x00010000u
+#define CLONE_SETTLS         0x00080000u
+#define CLONE_PARENT_SETTID  0x00100000u
+#define CLONE_CHILD_CLEARTID 0x00200000u
+#define CLONE_CHILD_SETTID   0x01000000u
 
 /*
  * syscall_handler: C dispatcher called from the INT 0x80 trampoline in isr.asm.

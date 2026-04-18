@@ -531,6 +531,100 @@ int sys_getpid(void)
     return r;
 }
 
+__attribute__((naked))
+int sys_clone(unsigned int flags, void *child_stack, int *parent_tid,
+              void *tls, int *child_tid)
+{
+    __asm__ volatile (
+        "push %ebp\n"
+        "mov %esp, %ebp\n"
+        "push %edi\n"
+        "push %esi\n"
+        "push %ebx\n"
+
+        /*
+         * The child returns from INT 0x80 with ESP set to child_stack. Seed
+         * that stack with the same callee-save/return frame this wrapper will
+         * pop, plus room for the caller's cdecl argument cleanup after ret.
+         * Otherwise the child would either return through uninitialized
+         * memory or advance ESP above the supplied stack top.
+         */
+        "mov 12(%ebp), %ecx\n"
+        "test %ecx, %ecx\n"
+        "jz 1f\n"
+        "sub $52, %ecx\n"
+        "mov 0(%esp), %eax\n"
+        "mov %eax, 0(%ecx)\n"
+        "mov 4(%esp), %eax\n"
+        "mov %eax, 4(%ecx)\n"
+        "mov 8(%esp), %eax\n"
+        "mov %eax, 8(%ecx)\n"
+        "mov 0(%ebp), %eax\n"
+        "mov %eax, 12(%ecx)\n"
+        "mov 4(%ebp), %eax\n"
+        "mov %eax, 16(%ecx)\n"
+        "1:\n"
+
+        "mov $120, %eax\n"
+        "mov 8(%ebp), %ebx\n"
+        "mov 16(%ebp), %edx\n"
+        "mov 20(%ebp), %esi\n"
+        "mov 24(%ebp), %edi\n"
+        "int $0x80\n"
+        "pop %ebx\n"
+        "pop %esi\n"
+        "pop %edi\n"
+        "pop %ebp\n"
+        "ret\n"
+    );
+}
+
+int sys_gettid(void)
+{
+    int r;
+    __asm__ volatile (
+        "int $0x80"
+        : "=a"(r)
+        : "a"(224)
+        : "memory"
+    );
+    return r;
+}
+
+int sys_set_tid_address(int *tidptr)
+{
+    int r;
+    __asm__ volatile (
+        "int $0x80"
+        : "=a"(r)
+        : "a"(258), "b"(tidptr)
+        : "memory"
+    );
+    return r;
+}
+
+int sys_yield(void)
+{
+    int r;
+    __asm__ volatile (
+        "int $0x80"
+        : "=a"(r)
+        : "a"(158)
+        : "memory"
+    );
+    return r;
+}
+
+void sys_exit_group(int code)
+{
+    __asm__ volatile (
+        "int $0x80"
+        :: "a"(252), "b"(code)
+        : "memory"
+    );
+    for (;;);
+}
+
 int sys_getppid(void)
 {
     int r;

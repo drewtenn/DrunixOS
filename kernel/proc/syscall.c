@@ -78,10 +78,20 @@ extern void scroll_down(int n);
  * Note: slots 0/1/2 are pre-populated by process_create(), so in the
  * normal case the first free slot will be 3.
  */
+static file_handle_t *proc_fd_entries(process_t *proc)
+{
+    return proc && proc->files ? proc->files->open_files : proc->open_files;
+}
+
 static int fd_alloc(process_t *proc)
 {
+    file_handle_t *files = proc_fd_entries(proc);
+
+    if (!files)
+        return -1;
+
     for (unsigned i = 0; i < MAX_FDS; i++) {
-        if (proc->open_files[i].type == FD_TYPE_NONE)
+        if (files[i].type == FD_TYPE_NONE)
             return (int)i;
     }
     return -1;
@@ -96,7 +106,7 @@ static tty_t *syscall_tty_from_fd(process_t *cur, uint32_t fd,
     if (!cur || fd >= MAX_FDS)
         return 0;
 
-    fh = &cur->open_files[fd];
+    fh = &proc_fd_entries(cur)[fd];
     if (fh->type != FD_TYPE_TTY)
         return 0;
 
@@ -487,7 +497,7 @@ static int linux_fd_stat_metadata(process_t *cur, uint32_t fd,
     if (!cur || !meta || fd >= MAX_FDS)
         return -1;
 
-    fh = &cur->open_files[fd];
+    fh = &proc_fd_entries(cur)[fd];
     k_memset(meta, 0, sizeof(*meta));
     meta->nlink = 1;
     meta->size = 0;
@@ -683,7 +693,7 @@ static int linux_path_stat_metadata_at_flags(process_t *cur, uint32_t dirfd,
             kfree(raw);
             return -1;
         }
-        fh = &cur->open_files[dirfd];
+        fh = &proc_fd_entries(cur)[dirfd];
         if (fh->type != FD_TYPE_DIR) {
             kfree(rpath);
             kfree(raw);
@@ -956,14 +966,14 @@ static int linux_truncate_fd(process_t *cur, uint32_t fd, uint64_t length)
     if (length > 0xFFFFFFFFull)
         return -22;
 
-    fh = &cur->open_files[fd];
+    fh = &proc_fd_entries(cur)[fd];
     if (fh->type != FD_TYPE_FILE || !fh->writable)
         return -1;
     if (vfs_truncate(fh->u.file.ref, (uint32_t)length) != 0)
         return -1;
 
     for (uint32_t i = 0; i < MAX_FDS; i++) {
-        file_handle_t *other = &cur->open_files[i];
+        file_handle_t *other = &proc_fd_entries(cur)[i];
         if (other->type == FD_TYPE_FILE &&
             other->u.file.ref.mount_id == fh->u.file.ref.mount_id &&
             other->u.file.ref.inode_num == fh->u.file.ref.inode_num) {
@@ -1109,7 +1119,7 @@ static uint32_t syscall_write_fd(uint32_t fd, uint32_t user_buf,
     if (!cur)
         return (uint32_t)-1;
 
-    fh = &cur->open_files[fd];
+    fh = &proc_fd_entries(cur)[fd];
 
     if (fh->type == FD_TYPE_BLOCKDEV)
         return (uint32_t)-1;
@@ -1246,7 +1256,7 @@ static uint32_t syscall_read_fd(uint32_t fd, uint32_t user_buf,
     if (!cur)
         return (uint32_t)-1;
 
-    fh = &cur->open_files[fd];
+    fh = &proc_fd_entries(cur)[fd];
 
     if (fh->type == FD_TYPE_BLOCKDEV)
         return syscall_read_blockdev(cur, fh, user_buf, count);
@@ -1562,7 +1572,7 @@ static uint32_t linux_poll_revents(process_t *cur, int32_t fd,
 
     if (!cur || fd < 0 || (uint32_t)fd >= MAX_FDS)
         return 0;
-    fh = &cur->open_files[(uint32_t)fd];
+    fh = &proc_fd_entries(cur)[(uint32_t)fd];
     if (fh->type == FD_TYPE_NONE)
         return 0x0020u; /* POLLNVAL */
 
@@ -1599,7 +1609,7 @@ static uint32_t syscall_ioctl(uint32_t fd, uint32_t request, uint32_t argp)
 
     if (!cur || fd >= MAX_FDS)
         return (uint32_t)-1;
-    fh = &cur->open_files[fd];
+    fh = &proc_fd_entries(cur)[fd];
     if (fh->type == FD_TYPE_NONE)
         return (uint32_t)-1;
 
@@ -1683,13 +1693,13 @@ static int fd_duplicate_from(process_t *proc, uint32_t oldfd, uint32_t minfd)
 
     if (!proc || oldfd >= MAX_FDS || minfd >= MAX_FDS)
         return -1;
-    if (proc->open_files[oldfd].type == FD_TYPE_NONE)
+    if (proc_fd_entries(proc)[oldfd].type == FD_TYPE_NONE)
         return -1;
 
     for (fd = minfd; fd < MAX_FDS; fd++) {
-        if (proc->open_files[fd].type == FD_TYPE_NONE) {
-            proc->open_files[fd] = proc->open_files[oldfd];
-            fd_bump_pipe_ref(&proc->open_files[fd]);
+        if (proc_fd_entries(proc)[fd].type == FD_TYPE_NONE) {
+            proc_fd_entries(proc)[fd] = proc_fd_entries(proc)[oldfd];
+            fd_bump_pipe_ref(&proc_fd_entries(proc)[fd]);
             return (int)fd;
         }
     }
@@ -1722,7 +1732,7 @@ static int syscall_seek_handle(process_t *cur, uint32_t fd, int64_t offset,
 
     if (!cur || fd >= MAX_FDS)
         return -1;
-    fh = &cur->open_files[fd];
+    fh = &proc_fd_entries(cur)[fd];
     if (fh->type != FD_TYPE_FILE && fh->type != FD_TYPE_SYSFILE &&
         fh->type != FD_TYPE_PROCFILE)
         return -1;
@@ -1773,8 +1783,8 @@ static uint32_t syscall_sendfile64(process_t *cur, uint32_t out_fd,
 
     if (!cur || out_fd >= MAX_FDS || in_fd >= MAX_FDS)
         return (uint32_t)-1;
-    out = &cur->open_files[out_fd];
-    in = &cur->open_files[in_fd];
+    out = &proc_fd_entries(cur)[out_fd];
+    in = &proc_fd_entries(cur)[in_fd];
     if (out->type != FD_TYPE_STDOUT)
         return (uint32_t)-1;
     if (in->type != FD_TYPE_FILE && in->type != FD_TYPE_SYSFILE &&
@@ -1992,84 +2002,84 @@ static int fd_install_vfs_node(process_t *proc, const vfs_node_t *node,
     if (fd < 0)
         return -1;
 
-    proc->open_files[fd].writable = writable;
-    proc->open_files[fd].append = 0;
+    proc_fd_entries(proc)[fd].writable = writable;
+    proc_fd_entries(proc)[fd].append = 0;
 
     switch (node->type) {
     case VFS_NODE_FILE:
-        proc->open_files[fd].type = FD_TYPE_FILE;
-        proc->open_files[fd].append = append ? 1u : 0u;
-        proc->open_files[fd].u.file.ref.mount_id = node->mount_id;
-        proc->open_files[fd].u.file.ref.inode_num = node->inode_num;
-        proc->open_files[fd].u.file.inode_num = node->inode_num;
-        proc->open_files[fd].u.file.size = node->size;
-        proc->open_files[fd].u.file.offset = 0;
+        proc_fd_entries(proc)[fd].type = FD_TYPE_FILE;
+        proc_fd_entries(proc)[fd].append = append ? 1u : 0u;
+        proc_fd_entries(proc)[fd].u.file.ref.mount_id = node->mount_id;
+        proc_fd_entries(proc)[fd].u.file.ref.inode_num = node->inode_num;
+        proc_fd_entries(proc)[fd].u.file.inode_num = node->inode_num;
+        proc_fd_entries(proc)[fd].u.file.size = node->size;
+        proc_fd_entries(proc)[fd].u.file.offset = 0;
         return fd;
 
     case VFS_NODE_SYSFILE:
         if (writable) {
-            proc->open_files[fd].type = FD_TYPE_NONE;
-            proc->open_files[fd].writable = 0;
+            proc_fd_entries(proc)[fd].type = FD_TYPE_NONE;
+            proc_fd_entries(proc)[fd].writable = 0;
             return -1;
         }
-        proc->open_files[fd].type = FD_TYPE_SYSFILE;
-        proc->open_files[fd].append = 0;
-        proc->open_files[fd].u.file.ref.mount_id = node->mount_id;
-        proc->open_files[fd].u.file.ref.inode_num = node->inode_num;
-        proc->open_files[fd].u.file.inode_num = node->inode_num;
-        proc->open_files[fd].u.file.size = node->size;
-        proc->open_files[fd].u.file.offset = 0;
+        proc_fd_entries(proc)[fd].type = FD_TYPE_SYSFILE;
+        proc_fd_entries(proc)[fd].append = 0;
+        proc_fd_entries(proc)[fd].u.file.ref.mount_id = node->mount_id;
+        proc_fd_entries(proc)[fd].u.file.ref.inode_num = node->inode_num;
+        proc_fd_entries(proc)[fd].u.file.inode_num = node->inode_num;
+        proc_fd_entries(proc)[fd].u.file.size = node->size;
+        proc_fd_entries(proc)[fd].u.file.offset = 0;
         return fd;
 
     case VFS_NODE_DIR:
-        proc->open_files[fd].type = FD_TYPE_DIR;
-        proc->open_files[fd].u.dir.path[0] = '\0';
-        proc->open_files[fd].u.dir.index = 0;
+        proc_fd_entries(proc)[fd].type = FD_TYPE_DIR;
+        proc_fd_entries(proc)[fd].u.dir.path[0] = '\0';
+        proc_fd_entries(proc)[fd].u.dir.index = 0;
         return fd;
 
     case VFS_NODE_BLOCKDEV:
         if (writable) {
-            proc->open_files[fd].type = FD_TYPE_NONE;
-            proc->open_files[fd].writable = 0;
+            proc_fd_entries(proc)[fd].type = FD_TYPE_NONE;
+            proc_fd_entries(proc)[fd].writable = 0;
             return -1;
         }
-        proc->open_files[fd].type = FD_TYPE_BLOCKDEV;
-        k_strncpy(proc->open_files[fd].u.blockdev.name,
+        proc_fd_entries(proc)[fd].type = FD_TYPE_BLOCKDEV;
+        k_strncpy(proc_fd_entries(proc)[fd].u.blockdev.name,
                   node->dev_name,
-                  sizeof(proc->open_files[fd].u.blockdev.name) - 1);
-        proc->open_files[fd].u.blockdev
-            .name[sizeof(proc->open_files[fd].u.blockdev.name) - 1] = '\0';
-        proc->open_files[fd].u.blockdev.offset = 0;
-        proc->open_files[fd].u.blockdev.size = node->size;
+                  sizeof(proc_fd_entries(proc)[fd].u.blockdev.name) - 1);
+        proc_fd_entries(proc)[fd].u.blockdev
+            .name[sizeof(proc_fd_entries(proc)[fd].u.blockdev.name) - 1] = '\0';
+        proc_fd_entries(proc)[fd].u.blockdev.offset = 0;
+        proc_fd_entries(proc)[fd].u.blockdev.size = node->size;
         return fd;
 
     case VFS_NODE_TTY:
-        proc->open_files[fd].type = FD_TYPE_TTY;
-        proc->open_files[fd].u.tty.tty_idx = node->dev_id;
+        proc_fd_entries(proc)[fd].type = FD_TYPE_TTY;
+        proc_fd_entries(proc)[fd].u.tty.tty_idx = node->dev_id;
         return fd;
 
     case VFS_NODE_PROCFILE:
-        proc->open_files[fd].type = FD_TYPE_PROCFILE;
-        proc->open_files[fd].u.proc.kind = node->proc_kind;
-        proc->open_files[fd].u.proc.pid = node->proc_pid;
-        proc->open_files[fd].u.proc.index = node->proc_index;
-        proc->open_files[fd].u.proc.size = node->size;
-        proc->open_files[fd].u.proc.offset = 0;
+        proc_fd_entries(proc)[fd].type = FD_TYPE_PROCFILE;
+        proc_fd_entries(proc)[fd].u.proc.kind = node->proc_kind;
+        proc_fd_entries(proc)[fd].u.proc.pid = node->proc_pid;
+        proc_fd_entries(proc)[fd].u.proc.index = node->proc_index;
+        proc_fd_entries(proc)[fd].u.proc.size = node->size;
+        proc_fd_entries(proc)[fd].u.proc.offset = 0;
         return fd;
 
     case VFS_NODE_CHARDEV:
-        proc->open_files[fd].type = FD_TYPE_CHARDEV;
-        k_strncpy(proc->open_files[fd].u.chardev.name,
+        proc_fd_entries(proc)[fd].type = FD_TYPE_CHARDEV;
+        k_strncpy(proc_fd_entries(proc)[fd].u.chardev.name,
                   node->dev_name,
-                  sizeof(proc->open_files[fd].u.chardev.name) - 1);
-        proc->open_files[fd].u.chardev
-            .name[sizeof(proc->open_files[fd].u.chardev.name) - 1] = '\0';
+                  sizeof(proc_fd_entries(proc)[fd].u.chardev.name) - 1);
+        proc_fd_entries(proc)[fd].u.chardev
+            .name[sizeof(proc_fd_entries(proc)[fd].u.chardev.name) - 1] = '\0';
         return fd;
 
     default:
-        proc->open_files[fd].type = FD_TYPE_NONE;
-        proc->open_files[fd].writable = 0;
-        proc->open_files[fd].append = 0;
+        proc_fd_entries(proc)[fd].type = FD_TYPE_NONE;
+        proc_fd_entries(proc)[fd].writable = 0;
+        proc_fd_entries(proc)[fd].append = 0;
         return -1;
     }
 }
@@ -2132,10 +2142,10 @@ static int syscall_open_resolved_path(process_t *cur, const char *rpath,
     if (fd < 0)
         return -1;
     if (node.type == VFS_NODE_DIR) {
-        k_strncpy(cur->open_files[fd].u.dir.path, rpath,
-                  sizeof(cur->open_files[fd].u.dir.path) - 1);
-        cur->open_files[fd].u.dir
-            .path[sizeof(cur->open_files[fd].u.dir.path) - 1] = '\0';
+        k_strncpy(proc_fd_entries(cur)[fd].u.dir.path, rpath,
+                  sizeof(proc_fd_entries(cur)[fd].u.dir.path) - 1);
+        proc_fd_entries(cur)[fd].u.dir
+            .path[sizeof(proc_fd_entries(cur)[fd].u.dir.path) - 1] = '\0';
     }
     return fd;
 }
@@ -2203,7 +2213,7 @@ static int resolve_user_path_at(process_t *proc, uint32_t dirfd,
             kfree(raw);
             return -1;
         }
-        fh = &proc->open_files[dirfd];
+        fh = &proc_fd_entries(proc)[dirfd];
         if (fh->type != FD_TYPE_DIR) {
             kfree(raw);
             return -1;
@@ -2315,7 +2325,7 @@ static uint32_t syscall_execve(uint32_t user_path, uint32_t user_argv,
     new_proc->state_waiters = exec_cur->state_waiters;
     k_memcpy(new_proc->cwd, exec_cur->cwd, sizeof(new_proc->cwd));
     for (unsigned i = 0; i < MAX_FDS; i++)
-        new_proc->open_files[i] = exec_cur->open_files[i];
+        proc_fd_entries(new_proc)[i] = proc_fd_entries(exec_cur)[i];
 
     new_proc->sig_pending = exec_cur->sig_pending;
     new_proc->sig_blocked = exec_cur->sig_blocked;
@@ -2344,7 +2354,7 @@ static uint32_t syscall_execve(uint32_t user_path, uint32_t user_argv,
  */
 static void fd_close_one(process_t *proc, unsigned fd)
 {
-    file_handle_t *fh = &proc->open_files[fd];
+    file_handle_t *fh = &proc_fd_entries(proc)[fd];
 
     if (fh->type == FD_TYPE_FILE && fh->writable)
         vfs_flush(fh->u.file.ref);
@@ -2411,7 +2421,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_writev(uint32_t eax, uint32_t ebx,
 
         if (!cur || ebx >= MAX_FDS || ecx == 0 || edx > 1024u)
             return (uint32_t)-1;
-        if (cur->open_files[ebx].type == FD_TYPE_NONE)
+        if (proc_fd_entries(cur)[ebx].type == FD_TYPE_NONE)
             return (uint32_t)-1;
 
         for (uint32_t i = 0; i < edx; i++) {
@@ -2450,7 +2460,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_readv(uint32_t eax, uint32_t ebx,
 
         if (!cur || ebx >= MAX_FDS || ecx == 0 || edx > 1024u)
             return (uint32_t)-1;
-        if (cur->open_files[ebx].type == FD_TYPE_NONE)
+        if (proc_fd_entries(cur)[ebx].type == FD_TYPE_NONE)
             return (uint32_t)-1;
 
         for (uint32_t i = 0; i < edx; i++) {
@@ -2586,7 +2596,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_close(uint32_t eax, uint32_t ebx,
         if (!cur)
             return (uint32_t)-1;
 
-        if (cur->open_files[ebx].type == FD_TYPE_NONE)
+        if (proc_fd_entries(cur)[ebx].type == FD_TYPE_NONE)
             return (uint32_t)-1;
 
         fd_close_one(cur, ebx);
@@ -2667,7 +2677,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_fchownat(uint32_t eax, uint32_t eb
         if (ecx == 0) {
             if ((edi & LINUX_AT_EMPTY_PATH) == 0 ||
                 !cur || ebx >= MAX_FDS ||
-                cur->open_files[ebx].type == FD_TYPE_NONE)
+                proc_fd_entries(cur)[ebx].type == FD_TYPE_NONE)
                 return (uint32_t)-1;
             return 0;
         }
@@ -2692,7 +2702,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_futimesat(uint32_t eax, uint32_t e
         (void)ebp;
         if (ecx == 0) {
             if (!cur || ebx >= MAX_FDS ||
-                cur->open_files[ebx].type == FD_TYPE_NONE)
+                proc_fd_entries(cur)[ebx].type == FD_TYPE_NONE)
                 return (uint32_t)-1;
             return 0;
         }
@@ -2965,7 +2975,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_utimensat(uint32_t eax, uint32_t e
         if ((esi & ~LINUX_AT_SYMLINK_NOFOLLOW) != 0)
             return (uint32_t)-22;
         if (ecx == 0) {
-            if (ebx >= MAX_FDS || cur->open_files[ebx].type == FD_TYPE_NONE)
+            if (ebx >= MAX_FDS || proc_fd_entries(cur)[ebx].type == FD_TYPE_NONE)
                 return (uint32_t)-1;
             return 0;
         }
@@ -3044,7 +3054,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_fcntl64(uint32_t eax, uint32_t ebx
 
         if (!cur || ebx >= MAX_FDS)
             return (uint32_t)-1;
-        if (cur->open_files[ebx].type == FD_TYPE_NONE)
+        if (proc_fd_entries(cur)[ebx].type == FD_TYPE_NONE)
             return (uint32_t)-1;
 
         switch (ecx) {
@@ -3057,10 +3067,10 @@ static uint32_t SYSCALL_NOINLINE syscall_case_fcntl64(uint32_t eax, uint32_t ebx
         case LINUX_F_SETFD:
             return 0;
         case LINUX_F_GETFL:
-            return linux_fd_status_flags(&cur->open_files[ebx]);
+            return linux_fd_status_flags(&proc_fd_entries(cur)[ebx]);
         case LINUX_F_SETFL:
-            cur->open_files[ebx].append =
-                (cur->open_files[ebx].type == FD_TYPE_FILE &&
+            proc_fd_entries(cur)[ebx].append =
+                (proc_fd_entries(cur)[ebx].type == FD_TYPE_FILE &&
                  (edx & LINUX_O_APPEND)) ? 1u : 0u;
             return 0;
         default:
@@ -3087,6 +3097,9 @@ static uint32_t SYSCALL_NOINLINE syscall_case_execve(uint32_t eax, uint32_t ebx,
          *
          * On success this syscall does not return to the old image.
          */
+        process_t *cur = sched_current();
+        if (cur && cur->group && task_group_live_count(cur->group) > 1)
+            return (uint32_t)-1;
 
         return syscall_execve(ebx, ecx, edx);
     }
@@ -3135,13 +3148,13 @@ static uint32_t SYSCALL_NOINLINE syscall_case_creat(uint32_t eax, uint32_t ebx,
             klog("CREATE", "fd table full");
             return (uint32_t)-1;
         }
-        cur->open_files[fd].type             = FD_TYPE_FILE;
-        cur->open_files[fd].writable         = 1;
-        cur->open_files[fd].append           = 0;
-        cur->open_files[fd].u.file.ref        = ref_c;
-        cur->open_files[fd].u.file.inode_num = (uint32_t)ino_c;
-        cur->open_files[fd].u.file.size      = size_c;
-        cur->open_files[fd].u.file.offset    = 0;
+        proc_fd_entries(cur)[fd].type             = FD_TYPE_FILE;
+        proc_fd_entries(cur)[fd].writable         = 1;
+        proc_fd_entries(cur)[fd].append           = 0;
+        proc_fd_entries(cur)[fd].u.file.ref        = ref_c;
+        proc_fd_entries(cur)[fd].u.file.inode_num = (uint32_t)ino_c;
+        proc_fd_entries(cur)[fd].u.file.size      = size_c;
+        proc_fd_entries(cur)[fd].u.file.offset    = 0;
         return (uint32_t)fd;
     }
 }
@@ -3200,6 +3213,81 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unlinkat(uint32_t eax, uint32_t eb
         kfree(rpath);
         return ret;
     }
+}
+
+#define CLONE_EXIT_SIGNAL_MASK 0xFFu
+#define CLONE_SUPPORTED_FLAGS \
+    (CLONE_EXIT_SIGNAL_MASK | CLONE_VM | CLONE_FS | CLONE_FILES | \
+     CLONE_SIGHAND | CLONE_THREAD | CLONE_SETTLS | CLONE_PARENT_SETTID | \
+     CLONE_CHILD_CLEARTID | CLONE_CHILD_SETTID)
+
+static int syscall_clone_validate_flags(uint32_t flags)
+{
+    uint32_t unsupported = flags & ~CLONE_SUPPORTED_FLAGS;
+    if (unsupported) {
+        klog_hex("CLONE", "unsupported flags", unsupported);
+        return -1;
+    }
+    if ((flags & CLONE_SIGHAND) && !(flags & CLONE_VM))
+        return -1;
+    if ((flags & CLONE_THREAD) && !(flags & CLONE_SIGHAND))
+        return -1;
+    return 0;
+}
+
+static uint32_t SYSCALL_NOINLINE syscall_case_clone(uint32_t eax, uint32_t ebx,
+                              uint32_t ecx,
+                              uint32_t edx, uint32_t esi,
+                              uint32_t edi, uint32_t ebp)
+{
+    (void)eax;
+    (void)ebp;
+    process_t *parent = sched_current();
+    process_t *child;
+    int ctid;
+
+    if (!parent || syscall_clone_validate_flags(ebx) != 0)
+        return (uint32_t)-1;
+
+    child = (process_t *)kmalloc(sizeof(*child));
+    if (!child)
+        return (uint32_t)-1;
+
+    if (process_clone(child, parent, ebx, ecx, edx, esi, edi) != 0) {
+        kfree(child);
+        return (uint32_t)-1;
+    }
+
+    if ((ebx & CLONE_PARENT_SETTID) && edx != 0) {
+        uint32_t child_tid_preview = sched_peek_next_tid();
+        if (uaccess_copy_to_user(parent, edx, &child_tid_preview,
+                                 sizeof(child_tid_preview)) != 0) {
+            process_clone_rollback(child);
+            kfree(child);
+            return (uint32_t)-1;
+        }
+    }
+
+    ctid = sched_add(child);
+    if (ctid < 0) {
+        process_clone_rollback(child);
+        kfree(child);
+        return (uint32_t)-1;
+    }
+    kfree(child);
+
+    if ((ebx & CLONE_CHILD_SETTID) && edi != 0) {
+        process_t *slot = sched_find_pid((uint32_t)ctid);
+        uint32_t tid_value = (uint32_t)ctid;
+
+        if (!slot || uaccess_copy_to_user(slot, edi, &tid_value,
+                                          sizeof(tid_value)) != 0) {
+            sched_force_remove_task((uint32_t)ctid);
+            return (uint32_t)-1;
+        }
+    }
+
+    return (uint32_t)ctid;
 }
 
 static uint32_t SYSCALL_NOINLINE syscall_case_fork_vfork(uint32_t eax, uint32_t ebx,
@@ -3556,10 +3644,11 @@ static uint32_t SYSCALL_NOINLINE syscall_case_getcwd(uint32_t eax, uint32_t ebx,
         path = (char *)kmalloc(4096);
         if (!path)
             return (uint32_t)-1;
-        if (cur->cwd[0] == '\0')
+        const char *cwd = cur->fs_state ? cur->fs_state->cwd : cur->cwd;
+        if (cwd[0] == '\0')
             k_strncpy(path, "/", 4095u);
         else
-            k_snprintf(path, 4096u, "/%s", cur->cwd);
+            k_snprintf(path, 4096u, "/%s", cwd);
         path[4095] = '\0';
 
         len = k_strnlen(path, 4095u);
@@ -3734,7 +3823,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_getdents(uint32_t eax, uint32_t eb
 
         if (!cur || ebx >= MAX_FDS)
             return (uint32_t)-1;
-        return (uint32_t)linux_fill_getdents(cur, &cur->open_files[ebx],
+        return (uint32_t)linux_fill_getdents(cur, &proc_fd_entries(cur)[ebx],
                                              ecx, edx);
     }
 }
@@ -3807,7 +3896,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_getdents64(uint32_t eax, uint32_t 
 
         if (!cur || ebx >= MAX_FDS)
             return (uint32_t)-1;
-        return (uint32_t)linux_fill_getdents64(cur, &cur->open_files[ebx],
+        return (uint32_t)linux_fill_getdents64(cur, &proc_fd_entries(cur)[ebx],
                                                ecx, edx);
     }
 }
@@ -3951,7 +4040,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_fstatfs64(uint32_t eax, uint32_t e
         process_t *cur = sched_current();
         int rc;
 
-        if (!cur || ebx >= MAX_FDS || cur->open_files[ebx].type == FD_TYPE_NONE)
+        if (!cur || ebx >= MAX_FDS || proc_fd_entries(cur)[ebx].type == FD_TYPE_NONE)
             return (uint32_t)-1;
         rc = linux_copy_statfs64(cur, edx, ecx);
         return rc == 0 ? 0 : (uint32_t)rc;
@@ -4198,8 +4287,12 @@ static uint32_t SYSCALL_NOINLINE syscall_case_exit_exit_group(uint32_t eax, uint
          * away.  schedule() never returns here — the zombie's kernel stack
          * is abandoned and will be freed when the slot is reused.
          */
-        sched_set_exit_status(ebx);
-        sched_mark_exit();
+        if (eax == SYS_EXIT_GROUP) {
+            sched_mark_group_exit(ebx);
+        } else {
+            sched_set_exit_status(ebx);
+            sched_mark_exit();
+        }
         schedule();
         __builtin_unreachable();
 }
@@ -4226,9 +4319,15 @@ static uint32_t SYSCALL_NOINLINE syscall_case_brk(uint32_t eax, uint32_t ebx,
          * failure — this is the standard Linux brk() contract.
          */
         process_t *cur = sched_current();
+        proc_address_space_t *as;
+        uint32_t *brk_ptr;
+        uint32_t pd_phys;
         vm_area_t *heap_vma;
         if (!cur)
             return (uint32_t)-1;
+        as = cur->as;
+        brk_ptr = as ? &as->brk : &cur->brk;
+        pd_phys = as ? as->pd_phys : cur->pd_phys;
         heap_vma = vma_find_kind(cur, VMA_KIND_HEAP);
         if (!heap_vma)
             return (uint32_t)-1;
@@ -4237,19 +4336,19 @@ static uint32_t SYSCALL_NOINLINE syscall_case_brk(uint32_t eax, uint32_t ebx,
 
         /* Query: return current brk without changing anything. */
         if (new_brk == 0) {
-            klog_hex("BRK", "query brk", cur->brk);
+            klog_hex("BRK", "query brk", *brk_ptr);
             klog_uint("BRK", "query pid", cur->pid);
-            return cur->brk;
+            return *brk_ptr;
         }
 
         /* Guard: must be above the heap base and below the stack region. */
         if (new_brk < heap_vma->start || new_brk > USER_HEAP_MAX)
-            return cur->brk;
+            return *brk_ptr;
 
-        if (new_brk < cur->brk) {
+        if (new_brk < *brk_ptr) {
             uint32_t unmap_start = (new_brk + 0xFFFu) & ~0xFFFu;
-            uint32_t old_end = (cur->brk + 0xFFFu) & ~0xFFFu;
-            uint32_t *pd = (uint32_t *)cur->pd_phys;
+            uint32_t old_end = (*brk_ptr + 0xFFFu) & ~0xFFFu;
+            uint32_t *pd = (uint32_t *)pd_phys;
 
             for (uint32_t vpage = unmap_start; vpage < old_end; vpage += 0x1000u) {
                 uint32_t pdi = vpage >> 22;
@@ -4268,7 +4367,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_brk(uint32_t eax, uint32_t ebx,
             }
         }
 
-        cur->brk = new_brk;
+        *brk_ptr = new_brk;
         heap_vma->end = new_brk;
         return new_brk;
     }
@@ -4418,10 +4517,10 @@ static uint32_t SYSCALL_NOINLINE syscall_case_pipe(uint32_t eax, uint32_t ebx,
             klog("PIPE", "fd table full (read end)");
             return (uint32_t)-1;
         }
-        cur->open_files[rfd].type           = FD_TYPE_PIPE_READ;
-        cur->open_files[rfd].writable       = 0;
-        cur->open_files[rfd].append         = 0;
-        cur->open_files[rfd].u.pipe.pipe_idx = (uint32_t)pipe_idx;
+        proc_fd_entries(cur)[rfd].type           = FD_TYPE_PIPE_READ;
+        proc_fd_entries(cur)[rfd].writable       = 0;
+        proc_fd_entries(cur)[rfd].append         = 0;
+        proc_fd_entries(cur)[rfd].u.pipe.pipe_idx = (uint32_t)pipe_idx;
 
         int wfd = fd_alloc(cur);
         if (wfd < 0) {
@@ -4429,10 +4528,10 @@ static uint32_t SYSCALL_NOINLINE syscall_case_pipe(uint32_t eax, uint32_t ebx,
             klog("PIPE", "fd table full (write end)");
             return (uint32_t)-1;
         }
-        cur->open_files[wfd].type           = FD_TYPE_PIPE_WRITE;
-        cur->open_files[wfd].writable       = 1;
-        cur->open_files[wfd].append         = 0;
-        cur->open_files[wfd].u.pipe.pipe_idx = (uint32_t)pipe_idx;
+        proc_fd_entries(cur)[wfd].type           = FD_TYPE_PIPE_WRITE;
+        proc_fd_entries(cur)[wfd].writable       = 1;
+        proc_fd_entries(cur)[wfd].append         = 0;
+        proc_fd_entries(cur)[wfd].u.pipe.pipe_idx = (uint32_t)pipe_idx;
 
         {
             int user_fds[2];
@@ -4493,23 +4592,23 @@ static uint32_t SYSCALL_NOINLINE syscall_case_dup2(uint32_t eax, uint32_t ebx,
         process_t *cur = sched_current();
         if (!cur) return (uint32_t)-1;
 
-        if (cur->open_files[ebx].type == FD_TYPE_NONE) return (uint32_t)-1;
+        if (proc_fd_entries(cur)[ebx].type == FD_TYPE_NONE) return (uint32_t)-1;
 
         if (ebx == ecx) return ecx;   /* dup2(fd, fd) is a documented no-op */
 
         /* Close the destination if it is already open. */
-        if (cur->open_files[ecx].type != FD_TYPE_NONE)
+        if (proc_fd_entries(cur)[ecx].type != FD_TYPE_NONE)
             fd_close_one(cur, ecx);
 
         /* Copy the handle. */
-        cur->open_files[ecx] = cur->open_files[ebx];
+        proc_fd_entries(cur)[ecx] = proc_fd_entries(cur)[ebx];
 
         /* Bump the pipe refcount for the duplicated end. */
-        if (cur->open_files[ecx].type == FD_TYPE_PIPE_READ) {
-            pipe_buf_t *pb = pipe_get((int)cur->open_files[ecx].u.pipe.pipe_idx);
+        if (proc_fd_entries(cur)[ecx].type == FD_TYPE_PIPE_READ) {
+            pipe_buf_t *pb = pipe_get((int)proc_fd_entries(cur)[ecx].u.pipe.pipe_idx);
             if (pb) pb->read_open++;
-        } else if (cur->open_files[ecx].type == FD_TYPE_PIPE_WRITE) {
-            pipe_buf_t *pb = pipe_get((int)cur->open_files[ecx].u.pipe.pipe_idx);
+        } else if (proc_fd_entries(cur)[ecx].type == FD_TYPE_PIPE_WRITE) {
+            pipe_buf_t *pb = pipe_get((int)proc_fd_entries(cur)[ecx].u.pipe.pipe_idx);
             if (pb) pb->write_open++;
         }
 
@@ -4597,12 +4696,14 @@ static uint32_t SYSCALL_NOINLINE syscall_case_sigaction(uint32_t eax, uint32_t e
         if (ecx > SIG_IGN && ecx >= USER_STACK_TOP)
             return (uint32_t)-1;
 
+        uint32_t *handlers = cur->sig_actions ? cur->sig_actions->handlers :
+                             cur->sig_handlers;
         if (edx &&
-            uaccess_copy_to_user(cur, edx, &cur->sig_handlers[sig],
-                                 sizeof(cur->sig_handlers[sig])) != 0)
+            uaccess_copy_to_user(cur, edx, &handlers[sig],
+                                 sizeof(handlers[sig])) != 0)
             return (uint32_t)-1;
 
-        cur->sig_handlers[sig] = ecx;
+        handlers[sig] = ecx;
         return 0;
     }
 }
@@ -4621,6 +4722,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_rt_sigaction(uint32_t eax, uint32_
         process_t *cur = sched_current();
         uint8_t kact[32];
         uint8_t kold[32];
+        uint32_t *handlers;
         uint32_t handler = 0;
         int sig = (int)ebx;
 
@@ -4628,9 +4730,11 @@ static uint32_t SYSCALL_NOINLINE syscall_case_rt_sigaction(uint32_t eax, uint32_
             return (uint32_t)-1;
         if (esi < sizeof(uint32_t) || esi > 128u)
             return (uint32_t)-1;
+        handlers = cur->sig_actions ? cur->sig_actions->handlers :
+                   cur->sig_handlers;
         if (edx != 0) {
             k_memset(kold, 0, sizeof(kold));
-            linux_put_u32(kold, 0u, cur->sig_handlers[sig]);
+            linux_put_u32(kold, 0u, handlers[sig]);
             if (uaccess_copy_to_user(cur, edx, kold, sizeof(kold)) != 0)
                 return (uint32_t)-1;
         }
@@ -4640,7 +4744,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_rt_sigaction(uint32_t eax, uint32_
             handler = linux_get_u32(kact, 0u);
             if (handler > SIG_IGN && handler >= USER_STACK_TOP)
                 return (uint32_t)-1;
-            cur->sig_handlers[sig] = handler;
+            handlers[sig] = handler;
         }
         return 0;
     }
@@ -4906,7 +5010,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_getpid(uint32_t eax, uint32_t ebx,
                               uint32_t edx, uint32_t esi,
                               uint32_t edi, uint32_t ebp)
 {
-        return sched_current_pid();
+        return sched_current_tgid();
 }
 
 static uint32_t SYSCALL_NOINLINE syscall_case_gettid(uint32_t eax, uint32_t ebx,
@@ -4914,7 +5018,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_gettid(uint32_t eax, uint32_t ebx,
                               uint32_t edx, uint32_t esi,
                               uint32_t edi, uint32_t ebp)
 {
-        return sched_current_pid();
+        return sched_current_tid();
 }
 
 static uint32_t SYSCALL_NOINLINE syscall_case_getppid(uint32_t eax, uint32_t ebx,
@@ -5151,6 +5255,9 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
     case SYS_FORK:
     case SYS_VFORK:
         return syscall_case_fork_vfork(eax, ebx, ecx, edx, esi, edi, ebp);
+
+    case SYS_CLONE:
+        return syscall_case_clone(eax, ebx, ecx, edx, esi, edi, ebp);
 
     case SYS_DRUNIX_CLEAR:
         return syscall_case_drunix_clear(eax, ebx, ecx, edx, esi, edi, ebp);
