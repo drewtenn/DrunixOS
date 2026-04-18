@@ -6,6 +6,8 @@
 #include "blkdev.h"
 #include "kstring.h"
 
+const blkdev_ops_t *blkdev_part_ops_for_index(uint32_t index);
+
 typedef struct {
     blkdev_info_t info;
     const blkdev_ops_t *ops;
@@ -97,7 +99,9 @@ int blkdev_register_part(const char *name, uint32_t parent_index,
     blkdev_table[idx].info.parent_index = parent_index;
     blkdev_table[idx].info.start_sector = start_sector;
     blkdev_table[idx].info.partition_number = partition_number;
-    blkdev_table[idx].ops = parent->ops;
+    blkdev_table[idx].ops = blkdev_part_ops_for_index((uint32_t)idx);
+    if (!blkdev_table[idx].ops)
+        return -1;
     return 0;
 }
 
@@ -110,6 +114,13 @@ const blkdev_ops_t *blkdev_get(const char *name)
 {
     int idx = blkdev_find_index(name);
     return idx >= 0 ? blkdev_table[idx].ops : 0;
+}
+
+const blkdev_ops_t *blkdev_ops_at(uint32_t index)
+{
+    if (index >= BLKDEV_MAX || blkdev_table[index].info.name[0] == '\0')
+        return 0;
+    return blkdev_table[index].ops;
 }
 
 uint32_t blkdev_count(void)

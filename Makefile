@@ -181,7 +181,7 @@ KOBJS = kernel/kernel-entry.o kernel/kernel.o \
         kernel/arch/idt.o kernel/arch/isr.o kernel/arch/sse.o kernel/arch/df_test.o \
         kernel/arch/irq.o kernel/arch/pit.o kernel/arch/clock.o \
         kernel/drivers/keyboard.o kernel/drivers/mouse.o kernel/drivers/ata.o \
-        kernel/drivers/blkdev.o kernel/blk/bcache.o kernel/drivers/chardev.o kernel/drivers/tty.o \
+        kernel/drivers/blkdev.o kernel/drivers/blkdev_part.o kernel/blk/bcache.o kernel/drivers/chardev.o kernel/drivers/tty.o \
         kernel/gui/display.o kernel/gui/framebuffer.o kernel/gui/font8x16.o kernel/gui/desktop.o kernel/gui/desktop_apps.o kernel/gui/terminal.o \
         kernel/mm/pmm.o kernel/mm/paging.o kernel/mm/paging_asm.o kernel/mm/fault.o kernel/mm/vma.o kernel/mm/kheap.o kernel/mm/slab.o \
         kernel/proc/elf.o kernel/proc/process.o kernel/proc/process_asm.o \

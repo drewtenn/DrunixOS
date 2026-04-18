@@ -40,7 +40,9 @@ int blkdev_register_part(const char *name, uint32_t parent_index,
                          uint32_t partition_number, uint32_t start_sector,
                          uint32_t sectors);
 int blkdev_register(const char *name, const blkdev_ops_t *ops);
+int blkdev_scan_mbr(uint32_t disk_index);
 const blkdev_ops_t *blkdev_get(const char *name);
+const blkdev_ops_t *blkdev_ops_at(uint32_t index);
 uint32_t blkdev_count(void);
 int blkdev_info_at(uint32_t index, blkdev_info_t *out);
 int blkdev_find_index(const char *name);
