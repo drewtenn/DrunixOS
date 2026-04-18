@@ -112,7 +112,7 @@ ISO_KERNEL_VGA := iso/boot/kernel-vga.elf
 DISK_SECTORS  := 102400
 PARTITION_START ?= 2048
 FS_SECTORS     := $(shell expr $(DISK_SECTORS) - $(PARTITION_START))
-USER_PROGS    := shell chello hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello linuxhello linuxprobe linuxabi busybox bbcompat dufstest redirtest ext3wtest
+USER_PROGS    := shell chello hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello lsblk linuxhello linuxprobe linuxabi busybox bbcompat dufstest redirtest ext3wtest
 USER_BINS     := $(addprefix user/,$(USER_PROGS))
 DISK_FILES    := $(foreach prog,$(USER_PROGS),user/$(prog) bin/$(prog)) \
                  tools/hello.txt hello.txt \

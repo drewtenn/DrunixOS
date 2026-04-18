@@ -28,6 +28,7 @@ user/kill
 user/printenv
 user/reader
 user/cpphello
+user/lsblk
 user/shell
 user/sleeper
 user/sleep
