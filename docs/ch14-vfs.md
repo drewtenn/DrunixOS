@@ -124,7 +124,7 @@ The DUFS registration installs a table with native implementations for root-leve
 
 ```c
 static const fs_ops_t dufs_ops = {
-    .ctx      = &g_dufs_hd0,
+    .ctx      = &g_dufs_sda1,
     .init     = dufs_vfs_init,
     .open     = dufs_vfs_open,
     .getdents = dufs_vfs_list,

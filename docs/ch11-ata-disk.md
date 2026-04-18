@@ -117,7 +117,7 @@ Writing a sector follows the same skeleton, but the command byte is WRITE SECTOR
 
 The ATA controller is brought up during kernel startup after the heap is set up but before the full interrupt path is live. On boot, we print one of three messages through the klog layer introduced in Chapter 9: a drive was found and is ready, no drive was detected, or an error occurred during initialisation. This gives immediate visible feedback that the controller is responding.
 
-Once the driver is initialised, it wraps its sector read/write routines in a small ops-table and publishes that table to the block device registry under the name `"hd0"`. Chapter 12 describes that registry in detail. After that, the filesystem layer and the syscall layer find the drive by name rather than calling ATA-specific code directly.
+Once the driver is initialised, it wraps each drive's sector read/write routines in a small ops-table and publishes them to the block device registry under the names `"sda"` for the master drive and `"sdb"` for the slave drive. Chapter 12 describes that registry in detail. After that, the filesystem layer and the syscall layer find each drive by name rather than calling ATA-specific code directly.
 
 ### Where the Machine Is by the End of Chapter 11
 
