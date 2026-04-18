@@ -98,7 +98,7 @@ static int write_zeroed_block(uint32_t lba)
 {
     uint8_t *z = (uint8_t *)kmalloc(DUFS_BLOCK_SIZE);
     if (!z) return -1;
-    for (uint32_t i = 0; i < DUFS_BLOCK_SIZE; i++) z[i] = 0;
+    k_memset(z, 0, DUFS_BLOCK_SIZE);
     int rc = write_block(lba, z);
     kfree(z);
     return rc;
@@ -429,7 +429,7 @@ static int dir_add(uint32_t dir_ino, const char *name, uint32_t child_ino)
     if (new_lba == 0) { kfree(buf); return -1; }
 
     uint32_t i;
-    for (i = 0; i < DUFS_BLOCK_SIZE; i++) buf[i] = 0;
+    k_memset(buf, 0, DUFS_BLOCK_SIZE);
 
     dufs_dirent_t *entries = (dufs_dirent_t *)buf;
     i = 0;
@@ -761,8 +761,7 @@ static void free_inode_blocks(dufs_inode_t *inode)
 
 static void zero_inode(dufs_inode_t *inode)
 {
-    uint8_t *p = (uint8_t *)inode;
-    for (uint32_t i = 0; i < sizeof(dufs_inode_t); i++) p[i] = 0;
+    k_memset(inode, 0, sizeof(dufs_inode_t));
 }
 
 /* ── Public API ─────────────────────────────────────────────────────────── */
@@ -882,8 +881,7 @@ int fs_read(uint32_t inode_num, uint32_t offset, uint8_t *buf, uint32_t count)
         uint32_t chunk = count - total_read;
         if (chunk > avail) chunk = avail;
 
-        for (uint32_t i = 0; i < chunk; i++)
-            buf[total_read + i] = blk[block_off + i];
+        k_memcpy(buf + total_read, blk + block_off, chunk);
 
         total_read += chunk;
     }
@@ -921,8 +919,7 @@ int fs_write(uint32_t inode_num, uint32_t offset,
         uint32_t chunk = count - written;
         if (chunk > space) chunk = space;
 
-        for (uint32_t i = 0; i < chunk; i++)
-            blk[block_off + i] = buf[written + i];
+        k_memcpy(blk + block_off, buf + written, chunk);
 
         if (write_block(lba, blk) != 0) break;
 
