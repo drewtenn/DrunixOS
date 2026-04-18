@@ -2278,6 +2278,16 @@ static int resolve_user_path_at(process_t *proc, uint32_t dirfd,
 }
 
 typedef uint32_t (*syscall_resolved_path_op_t)(const char *path);
+typedef uint32_t (*syscall_resolved_path2_op_t)(const char *oldpath,
+                                                const char *newpath);
+typedef int (*syscall_path_resolver_t)(process_t *proc, uint32_t resolver_arg,
+                                       uint32_t user_ptr, char *resolved,
+                                       uint32_t resolved_sz);
+
+typedef struct {
+    syscall_path_resolver_t resolve;
+    uint32_t resolver_arg;
+} syscall_path_spec_t;
 
 static uint32_t syscall_with_resolved_path(process_t *cur,
                                            uint32_t user_path,
@@ -2328,6 +2338,103 @@ static uint32_t syscall_with_resolved_path_at(process_t *cur,
     return ret;
 }
 
+static int syscall_resolve_user_path(process_t *proc, uint32_t resolver_arg,
+                                     uint32_t user_ptr, char *resolved,
+                                     uint32_t resolved_sz)
+{
+    (void)resolver_arg;
+    return resolve_user_path(proc, user_ptr, resolved, resolved_sz);
+}
+
+static int syscall_resolve_user_path_at(process_t *proc, uint32_t resolver_arg,
+                                        uint32_t user_ptr, char *resolved,
+                                        uint32_t resolved_sz)
+{
+    return resolve_user_path_at(proc, resolver_arg, user_ptr, resolved,
+                                resolved_sz);
+}
+
+static uint32_t syscall_with_two_resolved_paths_common(
+    process_t *cur,
+    uint32_t old_user_path,
+    uint32_t new_user_path,
+    const syscall_path_spec_t *old_spec,
+    const syscall_path_spec_t *new_spec,
+    syscall_resolved_path2_op_t op)
+{
+    char *oldpath;
+    char *newpath;
+    uint32_t ret;
+
+    if (!cur || !old_spec || !new_spec || !old_spec->resolve ||
+        !new_spec->resolve || !op)
+        return (uint32_t)-1;
+
+    oldpath = (char *)kmalloc(4096);
+    if (!oldpath)
+        return (uint32_t)-1;
+
+    newpath = (char *)kmalloc(4096);
+    if (!newpath) {
+        kfree(oldpath);
+        return (uint32_t)-1;
+    }
+
+    if (old_spec->resolve(cur, old_spec->resolver_arg, old_user_path,
+                          oldpath, 4096) != 0 ||
+        new_spec->resolve(cur, new_spec->resolver_arg, new_user_path,
+                          newpath, 4096) != 0) {
+        kfree(oldpath);
+        kfree(newpath);
+        return (uint32_t)-1;
+    }
+
+    ret = op(oldpath, newpath);
+    kfree(oldpath);
+    kfree(newpath);
+    return ret;
+}
+
+static uint32_t syscall_with_two_resolved_paths(process_t *cur,
+                                                uint32_t old_user_path,
+                                                uint32_t new_user_path,
+                                                syscall_resolved_path2_op_t op)
+{
+    syscall_path_spec_t old_spec = {
+        syscall_resolve_user_path,
+        0u,
+    };
+    syscall_path_spec_t new_spec = {
+        syscall_resolve_user_path,
+        0u,
+    };
+
+    return syscall_with_two_resolved_paths_common(cur, old_user_path,
+                                                  new_user_path, &old_spec,
+                                                  &new_spec, op);
+}
+
+static uint32_t syscall_with_two_resolved_paths_at(process_t *cur,
+                                                   uint32_t old_dirfd,
+                                                   uint32_t old_user_path,
+                                                   uint32_t new_dirfd,
+                                                   uint32_t new_user_path,
+                                                   syscall_resolved_path2_op_t op)
+{
+    syscall_path_spec_t old_spec = {
+        syscall_resolve_user_path_at,
+        old_dirfd,
+    };
+    syscall_path_spec_t new_spec = {
+        syscall_resolve_user_path_at,
+        new_dirfd,
+    };
+
+    return syscall_with_two_resolved_paths_common(cur, old_user_path,
+                                                  new_user_path, &old_spec,
+                                                  &new_spec, op);
+}
+
 static uint32_t syscall_vfs_mkdir_op(const char *path)
 {
     return (uint32_t)vfs_mkdir(path);
@@ -2341,6 +2448,24 @@ static uint32_t syscall_vfs_rmdir_op(const char *path)
 static uint32_t syscall_vfs_unlink_op(const char *path)
 {
     return (uint32_t)vfs_unlink(path);
+}
+
+static uint32_t syscall_vfs_rename_op(const char *oldpath,
+                                      const char *newpath)
+{
+    return (uint32_t)vfs_rename(oldpath, newpath);
+}
+
+static uint32_t syscall_vfs_link_follow_op(const char *oldpath,
+                                           const char *newpath)
+{
+    return (uint32_t)vfs_link(oldpath, newpath, 1u);
+}
+
+static uint32_t syscall_vfs_link_nofollow_op(const char *oldpath,
+                                             const char *newpath)
+{
+    return (uint32_t)vfs_link(oldpath, newpath, 0u);
 }
 
 static uint32_t syscall_execve(uint32_t user_path, uint32_t user_argv,
@@ -3770,34 +3895,15 @@ static uint32_t SYSCALL_NOINLINE syscall_case_rename(uint32_t eax, uint32_t ebx,
                               uint32_t edx, uint32_t esi,
                               uint32_t edi, uint32_t ebp)
 {
-    {
-        /*
-         * ebx = pointer to null-terminated old path in user space.
-         * ecx = pointer to null-terminated new path in user space.
-         *
-         * Both paths are resolved relative to the process cwd.
-         * Renames or moves a file or directory by updating its directory-
-         * entry name and parent fields in place.  No file data is copied.
-         * If newpath names an existing file it is atomically replaced.
-         * Returns 0 on success, -1 on error.
-         */
-        process_t *cur = sched_current();
-        char *rold = (char *)kmalloc(4096);
-        if (!rold) return (uint32_t)-1;
-        char *rnew = (char *)kmalloc(4096);
-        if (!rnew) { kfree(rold); return (uint32_t)-1; }
-        if (!cur ||
-            resolve_user_path(cur, ebx, rold, 4096) != 0 ||
-            resolve_user_path(cur, ecx, rnew, 4096) != 0) {
-            kfree(rold);
-            kfree(rnew);
-            return (uint32_t)-1;
-        }
-        uint32_t ret = (uint32_t)vfs_rename(rold, rnew);
-        kfree(rold);
-        kfree(rnew);
-        return ret;
-    }
+    process_t *cur = sched_current();
+
+    (void)eax;
+    (void)edx;
+    (void)esi;
+    (void)edi;
+    (void)ebp;
+    return syscall_with_two_resolved_paths(cur, ebx, ecx,
+                                           syscall_vfs_rename_op);
 }
 
 static uint32_t SYSCALL_NOINLINE syscall_case_renameat(uint32_t eax, uint32_t ebx,
@@ -3805,34 +3911,13 @@ static uint32_t SYSCALL_NOINLINE syscall_case_renameat(uint32_t eax, uint32_t eb
                               uint32_t edx, uint32_t esi,
                               uint32_t edi, uint32_t ebp)
 {
-    {
-        process_t *cur = sched_current();
-        char *rold = (char *)kmalloc(4096);
-        char *rnew;
-        uint32_t ret;
+    process_t *cur = sched_current();
 
-        (void)eax;
-        (void)edi;
-        (void)ebp;
-        if (!rold)
-            return (uint32_t)-1;
-        rnew = (char *)kmalloc(4096);
-        if (!rnew) {
-            kfree(rold);
-            return (uint32_t)-1;
-        }
-        if (!cur ||
-            resolve_user_path_at(cur, ebx, ecx, rold, 4096) != 0 ||
-            resolve_user_path_at(cur, edx, esi, rnew, 4096) != 0) {
-            kfree(rold);
-            kfree(rnew);
-            return (uint32_t)-1;
-        }
-        ret = (uint32_t)vfs_rename(rold, rnew);
-        kfree(rold);
-        kfree(rnew);
-        return ret;
-    }
+    (void)eax;
+    (void)edi;
+    (void)ebp;
+    return syscall_with_two_resolved_paths_at(cur, ebx, ecx, edx, esi,
+                                              syscall_vfs_rename_op);
 }
 
 static uint32_t SYSCALL_NOINLINE syscall_case_linkat(uint32_t eax, uint32_t ebx,
@@ -3840,36 +3925,18 @@ static uint32_t SYSCALL_NOINLINE syscall_case_linkat(uint32_t eax, uint32_t ebx,
                               uint32_t edx, uint32_t esi,
                               uint32_t edi, uint32_t ebp)
 {
-    {
-        process_t *cur = sched_current();
-        char *oldpath;
-        char *newpath;
-        uint32_t ret;
+    process_t *cur = sched_current();
+    syscall_resolved_path2_op_t op;
 
-        (void)eax;
-        (void)ebp;
-        if ((edi & ~LINUX_AT_SYMLINK_FOLLOW) != 0)
-            return (uint32_t)-22;
-        oldpath = (char *)kmalloc(4096);
-        newpath = (char *)kmalloc(4096);
-        if (!oldpath || !newpath) {
-            if (oldpath) kfree(oldpath);
-            if (newpath) kfree(newpath);
-            return (uint32_t)-1;
-        }
-        if (!cur ||
-            resolve_user_path_at(cur, ebx, ecx, oldpath, 4096) != 0 ||
-            resolve_user_path_at(cur, edx, esi, newpath, 4096) != 0) {
-            kfree(oldpath);
-            kfree(newpath);
-            return (uint32_t)-1;
-        }
-        ret = (uint32_t)vfs_link(oldpath, newpath,
-                                 (edi & LINUX_AT_SYMLINK_FOLLOW) != 0);
-        kfree(oldpath);
-        kfree(newpath);
-        return ret;
-    }
+    (void)eax;
+    (void)ebp;
+    if ((edi & ~LINUX_AT_SYMLINK_FOLLOW) != 0)
+        return (uint32_t)-22;
+
+    op = (edi & LINUX_AT_SYMLINK_FOLLOW) ?
+         syscall_vfs_link_follow_op :
+         syscall_vfs_link_nofollow_op;
+    return syscall_with_two_resolved_paths_at(cur, ebx, ecx, edx, esi, op);
 }
 
 static uint32_t SYSCALL_NOINLINE syscall_case_symlinkat(uint32_t eax, uint32_t ebx,
