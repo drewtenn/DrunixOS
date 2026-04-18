@@ -6,6 +6,7 @@
 #include "syscall.h"
 #include "sched.h"
 #include "process.h"
+#include "resources.h"
 #include "gdt.h"
 #include "pipe.h"
 #include "blkdev.h"
@@ -66,6 +67,46 @@ static void kcwd_resolve(const char *cwd, const char *name,
         k_snprintf(out, (uint32_t)outsz, "%s", name);        /* at root: use as-is */
     else
         k_snprintf(out, (uint32_t)outsz, "%s/%s", cwd, name); /* prepend cwd */
+}
+
+static const char *syscall_process_cwd(const process_t *proc)
+{
+    if (!proc)
+        return "";
+    return proc->fs_state ? proc->fs_state->cwd : proc->cwd;
+}
+
+static char *syscall_process_cwd_mut(process_t *proc)
+{
+    if (!proc)
+        return 0;
+    return proc->fs_state ? proc->fs_state->cwd : proc->cwd;
+}
+
+static void syscall_mirror_legacy_cwd(process_t *proc)
+{
+    const char *cwd;
+
+    if (!proc || !proc->fs_state)
+        return;
+    cwd = proc->fs_state->cwd;
+    k_strncpy(proc->cwd, cwd, sizeof(proc->cwd) - 1u);
+    proc->cwd[sizeof(proc->cwd) - 1u] = '\0';
+}
+
+static void syscall_set_process_cwd(process_t *proc, const char *cwd)
+{
+    if (!proc || !cwd)
+        return;
+
+    if (proc->fs_state) {
+        k_strncpy(proc->fs_state->cwd, cwd, sizeof(proc->fs_state->cwd) - 1u);
+        proc->fs_state->cwd[sizeof(proc->fs_state->cwd) - 1u] = '\0';
+        syscall_mirror_legacy_cwd(proc);
+    } else {
+        k_strncpy(proc->cwd, cwd, sizeof(proc->cwd) - 1u);
+        proc->cwd[sizeof(proc->cwd) - 1u] = '\0';
+    }
 }
 extern void print_bytes(const char *buf, int n);
 extern void clear_screen(void);
@@ -684,7 +725,7 @@ static int linux_path_stat_metadata_at_flags(process_t *cur, uint32_t dirfd,
     }
 
     if (raw[0] == '/' || dirfd == LINUX_AT_FDCWD) {
-        kcwd_resolve(cur->cwd, raw, rpath, 4096);
+        kcwd_resolve(syscall_process_cwd(cur), raw, rpath, 4096);
     } else {
         file_handle_t *fh;
 
@@ -2182,7 +2223,7 @@ static int resolve_user_path(process_t *proc, uint32_t user_ptr,
     if (!raw)
         return -1;
 
-    kcwd_resolve(proc->cwd, raw, resolved, (int)resolved_sz);
+    kcwd_resolve(syscall_process_cwd(proc), raw, resolved, (int)resolved_sz);
     kfree(raw);
     return 0;
 }
@@ -2205,7 +2246,8 @@ static int resolve_user_path_at(process_t *proc, uint32_t dirfd,
     }
 
     if (raw[0] == '/' || dirfd == LINUX_AT_FDCWD) {
-        kcwd_resolve(proc->cwd, raw, resolved, (int)resolved_sz);
+        kcwd_resolve(syscall_process_cwd(proc), raw, resolved,
+                     (int)resolved_sz);
     } else {
         file_handle_t *fh;
 
@@ -2240,10 +2282,13 @@ static uint32_t syscall_execve(uint32_t user_path, uint32_t user_argv,
     uint32_t sz;
     process_t *new_proc;
 
-    if (!kstrs)
+    if (!kstrs) {
+        klog_uint("EXEC", "argv scratch heap free", kheap_free_bytes());
         return (uint32_t)-1;
+    }
     kenvstrs = (char *)kmalloc(PROCESS_ENV_MAX_BYTES);
     if (!kenvstrs) {
+        klog_uint("EXEC", "env scratch heap free", kheap_free_bytes());
         kfree(kstrs);
         return (uint32_t)-1;
     }
@@ -2280,6 +2325,7 @@ static uint32_t syscall_execve(uint32_t user_path, uint32_t user_argv,
         return (uint32_t)-1;
     }
     if (resolve_user_path(exec_cur, user_path, exec_rpath, 4096) != 0) {
+        klog("EXEC", "resolve path failed");
         kfree(exec_rpath);
         kfree(kenvstrs);
         kfree(kstrs);
@@ -2287,6 +2333,7 @@ static uint32_t syscall_execve(uint32_t user_path, uint32_t user_argv,
     }
     if (vfs_open_file(exec_rpath, &exec_ref, &sz) != 0) {
         klog("EXEC", "file not found");
+        klog("EXEC", exec_rpath);
         kfree(exec_rpath);
         kfree(kenvstrs);
         kfree(kstrs);
@@ -2296,13 +2343,18 @@ static uint32_t syscall_execve(uint32_t user_path, uint32_t user_argv,
 
     new_proc = (process_t *)kmalloc(sizeof(process_t));
     if (!new_proc) {
+        klog_uint("EXEC", "process descriptor heap free", kheap_free_bytes());
         kfree(kenvstrs);
         kfree(kstrs);
         return (uint32_t)-1;
     }
 
-    if (process_create_file(new_proc, exec_ref, kargv, kargc, kenvp, kenvc, 0) != 0) {
-        klog("EXEC", "process_create failed");
+    int create_rc = process_create_file(new_proc, exec_ref,
+                                        kargv, kargc, kenvp, kenvc,
+                                        proc_fd_entries(exec_cur));
+    if (create_rc != 0) {
+        klog_uint("EXEC", "process_create failed code",
+                  (uint32_t)(-create_rc));
         kfree(new_proc);
         kfree(kenvstrs);
         kfree(kstrs);
@@ -2323,9 +2375,7 @@ static uint32_t syscall_execve(uint32_t user_path, uint32_t user_argv,
     new_proc->wait_deadline_set = 0;
     new_proc->exit_status = 0;
     new_proc->state_waiters = exec_cur->state_waiters;
-    k_memcpy(new_proc->cwd, exec_cur->cwd, sizeof(new_proc->cwd));
-    for (unsigned i = 0; i < MAX_FDS; i++)
-        proc_fd_entries(new_proc)[i] = proc_fd_entries(exec_cur)[i];
+    syscall_set_process_cwd(new_proc, syscall_process_cwd(exec_cur));
 
     new_proc->sig_pending = exec_cur->sig_pending;
     new_proc->sig_blocked = exec_cur->sig_blocked;
@@ -2339,6 +2389,7 @@ static uint32_t syscall_execve(uint32_t user_path, uint32_t user_argv,
 
     klog_hex("EXEC", "new_proc brk", new_proc->brk);
     klog_hex("EXEC", "new_proc heap_start", new_proc->heap_start);
+    proc_resource_put_exec_owner(exec_cur);
     process_build_exec_frame(new_proc, exec_cur->pd_phys,
                              exec_cur->kstack_bottom);
     sched_exec_current(new_proc);
@@ -3561,29 +3612,36 @@ static uint32_t SYSCALL_NOINLINE syscall_case_chdir(uint32_t eax, uint32_t ebx,
         if (!cur) return (uint32_t)-1;
 
         char *path = 0;
+        char *cwd;
 
         if (ebx != 0) {
             path = copy_user_string_alloc(cur, ebx, 4096);
             if (!path)
                 return (uint32_t)-1;
         }
+        cwd = syscall_process_cwd_mut(cur);
+        if (!cwd) {
+            kfree(path);
+            return (uint32_t)-1;
+        }
 
         /* Go to root. */
         if (!path || path[0] == '\0' ||
             (path[0] == '/' && path[1] == '\0')) {
-            cur->cwd[0] = '\0';
+            syscall_set_process_cwd(cur, "");
             kfree(path);
             return 0;
         }
 
         /* Go up one level. */
         if (path[0] == '.' && path[1] == '.' && path[2] == '\0') {
-            if (cur->cwd[0] == '\0') { kfree(path); return 0; } /* already at root */
+            if (cwd[0] == '\0') { kfree(path); return 0; } /* already at root */
             int i = 0;
-            while (cur->cwd[i]) i++;
-            while (i > 0 && cur->cwd[i - 1] != '/') i--;
+            while (cwd[i]) i++;
+            while (i > 0 && cwd[i - 1] != '/') i--;
             if (i > 0) i--; /* trim trailing slash */
-            cur->cwd[i] = '\0';
+            cwd[i] = '\0';
+            syscall_mirror_legacy_cwd(cur);
             kfree(path);
             return 0;
         }
@@ -3594,7 +3652,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_chdir(uint32_t eax, uint32_t ebx,
             kfree(path);
             return (uint32_t)-1;
         }
-        kcwd_resolve(cur->cwd, path, resolved, 4096);
+        kcwd_resolve(syscall_process_cwd(cur), path, resolved, 4096);
         kfree(path);
 
         /* Trim any trailing slash. */
@@ -3603,7 +3661,11 @@ static uint32_t SYSCALL_NOINLINE syscall_case_chdir(uint32_t eax, uint32_t ebx,
         if (rlen > 0 && resolved[rlen - 1] == '/') resolved[--rlen] = '\0';
 
         /* Empty after trimming → root. */
-        if (resolved[0] == '\0') { cur->cwd[0] = '\0'; kfree(resolved); return 0; }
+        if (resolved[0] == '\0') {
+            syscall_set_process_cwd(cur, "");
+            kfree(resolved);
+            return 0;
+        }
 
         /* Validate: must exist and be a directory (type == 2). */
         vfs_stat_t st;
@@ -3614,8 +3676,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_chdir(uint32_t eax, uint32_t ebx,
         }
 
         /* Commit the new cwd. */
-        k_strncpy(cur->cwd, resolved, 4095);
-        cur->cwd[4095] = '\0';
+        syscall_set_process_cwd(cur, resolved);
         kfree(resolved);
         return 0;
     }
@@ -3644,7 +3705,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_getcwd(uint32_t eax, uint32_t ebx,
         path = (char *)kmalloc(4096);
         if (!path)
             return (uint32_t)-1;
-        const char *cwd = cur->fs_state ? cur->fs_state->cwd : cur->cwd;
+        const char *cwd = syscall_process_cwd(cur);
         if (cwd[0] == '\0')
             k_strncpy(path, "/", 4095u);
         else
@@ -3853,7 +3914,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_drunix_getdents_path(uint32_t eax,
         }
         if (ebx == 0) {
             /* NULL → list the process cwd (empty string lists root). */
-            k_strncpy(rpath, cur->cwd, 4095);
+            k_strncpy(rpath, syscall_process_cwd(cur), 4095);
             rpath[4095] = '\0';
             upath = rpath;
         } else {
@@ -3862,7 +3923,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_drunix_getdents_path(uint32_t eax,
                 kfree(rpath);
                 return (uint32_t)-1;
             }
-            kcwd_resolve(cur->cwd, upath, rpath, 4096);
+            kcwd_resolve(syscall_process_cwd(cur), upath, rpath, 4096);
             kfree(upath);
             upath = rpath;
         }

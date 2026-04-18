@@ -53,6 +53,8 @@ extern void legacy_console_seed_shadow_for_test(int row,
                                                 int col,
                                                 char ch,
                                                 uint8_t attr);
+extern char legacy_console_shadow_char_for_test(int row, int col);
+extern uint8_t legacy_console_shadow_attr_for_test(int row, int col);
 extern void legacy_console_set_framebuffer_for_test(framebuffer_info_t *fb);
 extern void legacy_console_disable_framebuffer_for_test(void);
 extern void print_bytes(const char *buf, int n);
@@ -979,6 +981,39 @@ static void test_framebuffer_console_handoff_carries_vga_end_to_next_row(
     legacy_console_disable_framebuffer_for_test();
 
     KTEST_EXPECT_EQ(tc, pixels[25 * 16 * 640 + 2], fg);
+}
+
+static void test_vga_text_prompt_after_scrolled_command_output_is_visible(
+    ktest_case_t *tc)
+{
+    const char output[] = "/bin/yes\n";
+    const char prompt[] =
+        "\x1b[36mdrunix:\x1b[32m/\x1b[36m> \x1b[0m";
+
+    legacy_console_disable_framebuffer_for_test();
+    set_cursor(get_offset(0, 0));
+    print_bytes("\x1b[0m", 4);
+    for (int i = 0; i < 24; i++)
+        print_bytes("\n", 1);
+
+    print_bytes(output, sizeof(output) - 1);
+    print_bytes(prompt, sizeof(prompt) - 1);
+
+    KTEST_EXPECT_EQ(tc,
+                    legacy_console_shadow_char_for_test(24, 0),
+                    'd');
+    KTEST_EXPECT_EQ(tc,
+                    legacy_console_shadow_attr_for_test(24, 0),
+                    0x0b);
+    KTEST_EXPECT_EQ(tc,
+                    legacy_console_shadow_char_for_test(24, 6),
+                    ':');
+    KTEST_EXPECT_EQ(tc,
+                    legacy_console_shadow_char_for_test(24, 7),
+                    '/');
+    KTEST_EXPECT_EQ(tc,
+                    legacy_console_shadow_attr_for_test(24, 7),
+                    0x0a);
 }
 
 static void test_framebuffer_console_handoff_drops_stale_cells_after_cursor(
@@ -3092,6 +3127,160 @@ static void test_framebuffer_shell_return_prompt_keeps_unrelated_pixels(
     desktop_test_destroy(&desktop);
 }
 
+static void test_framebuffer_prompt_after_unterminated_output_is_visible(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+    const char prompt[] =
+        "\x1b[36mdrunix:\x1b[32m/\x1b[36m> \x1b[0m";
+    uint32_t cyan;
+    int glyph_base_x;
+    int glyph_base_y;
+    int found_cyan;
+
+    k_memset(pointer_motion_pixels, 0, sizeof(pointer_motion_pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pointer_motion_pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    desktop_open_shell_window(&desktop);
+    desktop_render(&desktop);
+
+    KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, "done", 4), 4);
+    KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, prompt,
+                                                     sizeof(prompt) - 1),
+                    sizeof(prompt) - 1);
+
+    KTEST_EXPECT_EQ(tc,
+                    gui_terminal_cell_at(&desktop.shell_terminal, 4, 0).ch,
+                    'd');
+    KTEST_EXPECT_EQ(tc,
+                    gui_terminal_cell_at(&desktop.shell_terminal, 4, 0).attr,
+                    0x0b);
+    KTEST_EXPECT_EQ(tc,
+                    gui_terminal_cell_at(&desktop.shell_terminal, 10, 0).ch,
+                    ':');
+    KTEST_EXPECT_EQ(tc,
+                    gui_terminal_cell_at(&desktop.shell_terminal, 11, 0).ch,
+                    '/');
+    KTEST_EXPECT_EQ(tc,
+                    gui_terminal_cell_at(&desktop.shell_terminal, 11, 0).attr,
+                    0x0a);
+
+    cyan = framebuffer_pack_rgb(&fb, 0x6f, 0xd6, 0xd2);
+    glyph_base_x = desktop.shell_pixel_rect.x +
+                   desktop.shell_terminal.padding_x +
+                   4 * (int)GUI_FONT_W;
+    glyph_base_y = desktop.shell_pixel_rect.y +
+                   desktop.shell_terminal.padding_y;
+    found_cyan = 0;
+    for (int py = 0; py < (int)GUI_FONT_H; py++) {
+        for (int px = 0; px < (int)GUI_FONT_W; px++) {
+            int index = (glyph_base_y + py) * 480 + glyph_base_x + px;
+
+            if (pointer_motion_pixels[index] == cyan)
+                found_cyan = 1;
+        }
+    }
+    KTEST_EXPECT_TRUE(tc, found_cyan);
+    desktop_test_destroy(&desktop);
+}
+
+static void test_framebuffer_prompt_after_scrolled_command_output_is_visible(
+    ktest_case_t *tc)
+{
+    gui_display_t display;
+    desktop_state_t desktop;
+    framebuffer_info_t fb;
+    const char output[] = "/bin/yes\n";
+    const char prompt[] =
+        "\x1b[36mdrunix:\x1b[32m/\x1b[36m> \x1b[0m";
+    uint32_t cyan;
+    int row;
+    int glyph_base_x;
+    int glyph_base_y;
+    int found_cyan;
+
+    k_memset(pointer_motion_pixels, 0, sizeof(pointer_motion_pixels));
+    k_memset(&fb, 0, sizeof(fb));
+    fb.address = (uintptr_t)pointer_motion_pixels;
+    fb.pitch = 480u * sizeof(uint32_t);
+    fb.width = 480u;
+    fb.height = 400u;
+    fb.bpp = 32u;
+    fb.red_pos = 16u;
+    fb.red_size = 8u;
+    fb.green_pos = 8u;
+    fb.green_size = 8u;
+    fb.blue_pos = 0u;
+    fb.blue_size = 8u;
+
+    gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+    desktop_init(&desktop, &display);
+    desktop_set_framebuffer_target(&desktop, &fb);
+    desktop_open_shell_window(&desktop);
+    desktop_render(&desktop);
+
+    for (int i = 0; i < desktop.shell_terminal.rows - 1; i++)
+        KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, "\n", 1), 1);
+
+    KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, output,
+                                                     sizeof(output) - 1),
+                    sizeof(output) - 1);
+    KTEST_ASSERT_EQ(tc, desktop_write_console_output(&desktop, prompt,
+                                                     sizeof(prompt) - 1),
+                    sizeof(prompt) - 1);
+
+    row = desktop.shell_terminal.rows - 1;
+    KTEST_EXPECT_EQ(tc,
+                    gui_terminal_cell_at(&desktop.shell_terminal, 0, row).ch,
+                    'd');
+    KTEST_EXPECT_EQ(tc,
+                    gui_terminal_cell_at(&desktop.shell_terminal, 0, row).attr,
+                    0x0b);
+    KTEST_EXPECT_EQ(tc,
+                    gui_terminal_cell_at(&desktop.shell_terminal, 6, row).ch,
+                    ':');
+    KTEST_EXPECT_EQ(tc,
+                    gui_terminal_cell_at(&desktop.shell_terminal, 7, row).ch,
+                    '/');
+    KTEST_EXPECT_EQ(tc,
+                    gui_terminal_cell_at(&desktop.shell_terminal, 7, row).attr,
+                    0x0a);
+
+    cyan = framebuffer_pack_rgb(&fb, 0x6f, 0xd6, 0xd2);
+    glyph_base_x = desktop.shell_pixel_rect.x +
+                   desktop.shell_terminal.padding_x;
+    glyph_base_y = desktop.shell_pixel_rect.y +
+                   desktop.shell_terminal.padding_y +
+                   row * (int)GUI_FONT_H;
+    found_cyan = 0;
+    for (int py = 0; py < (int)GUI_FONT_H; py++) {
+        for (int px = 0; px < (int)GUI_FONT_W; px++) {
+            int index = (glyph_base_y + py) * 480 + glyph_base_x + px;
+
+            if (pointer_motion_pixels[index] == cyan)
+                found_cyan = 1;
+        }
+    }
+    KTEST_EXPECT_TRUE(tc, found_cyan);
+    desktop_test_destroy(&desktop);
+}
+
 static void test_framebuffer_terminal_scroll_keeps_padding_pixels(
     ktest_case_t *tc)
 {
@@ -4194,6 +4383,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_framebuffer_console_handoff_blanks_nonprintable_imports),
     KTEST_CASE(test_framebuffer_console_handoff_preserves_vga_cursor),
     KTEST_CASE(test_framebuffer_console_handoff_carries_vga_end_to_next_row),
+    KTEST_CASE(test_vga_text_prompt_after_scrolled_command_output_is_visible),
     KTEST_CASE(test_framebuffer_console_handoff_drops_stale_cells_after_cursor),
     KTEST_CASE(test_framebuffer_console_uses_columns_beyond_vga_width),
     KTEST_CASE(test_framebuffer_console_uses_rows_beyond_vga_height),
@@ -4272,6 +4462,8 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_framebuffer_newline_repaints_only_dirty_terminal_cells),
     KTEST_CASE(test_framebuffer_shell_backspace_prompt_redraw_keeps_unrelated_pixels),
     KTEST_CASE(test_framebuffer_shell_return_prompt_keeps_unrelated_pixels),
+    KTEST_CASE(test_framebuffer_prompt_after_unterminated_output_is_visible),
+    KTEST_CASE(test_framebuffer_prompt_after_scrolled_command_output_is_visible),
     KTEST_CASE(test_framebuffer_terminal_scroll_keeps_padding_pixels),
     KTEST_CASE(test_framebuffer_terminal_scroll_does_not_copy_mouse_pointer),
     KTEST_CASE(test_framebuffer_terminal_scroll_paints_line_written_before_newline),

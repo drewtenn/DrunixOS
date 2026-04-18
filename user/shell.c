@@ -1865,7 +1865,7 @@ static void run_program(char **argv, int argc)
         sys_setpgid(0, 0);
         (void)argc;
         sys_execve(exec_path, argv, exec_envp);
-        printf("not found: %s\n", cmd_name);
+        printf("exec failed: %s\n", exec_path);
         sys_exit(127);
     }
 
@@ -1882,6 +1882,7 @@ static void run_program(char **argv, int argc)
 
     /* Wait for the child, also returning if it stops */
     int stopped = job_wait_foreground(&fg_job);
+    shell_claim_foreground_tty();
 
     if (stopped)
     {
@@ -1925,7 +1926,7 @@ static int exec_replace_self(char **argv, int argc)
     (void)exec_envc;
     shell_reset_job_signal_state();
     sys_execve(exec_path, &argv[1], exec_envp);
-    printf("exec failed: %s\n", argv[1]);
+    printf("exec failed: %s\n", exec_path);
     shell_install_signal_state();
     return 126;
 }
@@ -1979,7 +1980,7 @@ static void run_piped(char **lv, int lc, const shell_redir_t *lr,
         }
         (void)lc;
         sys_execve(exec_path, lv, exec_envp);
-        printf("pipe: left exec failed\n");
+        printf("pipe: left exec failed: %s\n", exec_path);
         sys_exit(1);
     }
 
@@ -2013,7 +2014,7 @@ static void run_piped(char **lv, int lc, const shell_redir_t *lr,
         }
         (void)rc;
         sys_execve(exec_path, rv, exec_envp);
-        printf("pipe: right exec failed\n");
+        printf("pipe: right exec failed: %s\n", exec_path);
         sys_exit(1);
     }
 
@@ -2034,6 +2035,7 @@ static void run_piped(char **lv, int lc, const shell_redir_t *lr,
     job_copy_cmd(fg_job.cmd, cmd);
 
     int stopped = job_wait_foreground(&fg_job);
+    shell_claim_foreground_tty();
 
     if (stopped)
     {

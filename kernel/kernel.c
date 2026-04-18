@@ -444,6 +444,24 @@ void legacy_console_seed_shadow_for_test(int row,
     shadow_vga[row][col * 2] = ch;
     shadow_vga[row][col * 2 + 1] = (char)attr;
 }
+
+char legacy_console_shadow_char_for_test(int row, int col)
+{
+    if (row < 0 || row >= console_rows || col < 0 || col >= console_cols)
+        return '\0';
+    if (legacy_console_fb)
+        return boot_fb_cells[row * console_cols + col].ch;
+    return shadow_vga[row][col * 2];
+}
+
+uint8_t legacy_console_shadow_attr_for_test(int row, int col)
+{
+    if (row < 0 || row >= console_rows || col < 0 || col >= console_cols)
+        return 0;
+    if (legacy_console_fb)
+        return boot_fb_cells[row * console_cols + col].attr;
+    return (uint8_t)shadow_vga[row][col * 2 + 1];
+}
 #endif
 
 #ifdef KTEST_ENABLED

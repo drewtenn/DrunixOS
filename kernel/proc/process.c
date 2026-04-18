@@ -483,7 +483,10 @@ int process_create_file(process_t *proc, vfs_file_ref_t file_ref,
      * kstack_bottom records the raw kmalloc base (for kfree).
      * kstack_top is the first byte above the usable stack region. */
     uint8_t *kstack_raw = (uint8_t *)kmalloc(0x1000u + KSTACK_SIZE + 0xFFFu);
-    if (!kstack_raw) return -5;
+    if (!kstack_raw) {
+        klog_uint("PROC", "process_create kstack heap free", kheap_free_bytes());
+        return -5;
+    }
     uint8_t *kguard = (uint8_t *)(((uint32_t)kstack_raw + 0xFFFu) & ~0xFFFu);
     paging_guard_page((uint32_t)kguard);
 
@@ -673,6 +676,10 @@ int process_fork(process_t *child_out, process_t *parent)
     child_out->wait_deadline_set = 0;
     child_out->parent_pid = parent->pid;
     child_out->exit_status = 0;
+    child_out->tid = 0;
+    child_out->tgid = 0;
+    child_out->group = 0;
+    child_out->clear_child_tid = 0;
     sched_wait_queue_init(&child_out->state_waiters);
 
     /*

@@ -164,6 +164,24 @@ static uint8_t *mapped_alias(process_t *proc, uint32_t virt)
     return (uint8_t *)(paging_entry_addr(*pte) + (virt & 0xFFFu));
 }
 
+static int cwdtest_stat(void *ctx, const char *path, vfs_stat_t *st)
+{
+    (void)ctx;
+
+    if (!path || k_strcmp(path, "bin") != 0)
+        return -1;
+
+    st->type = VFS_STAT_TYPE_DIR;
+    st->size = 0;
+    st->link_count = 1;
+    st->mtime = 0;
+    return 0;
+}
+
+static const fs_ops_t cwdtest_ops = {
+    .stat = cwdtest_stat,
+};
+
 static process_t *start_syscall_test_process(process_t *proc)
 {
     sched_init();
@@ -931,6 +949,38 @@ static void test_syscall_getcwd_reads_resource_fs_state(ktest_case_t *tc)
     stop_syscall_test_process(cur);
 }
 
+static void test_syscall_chdir_updates_resource_fs_state(ktest_case_t *tc)
+{
+    static process_t proc;
+    process_t *cur;
+    uint8_t *page;
+
+    vfs_reset();
+    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_register("cwdtest", &cwdtest_ops), 0u);
+    KTEST_ASSERT_EQ(tc, (uint32_t)vfs_mount("/", "cwdtest"), 0u);
+
+    cur = start_syscall_test_process(&proc);
+    KTEST_ASSERT_NOT_NULL(tc, cur);
+    KTEST_ASSERT_EQ(tc, map_test_user_page(cur, 0x00800000u), 0u);
+    page = mapped_alias(cur, 0x00800000u);
+    KTEST_ASSERT_NOT_NULL(tc, page);
+
+    k_strcpy((char *)page, "bin");
+    KTEST_ASSERT_EQ(tc,
+                    syscall_handler(SYS_CHDIR, 0x00800000u,
+                                    0, 0, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(cur->fs_state->cwd, "bin") == 0);
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_GETCWD, 0x00800100u,
+                                    64, 0, 0, 0, 0),
+                    5u);
+    KTEST_EXPECT_TRUE(tc, k_strcmp((const char *)(page + 0x100), "/bin") == 0);
+
+    stop_syscall_test_process(cur);
+    vfs_reset();
+}
+
 static void test_syscall_brk_reads_resource_address_space(ktest_case_t *tc)
 {
     static process_t proc;
@@ -1643,6 +1693,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_process_resource_get_put_tracks_refs),
     KTEST_CASE(test_syscall_fstat_reads_resource_fd_table),
     KTEST_CASE(test_syscall_getcwd_reads_resource_fs_state),
+    KTEST_CASE(test_syscall_chdir_updates_resource_fs_state),
     KTEST_CASE(test_syscall_brk_reads_resource_address_space),
     KTEST_CASE(test_rt_sigaction_reads_resource_handlers),
     KTEST_CASE(test_clone_rejects_sighand_without_vm),

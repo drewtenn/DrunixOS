@@ -272,3 +272,55 @@ void proc_resource_put_all(process_t *proc)
         }
     }
 }
+
+void proc_resource_put_exec_nonfiles(process_t *proc)
+{
+    if (!proc)
+        return;
+
+    if (proc->as) {
+        proc_address_space_t *as = proc->as;
+        if (as->refs > 0)
+            as->refs--;
+        if (as->refs == 0)
+            kfree(as);
+        proc->as = 0;
+    }
+
+    if (proc->fs_state) {
+        proc_fs_state_t *fs_state = proc->fs_state;
+        if (fs_state->refs > 0)
+            fs_state->refs--;
+        if (fs_state->refs == 0)
+            kfree(fs_state);
+        proc->fs_state = 0;
+    }
+
+    if (proc->sig_actions) {
+        proc_sig_actions_t *sig_actions = proc->sig_actions;
+        if (sig_actions->refs > 0)
+            sig_actions->refs--;
+        if (sig_actions->refs == 0)
+            kfree(sig_actions);
+        proc->sig_actions = 0;
+    }
+}
+
+void proc_resource_put_exec_owner(process_t *proc)
+{
+    if (!proc)
+        return;
+
+    proc_resource_put_exec_nonfiles(proc);
+
+    if (proc->files) {
+        proc_fd_table_t *files = proc->files;
+        if (files->refs > 0)
+            files->refs--;
+        if (files->refs == 0) {
+            proc_fd_table_close_all(files);
+            kfree(files);
+        }
+        proc->files = 0;
+    }
+}

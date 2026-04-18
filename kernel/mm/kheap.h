@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define HEAP_START  0x00032000u
-#define HEAP_END    0x00090000u   /* stops below the VGA/ROM hole at 0xA0000 */
+#define HEAP_END    0x0009F000u   /* stops below the VGA/ROM hole at 0xA0000 */
 #define HEAP_MAGIC  0xDEADBEEFu
 
 void     kheap_init(void);

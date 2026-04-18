@@ -10,6 +10,8 @@
 #include "pmm.h"
 #include "kheap.h"
 #include "process.h"
+#include "sched.h"
+#include "task_group.h"
 #include "kstring.h"
 
 #define TEST_IMAGE_START 0x00400000u
@@ -733,6 +735,46 @@ cleanup:
     destroy_test_proc(&parent);
 }
 
+static void test_process_fork_child_gets_fresh_task_group_slot(ktest_case_t *tc)
+{
+    static process_t parent;
+    static process_t child;
+    static uint32_t parent_kstack_words[64];
+
+    sched_init();
+    if (init_fork_test_proc(&parent, parent_kstack_words, 64u) != 0) {
+        KTEST_EXPECT_TRUE(tc, 0);
+        return;
+    }
+
+    parent.tid = 1;
+    parent.pid = 1;
+    parent.tgid = 1;
+    parent.group = task_group_create(parent.tgid, parent.tid, 0,
+                                     parent.pgid, parent.sid,
+                                     parent.tty_id, SIGCHLD);
+    KTEST_ASSERT_NOT_NULL(tc, parent.group);
+    task_group_add_task(parent.group);
+
+    k_memset(&child, 0, sizeof(child));
+    if (process_fork(&child, &parent) != 0) {
+        KTEST_EXPECT_TRUE(tc, 0);
+        task_group_put(parent.group);
+        destroy_test_proc(&parent);
+        sched_init();
+        return;
+    }
+
+    KTEST_EXPECT_EQ(tc, child.tgid, 0u);
+    KTEST_EXPECT_NULL(tc, child.group);
+    KTEST_EXPECT_EQ(tc, task_group_live_count(parent.group), 1u);
+
+    destroy_forked_child(&child);
+    task_group_put(parent.group);
+    destroy_test_proc(&parent);
+    sched_init();
+}
+
 static void test_repeated_fork_exec_cleanup_preserves_parent_refs(ktest_case_t *tc)
 {
     static process_t parent;
@@ -1045,6 +1087,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_process_fork_child_writes_image_data_before_exec),
     KTEST_CASE(test_process_fork_child_survives_parent_exit_and_reuses_last_cow_ref),
     KTEST_CASE(test_process_fork_child_stack_growth_is_private),
+    KTEST_CASE(test_process_fork_child_gets_fresh_task_group_slot),
     KTEST_CASE(test_repeated_fork_exec_cleanup_preserves_parent_refs),
     KTEST_CASE(test_copy_to_user_handles_three_way_cow_sharing),
     KTEST_CASE(test_process_fork_rolls_back_when_kstack_alloc_fails),
