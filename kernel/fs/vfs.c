@@ -184,7 +184,7 @@ static const char *vfs_relpath(const vfs_mount_t *mnt, const char *norm_path)
 
 static void vfs_dir_stat(vfs_stat_t *st)
 {
-    st->type = 2;
+    st->type = VFS_STAT_TYPE_DIR;
     st->size = 0;
     st->link_count = 1;
     st->mtime = 0;
@@ -192,8 +192,16 @@ static void vfs_dir_stat(vfs_stat_t *st)
 
 static void vfs_filelike_stat(vfs_stat_t *st)
 {
-    st->type = 1;
+    st->type = VFS_STAT_TYPE_FILE;
     st->size = 0;
+    st->link_count = 1;
+    st->mtime = 0;
+}
+
+static void vfs_blockdev_stat(vfs_stat_t *st, uint32_t size)
+{
+    st->type = VFS_STAT_TYPE_BLOCKDEV;
+    st->size = size;
     st->link_count = 1;
     st->mtime = 0;
 }
@@ -245,10 +253,10 @@ static int devfs_stat(const char *relpath, vfs_stat_t *st)
         return -1;
     if (node.type == VFS_NODE_DIR)
         vfs_dir_stat(st);
+    else if (node.type == VFS_NODE_BLOCKDEV)
+        vfs_blockdev_stat(st, node.size);
     else {
         vfs_filelike_stat(st);
-        if (node.type == VFS_NODE_BLOCKDEV)
-            st->size = node.size;
     }
     return 0;
 }

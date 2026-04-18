@@ -499,13 +499,15 @@ static int linux_fd_stat_metadata(process_t *cur, uint32_t fd,
 static void linux_metadata_from_vfs_stat(const vfs_stat_t *st,
                                          linux_fd_stat_t *meta)
 {
-    if (st->type == 2)
+    if (st->type == VFS_STAT_TYPE_DIR)
         meta->mode = LINUX_S_IFDIR | 0755u;
-    else if (st->type == 3)
+    else if (st->type == VFS_STAT_TYPE_SYMLINK)
         meta->mode = LINUX_S_IFLNK | 0777u;
+    else if (st->type == VFS_STAT_TYPE_BLOCKDEV)
+        meta->mode = LINUX_S_IFBLK | 0444u;
     else
         meta->mode = LINUX_S_IFREG | 0644u;
-    meta->nlink = st->type == 2 ? 2u : st->link_count;
+    meta->nlink = st->type == VFS_STAT_TYPE_DIR ? 2u : st->link_count;
     meta->size = st->size;
     meta->mtime = st->mtime;
     meta->ino = 1u;

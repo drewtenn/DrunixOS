@@ -20,9 +20,15 @@
 
 /*
  * File/directory metadata returned by vfs_stat().
- * type: 1 = regular file or file-like node, 2 = directory, 3 = symlink.
+ * type: 1 = regular file or file-like node, 2 = directory, 3 = symlink,
+ *       4 = block device.
  * mtime is a Unix timestamp in UTC seconds.
  */
+#define VFS_STAT_TYPE_FILE     1u
+#define VFS_STAT_TYPE_DIR      2u
+#define VFS_STAT_TYPE_SYMLINK  3u
+#define VFS_STAT_TYPE_BLOCKDEV 4u
+
 typedef struct {
     uint32_t type;
     uint32_t size;
