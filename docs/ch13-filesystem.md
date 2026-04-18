@@ -1,12 +1,12 @@
 \newpage
 
-## Chapter 13 — An Inode-Based Filesystem (DUFS v3)
+## Chapter 13 — Inode Filesystems: DUFS v3 and ext3
 
 ### Why a Filesystem Is Necessary
 
 Chapter 12 left us with a block device registry that routes all disk I/O through named ops-tables. Up to this point we loaded `shell` from a hard-coded sector offset on the disk. That worked because the Makefile placed the file at a known location and the loader knew exactly where to look. It stops working the moment a second program is added, because we have no way to distinguish one binary from another — every sector is just a sequence of bytes.
 
-A **filesystem** is the layer of software that turns a numbered sector into a named file and back again. This chapter builds DUFS v3 — "OS File System, version 3" — a compact inode-based filesystem modelled after the classical UNIX design with Linux-compatible limits. Understanding it requires following the path a single `open("shell")` call takes from the kernel's VFS layer down to a raw ATA sector read.
+A **filesystem** is the layer of software that turns a numbered sector into a named file and back again. This chapter starts with DUFS v3 — "OS File System, version 3" — a compact inode-based filesystem modelled after the classical UNIX design with Linux-compatible limits. It then connects those same ideas to Drunix's default root filesystem: a small, deterministic ext3 image that host Linux tools can inspect and that the kernel can update through an internal journal. Understanding both requires following the path a single `open("shell")` call takes from the kernel's VFS layer down to a raw ATA sector read.
 
 ### Why Inodes?
 
@@ -193,12 +193,77 @@ All layers above the VFS identify files by inode number rather than by LBA. `fil
 
 `fs_flush_inode(inode_num)` is a no-op in DUFS v3. The inode is always written back at the end of every `fs_write` call, so `sys_close` has nothing extra to flush.
 
+### The Linux-Compatible ext3 Root
+
+DUFS is intentionally small, but Drunix now boots a Linux-compatible **ext3** filesystem by default. ext3 is the journaled successor to ext2: it keeps the same superblock, block-group, inode, bitmap, and directory-entry model, then adds a journal so metadata changes can be recovered after an interrupted write.
+
+The generated root image is deliberately conservative. `tools/mkext3.py` creates one block group, 4096-byte filesystem blocks, 128-byte inodes, and classic ext2-style block maps rather than extents. The root directory is inode 2, matching ext2/ext3/ext4 convention. Inode 8 is the internal journal file. Regular user files and directories start at inode 11, after the reserved inode range.
+
+The first blocks in the generated image are:
+
+| Filesystem block | Contents |
+|------------------|----------|
+| byte 1024 inside block 0 | ext3 superblock |
+| block 1 | block-group descriptor table |
+| block 2 | block bitmap |
+| block 3 | inode bitmap |
+| block 4 onward | inode table |
+| first free data blocks | internal journal, directories, and file data |
+
+The superblock advertises only the feature bits Drunix understands for this image: `has_journal`, `filetype`, and `large_file`. The kernel also accepts `sparse_super` as a read-compatible feature, but it does not implement extents, hashed directories, external journals, metadata checksums, or JBD2. That is an important boundary: the driver is ext2/ext3-compatible for the simple images we build and for comparable host-created images, not a general ext4 implementation.
+
+### ext3 On-Disk Objects
+
+The ext3 inode is the same basic abstraction DUFS introduced earlier: fixed-size metadata plus an array of block pointers. The format is Linux-compatible, so fields use ext2/ext3 meanings: `mode` stores both file type and permissions, `links_count` stores the hard-link count, `size` stores the low 32 bits of the byte length, and `block[]` stores twelve direct pointers followed by indirect pointer slots. Directory contents are variable-length records containing an inode number, record length, name length, file type, and name bytes.
+
+That variable-length directory format is different from DUFS's fixed 260-byte directory slots. It lets ext3 pack short names densely and lets deletion merge free space into neighboring records instead of leaving only fixed-size holes. The kernel's ext3 lookup code still performs the same logical operation as DUFS lookup: read a directory inode, walk its data blocks, compare each entry name, and return the target inode number.
+
+Block and inode allocation also follows the same model as DUFS, but with Linux's block-group metadata. The block bitmap records allocated filesystem blocks. The inode bitmap records allocated inode numbers. The group descriptor points to both bitmaps and to the inode table. Because Drunix's writable ext3 support is intentionally single-group, those three pointers are enough to allocate, free, and update every object in the generated root image.
+
+### What Journaling Adds
+
+A journal is a write-ahead log for filesystem blocks. Before ext3 modifies the normal location of a metadata or file block, it first records the new block image in the journal and writes a commit record. If the machine stops before the commit record reaches disk, recovery ignores the partial transaction. If the commit record reaches disk but the later checkpoint to the home location does not, recovery replays the committed block images from the journal.
+
+Drunix uses the ext3 **JBD** (Journal Block Device) format with an internal journal inode. JBD metadata is big-endian even though the ext3 filesystem structures are little-endian, so the driver has explicit `be32` and `put_be32` helpers for journal headers, tags, sequence numbers, and superblock fields.
+
+The implementation uses synchronous full-block journaling:
+
+![](diagrams/ch13-diag08.svg)
+
+1. A filesystem mutation starts a transaction and records complete 4096-byte images for every changed filesystem block.
+2. The ext3 superblock is marked with the `needs_recovery` incompatibility bit so a later mount knows that journal replay may be required.
+3. The JBD journal superblock's `start` field is set to the first transaction block, then the driver writes one descriptor block, one data block for each changed filesystem block, and a commit block.
+4. After the commit is durable, the driver checkpoints the same block images to their normal filesystem locations.
+5. The journal `start` field is cleared, the sequence number advances, and `needs_recovery` is removed from the ext3 superblock.
+
+This is simpler than Linux's high-performance ordered metadata mode. Drunix journals full filesystem blocks and checkpoints them before the syscall returns. That costs extra I/O, but it makes the recovery rule easy to audit: a committed transaction is a list of exact block images that either need to be copied home or have already been copied home.
+
+### Recovery on Mount
+
+Mounting ext3 begins by reading the superblock at byte offset 1024, checking the `0xEF53` magic number, validating the block size, rejecting unsupported feature bits, and loading the group descriptor. If the image is clean, normal reads can begin immediately and writes are enabled when the block device is writable and the image uses a single block group.
+
+If the ext3 superblock has `needs_recovery` set, the driver opens the internal journal inode and reads the JBD superblock. It then walks the journal ring from `start`, parsing descriptor blocks, optional revoke blocks, and commit blocks. Descriptor tags identify the home filesystem block for each following journal data block. A commit block makes the transaction replayable. Revoke records suppress older block images that should no longer be applied.
+
+Replay first builds an in-memory overlay of committed block images. Reads during recovery consult that overlay before falling back to disk, so later replay logic sees a coherent filesystem view. Once replay parsing succeeds, Drunix checkpoints the overlay to the real filesystem blocks, clears the journal `start` field, removes `needs_recovery`, reloads the group descriptor, and enables writes.
+
+If the image needs recovery but uses an external journal, an invalid journal inode, unsupported JBD features, or too many blocks for the bounded replay buffers, the mount fails or remains read-only instead of guessing. That conservative behavior is deliberate: an ext3 driver must never silently reinterpret an unknown journal format.
+
+### Mutating ext3 Through the Driver
+
+The ext3 VFS backend supports reading, writing, truncating, creating files, unlinking files, creating directories, removing empty directories, `stat`, `lstat`, and `readlink`. Rename, hard-link creation, and symlink creation currently return a read-only-style error because they require additional directory and link-count edge cases that are not yet implemented.
+
+Every public mutation uses the journal path described above. Depending on the operation, one transaction may update several kinds of blocks: the block bitmap, the inode bitmap, indirect pointer blocks, directory data blocks, file data blocks, the inode table block containing the changed inode, and the group descriptor block with free-space counters. All of those blocks are staged as full images before the transaction commits.
+
+Because the generated image is Linux-compatible, host tools are part of the contract. `make validate-ext3-linux` checks the image with `tools/check_ext3_linux_compat.py`, `e2fsck -fn`, and `dumpe2fs`, including the `has_journal` feature and journal inode 8. `make test-ext3-linux-compat` boots a writable ext3 smoke test, verifies that the JBD sequence number advanced, and runs `e2fsck -fn` on the mutated image. `make test-ext3-host-write-interop` writes a file into the image with `debugfs` and then verifies Drunix's compatibility assumptions still hold.
+
 ### Where the Machine Is by the End of Chapter 13
 
-The DUFS v3 image is now mounted and the filesystem layer is fully operational. We have read the superblock from LBA 1, verified the magic number, and loaded both 4096-byte bitmaps into memory. The root directory inode (inode 1) is our anchor for every subsequent path resolution.
+The filesystem layer is now fully operational in two forms. DUFS v3 provides a compact teaching filesystem: we have read its superblock from LBA 1, verified the magic number, and loaded both 4096-byte bitmaps into memory. Its root directory inode (inode 1) is the anchor for DUFS path resolution.
 
-From here, any filename — whether a bare name in the root or a slash-separated path of arbitrary depth — resolves to an inode number through the filesystem's path walk. That inode number is our stable handle for the file: it outlives renames (the inode number never changes when a directory entry is rewritten), and two names pointing at the same inode number coexist correctly because the inode tracks a `link_count` rather than a single owning entry.
+The default root filesystem is ext3. It uses the same inode idea but stores it in a Linux-compatible layout: root inode 2, block-group bitmaps, variable-length directory entries, and an internal JBD journal in inode 8. Drunix can replay committed journal transactions on mount, checkpoint them to their home blocks, and then perform new mutations through synchronous full-block journal transactions.
+
+From here, any filename — whether a bare name in the root or a slash-separated path of arbitrary depth — resolves to an inode number through the selected filesystem's path walk. That inode number is our stable handle for the file: it outlives renames when the backend supports them, and two names pointing at the same inode number coexist correctly because the inode tracks a `link_count` rather than a single owning entry.
 
 File data is stored in 4096-byte blocks, addressed by up to twelve direct pointers plus single-indirect and double-indirect chains. A small file lives entirely in direct blocks; a large file extends transparently through indirect addressing without any change to the callers above.
 
-The inode number has replaced the raw LBA as our handle for an open file. Every layer from the ELF loader through the process open-file table and the read/write syscalls now speaks in inode numbers, with DUFS v3 handling the translation to physical disk sectors internally.
+The inode number has replaced the raw LBA as our handle for an open file. Every layer from the ELF loader through the process open-file table and the read/write syscalls now speaks in inode numbers, with each filesystem backend handling the translation to physical disk sectors internally.

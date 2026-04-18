@@ -185,6 +185,7 @@ DIAGRAM_BUCKETS = {
     'ch13-diag05.svg': 'lane_walk',
     'ch13-diag06.svg': 'segmented_strip',
     'ch13-diag07.svg': 'split_overview',
+    'ch13-diag08.svg': 'handoff_path',
     # Chapter 14
     'ch14-diag01.svg': 'layer_stack',
     # Chapter 15
@@ -1734,6 +1735,13 @@ split_overview(
         ('/date', 'date program stored later in the data region'),
     ],
 )
+flow(Path('ch13-diag08.svg'),'Ext3 journaled mutation','The journal records a committed block image before the home location is treated as durable.',[
+    ('stage blocks','full 4 KB images in memory','blue'),
+    ('mark recovery','set ext3 needs_recovery','amber'),
+    ('write journal','descriptor, data, commit','green'),
+    ('checkpoint','copy images to home blocks','blue'),
+    ('clean journal','clear start and advance sequence','green')
+],h=420)
 # Chapter 14
 stack(Path('ch14-diag01.svg'),'File operation stack','A file call descends through a fixed layer stack from user space to the disk driver.',[('User program','read, write, or open request','blue'),('Kernel entry layer','fd checks and syscall entry','green'),('VFS router','choose the owning backend','amber'),('Filesystem implementation','inode and directory logic','blue'),('Disk I/O layer','sector-sized requests','green'),('Disk driver','talk to hardware','gray')],h=450)
 # Chapter 15

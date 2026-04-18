@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="389.67999999999995" height="722" viewBox="0 0 389.67999999999995 722" role="img" aria-labelledby="title desc">
+  <title id="title">Ext3 journaled mutation</title>
+  <desc id="desc">The journal records a committed block image before the home location is treated as durable.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 2 2 L 10 6 L 2 10" fill="none" stroke="#0f172a" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      .bg { fill: #ffffff; }
+      .panel { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+      .blue { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.5; }
+      .green { fill: #ecfdf5; stroke: #059669; stroke-width: 1.5; }
+      .amber { fill: #fef3c7; stroke: #d97706; stroke-width: 1.5; }
+      .gray { fill: #f1f5f9; stroke: #64748b; stroke-width: 1.3; }
+      .chip { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.5; }
+      .vector { fill: #ecfdf5; stroke: #059669; stroke-width: 1.5; }
+      .tag { fill: #dbeafe; stroke: #2563eb; stroke-width: 1.25; }
+      .cell { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.4; }
+      .attr { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.4; }
+      .row { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.2; }
+      .gap { fill: #f1f5f9; stroke: #cbd5e1; stroke-width: 1.2; }
+      .table-shell { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.2; }
+      .table-headband { fill: #f8fafc; }
+      .table-rule { stroke: #cbd5e1; stroke-width: 1; }
+      .edge-label-bg { fill: #ffffff; fill-opacity: 0.94; }
+      .title { fill: #0f172a; font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label { fill: #0f172a; font: 600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-tight { fill: #0f172a; font: 600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-mini { fill: #0f172a; font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-micro { fill: #0f172a; font: 600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .colhead { fill: #334155; font: 700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .small { fill: #334155; font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .muted { fill: #64748b; font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .mono { fill: #0f172a; font: 12px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+      .byte { fill: #0f172a; font: 600 12px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; text-anchor: middle; dominant-baseline: middle; }
+      .arrow { stroke: #0f172a; stroke-width: 2.2; stroke-linecap: round; marker-end: url(#arrow); }
+      .line { stroke: #334155; stroke-width: 1.6; stroke-linecap: round; }
+    </style>
+  </defs>
+  <rect class="bg" x="0" y="0" width="389.67999999999995" height="722" rx="12"/>
+  <text class="title" x="44" y="42">Ext3 journaled mutation</text>
+  <text class="muted" x="44" y="68">The journal records a committed block image</text>
+  <text class="muted" x="44" y="84">before the home location is treated as durable.</text>
+  <rect class="panel" x="34" y="114" width="321.67999999999995" height="560" rx="10"/>
+  <rect class="blue" x="67.99999999999999" y="140" width="253.67999999999998" height="68" rx="7"/>
+  <text class="label" x="194.8" y="166.0" text-anchor="middle" dominant-baseline="middle">stage blocks</text>
+  <text class="muted" x="194.8" y="182.0" text-anchor="middle" dominant-baseline="middle">full 4 KB images in memory</text>
+  <line class="arrow" x1="194.83999999999997" y1="216" x2="194.83999999999997" y2="234"/>
+  <rect class="amber" x="67.99999999999999" y="246" width="253.67999999999998" height="68" rx="7"/>
+  <text class="label" x="194.8" y="272.0" text-anchor="middle" dominant-baseline="middle">mark recovery</text>
+  <text class="muted" x="194.8" y="288.0" text-anchor="middle" dominant-baseline="middle">set ext3 needs_recovery</text>
+  <line class="arrow" x1="194.83999999999997" y1="322" x2="194.83999999999997" y2="340"/>
+  <rect class="green" x="67.99999999999999" y="352" width="253.67999999999998" height="68" rx="7"/>
+  <text class="label" x="194.8" y="378.0" text-anchor="middle" dominant-baseline="middle">write journal</text>
+  <text class="muted" x="194.8" y="394.0" text-anchor="middle" dominant-baseline="middle">descriptor, data, commit</text>
+  <line class="arrow" x1="194.83999999999997" y1="428" x2="194.83999999999997" y2="446"/>
+  <rect class="blue" x="67.99999999999999" y="458" width="253.67999999999998" height="68" rx="7"/>
+  <text class="label" x="194.8" y="484.0" text-anchor="middle" dominant-baseline="middle">checkpoint</text>
+  <text class="muted" x="194.8" y="500.0" text-anchor="middle" dominant-baseline="middle">copy images to home blocks</text>
+  <line class="arrow" x1="194.83999999999997" y1="534" x2="194.83999999999997" y2="552"/>
+  <rect class="green" x="67.99999999999999" y="564" width="253.67999999999998" height="84" rx="7"/>
+  <text class="label" x="194.8" y="590.0" text-anchor="middle" dominant-baseline="middle">clean journal</text>
+  <text class="muted" x="194.8" y="606.0" text-anchor="middle" dominant-baseline="middle">clear start and advance</text>
+  <text class="muted" x="194.8" y="622.0" text-anchor="middle" dominant-baseline="middle">sequence</text>
+  <text class="muted" x="355.7" y="704.0" text-anchor="end">Chapter 13, Figure 8</text>
+</svg>
