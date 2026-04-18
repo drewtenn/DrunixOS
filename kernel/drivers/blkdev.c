@@ -18,6 +18,16 @@ static int blkdev_name_equals(const char *a, const char *b)
     return k_strcmp(a, b) == 0;
 }
 
+static int blkdev_name_is_valid(const char *name)
+{
+    uint32_t len;
+
+    if (!name || name[0] == '\0')
+        return 0;
+    len = k_strlen(name);
+    return len < BLKDEV_NAME_MAX;
+}
+
 void blkdev_reset(void)
 {
     k_memset(blkdev_table, 0, sizeof(blkdev_table));
@@ -37,14 +47,13 @@ int blkdev_register_disk(const char *name, uint32_t major, uint32_t minor,
 {
     int idx;
 
-    if (!name || !ops || sectors == 0 || blkdev_find_index(name) >= 0)
+    if (!blkdev_name_is_valid(name) || !ops || sectors == 0 || blkdev_find_index(name) >= 0)
         return -1;
     idx = blkdev_alloc_slot();
     if (idx < 0)
         return -1;
 
-    k_strncpy(blkdev_table[idx].info.name, name, BLKDEV_NAME_MAX - 1);
-    blkdev_table[idx].info.name[BLKDEV_NAME_MAX - 1] = '\0';
+    k_strncpy(blkdev_table[idx].info.name, name, BLKDEV_NAME_MAX);
     blkdev_table[idx].info.kind = BLKDEV_KIND_DISK;
     blkdev_table[idx].info.sector_size = BLKDEV_SECTOR_SIZE;
     blkdev_table[idx].info.sectors = sectors;
@@ -55,7 +64,7 @@ int blkdev_register_disk(const char *name, uint32_t major, uint32_t minor,
     blkdev_table[idx].info.start_sector = 0;
     blkdev_table[idx].info.partition_number = 0;
     blkdev_table[idx].ops = ops;
-    return idx;
+    return 0;
 }
 
 int blkdev_register_part(const char *name, uint32_t parent_index,
@@ -65,7 +74,7 @@ int blkdev_register_part(const char *name, uint32_t parent_index,
     int idx;
     const blkdev_entry_t *parent;
 
-    if (!name || sectors == 0 || parent_index >= BLKDEV_MAX ||
+    if (!blkdev_name_is_valid(name) || sectors == 0 || parent_index >= BLKDEV_MAX ||
         blkdev_find_index(name) >= 0)
         return -1;
     parent = &blkdev_table[parent_index];
@@ -78,8 +87,7 @@ int blkdev_register_part(const char *name, uint32_t parent_index,
     idx = blkdev_alloc_slot();
     if (idx < 0)
         return -1;
-    k_strncpy(blkdev_table[idx].info.name, name, BLKDEV_NAME_MAX - 1);
-    blkdev_table[idx].info.name[BLKDEV_NAME_MAX - 1] = '\0';
+    k_strncpy(blkdev_table[idx].info.name, name, BLKDEV_NAME_MAX);
     blkdev_table[idx].info.kind = BLKDEV_KIND_PART;
     blkdev_table[idx].info.sector_size = BLKDEV_SECTOR_SIZE;
     blkdev_table[idx].info.sectors = sectors;
@@ -90,7 +98,7 @@ int blkdev_register_part(const char *name, uint32_t parent_index,
     blkdev_table[idx].info.start_sector = start_sector;
     blkdev_table[idx].info.partition_number = partition_number;
     blkdev_table[idx].ops = parent->ops;
-    return idx;
+    return 0;
 }
 
 int blkdev_register(const char *name, const blkdev_ops_t *ops)

@@ -51,8 +51,38 @@ static void test_blkdev_enumerates_disks(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, info.sectors, 200u);
 }
 
+static void test_blkdev_enforces_unique_disk_name_and_count(ktest_case_t *tc)
+{
+    blkdev_reset();
+    KTEST_ASSERT_EQ(tc, (uint32_t)blkdev_register_disk("sda", 8u, 0u, 100u, &null_ops), 0u);
+    KTEST_EXPECT_EQ(tc, blkdev_count(), 1u);
+    KTEST_EXPECT_EQ(tc, (uint32_t)blkdev_register_disk("sda", 8u, 1u, 100u, &null_ops), 0xFFFFFFFFu);
+    KTEST_EXPECT_EQ(tc, blkdev_count(), 1u);
+}
+
+static void test_blkdev_rejects_bad_disk_name(ktest_case_t *tc)
+{
+    blkdev_reset();
+    KTEST_EXPECT_EQ(tc, (uint32_t)blkdev_register_disk("", 8u, 0u, 100u, &null_ops), 0xFFFFFFFFu);
+    KTEST_EXPECT_EQ(tc, blkdev_register_disk((const char *)0, 8u, 0u, 100u, &null_ops), 0xFFFFFFFFu);
+    KTEST_EXPECT_EQ(tc, (uint32_t)blkdev_register_disk("123456789012", 8u, 0u, 100u, &null_ops), 0xFFFFFFFFu);
+    KTEST_EXPECT_EQ(tc, blkdev_count(), 0u);
+}
+
+static void test_blkdev_lookup_by_name(ktest_case_t *tc)
+{
+    blkdev_reset();
+    KTEST_ASSERT_EQ(tc, (uint32_t)blkdev_register_disk("sda", 8u, 0u, 100u, &null_ops), 0u);
+
+    KTEST_EXPECT_EQ(tc, blkdev_find_index("sda"), 0u);
+    KTEST_EXPECT_EQ(tc, (uint32_t)blkdev_get("sda"), (uint32_t)&null_ops);
+}
+
 static ktest_case_t cases[] = {
     KTEST_CASE(test_blkdev_enumerates_disks),
+    KTEST_CASE(test_blkdev_enforces_unique_disk_name_and_count),
+    KTEST_CASE(test_blkdev_rejects_bad_disk_name),
+    KTEST_CASE(test_blkdev_lookup_by_name),
 };
 
 static ktest_suite_t suite = KTEST_SUITE("blkdev", cases);
