@@ -2277,6 +2277,72 @@ static int resolve_user_path_at(process_t *proc, uint32_t dirfd,
     return 0;
 }
 
+typedef uint32_t (*syscall_resolved_path_op_t)(const char *path);
+
+static uint32_t syscall_with_resolved_path(process_t *cur,
+                                           uint32_t user_path,
+                                           syscall_resolved_path_op_t op)
+{
+    char *rpath;
+    uint32_t ret;
+
+    if (!cur || !op)
+        return (uint32_t)-1;
+
+    rpath = (char *)kmalloc(4096);
+    if (!rpath)
+        return (uint32_t)-1;
+
+    if (resolve_user_path(cur, user_path, rpath, 4096) != 0) {
+        kfree(rpath);
+        return (uint32_t)-1;
+    }
+
+    ret = op(rpath);
+    kfree(rpath);
+    return ret;
+}
+
+static uint32_t syscall_with_resolved_path_at(process_t *cur,
+                                              uint32_t dirfd,
+                                              uint32_t user_path,
+                                              syscall_resolved_path_op_t op)
+{
+    char *rpath;
+    uint32_t ret;
+
+    if (!cur || !op)
+        return (uint32_t)-1;
+
+    rpath = (char *)kmalloc(4096);
+    if (!rpath)
+        return (uint32_t)-1;
+
+    if (resolve_user_path_at(cur, dirfd, user_path, rpath, 4096) != 0) {
+        kfree(rpath);
+        return (uint32_t)-1;
+    }
+
+    ret = op(rpath);
+    kfree(rpath);
+    return ret;
+}
+
+static uint32_t syscall_vfs_mkdir_op(const char *path)
+{
+    return (uint32_t)vfs_mkdir(path);
+}
+
+static uint32_t syscall_vfs_rmdir_op(const char *path)
+{
+    return (uint32_t)vfs_rmdir(path);
+}
+
+static uint32_t syscall_vfs_unlink_op(const char *path)
+{
+    return (uint32_t)vfs_unlink(path);
+}
+
 static uint32_t syscall_execve(uint32_t user_path, uint32_t user_argv,
                                uint32_t user_envp)
 {
@@ -3226,23 +3292,15 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unlink(uint32_t eax, uint32_t ebx,
                               uint32_t edi, uint32_t ebp)
 {
     {
-        /*
-         * ebx = pointer to null-terminated filename in user space.
-         *
-         * Deletes the named file: frees its bitmap sectors, clears its
-         * directory entry, and flushes both to disk.
-         * Returns 0 on success, -1 on error (file not found or I/O error).
-         */
         process_t *cur = sched_current();
-        char *rpath = (char *)kmalloc(4096);
-        if (!rpath) return (uint32_t)-1;
-        if (!cur || resolve_user_path(cur, ebx, rpath, 4096) != 0) {
-            kfree(rpath);
-            return (uint32_t)-1;
-        }
-        uint32_t ret = (uint32_t)vfs_unlink(rpath);
-        kfree(rpath);
-        return ret;
+
+        (void)eax;
+        (void)ecx;
+        (void)edx;
+        (void)esi;
+        (void)edi;
+        (void)ebp;
+        return syscall_with_resolved_path(cur, ebx, syscall_vfs_unlink_op);
     }
 }
 
@@ -3253,8 +3311,6 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unlinkat(uint32_t eax, uint32_t eb
 {
     {
         process_t *cur = sched_current();
-        char *rpath;
-        uint32_t ret;
 
         (void)eax;
         (void)esi;
@@ -3262,17 +3318,11 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unlinkat(uint32_t eax, uint32_t eb
         (void)ebp;
         if ((edx & ~LINUX_AT_REMOVEDIR) != 0)
             return (uint32_t)-22;
-        rpath = (char *)kmalloc(4096);
-        if (!rpath)
-            return (uint32_t)-1;
-        if (!cur || resolve_user_path_at(cur, ebx, ecx, rpath, 4096) != 0) {
-            kfree(rpath);
-            return (uint32_t)-1;
-        }
-        ret = (edx & LINUX_AT_REMOVEDIR) ?
-            (uint32_t)vfs_rmdir(rpath) : (uint32_t)vfs_unlink(rpath);
-        kfree(rpath);
-        return ret;
+        if (edx & LINUX_AT_REMOVEDIR)
+            return syscall_with_resolved_path_at(cur, ebx, ecx,
+                                                 syscall_vfs_rmdir_op);
+        return syscall_with_resolved_path_at(cur, ebx, ecx,
+                                             syscall_vfs_unlink_op);
     }
 }
 
@@ -3532,21 +3582,15 @@ static uint32_t SYSCALL_NOINLINE syscall_case_mkdir(uint32_t eax, uint32_t ebx,
                               uint32_t edi, uint32_t ebp)
 {
     {
-        /*
-         * ebx = pointer to null-terminated directory name in user space.
-         * Creates a directory. Path is resolved relative to process cwd.
-         * Returns 0 on success, -1 on error.
-         */
         process_t *cur = sched_current();
-        char *rpath = (char *)kmalloc(4096);
-        if (!rpath) return (uint32_t)-1;
-        if (!cur || resolve_user_path(cur, ebx, rpath, 4096) != 0) {
-            kfree(rpath);
-            return (uint32_t)-1;
-        }
-        uint32_t ret = (uint32_t)vfs_mkdir(rpath);
-        kfree(rpath);
-        return ret;
+
+        (void)eax;
+        (void)ecx;
+        (void)edx;
+        (void)esi;
+        (void)edi;
+        (void)ebp;
+        return syscall_with_resolved_path(cur, ebx, syscall_vfs_mkdir_op);
     }
 }
 
@@ -3557,23 +3601,14 @@ static uint32_t SYSCALL_NOINLINE syscall_case_mkdirat(uint32_t eax, uint32_t ebx
 {
     {
         process_t *cur = sched_current();
-        char *rpath = (char *)kmalloc(4096);
-        uint32_t ret;
 
         (void)eax;
         (void)edx;
         (void)esi;
         (void)edi;
         (void)ebp;
-        if (!rpath)
-            return (uint32_t)-1;
-        if (!cur || resolve_user_path_at(cur, ebx, ecx, rpath, 4096) != 0) {
-            kfree(rpath);
-            return (uint32_t)-1;
-        }
-        ret = (uint32_t)vfs_mkdir(rpath);
-        kfree(rpath);
-        return ret;
+        return syscall_with_resolved_path_at(cur, ebx, ecx,
+                                             syscall_vfs_mkdir_op);
     }
 }
 
@@ -3583,21 +3618,15 @@ static uint32_t SYSCALL_NOINLINE syscall_case_rmdir(uint32_t eax, uint32_t ebx,
                               uint32_t edi, uint32_t ebp)
 {
     {
-        /*
-         * ebx = pointer to null-terminated directory name in user space.
-         * Removes an empty directory. Path is resolved relative to process cwd.
-         * Returns 0 on success, -1 if not found, not empty, or on error.
-         */
         process_t *cur = sched_current();
-        char *rpath = (char *)kmalloc(4096);
-        if (!rpath) return (uint32_t)-1;
-        if (!cur || resolve_user_path(cur, ebx, rpath, 4096) != 0) {
-            kfree(rpath);
-            return (uint32_t)-1;
-        }
-        uint32_t ret = (uint32_t)vfs_rmdir(rpath);
-        kfree(rpath);
-        return ret;
+
+        (void)eax;
+        (void)ecx;
+        (void)edx;
+        (void)esi;
+        (void)edi;
+        (void)ebp;
+        return syscall_with_resolved_path(cur, ebx, syscall_vfs_rmdir_op);
     }
 }
 
