@@ -128,6 +128,38 @@ typedef struct {
     } u;
 } file_handle_t;
 
+typedef struct proc_address_space {
+    uint32_t refs;
+    uint32_t pd_phys;
+    uint32_t entry;
+    uint32_t user_stack;
+    uint32_t heap_start;
+    uint32_t brk;
+    uint32_t image_start;
+    uint32_t image_end;
+    uint32_t stack_low_limit;
+    vm_area_t vmas[PROCESS_MAX_VMAS];
+    uint32_t vma_count;
+    char name[16];
+    char psargs[80];
+} proc_address_space_t;
+
+typedef struct proc_fd_table {
+    uint32_t refs;
+    file_handle_t open_files[MAX_FDS];
+} proc_fd_table_t;
+
+typedef struct proc_fs_state {
+    uint32_t refs;
+    uint32_t umask;
+    char cwd[4096];
+} proc_fs_state_t;
+
+typedef struct proc_sig_actions {
+    uint32_t refs;
+    uint32_t handlers[NSIG];
+} proc_sig_actions_t;
+
 typedef enum {
     PROC_UNUSED   = 0,  /* slot is free */
     PROC_READY    = 1,  /* runnable, not currently on CPU */
@@ -165,6 +197,10 @@ typedef struct {
 } crash_info_t;
 
 typedef struct process {
+    proc_address_space_t *as;
+    proc_fd_table_t      *files;
+    proc_fs_state_t      *fs_state;
+    proc_sig_actions_t   *sig_actions;
     uint32_t     pd_phys;       /* physical address of the process page directory */
     uint32_t     entry;         /* ELF entry point virtual address */
     uint32_t     user_stack;    /* user stack top (initial ESP, grows down) */

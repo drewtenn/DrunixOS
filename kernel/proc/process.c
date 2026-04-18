@@ -4,6 +4,7 @@
  */
 
 #include "process.h"
+#include "resources.h"
 #include "sched.h"
 #include "pipe.h"
 #include "elf.h"
@@ -306,6 +307,8 @@ int process_create_file(process_t *proc, vfs_file_ref_t file_ref,
 {
     process_t *parent = sched_current();
 
+    k_memset(proc, 0, sizeof(*proc));
+
     /* Step 1: fresh page directory with kernel mappings copied (no PG_USER) */
     uint32_t pd_phys = paging_create_user_space();
     if (!pd_phys) return -1;
@@ -484,6 +487,13 @@ int process_create_file(process_t *proc, vfs_file_ref_t file_ref,
         proc->open_files[2].type     = FD_TYPE_STDOUT;
         proc->open_files[2].writable = 1;
     }
+
+    if (proc_resource_init_fresh(proc) != 0) {
+        process_release_user_space(proc);
+        process_release_kstack(proc);
+        return -10;
+    }
+    proc_resource_mirror_from_process(proc);
 
     return 0;
 }
@@ -677,6 +687,8 @@ void process_release_user_space(process_t *proc)
     }
 
     pmm_free_page(proc->pd_phys);
+    if (proc->as && proc->as->pd_phys == proc->pd_phys)
+        proc->as->pd_phys = 0;
     proc->pd_phys = 0;
 }
 

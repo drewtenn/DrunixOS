@@ -183,7 +183,7 @@ KOBJS = kernel/kernel-entry.o kernel/kernel.o \
         kernel/drivers/blkdev.o kernel/blk/bcache.o kernel/drivers/chardev.o kernel/drivers/tty.o \
         kernel/gui/display.o kernel/gui/framebuffer.o kernel/gui/font8x16.o kernel/gui/desktop.o kernel/gui/desktop_apps.o kernel/gui/terminal.o \
         kernel/mm/pmm.o kernel/mm/paging.o kernel/mm/paging_asm.o kernel/mm/fault.o kernel/mm/vma.o kernel/mm/kheap.o kernel/mm/slab.o \
-        kernel/proc/elf.o kernel/proc/process.o kernel/proc/process_asm.o kernel/proc/task_group.o \
+        kernel/proc/elf.o kernel/proc/process.o kernel/proc/process_asm.o kernel/proc/task_group.o kernel/proc/resources.o \
         kernel/proc/sched.o kernel/proc/syscall.o kernel/proc/core.o kernel/proc/mem_forensics.o kernel/proc/pipe.o kernel/proc/switch.o \
         kernel/proc/uaccess.o \
         kernel/fs/fs.o kernel/fs/vfs.o kernel/fs/procfs.o kernel/fs/ext3.o

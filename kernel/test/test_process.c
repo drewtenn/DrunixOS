@@ -8,6 +8,7 @@
 #include "elf.h"
 #include "fs.h"
 #include "process.h"
+#include "resources.h"
 #include "sched.h"
 #include "gdt.h"
 #include "kstring.h"
@@ -148,8 +149,14 @@ static process_t *start_syscall_test_process(process_t *proc)
     proc->saved_esp = 1; /* syscall tests do not context-switch this task */
     proc->open_files[1].type = FD_TYPE_STDOUT;
     proc->open_files[1].writable = 1;
+    if (proc_resource_init_fresh(proc) != 0) {
+        process_release_user_space(proc);
+        return 0;
+    }
+    proc_resource_mirror_from_process(proc);
 
     if (sched_add(proc) < 1) {
+        proc_resource_put_all(proc);
         process_release_user_space(proc);
         return 0;
     }
@@ -158,8 +165,12 @@ static process_t *start_syscall_test_process(process_t *proc)
 
 static void stop_syscall_test_process(process_t *proc)
 {
-    if (proc)
-        process_release_user_space(proc);
+    if (proc) {
+        if (proc->as)
+            proc_resource_put_all(proc);
+        else
+            process_release_user_space(proc);
+    }
     sched_init();
 }
 
@@ -814,6 +825,45 @@ static void test_mem_forensics_counts_present_heap_pages(ktest_case_t *tc)
     process_release_user_space(&proc);
 }
 
+static void test_process_resources_start_with_single_refs(ktest_case_t *tc)
+{
+    static process_t proc;
+    process_t *cur = start_syscall_test_process(&proc);
+    KTEST_ASSERT_NOT_NULL(tc, cur);
+
+    KTEST_ASSERT_NOT_NULL(tc, cur->as);
+    KTEST_ASSERT_NOT_NULL(tc, cur->files);
+    KTEST_ASSERT_NOT_NULL(tc, cur->fs_state);
+    KTEST_ASSERT_NOT_NULL(tc, cur->sig_actions);
+    KTEST_EXPECT_EQ(tc, cur->as->refs, 1u);
+    KTEST_EXPECT_EQ(tc, cur->files->refs, 1u);
+    KTEST_EXPECT_EQ(tc, cur->fs_state->refs, 1u);
+    KTEST_EXPECT_EQ(tc, cur->sig_actions->refs, 1u);
+
+    stop_syscall_test_process(cur);
+}
+
+static void test_process_resource_get_put_tracks_refs(ktest_case_t *tc)
+{
+    static process_t proc;
+    process_t *cur = start_syscall_test_process(&proc);
+    KTEST_ASSERT_NOT_NULL(tc, cur);
+
+    proc_resource_get_all(cur);
+    KTEST_EXPECT_EQ(tc, cur->as->refs, 2u);
+    KTEST_EXPECT_EQ(tc, cur->files->refs, 2u);
+    KTEST_EXPECT_EQ(tc, cur->fs_state->refs, 2u);
+    KTEST_EXPECT_EQ(tc, cur->sig_actions->refs, 2u);
+
+    proc_resource_put_all(cur);
+    KTEST_EXPECT_EQ(tc, cur->as->refs, 1u);
+    KTEST_EXPECT_EQ(tc, cur->files->refs, 1u);
+    KTEST_EXPECT_EQ(tc, cur->fs_state->refs, 1u);
+    KTEST_EXPECT_EQ(tc, cur->sig_actions->refs, 1u);
+
+    stop_syscall_test_process(cur);
+}
+
 static void test_linux_syscalls_fill_uname_time_and_fstat64(ktest_case_t *tc)
 {
     static process_t seed;
@@ -1201,6 +1251,8 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_mem_forensics_classifies_unknown_fault_vector),
     KTEST_CASE(test_mem_forensics_classifies_stack_limit_fault),
     KTEST_CASE(test_mem_forensics_counts_present_heap_pages),
+    KTEST_CASE(test_process_resources_start_with_single_refs),
+    KTEST_CASE(test_process_resource_get_put_tracks_refs),
     KTEST_CASE(test_linux_syscalls_fill_uname_time_and_fstat64),
     KTEST_CASE(test_linux_syscalls_support_busybox_identity_and_rt_sigmask),
     KTEST_CASE(test_linux_syscalls_support_busybox_stdio_helpers),
