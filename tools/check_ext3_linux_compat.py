@@ -36,11 +36,27 @@ def bit_is_set(buf, bit):
     return bool(buf[bit // 8] & (1 << (bit % 8)))
 
 
+def mbr_partition_offset(path):
+    with open(path, "rb") as f:
+        mbr = f.read(512)
+    if len(mbr) != 512 or mbr[510:512] != b"\x55\xaa":
+        return 0
+    entry = mbr[446:462]
+    if len(entry) != 16 or entry[4] == 0:
+        return 0
+    start = int.from_bytes(entry[8:12], "little")
+    sectors = int.from_bytes(entry[12:16], "little")
+    if start == 0 or sectors == 0:
+        return 0
+    return start * 512
+
+
 class Image:
     def __init__(self, path):
         with open(path, "rb") as f:
             self.img = f.read()
-        self.sb = self.img[1024:2048]
+        self.base = mbr_partition_offset(path)
+        self.sb = self.img[self.base + 1024:self.base + 2048]
         if len(self.sb) != 1024:
             fail("missing superblock")
         if self.u16(self.sb, 56) != EXT3_MAGIC:
@@ -79,11 +95,11 @@ class Image:
         return struct.unpack_from(">I", buf, off)[0]
 
     def block(self, num):
-        off = num * self.block_size
+        off = self.base + num * self.block_size
         return self.img[off:off + self.block_size]
 
     def inode(self, ino):
-        off = self.inode_table * self.block_size + (ino - 1) * self.inode_size
+        off = self.base + self.inode_table * self.block_size + (ino - 1) * self.inode_size
         raw = self.img[off:off + self.inode_size]
         if len(raw) != self.inode_size:
             fail(f"inode {ino} outside image")
