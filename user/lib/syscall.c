@@ -531,6 +531,54 @@ int sys_getpid(void)
     return r;
 }
 
+int sys_clone(unsigned int flags, void *child_stack, int *parent_tid,
+              void *tls, int *child_tid)
+{
+    int r;
+    __asm__ volatile (
+        "int $0x80"
+        : "=a"(r)
+        : "a"(120), "b"(flags), "c"(child_stack), "d"(parent_tid),
+          "S"(tls), "D"(child_tid)
+        : "memory"
+    );
+    return r;
+}
+
+int sys_gettid(void)
+{
+    int r;
+    __asm__ volatile (
+        "int $0x80"
+        : "=a"(r)
+        : "a"(224)
+        : "memory"
+    );
+    return r;
+}
+
+int sys_set_tid_address(int *tidptr)
+{
+    int r;
+    __asm__ volatile (
+        "int $0x80"
+        : "=a"(r)
+        : "a"(258), "b"(tidptr)
+        : "memory"
+    );
+    return r;
+}
+
+void sys_exit_group(int code)
+{
+    __asm__ volatile (
+        "int $0x80"
+        :: "a"(252), "b"(code)
+        : "memory"
+    );
+    for (;;);
+}
+
 int sys_getppid(void)
 {
     int r;

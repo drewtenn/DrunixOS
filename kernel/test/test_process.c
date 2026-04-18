@@ -41,6 +41,15 @@ extern void process_exec_launch(void);
 #define TEST_LINUX_O_RDWR     02u
 #define TEST_LINUX_O_CREAT    0100u
 #define TEST_LINUX_O_APPEND   02000u
+#define TEST_CLONE_VM             0x00000100u
+#define TEST_CLONE_FS             0x00000200u
+#define TEST_CLONE_FILES          0x00000400u
+#define TEST_CLONE_SIGHAND        0x00000800u
+#define TEST_CLONE_PARENT_SETTID  0x00100000u
+#define TEST_CLONE_THREAD         0x00010000u
+#define TEST_CLONE_SETTLS         0x00080000u
+#define TEST_CLONE_CHILD_CLEARTID 0x00200000u
+#define TEST_CLONE_CHILD_SETTID   0x01000000u
 
 static uint32_t test_align_up(uint32_t val, uint32_t align)
 {
@@ -940,6 +949,34 @@ static void test_rt_sigaction_reads_resource_handlers(ktest_case_t *tc)
     stop_syscall_test_process(cur);
 }
 
+static void test_clone_rejects_sighand_without_vm(ktest_case_t *tc)
+{
+    static process_t proc;
+    process_t *cur = start_syscall_test_process(&proc);
+    KTEST_ASSERT_NOT_NULL(tc, cur);
+
+    KTEST_EXPECT_EQ(tc,
+        syscall_handler(SYS_CLONE, TEST_CLONE_SIGHAND | SIGCHLD,
+                        USER_STACK_TOP - 0x1000u, 0, 0, 0, 0),
+        (uint32_t)-1);
+
+    stop_syscall_test_process(cur);
+}
+
+static void test_clone_rejects_thread_without_sighand(ktest_case_t *tc)
+{
+    static process_t proc;
+    process_t *cur = start_syscall_test_process(&proc);
+    KTEST_ASSERT_NOT_NULL(tc, cur);
+
+    KTEST_EXPECT_EQ(tc,
+        syscall_handler(SYS_CLONE, TEST_CLONE_THREAD | TEST_CLONE_VM | SIGCHLD,
+                        USER_STACK_TOP - 0x1000u, 0, 0, 0, 0),
+        (uint32_t)-1);
+
+    stop_syscall_test_process(cur);
+}
+
 static void test_linux_syscalls_fill_uname_time_and_fstat64(ktest_case_t *tc)
 {
     static process_t seed;
@@ -1333,6 +1370,8 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_syscall_getcwd_reads_resource_fs_state),
     KTEST_CASE(test_syscall_brk_reads_resource_address_space),
     KTEST_CASE(test_rt_sigaction_reads_resource_handlers),
+    KTEST_CASE(test_clone_rejects_sighand_without_vm),
+    KTEST_CASE(test_clone_rejects_thread_without_sighand),
     KTEST_CASE(test_linux_syscalls_fill_uname_time_and_fstat64),
     KTEST_CASE(test_linux_syscalls_support_busybox_identity_and_rt_sigmask),
     KTEST_CASE(test_linux_syscalls_support_busybox_stdio_helpers),

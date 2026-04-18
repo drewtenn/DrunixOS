@@ -86,6 +86,16 @@ typedef struct {
 #define MAP_ANON       MAP_ANONYMOUS
 #define MAP_FAILED     ((void *)-1)
 
+#define CLONE_VM             0x00000100u
+#define CLONE_FS             0x00000200u
+#define CLONE_FILES          0x00000400u
+#define CLONE_SIGHAND        0x00000800u
+#define CLONE_THREAD         0x00010000u
+#define CLONE_SETTLS         0x00080000u
+#define CLONE_PARENT_SETTID  0x00100000u
+#define CLONE_CHILD_CLEARTID 0x00200000u
+#define CLONE_CHILD_SETTID   0x01000000u
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -356,6 +366,12 @@ int sys_lseek(int fd, int offset, int whence);
 
 /* Return the PID of the calling process. */
 int sys_getpid(void);
+
+int sys_clone(unsigned int flags, void *child_stack, int *parent_tid,
+              void *tls, int *child_tid);
+int sys_gettid(void);
+int sys_set_tid_address(int *tidptr);
+void sys_exit_group(int code);
 
 /* Return the PID of the calling process's parent. */
 int sys_getppid(void);

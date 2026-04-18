@@ -3011,6 +3011,43 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unlinkat(uint32_t eax, uint32_t eb
     }
 }
 
+#define CLONE_EXIT_SIGNAL_MASK 0xFFu
+#define CLONE_SUPPORTED_FLAGS \
+    (CLONE_EXIT_SIGNAL_MASK | CLONE_VM | CLONE_FS | CLONE_FILES | \
+     CLONE_SIGHAND | CLONE_THREAD | CLONE_SETTLS | CLONE_PARENT_SETTID | \
+     CLONE_CHILD_CLEARTID | CLONE_CHILD_SETTID)
+
+static int syscall_clone_validate_flags(uint32_t flags)
+{
+    uint32_t unsupported = flags & ~CLONE_SUPPORTED_FLAGS;
+    if (unsupported) {
+        klog_hex("CLONE", "unsupported flags", unsupported);
+        return -1;
+    }
+    if ((flags & CLONE_SIGHAND) && !(flags & CLONE_VM))
+        return -1;
+    if ((flags & CLONE_THREAD) && !(flags & CLONE_SIGHAND))
+        return -1;
+    return 0;
+}
+
+static uint32_t SYSCALL_NOINLINE syscall_case_clone(uint32_t eax, uint32_t ebx,
+                              uint32_t ecx,
+                              uint32_t edx, uint32_t esi,
+                              uint32_t edi, uint32_t ebp)
+{
+    (void)eax;
+    (void)ecx;
+    (void)edx;
+    (void)esi;
+    (void)edi;
+    (void)ebp;
+    if (syscall_clone_validate_flags(ebx) != 0)
+        return (uint32_t)-1;
+    klog_hex("CLONE", "not yet creating child for flags", ebx);
+    return (uint32_t)-1;
+}
+
 static uint32_t SYSCALL_NOINLINE syscall_case_fork_vfork(uint32_t eax, uint32_t ebx,
                               uint32_t ecx,
                               uint32_t edx, uint32_t esi,
@@ -4971,6 +5008,9 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
     case SYS_FORK:
     case SYS_VFORK:
         return syscall_case_fork_vfork(eax, ebx, ecx, edx, esi, edi, ebp);
+
+    case SYS_CLONE:
+        return syscall_case_clone(eax, ebx, ecx, edx, esi, edi, ebp);
 
     case SYS_DRUNIX_CLEAR:
         return syscall_case_drunix_clear(eax, ebx, ecx, edx, esi, edi, ebp);
