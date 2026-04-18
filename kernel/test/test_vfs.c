@@ -476,6 +476,8 @@ static void test_dev_namespace_lists_and_resolves_devices(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree(), 0u);
     KTEST_EXPECT_TRUE(tc, blkdev_get("sda") != 0);
     KTEST_EXPECT_TRUE(tc, blkdev_get("sda1") != 0);
+    KTEST_EXPECT_TRUE(tc, blkdev_get("sdb") != 0);
+    KTEST_EXPECT_TRUE(tc, blkdev_get("sdb1") != 0);
 
     n = vfs_getdents("dev", buf, sizeof(buf));
     KTEST_EXPECT_TRUE(tc, n > 0);
@@ -483,6 +485,8 @@ static void test_dev_namespace_lists_and_resolves_devices(ktest_case_t *tc)
     KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "tty0"));
     KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "sda"));
     KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "sda1"));
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "sdb"));
+    KTEST_EXPECT_TRUE(tc, has_entry(buf, n, "sdb1"));
 
     KTEST_EXPECT_EQ(tc, (uint32_t)vfs_resolve("/dev/tty0", &node), 0u);
     KTEST_EXPECT_EQ(tc, node.type, (uint32_t)VFS_NODE_TTY);
@@ -495,6 +499,14 @@ static void test_dev_namespace_lists_and_resolves_devices(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, (uint32_t)vfs_resolve("/dev/sda1", &node), 0u);
     KTEST_EXPECT_EQ(tc, node.type, (uint32_t)VFS_NODE_BLOCKDEV);
     KTEST_EXPECT_TRUE(tc, k_strcmp(node.dev_name, "sda1") == 0);
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)vfs_resolve("/dev/sdb", &node), 0u);
+    KTEST_EXPECT_EQ(tc, node.type, (uint32_t)VFS_NODE_BLOCKDEV);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(node.dev_name, "sdb") == 0);
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)vfs_resolve("/dev/sdb1", &node), 0u);
+    KTEST_EXPECT_EQ(tc, node.type, (uint32_t)VFS_NODE_BLOCKDEV);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(node.dev_name, "sdb1") == 0);
     vfs_reset();
 }
 

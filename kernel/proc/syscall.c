@@ -252,15 +252,20 @@ static uint32_t syscall_read_blockdev(process_t *cur, file_handle_t *fh,
 
         rc = dev->read_sector(lba, sec);
         if (rc != 0)
-            return copied ? copied : (uint32_t)-1;
+            goto partial_fail;
         if (uaccess_copy_to_user(cur, user_buf + copied, sec + sec_off,
                                  chunk) != 0)
-            return copied ? copied : (uint32_t)-1;
+            goto partial_fail;
         copied += chunk;
     }
 
     fh->u.blockdev.offset = offset + copied;
     return copied;
+
+partial_fail:
+    if (copied != 0)
+        fh->u.blockdev.offset = offset + copied;
+    return copied ? copied : (uint32_t)-1;
 }
 
 typedef struct {
@@ -513,6 +518,26 @@ static void linux_metadata_from_vfs_stat(const vfs_stat_t *st,
     meta->ino = 1u;
 }
 
+static void linux_metadata_fix_blockdev_ino(const char *path,
+                                            const vfs_stat_t *st,
+                                            linux_fd_stat_t *meta)
+{
+    const char *base;
+    int idx;
+
+    if (!path || !st || !meta || st->type != VFS_STAT_TYPE_BLOCKDEV)
+        return;
+
+    base = k_strrchr(path, '/');
+    base = base ? base + 1 : path;
+    if (!base[0])
+        return;
+
+    idx = blkdev_find_index(base);
+    if (idx >= 0)
+        meta->ino = 0x80000000u + (uint32_t)idx;
+}
+
 static int linux_path_stat_metadata(process_t *cur, uint32_t user_path,
                                     linux_fd_stat_t *meta)
 {
@@ -535,6 +560,7 @@ static int linux_path_stat_metadata(process_t *cur, uint32_t user_path,
     }
 
     linux_metadata_from_vfs_stat(&st, meta);
+    linux_metadata_fix_blockdev_ino(rpath, &st, meta);
 
     kfree(rpath);
     return 0;
@@ -562,6 +588,7 @@ static int linux_path_lstat_metadata(process_t *cur, uint32_t user_path,
     }
 
     linux_metadata_from_vfs_stat(&st, meta);
+    linux_metadata_fix_blockdev_ino(rpath, &st, meta);
 
     kfree(rpath);
     return 0;
@@ -615,6 +642,7 @@ static int linux_path_stat_metadata_at_flags(process_t *cur, uint32_t dirfd,
     }
 
     linux_metadata_from_vfs_stat(&st, meta);
+    linux_metadata_fix_blockdev_ino(rpath, &st, meta);
 
     kfree(rpath);
     kfree(raw);

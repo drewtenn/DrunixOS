@@ -879,10 +879,14 @@ static void test_linux_syscalls_cover_blockdev_fd_path(ktest_case_t *tc)
     uint8_t *page;
     int32_t fd;
     uint8_t *stat_base;
+    uint8_t *fstat_base;
     uint8_t *poll_base;
     uint8_t *read_base;
     uint32_t stat_mode;
+    uint32_t stat_ino;
     uint32_t stat_size;
+    uint32_t fstat_mode;
+    uint32_t fstat_ino;
 
     vfs_reset();
     dufs_register();
@@ -897,6 +901,7 @@ static void test_linux_syscalls_cover_blockdev_fd_path(ktest_case_t *tc)
 
     k_strcpy((char *)page, "/dev/sda");
     stat_base = page + 0x100u;
+    fstat_base = page + 0x180u;
     poll_base = page + 0x200u;
     read_base = page + 0x300u;
 
@@ -910,11 +915,21 @@ static void test_linux_syscalls_cover_blockdev_fd_path(ktest_case_t *tc)
     stat_size = test_read_u32_le(stat_base, 44u);
     KTEST_EXPECT_EQ(tc, stat_mode, 0x00006124u);
     KTEST_EXPECT_TRUE(tc, stat_size != 0u);
+    stat_ino = test_read_u32_le(stat_base, 88u);
 
     fd = (int32_t)syscall_handler(SYS_OPEN, 0x00800000u, 0u, 0, 0, 0, 0);
     KTEST_ASSERT_TRUE(tc, fd >= 0);
     KTEST_EXPECT_EQ(tc, cur->open_files[(uint32_t)fd].type,
                     (uint32_t)FD_TYPE_BLOCKDEV);
+
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_FSTAT64, (uint32_t)fd,
+                                    0x00800180u, 0, 0, 0, 0),
+                    0u);
+    fstat_mode = test_read_u32_le(fstat_base, 16u);
+    fstat_ino = test_read_u32_le(fstat_base, 88u);
+    KTEST_EXPECT_EQ(tc, fstat_mode, stat_mode);
+    KTEST_EXPECT_EQ(tc, fstat_ino, stat_ino);
 
     ((uint32_t *)poll_base)[0] = (uint32_t)fd;
     ((uint32_t *)poll_base)[1] = TEST_LINUX_POLLIN;
