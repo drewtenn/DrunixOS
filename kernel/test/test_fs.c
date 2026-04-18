@@ -5,6 +5,7 @@
 
 #include "ktest.h"
 #include "fs.h"
+#include "kstring.h"
 
 /*
  * DUFS v2 filesystem tests.
@@ -23,9 +24,18 @@
 #define TEST_DIR     "_ktdir_"
 #define TEST_SUBFILE "_ktdir_/_ktsub_"
 
+#ifndef DRUNIX_ROOT_FS
+#define DRUNIX_ROOT_FS "ext3"
+#endif
+
+static const char *fs_test_device(void)
+{
+    return (k_strcmp(DRUNIX_ROOT_FS, "dufs") == 0) ? "sda1" : "sdb1";
+}
+
 static int fs_test_init(void)
 {
-    if (dufs_use_device("sdb1") != 0)
+    if (dufs_use_device(fs_test_device()) != 0)
         return -1;
     return fs_init();
 }
@@ -39,8 +49,9 @@ static int mem_eq(const uint8_t *a, const uint8_t *b, uint32_t n)
 
 /* ── Test cases ─────────────────────────────────────────────────────────── */
 
-static void test_fs_use_device_sdb1(ktest_case_t *tc)
+static void test_fs_use_device_sda1_and_sdb1(ktest_case_t *tc)
 {
+    KTEST_EXPECT_EQ(tc, (uint32_t)dufs_use_device("sda1"), 0u);
     KTEST_EXPECT_EQ(tc, (uint32_t)dufs_use_device("sdb1"), 0u);
 }
 
@@ -248,7 +259,7 @@ static void test_fs_create_in_subdir(ktest_case_t *tc)
 /* ── Suite ──────────────────────────────────────────────────────────────── */
 
 static ktest_case_t cases[] = {
-    KTEST_CASE(test_fs_use_device_sdb1),
+    KTEST_CASE(test_fs_use_device_sda1_and_sdb1),
     KTEST_CASE(test_fs_init_ok),
     KTEST_CASE(test_fs_create_and_unlink),
     KTEST_CASE(test_fs_write_and_readback),
