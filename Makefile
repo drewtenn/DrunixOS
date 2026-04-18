@@ -109,13 +109,13 @@ GRUB_MKRESCUE := i686-elf-grub-mkrescue
 ISO_KERNEL    := iso/boot/kernel.elf
 ISO_KERNEL_VGA := iso/boot/kernel-vga.elf
 DISK_SECTORS  := 102400
-USER_PROGS    := shell chello hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello linuxhello linuxprobe linuxabi busybox bbcompat dufstest redirtest ext3wtest
+USER_PROGS    := shell chello hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello linuxhello linuxprobe linuxabi busybox bbcompat dufstest redirtest ext3wtest threadtest
 USER_BINS     := $(addprefix user/,$(USER_PROGS))
 DISK_FILES    := $(foreach prog,$(USER_PROGS),user/$(prog) bin/$(prog)) \
                  tools/hello.txt hello.txt \
                  tools/readme.txt readme.txt
 RUN_LOGS      := serial.log debugcon.log
-TEST_SUFFIXES := ktest df bbcompat linuxabi ext3w
+TEST_SUFFIXES := ktest df bbcompat linuxabi ext3w threadtest
 TEST_IMAGES   := $(foreach suffix,$(TEST_SUFFIXES),disk-$(suffix).img dufs-$(suffix).img) disk-ext3-host.img
 TEST_LOGS     := $(foreach suffix,$(TEST_SUFFIXES),serial-$(suffix).log debugcon-$(suffix).log) \
                  bbcompat.log linuxabi.log ext3wtest.log ext3-host-readback.txt
@@ -519,6 +519,16 @@ test-linux-abi:
 	! grep -q "LINUXABI FAIL" linuxabi.log
 	! grep -Eq "unknown syscall|Unhandled syscall" debugcon-linuxabi.log
 
+test-threadtest:
+	$(MAKE) KLOG_TO_DEBUGCON=1 INIT_PROGRAM=bin/threadtest INIT_ARG0=threadtest kernel disk
+	$(call prepare_test_images,threadtest,threadtest.log)
+	$(call qemu_headless_for,threadtest,30)
+	$(PYTHON) tools/dufs_extract.py dufs-threadtest.img threadtest.log threadtest.log
+	cat threadtest.log
+	grep -q "THREADTEST PASS" threadtest.log
+	! grep -q "THREADTEST FAIL" threadtest.log
+	! grep -Eq "unknown syscall|Unhandled syscall" debugcon-threadtest.log
+
 # `test-ext3-linux-compat` — verify a freshly generated ext3 root with host
 #                            e2fsprogs, then boot Drunix writable ext3 smoke
 #                            tests and fsck the mutated root image.
@@ -585,7 +595,7 @@ clean:
 .PHONY: all build kernel iso images disk fresh check \
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
-        test test-fresh test-headless test-halt test-busybox-compat test-linux-abi test-ext3-linux-compat test-ext3-host-write-interop test-all \
+        test test-fresh test-headless test-halt test-busybox-compat test-linux-abi test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean

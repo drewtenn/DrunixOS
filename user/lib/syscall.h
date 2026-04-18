@@ -371,6 +371,7 @@ int sys_clone(unsigned int flags, void *child_stack, int *parent_tid,
               void *tls, int *child_tid);
 int sys_gettid(void);
 int sys_set_tid_address(int *tidptr);
+int sys_yield(void);
 void sys_exit_group(int code);
 
 /* Return the PID of the calling process's parent. */
