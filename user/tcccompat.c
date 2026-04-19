@@ -74,6 +74,11 @@ static const char runtime_source[] =
     "    return 1;\n"
     "}\n";
 
+static const char gcc_source[] =
+    "int gcc_value(void) {\n"
+    "    return 7;\n"
+    "}\n";
+
 static int text_contains(const char *haystack, const char *needle)
 {
     int hlen;
@@ -227,6 +232,8 @@ int main(void)
     char *runtime_run_argv[] = { "/tmp/tccrt", 0 };
     char *readelf_argv[] = { "readelf", "-h", "/tmp/tccrt", 0 };
     char *objdump_argv[] = { "objdump", "-f", "/tmp/tccrt", 0 };
+    char *gcc_compile_argv[] = { "gcc", "-c", "-nostdinc", "-B/bin/", "-o",
+                                 "/tmp/gcchello.o", "/tmp/gcchello.c", 0 };
 
     log_fd = sys_create("/dufs/tcc.log");
 
@@ -239,6 +246,8 @@ int main(void)
     sys_unlink("/tmp/tccmulti");
     sys_unlink("/tmp/tccrt.c");
     sys_unlink("/tmp/tccrt");
+    sys_unlink("/tmp/gcchello.c");
+    sys_unlink("/tmp/gcchello.o");
     if (write_text_file("/tmp/tcchello.c", hello_source) == 0) {
         emit("TCCCOMPAT: source write ok\n");
     } else {
@@ -285,6 +294,15 @@ int main(void)
         goto fail;
     if (stage_ok("TCCCOMPAT: objdump", "/bin/objdump", objdump_argv, envp,
                  "file format", out, sizeof(out)) != 0)
+        goto fail;
+    if (write_text_file("/tmp/gcchello.c", gcc_source) == 0) {
+        emit("TCCCOMPAT: gcc source write ok\n");
+    } else {
+        emit("TCCCOMPAT: gcc source write fail\n");
+        goto fail;
+    }
+    if (stage_ok("TCCCOMPAT: gcc compile", "/bin/gcc", gcc_compile_argv,
+                 envp, 0, out, sizeof(out)) != 0)
         goto fail;
 
     emit("TCCCOMPAT PASS\n");

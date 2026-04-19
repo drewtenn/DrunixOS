@@ -7,6 +7,10 @@
 #include "blkdev.h"
 #include "klog.h"
 
+#ifndef DRUNIX_DISK_SECTORS
+#define DRUNIX_DISK_SECTORS 102400u
+#endif
+
 extern void port_byte_out(unsigned short port, unsigned char data);
 extern unsigned char port_byte_in(unsigned short port);
 
@@ -156,6 +160,8 @@ static const blkdev_ops_t ata_slave_ops = {
 };
 
 void ata_register(void) {
-    blkdev_register_disk("sda", 8u, 0u, 102400u, &ata_master_ops);
-    blkdev_register_disk("sdb", 8u, 16u, 102400u, &ata_slave_ops);
+    blkdev_register_disk("sda", 8u, 0u, DRUNIX_DISK_SECTORS,
+                         &ata_master_ops);
+    blkdev_register_disk("sdb", 8u, 16u, DRUNIX_DISK_SECTORS,
+                         &ata_slave_ops);
 }

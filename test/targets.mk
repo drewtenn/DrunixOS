@@ -55,7 +55,7 @@ test-linux-abi:
 	$(call qemu_headless_for,linuxabi,30)
 	$(PYTHON) tools/dufs_extract.py $(IMG_DIR)/dufs-linuxabi.img linuxabi.log $(LOG_DIR)/linuxabi.log
 	cat $(LOG_DIR)/linuxabi.log
-	grep -q "LINUXABI SUMMARY passed 358/358" $(LOG_DIR)/linuxabi.log
+	grep -q "LINUXABI SUMMARY passed 369/369" $(LOG_DIR)/linuxabi.log
 	! grep -q "LINUXABI FAIL" $(LOG_DIR)/linuxabi.log
 	! grep -Eq "unknown syscall|Unhandled syscall" $(LOG_DIR)/debugcon-linuxabi.log
 
@@ -86,6 +86,8 @@ test-tcc:
 	grep -q "TCCCOMPAT: runtime run ok" $(LOG_DIR)/tcc.log
 	grep -q "TCCCOMPAT: readelf ok" $(LOG_DIR)/tcc.log
 	grep -q "TCCCOMPAT: objdump ok" $(LOG_DIR)/tcc.log
+	grep -q "TCCCOMPAT: gcc source write ok" $(LOG_DIR)/tcc.log
+	grep -q "TCCCOMPAT: gcc compile ok" $(LOG_DIR)/tcc.log
 	grep -q "TCCCOMPAT PASS" $(LOG_DIR)/tcc.log
 	! grep -q "TCCCOMPAT FAIL" $(LOG_DIR)/tcc.log
 	! grep -Eq "unknown syscall|Unhandled syscall" $(LOG_DIR)/debugcon-tcc.log

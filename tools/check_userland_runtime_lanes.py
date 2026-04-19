@@ -41,6 +41,8 @@ def main():
     cxx_progs = make_var(text, "CXX_PROGS")
     linux_progs = make_var(text, "LINUX_PROGS")
     linux_binutils_progs = make_var(text, "LINUX_BINUTILS_PROGS")
+    linux_gcc_progs = make_var(text, "LINUX_GCC_PROGS")
+    linux_gcc_helper_progs = make_var(text, "LINUX_GCC_HELPER_PROGS")
     c_runtime = make_var(text, "C_RUNTIME_OBJS")
     cxx_runtime = make_var(text, "CXX_RUNTIME_OBJS")
     c_link = scalar_make_var(text, "C_LINK_OBJS")
@@ -61,6 +63,12 @@ def main():
     if linux_binutils_progs is None:
         add_failure(failures, "user/Makefile must define LINUX_BINUTILS_PROGS")
         linux_binutils_progs = []
+    if linux_gcc_progs is None:
+        add_failure(failures, "user/Makefile must define LINUX_GCC_PROGS")
+        linux_gcc_progs = []
+    if linux_gcc_helper_progs is None:
+        add_failure(failures, "user/Makefile must define LINUX_GCC_HELPER_PROGS")
+        linux_gcc_helper_progs = []
     if c_runtime is None:
         add_failure(failures, "user/Makefile must define C_RUNTIME_OBJS")
         c_runtime = []
@@ -111,11 +119,19 @@ def main():
         add_failure(failures, "LINUX_PROGS must include readelf and objdump as generated static Linux i386 binutils targets")
     if set(linux_binutils_progs) != {"readelf", "objdump"}:
         add_failure(failures, "LINUX_BINUTILS_PROGS must be the generated binutils targets: readelf objdump")
+    if "gcc" not in linux_set:
+        add_failure(failures, "LINUX_PROGS must include gcc as the generated static Linux i386 compiler driver target")
+    if set(linux_gcc_progs) != {"gcc"}:
+        add_failure(failures, "LINUX_GCC_PROGS must be the generated GCC driver target: gcc")
+    if set(linux_gcc_helper_progs) != {"gcc-cc1", "gcc-as"}:
+        add_failure(failures, "LINUX_GCC_HELPER_PROGS must include the staged GCC helpers: gcc-cc1 gcc-as")
 
     if "include programs.mk" not in makefile_text:
         add_failure(failures, "user/Makefile must include user/programs.mk as the shared user program manifest")
     if not re.search(r"^\$\(LINUX_BINUTILS_PROGS\):\n\t\.\./tools/build_linux_binutils\.sh \$@ \$\(BINUTILS_VERSION\) \$\(BINUTILS_BUILD_DIR\)", makefile_text, re.MULTILINE):
         add_failure(failures, "user/Makefile must build $(LINUX_BINUTILS_PROGS) with tools/build_linux_binutils.sh")
+    if not re.search(r"^\$\(LINUX_GCC_PROGS\):\n\t\.\./tools/build_linux_gcc_tool\.sh \$@ gcc \$\(GCC_TOOLCHAIN_VERSION\) \$\(GCC_TOOLCHAIN_BUILD_DIR\)", makefile_text, re.MULTILINE):
+        add_failure(failures, "user/Makefile must build $(LINUX_GCC_PROGS) with tools/build_linux_gcc_tool.sh")
     if not re.search(r"^include\s+user/programs\.mk$", root_text, re.MULTILINE):
         add_failure(failures, "top-level Makefile must include user/programs.mk for disk image packing")
     if not re.search(r"USER_PROGS\s*:?\=\s*\$\(PROGS\)", root_text):
@@ -139,7 +155,7 @@ def main():
             add_failure(failures, f"C++ program must not also have C source: user/{prog}.c")
 
     linux_c_progs = {"linuxprobe", "linuxabi"}
-    linux_generated_progs = {"busybox", "tcc", "readelf", "objdump"}
+    linux_generated_progs = {"busybox", "tcc", "readelf", "objdump", "gcc"}
     for prog in linux_progs:
         has_asm = (USER / f"{prog}.asm").exists()
         has_c = (USER / f"{prog}.c").exists()

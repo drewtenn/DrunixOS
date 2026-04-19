@@ -54,11 +54,11 @@ def set_padding_bits(buf, valid_bits):
         set_bit(buf, bit)
 
 
-def pack_inode(mode, size, blocks, links, indirect=0, mtime=0):
+def pack_inode(mode, size, blocks, links, indirect=0, double_indirect=0,
+               metadata_blocks=0, mtime=0):
     direct = list(blocks[:12])
-    extra = list(blocks[12:])
-    block_count = len(blocks) + (1 if extra else 0)
-    ptrs = direct + [0] * (12 - len(direct)) + [indirect, 0, 0]
+    block_count = len(blocks) + metadata_blocks
+    ptrs = direct + [0] * (12 - len(direct)) + [indirect, double_indirect, 0]
     sectors = block_count * (BLOCK // SECTOR)
     return struct.pack(
         "<HHIIIIIHHIII15I4I12s",
@@ -192,7 +192,8 @@ def main():
         journal_indirect = alloc_block(payload)
     write_inode(JOURNAL_INO,
                 pack_inode(S_IFREG | 0o600, JOURNAL_BLOCKS * BLOCK,
-                           journal_blocks, 1, journal_indirect))
+                           journal_blocks, 1, journal_indirect,
+                           metadata_blocks=1 if journal_indirect else 0))
 
     dir_blocks = {}
     for path, info in dirs.items():
@@ -211,17 +212,36 @@ def main():
         for off in range(0, len(data), BLOCK):
             blocks.append(alloc_block(data[off:off + BLOCK]))
         indirect = 0
-        if len(blocks) > 12:
-            if len(blocks) > 12 + BLOCK // 4:
-                raise SystemExit(f"{f['dest']} is too large for mkext3 single-indirect writer")
+        double_indirect = 0
+        metadata_blocks = 0
+        extra = blocks[12:]
+        if extra:
+            single_entries = extra[:BLOCK // 4]
             payload = bytearray(BLOCK)
-            for i, block in enumerate(blocks[12:]):
+            for i, block in enumerate(single_entries):
                 struct.pack_into("<I", payload, i * 4, block)
             indirect = alloc_block(payload)
+            metadata_blocks += 1
+
+            double_entries = extra[BLOCK // 4:]
+            if double_entries:
+                if len(double_entries) > (BLOCK // 4) * (BLOCK // 4):
+                    raise SystemExit(f"{f['dest']} is too large for mkext3 double-indirect writer")
+                root = bytearray(BLOCK)
+                for root_idx, off in enumerate(range(0, len(double_entries), BLOCK // 4)):
+                    child_payload = bytearray(BLOCK)
+                    for i, block in enumerate(double_entries[off:off + BLOCK // 4]):
+                        struct.pack_into("<I", child_payload, i * 4, block)
+                    child = alloc_block(child_payload)
+                    metadata_blocks += 1
+                    struct.pack_into("<I", root, root_idx * 4, child)
+                double_indirect = alloc_block(root)
+                metadata_blocks += 1
         if not blocks and len(data) == 0:
             blocks = []
         write_inode(f["ino"], pack_inode(S_IFREG | 0o755, len(data), blocks, 1,
-                                          indirect))
+                                          indirect, double_indirect,
+                                          metadata_blocks))
 
     for b in range(DATA_START, next_block):
         set_bit(block_bitmap, b)

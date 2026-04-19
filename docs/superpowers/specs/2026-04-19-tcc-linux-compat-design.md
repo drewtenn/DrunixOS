@@ -112,7 +112,7 @@ compiler milestones are:
 1. [x] Compile a multi-file C program.
 2. [x] Compile against the Drunix user runtime packaged as a real sysroot.
 3. [x] Run GNU binutils tools as static Linux i386 programs.
-4. [ ] Run the GCC C driver far enough to compile a small C file.
+4. [x] Run the GCC C driver far enough to compile a small C file.
 5. [ ] Add G++ only after the C compiler path and Linux process/filesystem
    compatibility are stable.
 

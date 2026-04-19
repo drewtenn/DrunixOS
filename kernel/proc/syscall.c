@@ -382,6 +382,8 @@ typedef struct {
 #define LINUX_O_CREAT 0100u
 #define LINUX_O_TRUNC 01000u
 #define LINUX_O_APPEND 02000u
+#define LINUX_O_NONBLOCK 04000u
+#define LINUX_O_CLOEXEC 02000000u
 #define LINUX_POLLIN 0x0001u
 #define LINUX_POLLOUT 0x0004u
 #define USER_IO_CHUNK 512u
@@ -1568,6 +1570,31 @@ static uint32_t syscall_wait_common(uint32_t pid, uint32_t user_status,
             return (uint32_t)-1;
     }
     return waited_pid;
+}
+
+static uint32_t SYSCALL_NOINLINE syscall_case_getrusage(uint32_t eax,
+                              uint32_t ebx,
+                              uint32_t ecx,
+                              uint32_t edx, uint32_t esi,
+                              uint32_t edi, uint32_t ebp)
+{
+    process_t *cur = sched_current();
+    uint8_t zero[72];
+
+    (void)eax;
+    (void)edx;
+    (void)esi;
+    (void)edi;
+    (void)ebp;
+
+    if (!cur || ecx == 0)
+        return (uint32_t)-1;
+    if (ebx != 0 && ebx != 0xFFFFFFFFu)
+        return (uint32_t)-22;
+    k_memset(zero, 0, sizeof(zero));
+    return uaccess_copy_to_user(cur, ecx, zero, sizeof(zero)) == 0
+        ? 0
+        : (uint32_t)-1;
 }
 
 static uint32_t syscall_nanosleep(uint32_t user_req, uint32_t user_rem)
@@ -4751,6 +4778,18 @@ static uint32_t SYSCALL_NOINLINE syscall_case_pipe(uint32_t eax, uint32_t ebx,
     }
 }
 
+static uint32_t SYSCALL_NOINLINE syscall_case_pipe2(uint32_t eax, uint32_t ebx,
+                              uint32_t ecx,
+                              uint32_t edx, uint32_t esi,
+                              uint32_t edi, uint32_t ebp)
+{
+    uint32_t supported = LINUX_O_CLOEXEC | LINUX_O_NONBLOCK;
+
+    if ((ecx & ~supported) != 0)
+        return (uint32_t)-22;
+    return syscall_case_pipe(eax, ebx, ecx, edx, esi, edi, ebp);
+}
+
 static uint32_t SYSCALL_NOINLINE syscall_case_dup(uint32_t eax, uint32_t ebx,
                               uint32_t ecx,
                               uint32_t edx, uint32_t esi,
@@ -5481,6 +5520,9 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
     case SYS_NANOSLEEP:
         return syscall_case_nanosleep(eax, ebx, ecx, edx, esi, edi, ebp);
 
+    case SYS_GETRUSAGE:
+        return syscall_case_getrusage(eax, ebx, ecx, edx, esi, edi, ebp);
+
     case SYS_MKDIR:
         return syscall_case_mkdir(eax, ebx, ecx, edx, esi, edi, ebp);
 
@@ -5587,6 +5629,9 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
 
     case SYS_PIPE:
         return syscall_case_pipe(eax, ebx, ecx, edx, esi, edi, ebp);
+
+    case SYS_PIPE2:
+        return syscall_case_pipe2(eax, ebx, ecx, edx, esi, edi, ebp);
 
     case SYS_DUP2:
         return syscall_case_dup2(eax, ebx, ecx, edx, esi, edi, ebp);

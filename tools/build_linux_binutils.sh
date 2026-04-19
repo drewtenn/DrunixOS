@@ -15,9 +15,13 @@ cc=${LINUX_I386_CC:-i486-linux-musl-gcc}
 jobs=${JOBS:-2}
 url=${BINUTILS_URL:-https://ftp.gnu.org/gnu/binutils/binutils-${version}.tar.xz}
 tool=$(basename "$out")
+binutils_tool=$tool
+if [ "$tool" = "gcc-as" ]; then
+    binutils_tool=as
+fi
 
-case "$tool" in
-    readelf|objdump)
+case "$binutils_tool" in
+    readelf|objdump|as)
         ;;
     *)
         echo "unsupported binutils tool: $tool" >&2
@@ -67,9 +71,18 @@ if [ ! -f Makefile ]; then
         LDFLAGS="-static"
 fi
 
-make -j "$jobs" MAKEINFO=true all-binutils
-rm -f "binutils/${tool}"
-make -C binutils MAKEINFO=true LDFLAGS="-all-static -static" "$tool"
-
-cp "binutils/${tool}" "${out}.tmp"
+case "$binutils_tool" in
+    as)
+        make -j "$jobs" MAKEINFO=true all-gas
+        rm -f gas/as-new
+        make -C gas MAKEINFO=true LDFLAGS="-all-static -static" as-new
+        cp gas/as-new "${out}.tmp"
+        ;;
+    *)
+        make -j "$jobs" MAKEINFO=true all-binutils
+        rm -f "binutils/${tool}"
+        make -C binutils MAKEINFO=true LDFLAGS="-all-static -static" "$tool"
+        cp "binutils/${tool}" "${out}.tmp"
+        ;;
+esac
 mv "${out}.tmp" "$out"

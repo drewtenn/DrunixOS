@@ -38,6 +38,7 @@
 #define SYS_GETPPID     64
 #define SYS_SETSID      66
 #define SYS_SIGACTION   67
+#define SYS_GETRUSAGE   77
 #define SYS_GETTIMEOFDAY 78
 #define SYS_READLINK    85
 #define SYS_MMAP        90
@@ -102,6 +103,7 @@
 #define SYS_FCHMODAT    306
 #define SYS_FACCESSAT   307
 #define SYS_UTIMENSAT   320
+#define SYS_PIPE2       331
 #define SYS_PRLIMIT64   340
 #define SYS_STATX       383
 #define SYS_CLOCK_GETTIME64 403
@@ -111,6 +113,7 @@
 #define O_CREAT  0100
 #define O_TRUNC  01000
 #define O_APPEND 02000
+#define O_CLOEXEC 02000000
 #define O_DIRECTORY 0200000
 
 #define SEEK_SET 0
@@ -507,9 +510,16 @@ static void test_process_controls(void)
 {
     long pid = sc0(SYS_GETPID);
     uint32_t req[2];
+    unsigned char rusage[72];
 
     check_eq("getpriority returns default priority", sc2(SYS_GETPRIORITY, 0, 0), 0);
     check_eq("setpriority accepts root priority", sc3(SYS_SETPRIORITY, 0, 0, 0), 0);
+    for (unsigned i = 0; i < sizeof(rusage); i++)
+        rusage[i] = 0xFF;
+    check_eq("getrusage self succeeds", sc2(SYS_GETRUSAGE, 0, (long)rusage), 0);
+    check_eq("getrusage self user seconds zero", (long)get_u32(rusage, 0), 0);
+    check_eq("getrusage children succeeds", sc2(SYS_GETRUSAGE, -1, (long)rusage), 0);
+    check_eq("getrusage rejects invalid who", sc2(SYS_GETRUSAGE, 99, (long)rusage), -EINVAL);
     check_eq("sync succeeds", sc0(SYS_SYNC), 0);
     check_eq("umask returns default mask", sc1(SYS_UMASK, 077), 022);
     check_eq("umask stores previous mask", sc1(SYS_UMASK, 022), 077);
@@ -1026,6 +1036,18 @@ static void test_fds_and_pipes(void)
         check_eq("close pipe read fd succeeds", sc1(SYS_CLOSE, fds[0]), 0);
         check_eq("close pipe write fd succeeds", sc1(SYS_CLOSE, fds[1]), 0);
     }
+    check_eq("pipe2 cloexec creates read and write fds", sc2(SYS_PIPE2, (long)fds, O_CLOEXEC), 0);
+    if (fds[0] >= 0 && fds[1] >= 0) {
+        check_eq("pipe2 write returns byte count", sc3(SYS_WRITE, fds[1], (long)"q", 1), 1);
+        check_eq("pipe2 read returns byte count", sc3(SYS_READ, fds[0], (long)&c, 1), 1);
+        if (c == 'q')
+            pass("pipe2 preserves byte value");
+        else
+            fail("pipe2 preserves byte value", c, 'q');
+        check_eq("close pipe2 read fd succeeds", sc1(SYS_CLOSE, fds[0]), 0);
+        check_eq("close pipe2 write fd succeeds", sc1(SYS_CLOSE, fds[1]), 0);
+    }
+    check_eq("pipe2 rejects unsupported flags", sc2(SYS_PIPE2, (long)fds, 0x80000000u), -EINVAL);
 }
 
 static void test_memory_and_time(void)

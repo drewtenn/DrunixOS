@@ -79,6 +79,8 @@ endif
 	echo "$(NO_DESKTOP)" | cmp -s - $@ || echo "$(NO_DESKTOP)" > $@
 .vga-text-flag: FORCE
 	echo "$(VGA_TEXT)" | cmp -s - $@ || echo "$(VGA_TEXT)" > $@
+.disk-sectors-flag: FORCE
+	echo "$(DISK_SECTORS)" | cmp -s - $@ || echo "$(DISK_SECTORS)" > $@
 # GRUB menu timeout (seconds). Default 0 boots the first entry instantly.
 # Override (e.g. GRUB_TIMEOUT=10) to display the menu — the `run-grub-menu`
 # target uses this for interactive verification.
@@ -93,13 +95,15 @@ kernel/kernel.o: .vga-text-flag
 kernel/kernel-entry.o: .vga-text-flag FORCE
 kernel/lib/klog.o: .klog-debugcon-flag
 kernel/drivers/mouse.o: .mouse-speed-flag
+kernel/drivers/ata.o: .disk-sectors-flag
 kernel/test/test_desktop.o: .mouse-speed-flag
 
 # GRUB2 mkrescue (provided by: brew install i686-elf-grub xorriso)
 GRUB_MKRESCUE := i686-elf-grub-mkrescue
 ISO_KERNEL    := iso/boot/kernel.elf
 ISO_KERNEL_VGA := iso/boot/kernel-vga.elf
-DISK_SECTORS  := 102400
+DISK_SECTORS  ?= 262144
+CFLAGS += -DDRUNIX_DISK_SECTORS=$(DISK_SECTORS)
 PARTITION_START ?= 2048
 FS_SECTORS     := $(shell expr $(DISK_SECTORS) - $(PARTITION_START))
 include user/programs.mk
@@ -110,8 +114,15 @@ USER_RUNTIME_SYSROOT := $(foreach hdr,$(USER_RUNTIME_HEADERS),$(hdr) usr/include
                         user/lib/tcc_crt0.o usr/lib/drunix/crt0.o \
                         user/lib/libc.a usr/lib/drunix/libc.a \
                         user/user.ld usr/lib/drunix/user.ld
+USER_GCC_TOOLS := user/gcc-cc1 user/gcc-as
+USER_GCC_SYSROOT := user/gcc bin/i686-linux-musl-gcc \
+                    user/gcc-cc1 bin/cc1 \
+                    user/gcc-cc1 libexec/gcc/i686-linux-musl/11.2.1/cc1 \
+                    user/gcc-as bin/as \
+                    user/gcc-as bin/i686-linux-musl-as
 DISK_FILES    := $(foreach prog,$(USER_PROGS),user/$(prog) bin/$(prog)) \
                  $(USER_RUNTIME_SYSROOT) \
+                 $(USER_GCC_SYSROOT) \
                  tools/hello.txt hello.txt \
                  tools/readme.txt readme.txt
 LOG_DIR       := logs
@@ -125,7 +136,8 @@ TEST_LOGS     := $(foreach suffix,$(TEST_SUFFIXES),$(LOG_DIR)/serial-$(suffix).l
                  $(LOG_DIR)/bbcompat.log $(LOG_DIR)/linuxabi.log $(LOG_DIR)/ext3wtest.log \
                  $(LOG_DIR)/threadtest.log $(LOG_DIR)/tcc.log $(LOG_DIR)/ext3-host-readback.txt
 SENTINELS     := .ktest-flag .double-fault-test-flag .klog-debugcon-flag \
-                 .mouse-speed-flag .init-program-flag .no-desktop-flag .vga-text-flag
+                 .mouse-speed-flag .init-program-flag .no-desktop-flag \
+                 .vga-text-flag .disk-sectors-flag
 
 QEMU_DISKS    = -drive format=raw,file=$(1),if=ide,index=0 \
                  -drive format=raw,file=$(2),if=ide,index=1
@@ -200,8 +212,8 @@ kernel-vga.elf: $(KOBJS_VGA) $(KTOBJS)
 # Declared phony so make always delegates to the user subdirectory's own
 # dependency tracking — changes to user/*.c or user/lib/* are picked up
 # without needing a manual clean.
-.PHONY: $(USER_BINS)
-$(USER_BINS):
+.PHONY: $(USER_BINS) $(USER_GCC_TOOLS)
+$(USER_BINS) $(USER_GCC_TOOLS):
 	$(MAKE) -C user $(@F)
 
 user/lib/libc.a user/lib/tcc_crt0.o:
@@ -212,22 +224,22 @@ user/lib/libc.a user/lib/tcc_crt0.o:
 # Linux-compatible ext3 root partition.  ROOT_FS=dufs builds sda as DUFS
 # instead.
 ifeq ($(ROOT_FS),dufs)
-disk.fs: $(USER_BINS) user/lib/libc.a user/lib/tcc_crt0.o tools/hello.txt tools/readme.txt tools/mkfs.py
+disk.fs: $(USER_BINS) $(USER_GCC_TOOLS) user/lib/libc.a user/lib/tcc_crt0.o tools/hello.txt tools/readme.txt tools/mkfs.py .disk-sectors-flag
 	$(PYTHON) tools/mkfs.py $@ $(FS_SECTORS) $(DISK_FILES)
-$(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py | $(IMG_DIR)
+$(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
 	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0xDA
 else
-disk.fs: $(USER_BINS) user/lib/libc.a user/lib/tcc_crt0.o tools/hello.txt tools/readme.txt tools/mkext3.py
+disk.fs: $(USER_BINS) $(USER_GCC_TOOLS) user/lib/libc.a user/lib/tcc_crt0.o tools/hello.txt tools/readme.txt tools/mkext3.py .disk-sectors-flag
 	$(PYTHON) tools/mkext3.py $@ $(FS_SECTORS) $(DISK_FILES)
-$(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py | $(IMG_DIR)
+$(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
 	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0x83
 endif
 
 # dufs.img is the primary ATA slave (sdb), mounted at /dufs during ext3-root
 # boots.  It is intentionally not rebuilt by run-fresh when it already exists.
-dufs.fs: tools/mkfs.py
+dufs.fs: tools/mkfs.py .disk-sectors-flag
 	$(PYTHON) tools/mkfs.py $@ $(FS_SECTORS)
-$(DUFS_IMG): dufs.fs tools/wrap_mbr.py | $(IMG_DIR)
+$(DUFS_IMG): dufs.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
 	$(PYTHON) tools/wrap_mbr.py dufs.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0xDA
 
 disk.img: $(ROOT_DISK_IMG)

@@ -51,6 +51,7 @@
 #define SYS_GETPPID    64
 #define SYS_SETSID     66
 #define SYS_SIGACTION  67
+#define SYS_GETRUSAGE  77
 #define SYS_GETTIMEOFDAY 78
 #define SYS_READLINK   85
 #define SYS_MMAP       90
@@ -116,6 +117,7 @@
 #define SYS_FCHMODAT  306
 #define SYS_FACCESSAT 307
 #define SYS_UTIMENSAT 320
+#define SYS_PIPE2     331
 #define SYS_PRLIMIT64 340
 #define SYS_STATX     383
 #define SYS_CLOCK_GETTIME64 403

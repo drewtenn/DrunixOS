@@ -50,6 +50,9 @@ user/busybox
 user/tcc
 user/readelf
 user/objdump
+user/gcc
+user/gcc-cc1
+user/gcc-as
 user/tcccompat
 user/dufstest
 user/redirtest
@@ -79,3 +82,4 @@ venv/
 .init-program-flag
 .no-desktop-flag
 .vga-text-flag
+.disk-sectors-flag
