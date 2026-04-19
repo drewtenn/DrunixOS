@@ -10,6 +10,7 @@
 *.iso
 iso/boot/grub/grub.cfg
 /build/
+compile_commands.json
 user/lib/libc.a
 .worktrees/
 user/date

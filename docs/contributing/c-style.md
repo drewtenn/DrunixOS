@@ -60,3 +60,17 @@ At minimum, style review should check:
 
 Style tooling should start as reporting-only. Make it enforcement once the
 existing codebase has been cleaned enough that failures are signal, not noise.
+
+The build exposes the current mechanical checks as separate targets:
+
+- `make compile-commands` generates `compile_commands.json` for scanner and
+  editor tooling.
+- `make format-check` runs `clang-format` in dry-run mode with the repo
+  `.clang-format` file.
+- `make cppcheck` runs Cppcheck through the generated compilation database.
+- `make sparse-check` runs Sparse over kernel C sources.
+- `make scan` runs the formatter check and both scanners.
+
+These targets are reporting-only by default while the baseline is noisy. Use
+`SCAN_FAIL=1` when running them in an enforcement context or when a specific
+area has been cleaned up enough to treat new findings as regressions.

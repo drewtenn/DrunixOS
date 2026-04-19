@@ -28,6 +28,8 @@ Required:
 Optional:
 
 - `i386-elf-gdb` for `make debug`
+- `clang-format`, `cppcheck`, and `sparse` for `make scan`,
+  `make format-check`, `make cppcheck`, and `make sparse-check`
 - `pandoc` for `make epub`, `make pdf`, and `make docs`
 - `typst` for `make pdf` and `make docs`
 - `rsvg-convert` from `librsvg` for `make epub` and `make docs` — converts SVG diagrams to PNG
@@ -42,6 +44,7 @@ Install Homebrew first, then:
 ```sh
 brew install make nasm python qemu x86_64-elf-gcc i686-elf-grub xorriso
 brew install i386-elf-gdb pandoc typst
+brew install clang-format cppcheck sparse
 brew install librsvg
 ```
 Verify the compiler tools you need are on `PATH`:
@@ -71,7 +74,7 @@ The simplest supported setup is WSL2 with Ubuntu. Inside the WSL shell:
 
 ```sh
 sudo apt update
-sudo apt install -y build-essential python3 curl nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl librsvg2-bin
+sudo apt install -y build-essential python3 curl nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl librsvg2-bin clang-format cppcheck sparse
 ```
 
 You still need an `x86_64-elf` cross toolchain and `i386-elf-gdb` on your `PATH`. If your package set does not provide them directly, build and install the usual OSDev cross toolchain, then verify these commands exist:
@@ -106,19 +109,19 @@ Ubuntu / Debian:
 
 ```sh
 sudo apt update
-sudo apt install -y build-essential python3 curl nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl librsvg2-bin
+sudo apt install -y build-essential python3 curl nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl librsvg2-bin clang-format cppcheck sparse
 ```
 
 Fedora:
 
 ```sh
-sudo dnf install -y make python3 curl nasm qemu-system-i386 xorriso grub2-tools-extra mtools pandoc typst zip unzip perl librsvg2-tools
+sudo dnf install -y make python3 curl nasm qemu-system-i386 xorriso grub2-tools-extra mtools pandoc typst zip unzip perl librsvg2-tools clang-tools-extra cppcheck sparse
 ```
 
 Arch:
 
 ```sh
-sudo pacman -S --needed make python curl nasm qemu-desktop xorriso grub mtools pandoc typst zip unzip perl librsvg
+sudo pacman -S --needed make python curl nasm qemu-desktop xorriso grub mtools pandoc typst zip unzip perl librsvg clang cppcheck sparse
 ```
 
 As on Windows, make sure the `x86_64-elf` cross compiler/linker and optional `i386-elf-gdb` are installed and visible on `PATH`.
@@ -182,6 +185,21 @@ Build-only targets:
 - `make kernel` rebuilds `kernel.elf`, `kernel-vga.elf`, and `os.iso`
 - `make iso` rebuilds `os.iso`
 - `make disk` / `make images` rebuild `img/disk.img` and `img/dufs.img`
+
+Static analysis and style targets:
+
+- `make compile-commands` regenerates `compile_commands.json` for local tools
+  such as `cppcheck`, `clangd`, and `clang-tidy`
+- `make format-check` runs `clang-format --dry-run --Werror` using the repo's
+  `.clang-format` policy
+- `make cppcheck` runs Cppcheck against the generated compilation database
+- `make sparse-check` runs Sparse over kernel C sources with the kernel build
+  flags
+- `make scan` runs all three scanner targets
+
+The scanner targets are reporting-only by default so the current cleanup
+backlog does not break normal local builds. Add `SCAN_FAIL=1` to make scanner
+findings fail the target, for example `make SCAN_FAIL=1 cppcheck`.
 
 Run and debug targets:
 

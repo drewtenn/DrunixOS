@@ -4,6 +4,13 @@ NASM    := nasm
 PYTHON  := python3
 QEMU    := qemu-system-i386
 GDB     := i386-elf-gdb
+CLANG_FORMAT ?= clang-format
+CPPCHECK ?= cppcheck
+SPARSE ?= sparse
+SPARSEFLAGS ?= -nostdinc -I tools/sparse-include -I user/lib
+SCAN_FAIL ?= 0
+LINUX_I386_CC ?= i486-linux-musl-gcc
+LINUX_CFLAGS ?= -static -Os -s
 E2FSPROGS_SBIN ?= /opt/homebrew/opt/e2fsprogs/sbin
 E2FSCK  ?= $(if $(wildcard $(E2FSPROGS_SBIN)/e2fsck),$(E2FSPROGS_SBIN)/e2fsck,e2fsck)
 DUMPE2FS ?= $(if $(wildcard $(E2FSPROGS_SBIN)/dumpe2fs),$(E2FSPROGS_SBIN)/dumpe2fs,dumpe2fs)
@@ -185,6 +192,14 @@ define qemu_headless_until_log
 sh -c '$(QEMU) -display none $(call QEMU_DISKS,$(IMG_DIR)/disk-$(1).img,$(IMG_DIR)/dufs-$(1).img) $(QEMU_BOOT) -serial file:$(LOG_DIR)/serial-$(1).log -debugcon file:$(LOG_DIR)/debugcon-$(1).log >/dev/null 2>&1 & pid=$$!; for i in $$(seq 1 $(2)); do grep -q "$(3)" $(LOG_DIR)/debugcon-$(1).log 2>/dev/null && break; sleep 1; done; kill $$pid >/dev/null 2>&1 || true; wait $$pid >/dev/null 2>&1 || true'
 endef
 
+define require_tool
+@command -v $(1) >/dev/null 2>&1 || { \
+	echo "missing required tool: $(1)"; \
+	echo "Install scanner dependencies from README.md, then rerun this target."; \
+	exit 127; \
+}
+endef
+
 # ─── Pattern rules ───────────────────────────────────────────────────────────
 $(LOG_DIR) $(IMG_DIR):
 	mkdir -p $@
@@ -291,6 +306,68 @@ validate-ext3-linux: $(ROOT_DISK_IMG) tools/check_ext3_linux_compat.py tools/che
 	$(DUMPE2FS) -h disk.fs | grep -q 'Filesystem features:.*has_journal'
 	$(DUMPE2FS) -h disk.fs | grep -q 'Journal inode:[[:space:]]*8'
 
+# ─── Static analysis and style scans ─────────────────────────────────────────
+SCAN_C_STYLE_SOURCES := $(shell find kernel user -type f \( -name '*.c' -o -name '*.h' \) | sort)
+SCAN_KERNEL_C_SOURCES := $(shell find kernel -type f -name '*.c' | sort)
+SCAN_USER_C_RUNTIME_OBJS := lib/cxx_init.o lib/syscall.o lib/malloc.o \
+                            lib/string.o lib/ctype.o lib/stdlib.o \
+                            lib/stdio.o lib/unistd.o lib/time.o
+
+compile_commands.json: tools/generate_compile_commands.py kernel/objects.mk user/programs.mk user/Makefile Makefile
+	$(PYTHON) tools/generate_compile_commands.py \
+		--root=. \
+		--output=$@ \
+		--kernel-objs="$(KOBJS)" \
+		--kernel-cc="$(CC)" \
+		--kernel-cflags="$(CFLAGS)" \
+		--kernel-inc="$(INC)" \
+		--user-cc="$(CC)" \
+		--user-cflags="-m32 -ffreestanding -nostdlib -fno-pie -no-pie -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall" \
+		--linux-cc="$(LINUX_I386_CC)" \
+		--linux-cflags="$(LINUX_CFLAGS)" \
+		--user-c-runtime-objs="$(SCAN_USER_C_RUNTIME_OBJS)" \
+		--user-c-progs="$(C_PROGS)" \
+		--linux-c-progs="$(LINUX_C_PROGS)"
+
+compile-commands: compile_commands.json
+
+format-check:
+	$(call require_tool,$(CLANG_FORMAT))
+	@mkdir -p build
+	@$(CLANG_FORMAT) --dry-run --Werror $(SCAN_C_STYLE_SOURCES) 2> build/clang-format.log || { \
+		sed -n '1,120p' build/clang-format.log; \
+		echo "... full clang-format report: build/clang-format.log"; \
+		test "$(SCAN_FAIL)" != "1"; \
+	}
+
+cppcheck: compile_commands.json
+	$(call require_tool,$(CPPCHECK))
+	@mkdir -p build/cppcheck
+	@$(CPPCHECK) --project=compile_commands.json \
+		--cppcheck-build-dir=build/cppcheck \
+		--enable=warning,style,performance,portability \
+		--std=c99 \
+		--error-exitcode=1 > build/cppcheck.log 2>&1 || { \
+		sed -n '1,180p' build/cppcheck.log; \
+		echo "... full Cppcheck report: build/cppcheck.log"; \
+		test "$(SCAN_FAIL)" != "1"; \
+	}
+
+sparse-check:
+	$(call require_tool,$(SPARSE))
+	@mkdir -p build
+	@: > build/sparse.log
+	@rc=0; for src in $(SCAN_KERNEL_C_SOURCES); do \
+		$(SPARSE) $(SPARSEFLAGS) $(CFLAGS) $(INC) $$src >> build/sparse.log 2>&1 || rc=1; \
+	done; \
+	if [ $$rc -ne 0 ] || [ -s build/sparse.log ]; then \
+		sed -n '1,180p' build/sparse.log; \
+		echo "... full Sparse report: build/sparse.log"; \
+		test "$(SCAN_FAIL)" != "1"; \
+	fi
+
+scan: format-check cppcheck sparse-check
+
 # ─────────────────────────────────────────────────────────────────────────────
 # RUN TARGETS  (boot QEMU with the current img/disk.img — no filesystem rebuild)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -381,6 +458,7 @@ clean:
 	$(MAKE) -C user clean
 
 .PHONY: all build kernel iso images disk fresh check \
+        compile-commands format-check cppcheck sparse-check scan \
         disk.img dufs.img \
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
