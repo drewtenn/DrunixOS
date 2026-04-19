@@ -7,8 +7,8 @@
 #include "lib/string.h"
 #include "lib/syscall.h"
 
-#define KEY_PAGE_UP '\x01'   /* keyboard driver maps E0 49 → SOH */
-#define KEY_PAGE_DOWN '\x02' /* keyboard driver maps E0 51 → STX */
+#define KEY_PAGE_UP '\x01'   /* Legacy keyboard-driver scroll shortcut. */
+#define KEY_PAGE_DOWN '\x02' /* Legacy keyboard-driver scroll shortcut. */
 
 /* ANSI Color Codes */
 #define TERM_COLOR_CYAN "\x1b[36m"
@@ -1271,6 +1271,32 @@ static int read_char(void)
     return -1;
 }
 
+static void readline_handle_escape(void)
+{
+    int c = read_char();
+
+    if (c != '[' && c != 'O')
+        return;
+
+    c = read_char();
+    if (c < 0)
+        return;
+
+    if (c >= '0' && c <= '9')
+    {
+        int final = read_char();
+        if (final != '~')
+            return;
+        if (c == '5')
+            sys_scroll_up(5);
+        else if (c == '6')
+            sys_scroll_down(5);
+        return;
+    }
+
+    /* Cursor, Home/End, and function-key sequences have no shell action yet. */
+}
+
 static int readline(char *buf, int max)
 {
     int n = 0;
@@ -1301,6 +1327,11 @@ static int readline(char *buf, int max)
         if (c == KEY_PAGE_DOWN)
         {
             sys_scroll_down(5);
+            continue;
+        }
+        if (c == '\x1b')
+        {
+            readline_handle_escape();
             continue;
         }
         if (c == '\x03')

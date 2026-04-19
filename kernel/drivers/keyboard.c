@@ -67,6 +67,39 @@ static int e0_prefix  = 0;  /* set when 0xE0 extended scancode prefix is seen */
 static int shift_held = 0;  /* non-zero while either shift key is depressed */
 static int ctrl_held  = 0;  /* non-zero while Ctrl is depressed */
 
+typedef struct {
+    uint8_t scancode;
+    const char *sequence;
+} keyboard_sequence_t;
+
+static const keyboard_sequence_t normal_sequences[] = {
+    { 0x3b, "\x1bOP"   }, /* F1 */
+    { 0x3c, "\x1bOQ"   }, /* F2 */
+    { 0x3d, "\x1bOR"   }, /* F3 */
+    { 0x3e, "\x1bOS"   }, /* F4 */
+    { 0x3f, "\x1b[15~" }, /* F5 */
+    { 0x40, "\x1b[17~" }, /* F6 */
+    { 0x41, "\x1b[18~" }, /* F7 */
+    { 0x42, "\x1b[19~" }, /* F8 */
+    { 0x43, "\x1b[20~" }, /* F9 */
+    { 0x44, "\x1b[21~" }, /* F10 */
+    { 0x57, "\x1b[23~" }, /* F11 */
+    { 0x58, "\x1b[24~" }, /* F12 */
+};
+
+static const keyboard_sequence_t extended_sequences[] = {
+    { 0x47, "\x1b[H"  }, /* Home */
+    { 0x48, "\x1b[A"  }, /* Up */
+    { 0x49, "\x1b[5~" }, /* Page Up */
+    { 0x4b, "\x1b[D"  }, /* Left */
+    { 0x4d, "\x1b[C"  }, /* Right */
+    { 0x4f, "\x1b[F"  }, /* End */
+    { 0x50, "\x1b[B"  }, /* Down */
+    { 0x51, "\x1b[6~" }, /* Page Down */
+    { 0x52, "\x1b[2~" }, /* Insert */
+    { 0x53, "\x1b[3~" }, /* Delete */
+};
+
 int keyboard_ascii_for_scancode_for_test(uint8_t scancode, int shift_down,
                                          int ctrl_down, char *out)
 {
@@ -88,12 +121,64 @@ int keyboard_ascii_for_scancode_for_test(uint8_t scancode, int shift_down,
     return 1;
 }
 
+static const char *keyboard_sequence_for_scancode(uint8_t scancode,
+                                                  int extended)
+{
+    const keyboard_sequence_t *sequences;
+    uint32_t count;
+    uint32_t i;
+
+    sequences = extended ? extended_sequences : normal_sequences;
+    count = extended
+        ? (uint32_t)(sizeof(extended_sequences) / sizeof(extended_sequences[0]))
+        : (uint32_t)(sizeof(normal_sequences) / sizeof(normal_sequences[0]));
+
+    for (i = 0; i < count; i++) {
+        if (sequences[i].scancode == scancode)
+            return sequences[i].sequence;
+    }
+    return 0;
+}
+
+int keyboard_sequence_for_scancode_for_test(uint8_t scancode,
+                                            int extended,
+                                            const char **out)
+{
+    const char *sequence;
+
+    if (!out)
+        return 0;
+    sequence = keyboard_sequence_for_scancode(scancode, extended);
+    if (!sequence)
+        return 0;
+    *out = sequence;
+    return 1;
+}
+
 static void keyboard_deliver_char(char c)
 {
     if (desktop_is_active() &&
         desktop_handle_key(desktop_global(), c) == DESKTOP_KEY_CONSUMED)
         return;
     tty_input_char(0, c);
+}
+
+static void keyboard_deliver_sequence(const char *sequence)
+{
+    desktop_state_t *desktop;
+
+    if (!sequence)
+        return;
+
+    desktop = desktop_is_active() ? desktop_global() : 0;
+    if (desktop &&
+        desktop_handle_key_sequence(desktop, sequence) == DESKTOP_KEY_CONSUMED)
+        return;
+
+    while (*sequence) {
+        tty_input_char(0, *sequence);
+        sequence++;
+    }
 }
 
 static void kb_push(char c) {
@@ -131,15 +216,35 @@ void keyboard_handler(void) {
         return;
     }
 
+    if (e0_prefix) {
+        const char *sequence;
+
+        e0_prefix = 0;
+        if (scancode == 0x1D) {
+            ctrl_held = 1;
+            return;
+        }
+
+        sequence = keyboard_sequence_for_scancode(scancode, 1);
+        if (sequence)
+            keyboard_deliver_sequence(sequence);
+        return;
+    }
+
     /* Modifier key press — track state, don't emit a character. */
     if (scancode == 0x2A || scancode == 0x36) { shift_held = 1; return; }
     if (scancode == 0x1D) { ctrl_held = 1; return; }
 
-    if (e0_prefix) {
-        e0_prefix = 0;
-        if (scancode == 0x49) keyboard_deliver_char('\x01');  /* Page Up   → SOH */
-        if (scancode == 0x51) keyboard_deliver_char('\x02');  /* Page Down → STX */
-        if (scancode == 0x53) keyboard_deliver_char(0x7F);    /* Delete    → DEL */
+    {
+        const char *sequence = keyboard_sequence_for_scancode(scancode, 0);
+        if (sequence) {
+            keyboard_deliver_sequence(sequence);
+            return;
+        }
+    }
+
+    if (scancode == 0x45 || scancode == 0x46) {
+        /* Num Lock and Scroll Lock have no terminal byte representation yet. */
         return;
     }
 

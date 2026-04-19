@@ -126,6 +126,8 @@ int desktop_console_mirror_enabled(void);
 void desktop_handle_pointer(desktop_state_t *desktop,
                             const desktop_pointer_event_t *ev);
 desktop_key_result_t desktop_handle_key(desktop_state_t *desktop, char c);
+desktop_key_result_t desktop_handle_key_sequence(desktop_state_t *desktop,
+                                                 const char *seq);
 int desktop_is_active(void);
 desktop_state_t *desktop_global(void);
 

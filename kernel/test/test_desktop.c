@@ -61,10 +61,15 @@ extern void print_bytes(const char *buf, int n);
 extern void set_cursor(int offset);
 extern int get_cursor(void);
 extern int get_offset(int col, int row);
+extern desktop_key_result_t desktop_handle_key_sequence(desktop_state_t *desktop,
+                                                        const char *seq);
 extern int keyboard_ascii_for_scancode_for_test(uint8_t scancode,
                                                 int shift_held,
                                                 int ctrl_held,
                                                 char *out);
+extern int keyboard_sequence_for_scancode_for_test(uint8_t scancode,
+                                                   int extended,
+                                                   const char **out);
 extern void boot_parse_cmdline_for_test(const char *cmdline,
                                         int *nodesktop,
                                         int *vgatext);
@@ -2028,6 +2033,10 @@ static void test_desktop_escape_opens_launcher_and_consumes_input(ktest_case_t *
     KTEST_EXPECT_EQ(tc, desktop_handle_key(&desktop, 27), DESKTOP_KEY_CONSUMED);
     KTEST_EXPECT_TRUE(tc, desktop.launcher_open);
     KTEST_EXPECT_EQ(tc, desktop.focus, DESKTOP_FOCUS_LAUNCHER);
+    KTEST_EXPECT_EQ(tc, desktop_handle_key_sequence(&desktop, "\x1b[B"),
+                    DESKTOP_KEY_CONSUMED);
+    KTEST_EXPECT_TRUE(tc, desktop.launcher_open);
+    KTEST_EXPECT_EQ(tc, desktop.launcher_selection, DESKTOP_APP_FILES);
     desktop_test_destroy(&desktop);
 }
 
@@ -2379,6 +2388,46 @@ static void test_keyboard_enter_and_tty_icrnl_match_linux(ktest_case_t *tc)
     tty_input_char(0, '\r');
     KTEST_EXPECT_EQ(tc, tty->raw_head, 1u);
     KTEST_EXPECT_EQ(tc, tty->raw_buf[0], '\r');
+}
+
+static void test_keyboard_navigation_scancodes_emit_ansi_sequences(
+    ktest_case_t *tc)
+{
+    const char *seq = 0;
+
+    KTEST_EXPECT_EQ(tc,
+                    keyboard_sequence_for_scancode_for_test(0x48, 1, &seq),
+                    1);
+    KTEST_ASSERT_NOT_NULL(tc, seq);
+    KTEST_EXPECT_EQ(tc, k_strcmp(seq, "\x1b[A"), 0);
+
+    seq = 0;
+    KTEST_EXPECT_EQ(tc,
+                    keyboard_sequence_for_scancode_for_test(0x50, 1, &seq),
+                    1);
+    KTEST_ASSERT_NOT_NULL(tc, seq);
+    KTEST_EXPECT_EQ(tc, k_strcmp(seq, "\x1b[B"), 0);
+
+    seq = 0;
+    KTEST_EXPECT_EQ(tc,
+                    keyboard_sequence_for_scancode_for_test(0x4d, 1, &seq),
+                    1);
+    KTEST_ASSERT_NOT_NULL(tc, seq);
+    KTEST_EXPECT_EQ(tc, k_strcmp(seq, "\x1b[C"), 0);
+
+    seq = 0;
+    KTEST_EXPECT_EQ(tc,
+                    keyboard_sequence_for_scancode_for_test(0x4b, 1, &seq),
+                    1);
+    KTEST_ASSERT_NOT_NULL(tc, seq);
+    KTEST_EXPECT_EQ(tc, k_strcmp(seq, "\x1b[D"), 0);
+
+    seq = 0;
+    KTEST_EXPECT_EQ(tc,
+                    keyboard_sequence_for_scancode_for_test(0x3b, 0, &seq),
+                    1);
+    KTEST_ASSERT_NOT_NULL(tc, seq);
+    KTEST_EXPECT_EQ(tc, k_strcmp(seq, "\x1bOP"), 0);
 }
 
 static void test_mouse_packet_decode_preserves_motion_and_buttons(ktest_case_t *tc)
@@ -4582,6 +4631,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_tty_ctrl_c_echo_routes_to_desktop_shell_buffer),
     KTEST_CASE(test_keyboard_ctrl_letter_translation_matches_raw_tty),
     KTEST_CASE(test_keyboard_enter_and_tty_icrnl_match_linux),
+    KTEST_CASE(test_keyboard_navigation_scancodes_emit_ansi_sequences),
     KTEST_CASE(test_mouse_packet_decode_preserves_motion_and_buttons),
     KTEST_CASE(test_mouse_packet_decode_saturates_overflow_motion),
     KTEST_CASE(test_mouse_stream_resyncs_after_noise),

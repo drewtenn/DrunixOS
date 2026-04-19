@@ -2510,6 +2510,70 @@ desktop_key_result_t desktop_handle_key(desktop_state_t *desktop, char c)
         : DESKTOP_KEY_CONSUMED;
 }
 
+static void desktop_launcher_move_selection(desktop_state_t *desktop,
+                                            int delta)
+{
+    int index;
+
+    if (!desktop)
+        return;
+
+    index = (int)desktop->launcher_selection - (int)DESKTOP_APP_SHELL;
+    if (index < 0 || index > 3)
+        index = 0;
+    index = (index + delta + 4) % 4;
+    desktop->launcher_selection = desktop_launcher_app_from_index(index);
+}
+
+static int desktop_focused_shell_window(const desktop_state_t *desktop)
+{
+    int i;
+
+    if (!desktop)
+        return 0;
+
+    for (i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+        const desktop_window_t *window = &desktop->windows[i];
+        if (window->open &&
+            window->id == desktop->focused_window_id &&
+            window->app == DESKTOP_APP_SHELL)
+            return 1;
+    }
+    return 0;
+}
+
+desktop_key_result_t desktop_handle_key_sequence(desktop_state_t *desktop,
+                                                 const char *seq)
+{
+    if (!seq || !seq[0])
+        return DESKTOP_KEY_FORWARD;
+    if (!seq[1])
+        return desktop_handle_key(desktop, seq[0]);
+
+    if (!desktop || !desktop->active)
+        return DESKTOP_KEY_FORWARD;
+
+    if (desktop->launcher_open) {
+        if (k_strcmp(seq, "\x1b[A") == 0 ||
+            k_strcmp(seq, "\x1b[D") == 0) {
+            desktop_launcher_move_selection(desktop, -1);
+            desktop_render(desktop);
+        } else if (k_strcmp(seq, "\x1b[B") == 0 ||
+                   k_strcmp(seq, "\x1b[C") == 0) {
+            desktop_launcher_move_selection(desktop, 1);
+            desktop_render(desktop);
+        }
+        return DESKTOP_KEY_CONSUMED;
+    }
+
+    if (desktop->focus == DESKTOP_FOCUS_SHELL)
+        return DESKTOP_KEY_FORWARD;
+    if (desktop->focus == DESKTOP_FOCUS_WINDOW &&
+        desktop_focused_shell_window(desktop))
+        return DESKTOP_KEY_FORWARD;
+    return DESKTOP_KEY_CONSUMED;
+}
+
 void desktop_open_shell_window(desktop_state_t *desktop)
 {
     if (!desktop)
