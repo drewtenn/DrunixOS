@@ -10,6 +10,8 @@
 #include "pmm.h"
 #include "kheap.h"
 #include "process.h"
+#include "resources.h"
+#include "pipe.h"
 #include "sched.h"
 #include "task_group.h"
 #include "kstring.h"
@@ -981,6 +983,61 @@ static void test_repeated_fork_exec_cleanup_preserves_parent_refs(ktest_case_t *
     destroy_test_proc(&parent);
 }
 
+static void test_process_fork_bumps_pipe_refs_once_with_resource_table(ktest_case_t *tc)
+{
+    static process_t parent;
+    static process_t child;
+    static uint32_t parent_kstack_words[64];
+    int pipe_idx;
+    pipe_buf_t *pb;
+
+    if (init_fork_test_proc(&parent, parent_kstack_words, 64u) != 0) {
+        KTEST_EXPECT_TRUE(tc, 0);
+        return;
+    }
+    if (proc_resource_init_fresh(&parent) != 0) {
+        KTEST_EXPECT_TRUE(tc, 0);
+        destroy_test_proc(&parent);
+        return;
+    }
+
+    pipe_idx = pipe_alloc();
+    if (pipe_idx < 0) {
+        KTEST_EXPECT_TRUE(tc, 0);
+        proc_resource_put_all(&parent);
+        destroy_test_proc(&parent);
+        return;
+    }
+    pb = pipe_get(pipe_idx);
+    KTEST_ASSERT_NOT_NULL(tc, pb);
+
+    parent.open_files[3].type = FD_TYPE_PIPE_READ;
+    parent.open_files[3].u.pipe.pipe_idx = (uint32_t)pipe_idx;
+    parent.open_files[4].type = FD_TYPE_PIPE_WRITE;
+    parent.open_files[4].writable = 1;
+    parent.open_files[4].u.pipe.pipe_idx = (uint32_t)pipe_idx;
+    proc_resource_mirror_from_process(&parent);
+
+    KTEST_EXPECT_EQ(tc, pb->read_open, 1u);
+    KTEST_EXPECT_EQ(tc, pb->write_open, 1u);
+
+    k_memset(&child, 0, sizeof(child));
+    if (process_fork(&child, &parent) != 0) {
+        KTEST_EXPECT_TRUE(tc, 0);
+        proc_resource_put_all(&parent);
+        destroy_test_proc(&parent);
+        return;
+    }
+
+    KTEST_EXPECT_EQ(tc, pb->read_open, 2u);
+    KTEST_EXPECT_EQ(tc, pb->write_open, 2u);
+
+    proc_resource_put_all(&child);
+    destroy_forked_child(&child);
+    proc_resource_put_all(&parent);
+    destroy_test_proc(&parent);
+}
+
 static void test_copy_to_user_handles_three_way_cow_sharing(ktest_case_t *tc)
 {
     static process_t parent;
@@ -1185,6 +1242,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_process_fork_child_gets_fresh_task_group_slot),
     KTEST_CASE(test_process_fork_then_sched_add_child_clears_exec_guard),
     KTEST_CASE(test_repeated_fork_exec_cleanup_preserves_parent_refs),
+    KTEST_CASE(test_process_fork_bumps_pipe_refs_once_with_resource_table),
     KTEST_CASE(test_copy_to_user_handles_three_way_cow_sharing),
     KTEST_CASE(test_process_fork_rolls_back_when_kstack_alloc_fails),
 };

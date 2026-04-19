@@ -470,6 +470,7 @@ void sched_mark_exit(void)
     if (g_current->clear_child_tid != 0)
         (void)uaccess_copy_to_user(g_current, g_current->clear_child_tid,
                                    &zero, sizeof(zero));
+    proc_resource_put_files(g_current);
     task_group_remove_task(group);
     if (group && task_group_live_count(group) == 0) {
         if (!group->group_exit)

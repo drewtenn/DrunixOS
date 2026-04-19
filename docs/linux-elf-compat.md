@@ -12,6 +12,12 @@ The direct ABI test writes `linuxabi.log`; the BusyBox test writes
 `bbcompat.log`.  Both targets also fail if the debug console reports an
 unknown Linux syscall.
 
+The compiler probe, `make test-tcc`, boots `bin/tcccompat` with a static Linux
+i386 TinyCC at `/bin/tcc`.  The probe writes a small no-libc C source file in
+`/tmp`, invokes TinyCC to produce another Linux ELF, runs the generated
+program, and extracts `tcc.log`.  This catches process, pipe, exec, and file-I/O
+semantics that simple syscall probes do not exercise together.
+
 | Area | Linux i386 syscall surface | Direct ABI coverage | Integration coverage | Current notes |
 | --- | --- | --- | --- | --- |
 | ELF startup | `set_thread_area`, `set_tid_address`, `brk`, `mmap`, `mmap2`, `munmap` | TLS setup, tid-address setup, `brk`, old `mmap`, `mmap2`, `mprotect`, `munmap` | static musl programs, BusyBox startup | Static musl startup and explicit ABI probes both cover the TLS/thread-id path. |
@@ -21,6 +27,7 @@ unknown Linux syscall.
 | Directory ops | `mkdir`, `mkdirat`, `rmdir`, `chdir`, `getcwd`, `getdents`, `getdents64`, `rename`, `renameat`, `unlink`, `unlinkat`, `linkat`, `symlinkat` | mkdir/mkdirat/rmdir/chdir/getcwd/getdents/getdents64/rename/renameat/unlink/unlinkat, hardlink lifetime after unlink, relative symlink creation, symlinked-directory traversal, and `linkat(AT_SYMLINK_FOLLOW)` semantics | BusyBox `mkdir`, `rmdir`, `find`, `tree`, `tar` | Directory iteration returns Linux dirent records; `unlinkat(AT_REMOVEDIR)` removes empty directories. |
 | FD control | `pipe`, `dup`, `dup2`, `fcntl64`, `ioctl`, `_newselect`, `poll` | pipe round trip, `dup`, `dup2`, `F_DUPFD`, `F_DUPFD_CLOEXEC`, fd flags, `TIOCGWINSZ`, `FIONREAD`, termios probes, readable/writable `poll`, and readable pipe `select` | BusyBox shells, text filters, terminal probes | `select` supports `nfds <= 32` and immediate readiness over the same fd types as `poll`. |
 | Processes | `fork`, `vfork`, `clone`, `execve`, `waitpid`, `wait4`, `exit`, `exit_group`, `kill` | `fork`, rejected-invalid `clone` flag combinations, `waitpid`, `wait4`, Linux-encoded wait status, and `kill(pid, 0)` probes | BusyBox shell execution and applet subprocesses; `threadtest` covers shared-VM clone threads | `clone` supports the shared-resource threading subset. Futex joins, robust futex lists, namespaces, ptrace, and SMP behavior remain out of scope. |
+| Compiler workflow | `fork`, `execve`, `pipe`, `waitpid`, `open`, `write`, `read`, `close`, `stat64`, `lseek`, `brk`, `mmap2` | `test-tcc` runs TinyCC version, compile, and generated-program execution checks | TinyCC compiling and running a generated Linux ELF | Exiting processes close their file descriptors before parent reap so pipe readers observe EOF like Linux. |
 | Time | `gettimeofday`, `clock_gettime`, `clock_gettime64`, `nanosleep` | realtime, monotonic, time64, timeval, and zero-interval nanosleep probes | BusyBox `date`, `sleep`, `timeout` | The test runner checks direct success semantics, not wall-clock accuracy. |
 | Signals | `sigaction`, `rt_sigaction`, `sigprocmask`, `rt_sigprocmask`, `sigreturn`, `kill` | signal-mask set/query/unblock, `rt_sigprocmask` query, and `rt_sigaction` install/query/restore | BusyBox process-control setup | Handler delivery is still intentionally small; disposition storage now follows the Linux rt_sigaction contract. |
 | Proc/sys info | `uname`, `sysinfo`, `sched_getaffinity`, priorities/session/process-group calls | `uname`, `sysinfo`, CPU affinity, priority, session, and process-group probes | BusyBox `uname`, `ps`, `pstree`, `nproc` | Existing integration coverage exercises these through applets. |

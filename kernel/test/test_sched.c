@@ -6,6 +6,8 @@
 #include "ktest.h"
 #include "sched.h"
 #include "process.h"
+#include "resources.h"
+#include "pipe.h"
 #include "kstring.h"
 
 /*
@@ -334,6 +336,37 @@ static void test_sched_mark_exit_wakes_child_state_waiters(ktest_case_t *tc)
     KTEST_EXPECT_NULL(tc, running->state_waiters.tail);
 }
 
+static void test_sched_mark_exit_closes_pipe_fds_before_reap(ktest_case_t *tc)
+{
+    static process_t child;
+    int pipe_idx;
+    pipe_buf_t *pb;
+
+    sched_init();
+    init_dummy_proc(&child);
+    KTEST_ASSERT_EQ(tc, (uint32_t)proc_resource_init_fresh(&child), 0u);
+
+    pipe_idx = pipe_alloc();
+    KTEST_ASSERT_TRUE(tc, pipe_idx >= 0);
+    pb = pipe_get(pipe_idx);
+    KTEST_ASSERT_NOT_NULL(tc, pb);
+
+    child.files->open_files[3].type = FD_TYPE_PIPE_READ;
+    child.files->open_files[3].u.pipe.pipe_idx = (uint32_t)pipe_idx;
+    child.files->open_files[4].type = FD_TYPE_PIPE_WRITE;
+    child.files->open_files[4].writable = 1;
+    child.files->open_files[4].u.pipe.pipe_idx = (uint32_t)pipe_idx;
+
+    KTEST_EXPECT_EQ(tc, pb->read_open, 1u);
+    KTEST_EXPECT_EQ(tc, pb->write_open, 1u);
+    KTEST_ASSERT_TRUE(tc, sched_add(&child) >= 1);
+    KTEST_ASSERT_NOT_NULL(tc, sched_bootstrap());
+
+    sched_mark_exit();
+
+    KTEST_EXPECT_NULL(tc, pipe_get(pipe_idx));
+}
+
 static void test_thread_exit_keeps_group_alive_until_last_task(ktest_case_t *tc)
 {
     sched_init();
@@ -401,6 +434,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_sched_send_signal_wakes_blocked_process_and_unqueues_it),
     KTEST_CASE(test_sched_tick_wakes_timed_blocked_process),
     KTEST_CASE(test_sched_mark_exit_wakes_child_state_waiters),
+    KTEST_CASE(test_sched_mark_exit_closes_pipe_fds_before_reap),
     KTEST_CASE(test_thread_exit_keeps_group_alive_until_last_task),
     KTEST_CASE(test_exit_group_marks_all_group_tasks),
 };

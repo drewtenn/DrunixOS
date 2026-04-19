@@ -273,6 +273,21 @@ void proc_resource_put_all(process_t *proc)
     }
 }
 
+void proc_resource_put_files(process_t *proc)
+{
+    if (!proc || !proc->files)
+        return;
+
+    proc_fd_table_t *files = proc->files;
+    if (files->refs > 0)
+        files->refs--;
+    if (files->refs == 0) {
+        proc_fd_table_close_all(files);
+        kfree(files);
+    }
+    proc->files = 0;
+}
+
 /*
  * execve resource release helpers.
  *
@@ -341,14 +356,5 @@ void proc_resource_put_exec_owner(process_t *proc)
 
     proc_resource_put_exec_nonfiles(proc);
 
-    if (proc->files) {
-        proc_fd_table_t *files = proc->files;
-        if (files->refs > 0)
-            files->refs--;
-        if (files->refs == 0) {
-            proc_fd_table_close_all(files);
-            kfree(files);
-        }
-        proc->files = 0;
-    }
+    proc_resource_put_files(proc);
 }

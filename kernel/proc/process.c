@@ -746,21 +746,6 @@ int process_fork(process_t *child_out, process_t *parent)
 
     child_out->saved_esp = (uint32_t)ksp;
 
-    /*
-     * The shallow copy above duplicated all fd table entries including any
-     * open pipe ends.  Bump the pipe refcounts so that fd_close_one() in
-     * either the parent or child does not prematurely free a shared buffer.
-     */
-    for (unsigned i = 0; i < MAX_FDS; i++) {
-        if (child_out->open_files[i].type == FD_TYPE_PIPE_READ) {
-            pipe_buf_t *pb = pipe_get((int)child_out->open_files[i].u.pipe.pipe_idx);
-            if (pb) pb->read_open++;
-        } else if (child_out->open_files[i].type == FD_TYPE_PIPE_WRITE) {
-            pipe_buf_t *pb = pipe_get((int)child_out->open_files[i].u.pipe.pipe_idx);
-            if (pb) pb->write_open++;
-        }
-    }
-
     return 0;
 }
 
