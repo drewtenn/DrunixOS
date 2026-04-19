@@ -1197,10 +1197,10 @@ static void test_memory_and_time(void)
     mmap_args[2] = PROT_READ | PROT_WRITE;
     check_eq("clock_gettime realtime succeeds", sc2(SYS_CLOCK_GETTIME, 0, (long)ts), 0);
     check_eq("clock_gettime monotonic succeeds", sc2(SYS_CLOCK_GETTIME, 1, (long)ts), 0);
-    check_eq("clock_gettime rejects invalid clock", sc2(SYS_CLOCK_GETTIME, 99, (long)ts), -1);
+    check_eq("clock_gettime rejects invalid clock with EINVAL", sc2(SYS_CLOCK_GETTIME, 99, (long)ts), -EINVAL);
     check_eq("clock_gettime64 realtime succeeds", sc2(SYS_CLOCK_GETTIME64, 0, (long)ts64), 0);
     check_eq("clock_gettime64 high seconds zero", ts64[1], 0);
-    check_eq("clock_gettime64 rejects invalid clock", sc2(SYS_CLOCK_GETTIME64, 99, (long)ts64), -1);
+    check_eq("clock_gettime64 rejects invalid clock with EINVAL", sc2(SYS_CLOCK_GETTIME64, 99, (long)ts64), -EINVAL);
     check_eq("gettimeofday succeeds", sc2(SYS_GETTIMEOFDAY, (long)tv, 0), 0);
     tz[0] = 1;
     tz[1] = 1;

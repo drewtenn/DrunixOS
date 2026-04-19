@@ -4677,7 +4677,8 @@ static uint32_t SYSCALL_NOINLINE syscall_case_clock_gettime(uint32_t eax, uint32
          * ecx = pointer to struct timespec in user space:
          *       long tv_sec; long tv_nsec;
          *
-         * Returns 0 on success or -1 for an unsupported clock / bad pointer.
+         * Returns 0 on success, -EINVAL for an unsupported clock, or -1 for a
+         * bad pointer.
          */
         process_t *cur = sched_current();
         uint32_t ts[2];
@@ -4693,7 +4694,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_clock_gettime(uint32_t eax, uint32
             ts[0] = ticks / SCHED_HZ;
             ts[1] = (ticks % SCHED_HZ) * (1000000000u / SCHED_HZ);
         } else {
-            return (uint32_t)-1;
+            return (uint32_t)-LINUX_EINVAL;
         }
         if (uaccess_copy_to_user(cur, ecx, ts, sizeof(ts)) != 0)
             return (uint32_t)-1;
@@ -4729,7 +4730,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_clock_gettime64(uint32_t eax, uint
             ts64[2] = (ticks % SCHED_HZ) * (1000000000u / SCHED_HZ);
             ts64[3] = 0;
         } else {
-            return (uint32_t)-1;
+            return (uint32_t)-LINUX_EINVAL;
         }
         if (uaccess_copy_to_user(cur, ecx, ts64, sizeof(ts64)) != 0)
             return (uint32_t)-1;
