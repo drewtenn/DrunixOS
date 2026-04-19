@@ -2,6 +2,13 @@
 
 When planning a design or debugging a problem, check how Linux solves the same problem. Linux has already faced the same low-level OS concerns this project will encounter, including memory layout, driver initialization order, struct alignment with hardware specs, and race conditions.
 
+When fixing a bug in Linux-facing behavior, move toward the Linux model rather
+than choosing the smallest local workaround. Preserve Linux syscall contracts,
+errno values, flag semantics, data structure layouts, and observable edge cases
+unless a documented Drunix-specific interface is intentionally separate from
+the Linux ABI. Compatibility fixes should address the missing model or shared
+abstraction that caused the bug, not just the one program that exposed it.
+
 Useful references:
 
 - Memory layout / PMM: `mm/page_alloc.c`, `mm/memblock.c`
