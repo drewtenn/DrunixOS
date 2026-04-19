@@ -110,6 +110,7 @@
 
 #define O_WRONLY 01
 #define O_RDWR   02
+#define O_ACCMODE 03
 #define O_CREAT  0100
 #define O_EXCL   0200
 #define O_TRUNC  01000
@@ -632,6 +633,8 @@ static void test_filesystem(void)
     check_ok("open creates writable file", fd);
     if (fd >= 0) {
         check_eq("write returns byte count", sc3(SYS_WRITE, fd, (long)"abcdef", 6), 6);
+        n = sc3(SYS_FCNTL64, fd, F_GETFL, 0);
+        check_eq("F_GETFL preserves O_RDWR access mode", n & O_ACCMODE, O_RDWR);
         check_eq("zero-length write skips null buffer", sc3(SYS_WRITE, fd, 0, 0), 0);
         check_eq("lseek rewinds file", sc3(SYS_LSEEK, fd, 0, SEEK_SET), 0);
         check_eq("zero-length read skips null buffer", sc3(SYS_READ, fd, 0, 0), 0);
@@ -760,6 +763,8 @@ static void test_file_variants(void)
     fd = (int)sc2(SYS_CREAT, (long)"/linuxabi.vec", 0644);
     check_ok("creat creates vector file", fd);
     if (fd >= 0) {
+        n = sc3(SYS_FCNTL64, fd, F_GETFL, 0);
+        check_eq("creat fd reports O_WRONLY access mode", n & O_ACCMODE, O_WRONLY);
         iov[0] = (uint32_t)"ab";
         iov[1] = 2;
         iov[2] = (uint32_t)"cd";
@@ -992,6 +997,10 @@ static void test_fds_and_pipes(void)
     check_eq("pipe creates read and write fds", sc1(SYS_PIPE, (long)fds), 0);
     if (fds[0] >= 0 && fds[1] >= 0) {
         check_eq("pipe write returns byte count", sc3(SYS_WRITE, fds[1], (long)"z", 1), 1);
+        n = sc3(SYS_FCNTL64, fds[0], F_GETFL, 0);
+        check_eq("pipe read fd reports O_RDONLY access mode", n & O_ACCMODE, 0);
+        n = sc3(SYS_FCNTL64, fds[1], F_GETFL, 0);
+        check_eq("pipe write fd reports O_WRONLY access mode", n & O_ACCMODE, O_WRONLY);
         check_eq("ioctl FIONREAD succeeds", sc3(SYS_IOCTL, fds[0], FIONREAD, (long)&available), 0);
         check_eq("ioctl FIONREAD reports byte count", available, 1);
         n = 1u << (unsigned)fds[0];

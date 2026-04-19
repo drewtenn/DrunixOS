@@ -199,12 +199,15 @@ static process_t *start_syscall_test_process(process_t *proc)
     proc->tty_id = 0;
     proc->open_files[0].type = FD_TYPE_TTY;
     proc->open_files[0].writable = 1;
+    proc->open_files[0].access_mode = TEST_LINUX_O_RDWR;
     proc->open_files[0].u.tty.tty_idx = 0;
     proc->open_files[1].type = FD_TYPE_TTY;
     proc->open_files[1].writable = 1;
+    proc->open_files[1].access_mode = TEST_LINUX_O_RDWR;
     proc->open_files[1].u.tty.tty_idx = 0;
     proc->open_files[2].type = FD_TYPE_TTY;
     proc->open_files[2].writable = 1;
+    proc->open_files[2].access_mode = TEST_LINUX_O_RDWR;
     proc->open_files[2].u.tty.tty_idx = 0;
     if (proc_resource_init_fresh(proc) != 0) {
         process_release_user_space(proc);

@@ -405,6 +405,7 @@ typedef struct {
 #define LINUX_RLIMIT_STACK 3u
 #define LINUX_O_WRONLY 01u
 #define LINUX_O_RDWR 02u
+#define LINUX_O_ACCMODE 03u
 #define LINUX_O_CREAT 0100u
 #define LINUX_O_EXCL 0200u
 #define LINUX_O_TRUNC 01000u
@@ -1970,10 +1971,7 @@ static uint32_t linux_fd_status_flags(const file_handle_t *fh)
 
     if (!fh)
         return 0;
-    if (fh->type == FD_TYPE_TTY)
-        flags = LINUX_O_RDWR;
-    else
-        flags = fh->writable ? LINUX_O_WRONLY : 0u;
+    flags = fh->access_mode & LINUX_O_ACCMODE;
     if (fh->type == FD_TYPE_FILE && fh->append)
         flags |= LINUX_O_APPEND;
     if (fh->nonblock)
@@ -2251,7 +2249,8 @@ static int snapshot_user_string_vector(process_t *proc,
 }
 
 static int fd_install_vfs_node(process_t *proc, const vfs_node_t *node,
-                               uint32_t writable, uint32_t append,
+                               uint32_t access_mode, uint32_t writable,
+                               uint32_t append,
                                uint32_t cloexec, uint32_t nonblock)
 {
     int fd;
@@ -2264,6 +2263,7 @@ static int fd_install_vfs_node(process_t *proc, const vfs_node_t *node,
         return -1;
 
     proc_fd_entries(proc)[fd].writable = writable;
+    proc_fd_entries(proc)[fd].access_mode = access_mode & LINUX_O_ACCMODE;
     proc_fd_entries(proc)[fd].append = 0;
     proc_fd_entries(proc)[fd].cloexec = cloexec ? 1u : 0u;
     proc_fd_entries(proc)[fd].nonblock = nonblock ? 1u : 0u;
@@ -2283,6 +2283,7 @@ static int fd_install_vfs_node(process_t *proc, const vfs_node_t *node,
         if (writable) {
             proc_fd_entries(proc)[fd].type = FD_TYPE_NONE;
             proc_fd_entries(proc)[fd].writable = 0;
+            proc_fd_entries(proc)[fd].access_mode = 0;
             proc_fd_entries(proc)[fd].cloexec = 0;
             proc_fd_entries(proc)[fd].nonblock = 0;
             return -1;
@@ -2306,6 +2307,7 @@ static int fd_install_vfs_node(process_t *proc, const vfs_node_t *node,
         if (writable) {
             proc_fd_entries(proc)[fd].type = FD_TYPE_NONE;
             proc_fd_entries(proc)[fd].writable = 0;
+            proc_fd_entries(proc)[fd].access_mode = 0;
             proc_fd_entries(proc)[fd].cloexec = 0;
             proc_fd_entries(proc)[fd].nonblock = 0;
             return -1;
@@ -2346,6 +2348,7 @@ static int fd_install_vfs_node(process_t *proc, const vfs_node_t *node,
     default:
         proc_fd_entries(proc)[fd].type = FD_TYPE_NONE;
         proc_fd_entries(proc)[fd].writable = 0;
+        proc_fd_entries(proc)[fd].access_mode = 0;
         proc_fd_entries(proc)[fd].append = 0;
         proc_fd_entries(proc)[fd].cloexec = 0;
         proc_fd_entries(proc)[fd].nonblock = 0;
@@ -2368,7 +2371,7 @@ static int syscall_open_resolved_path(process_t *cur, const char *rpath,
     if (!cur || !rpath)
         return -1;
 
-    accmode = flags & (LINUX_O_WRONLY | LINUX_O_RDWR);
+    accmode = flags & LINUX_O_ACCMODE;
     if (accmode == (LINUX_O_WRONLY | LINUX_O_RDWR))
         return -1;
     writable = accmode != 0;
@@ -2421,7 +2424,8 @@ static int syscall_open_resolved_path(process_t *cur, const char *rpath,
     if (writable && node.type == VFS_NODE_DIR)
         return -LINUX_EISDIR;
 
-    fd = fd_install_vfs_node(cur, &node, writable, append, cloexec, nonblock);
+    fd = fd_install_vfs_node(cur, &node, accmode, writable, append, cloexec,
+                             nonblock);
     if (fd < 0)
         return -1;
     if (node.type == VFS_NODE_DIR) {
@@ -2870,6 +2874,7 @@ static void fd_close_one(process_t *proc, unsigned fd)
 
     fh->type     = FD_TYPE_NONE;
     fh->writable = 0;
+    fh->access_mode = 0;
     fh->append   = 0;
     fh->cloexec  = 0;
     fh->nonblock = 0;
@@ -3682,6 +3687,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_creat(uint32_t eax, uint32_t ebx,
         }
         proc_fd_entries(cur)[fd].type             = FD_TYPE_FILE;
         proc_fd_entries(cur)[fd].writable         = 1;
+        proc_fd_entries(cur)[fd].access_mode      = LINUX_O_WRONLY;
         proc_fd_entries(cur)[fd].append           = 0;
         proc_fd_entries(cur)[fd].cloexec          = 0;
         proc_fd_entries(cur)[fd].nonblock         = 0;
@@ -4968,6 +4974,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_pipe(uint32_t eax, uint32_t ebx,
         }
         proc_fd_entries(cur)[rfd].type           = FD_TYPE_PIPE_READ;
         proc_fd_entries(cur)[rfd].writable       = 0;
+        proc_fd_entries(cur)[rfd].access_mode    = 0;
         proc_fd_entries(cur)[rfd].append         = 0;
         proc_fd_entries(cur)[rfd].cloexec        = 0;
         proc_fd_entries(cur)[rfd].nonblock       = 0;
@@ -4981,6 +4988,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_pipe(uint32_t eax, uint32_t ebx,
         }
         proc_fd_entries(cur)[wfd].type           = FD_TYPE_PIPE_WRITE;
         proc_fd_entries(cur)[wfd].writable       = 1;
+        proc_fd_entries(cur)[wfd].access_mode    = LINUX_O_WRONLY;
         proc_fd_entries(cur)[wfd].append         = 0;
         proc_fd_entries(cur)[wfd].cloexec        = 0;
         proc_fd_entries(cur)[wfd].nonblock       = 0;

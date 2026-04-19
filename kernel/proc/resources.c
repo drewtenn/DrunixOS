@@ -220,6 +220,7 @@ void proc_fd_table_close_all(proc_fd_table_t *files)
 
         fh->type = FD_TYPE_NONE;
         fh->writable = 0;
+        fh->access_mode = 0;
         fh->append = 0;
     }
 }

@@ -600,22 +600,26 @@ int process_create_file(process_t *proc, vfs_file_ref_t file_ref,
         for (unsigned i = 0; i < MAX_FDS; i++) {
             proc->open_files[i].type     = FD_TYPE_NONE;
             proc->open_files[i].writable = 0;
+            proc->open_files[i].access_mode = 0;
             proc->open_files[i].append   = 0;
         }
 
         /* fd 0 — stdin: TTY line discipline on the inherited controlling TTY. */
         proc->open_files[0].type          = FD_TYPE_TTY;
         proc->open_files[0].writable      = 1;
+        proc->open_files[0].access_mode   = 2;
         proc->open_files[0].u.tty.tty_idx = proc->tty_id;
 
         /* fd 1 — stdout: writable controlling TTY. */
         proc->open_files[1].type          = FD_TYPE_TTY;
         proc->open_files[1].writable      = 1;
+        proc->open_files[1].access_mode   = 2;
         proc->open_files[1].u.tty.tty_idx = proc->tty_id;
 
         /* fd 2 — stderr: writable controlling TTY. */
         proc->open_files[2].type          = FD_TYPE_TTY;
         proc->open_files[2].writable      = 1;
+        proc->open_files[2].access_mode   = 2;
         proc->open_files[2].u.tty.tty_idx = proc->tty_id;
     }
 
