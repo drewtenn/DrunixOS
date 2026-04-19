@@ -632,7 +632,9 @@ static void test_filesystem(void)
     check_ok("open creates writable file", fd);
     if (fd >= 0) {
         check_eq("write returns byte count", sc3(SYS_WRITE, fd, (long)"abcdef", 6), 6);
+        check_eq("zero-length write skips null buffer", sc3(SYS_WRITE, fd, 0, 0), 0);
         check_eq("lseek rewinds file", sc3(SYS_LSEEK, fd, 0, SEEK_SET), 0);
+        check_eq("zero-length read skips null buffer", sc3(SYS_READ, fd, 0, 0), 0);
         n = sc3(SYS_READ, fd, (long)buf, 6);
         if (n == 6 && memeq(buf, "abcdef", 6))
             pass("read returns written bytes");
@@ -986,6 +988,7 @@ static void test_fds_and_pipes(void)
     check_eq("ioctl TIOCGWINSZ succeeds", sc3(SYS_IOCTL, 1, TIOCGWINSZ, (long)winsz), 0);
     check_eq("ioctl TCGETS succeeds", sc3(SYS_IOCTL, 0, TCGETS, (long)termios), 0);
     check_eq("ioctl TCSETS succeeds", sc3(SYS_IOCTL, 0, TCSETS, (long)termios), 0);
+    check_eq("zero-length tty read returns immediately", sc3(SYS_READ, 0, 0, 0), 0);
     check_eq("pipe creates read and write fds", sc1(SYS_PIPE, (long)fds), 0);
     if (fds[0] >= 0 && fds[1] >= 0) {
         check_eq("pipe write returns byte count", sc3(SYS_WRITE, fds[1], (long)"z", 1), 1);
@@ -1010,6 +1013,8 @@ static void test_fds_and_pipes(void)
         available = 0xFFFFFFFFu;
         check_eq("ioctl FIONREAD after read succeeds", sc3(SYS_IOCTL, fds[0], FIONREAD, (long)&available), 0);
         check_eq("ioctl FIONREAD after read reports empty", available, 0);
+        check_eq("zero-length pipe read returns immediately", sc3(SYS_READ, fds[0], 0, 0), 0);
+        check_eq("zero-length pipe write returns immediately", sc3(SYS_WRITE, fds[1], 0, 0), 0);
         dupfd = (int)sc1(SYS_DUP, fds[1]);
         check_ok("dup duplicates fd", dupfd);
         if (dupfd >= 0) {

@@ -1350,16 +1350,29 @@ static uint32_t syscall_read_fd(uint32_t fd, uint32_t user_buf,
 
     fh = &proc_fd_entries(cur)[fd];
 
+    if (count == 0) {
+        switch (fh->type) {
+        case FD_TYPE_BLOCKDEV:
+        case FD_TYPE_TTY:
+        case FD_TYPE_CHARDEV:
+        case FD_TYPE_PIPE_READ:
+        case FD_TYPE_FILE:
+        case FD_TYPE_SYSFILE:
+            return 0;
+        default:
+            return (uint32_t)-1;
+        }
+    }
+
     if (fh->type == FD_TYPE_BLOCKDEV)
         return syscall_read_blockdev(cur, fh, user_buf, count);
 
     if (fh->type == FD_TYPE_TTY) {
         char kbuf[TTY_IO_CHUNK];
-        uint32_t read_count = count ? count : 1;
-        uint32_t chunk = read_count > TTY_IO_CHUNK ? TTY_IO_CHUNK : read_count;
+        uint32_t chunk = count > TTY_IO_CHUNK ? TTY_IO_CHUNK : count;
         int n;
 
-        if (uaccess_prepare(cur, user_buf, read_count, 1) != 0)
+        if (uaccess_prepare(cur, user_buf, chunk, 1) != 0)
             return (uint32_t)-1;
         n = tty_read((int)fh->u.tty.tty_idx, kbuf, chunk);
         if (n > 0 &&
