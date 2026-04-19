@@ -245,6 +245,13 @@ in included fragments so the root file stays small:
 - `docs/build.mk` contains the EPUB, PDF, and diagram build rules
 - `test/targets.mk` contains the headless and integration test targets
 
+Contributor policy lives under `docs/contributing/`. Use
+`docs/contributing/c-style.md` for C formatting and cleanup rules,
+`docs/style.md` plus `docs/contributing/docs.md` for book prose and chapter
+workflow, and the other files in `docs/contributing/` for focused project
+rules such as syscall-table maintenance, commit messages, Linux references, and
+README updates.
+
 When adding a user program to the disk image, update `user/programs.mk` and add
 the build rule or source file in `user/Makefile` as needed. Native Drunix C
 programs go in `C_PROGS`, native Drunix C++ programs go in `CXX_PROGS`, and
