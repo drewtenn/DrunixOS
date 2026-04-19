@@ -48,6 +48,8 @@ user/linuxprobe
 user/linuxabi
 user/busybox
 user/tcc
+user/readelf
+user/objdump
 user/tcccompat
 user/dufstest
 user/redirtest

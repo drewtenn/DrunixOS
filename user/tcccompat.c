@@ -225,6 +225,8 @@ int main(void)
                                      "/usr/lib/drunix/crt0.o", "/tmp/tccrt.c",
                                      "/usr/lib/drunix/libc.a", 0 };
     char *runtime_run_argv[] = { "/tmp/tccrt", 0 };
+    char *readelf_argv[] = { "readelf", "-h", "/tmp/tccrt", 0 };
+    char *objdump_argv[] = { "objdump", "-f", "/tmp/tccrt", 0 };
 
     log_fd = sys_create("/dufs/tcc.log");
 
@@ -277,6 +279,12 @@ int main(void)
         goto fail;
     if (stage_ok("TCCCOMPAT: runtime run", "/tmp/tccrt", runtime_run_argv, envp,
                  "TCCRT OK\n", out, sizeof(out)) != 0)
+        goto fail;
+    if (stage_ok("TCCCOMPAT: readelf", "/bin/readelf", readelf_argv, envp,
+                 "ELF Header", out, sizeof(out)) != 0)
+        goto fail;
+    if (stage_ok("TCCCOMPAT: objdump", "/bin/objdump", objdump_argv, envp,
+                 "file format", out, sizeof(out)) != 0)
         goto fail;
 
     emit("TCCCOMPAT PASS\n");

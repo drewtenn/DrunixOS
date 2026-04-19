@@ -109,11 +109,11 @@ archive-linking, and C preprocessor cases.
 After TinyCC can compile and run a simple program inside Drunix, the next
 compiler milestones are:
 
-1. Compile a multi-file C program.
-2. Compile against the Drunix user runtime packaged as a real sysroot.
-3. Run GNU binutils tools as static Linux i386 programs.
-4. Run the GCC C driver far enough to compile a small C file.
-5. Add G++ only after the C compiler path and Linux process/filesystem
+1. [x] Compile a multi-file C program.
+2. [x] Compile against the Drunix user runtime packaged as a real sysroot.
+3. [x] Run GNU binutils tools as static Linux i386 programs.
+4. [ ] Run the GCC C driver far enough to compile a small C file.
+5. [ ] Add G++ only after the C compiler path and Linux process/filesystem
    compatibility are stable.
 
 Each step should keep the same principle: use compiler workloads to close Linux

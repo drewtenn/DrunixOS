@@ -102,6 +102,7 @@
 #define SYS_FCHMODAT    306
 #define SYS_FACCESSAT   307
 #define SYS_UTIMENSAT   320
+#define SYS_PRLIMIT64   340
 #define SYS_STATX       383
 #define SYS_CLOCK_GETTIME64 403
 
@@ -175,6 +176,8 @@
 #define SIG_SETMASK 2
 
 #define WNOHANG 1
+
+#define RLIMIT_STACK 3
 
 static int log_fd = -1;
 static int passed = 0;
@@ -1032,6 +1035,7 @@ static void test_memory_and_time(void)
     uint32_t ts64[4];
     uint32_t tv[2];
     uint32_t tz[2];
+    uint32_t rlim[4];
     long addr;
     long brk0;
     long n;
@@ -1081,6 +1085,14 @@ static void test_memory_and_time(void)
         pass("gettimeofday zeroes timezone");
     else
         fail("gettimeofday zeroes timezone", n, 0);
+    for (unsigned i = 0; i < 4; i++)
+        rlim[i] = 0xA5A5A5A5u;
+    n = sc4(SYS_PRLIMIT64, 0, RLIMIT_STACK, 0, (long)rlim);
+    if (n == 0 && (rlim[0] != 0xA5A5A5A5u || rlim[1] != 0xA5A5A5A5u) &&
+        (rlim[2] != 0xA5A5A5A5u || rlim[3] != 0xA5A5A5A5u))
+        pass("prlimit64 reads stack limit");
+    else
+        fail("prlimit64 reads stack limit", n, 0);
     check_eq("mmap2 rejects zero length", sc6(SYS_MMAP2, 0, 0, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0), -1);
     check_eq("mmap2 rejects file descriptor", sc6(SYS_MMAP2, 0, 4096, PROT_READ, MAP_PRIVATE, 0, 0), -1);
     addr = sc6(SYS_MMAP2, 0, 4096, PROT_READ | PROT_WRITE,

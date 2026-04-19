@@ -90,6 +90,7 @@ The complete syscall table:
 | 162| `SYS_NANOSLEEP`     | Suspend the process for a timespec duration |
 | 183| `SYS_GETCWD`        | Copy the process cwd into a user buffer |
 | 265| `SYS_CLOCK_GETTIME` | Read a kernel clock into a `timespec` |
+| 340| `SYS_PRLIMIT64`     | Read stable Linux process resource limits |
 | 4000| `SYS_DRUNIX_CLEAR`       | Clear the active console or desktop shell |
 | 4001| `SYS_DRUNIX_SCROLL_UP`   | Page backward through terminal history |
 | 4002| `SYS_DRUNIX_SCROLL_DOWN` | Page forward toward the live console |

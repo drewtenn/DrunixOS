@@ -1,5 +1,5 @@
 include programs.mk
-CLEAN_PROGS = $(filter-out $(LINUX_BUSYBOX_PROGS) $(LINUX_TCC_PROGS),$(PROGS))
+CLEAN_PROGS = $(filter-out $(LINUX_BUSYBOX_PROGS) $(LINUX_TCC_PROGS) $(LINUX_BINUTILS_PROGS),$(PROGS))
 
 all: $(PROGS)
 
@@ -16,6 +16,8 @@ BUSYBOX_VERSION ?= 1.36.1
 BUSYBOX_BUILD_DIR ?= ../build/busybox
 TCC_VERSION ?= 0.9.27
 TCC_BUILD_DIR ?= ../build/tcc
+BINUTILS_VERSION ?= 2.42
+BINUTILS_BUILD_DIR ?= ../build/binutils
 CFLAGS = -m32 -ffreestanding -nostdlib -fno-pie -no-pie \
          -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall \
          -fdebug-prefix-map=$(abspath ..)=.
@@ -100,6 +102,9 @@ $(LINUX_BUSYBOX_PROGS):
 
 $(LINUX_TCC_PROGS):
 	../tools/build_linux_tcc.sh $@ $(TCC_VERSION) $(TCC_BUILD_DIR)
+
+$(LINUX_BINUTILS_PROGS):
+	../tools/build_linux_binutils.sh $@ $(BINUTILS_VERSION) $(BINUTILS_BUILD_DIR)
 
 clean:
 	find . -name '*.o' -delete

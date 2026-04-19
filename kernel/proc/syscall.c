@@ -375,6 +375,8 @@ typedef struct {
 #define LINUX_F_GETFL 3u
 #define LINUX_F_SETFL 4u
 #define LINUX_F_DUPFD_CLOEXEC 1030u
+#define LINUX_RLIMIT_NLIMITS 16u
+#define LINUX_RLIMIT_STACK 3u
 #define LINUX_O_WRONLY 01u
 #define LINUX_O_RDWR 02u
 #define LINUX_O_CREAT 0100u
@@ -3165,6 +3167,41 @@ static uint32_t SYSCALL_NOINLINE syscall_case_sysinfo(uint32_t eax, uint32_t ebx
     }
 }
 
+static uint32_t SYSCALL_NOINLINE syscall_case_prlimit64(uint32_t eax, uint32_t ebx,
+                              uint32_t ecx,
+                              uint32_t edx, uint32_t esi,
+                              uint32_t edi, uint32_t ebp)
+{
+    {
+        /*
+         * Linux i386 prlimit64(pid, resource, new_limit, old_limit).  Static
+         * musl probes process limits; Drunix reports stable limits and rejects
+         * attempts to change them for now.
+         */
+        process_t *cur = sched_current();
+        uint8_t rlim[16];
+        uint64_t value = ~(uint64_t)0;
+
+        if (!cur || ecx >= LINUX_RLIMIT_NLIMITS)
+            return (uint32_t)-1;
+        if (ebx != 0 && ebx != sched_current_tgid() &&
+            ebx != sched_current_tid())
+            return (uint32_t)-1;
+        if (edx != 0)
+            return (uint32_t)-1;
+        if (esi == 0)
+            return 0;
+
+        if (ecx == LINUX_RLIMIT_STACK)
+            value = (uint64_t)USER_STACK_MAX_PAGES * PAGE_SIZE;
+        linux_put_u64(rlim, 0u, value);
+        linux_put_u64(rlim, 8u, value);
+        return uaccess_copy_to_user(cur, esi, rlim, sizeof(rlim)) == 0
+            ? 0
+            : (uint32_t)-1;
+    }
+}
+
 static uint32_t SYSCALL_NOINLINE syscall_case_truncate64(uint32_t eax, uint32_t ebx,
                               uint32_t ecx,
                               uint32_t edx, uint32_t esi,
@@ -5385,6 +5422,9 @@ uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx,
 
     case SYS_SYSINFO:
         return syscall_case_sysinfo(eax, ebx, ecx, edx, esi, edi, ebp);
+
+    case SYS_PRLIMIT64:
+        return syscall_case_prlimit64(eax, ebx, ecx, edx, esi, edi, ebp);
 
     case SYS_TRUNCATE64:
         return syscall_case_truncate64(eax, ebx, ecx, edx, esi, edi, ebp);
