@@ -1154,6 +1154,36 @@ static void test_memory_and_time(void)
         check_eq("mprotect anonymous page succeeds", sc3(SYS_MPROTECT, addr, 4096, PROT_READ | PROT_WRITE), 0);
         check_eq("munmap anonymous page succeeds", sc2(SYS_MUNMAP, addr, 4096), 0);
     }
+    n = sc3(SYS_OPEN, (long)"/hello.txt", 0, 0);
+    check_ok("open hello for mmap succeeds", n);
+    if (n >= 0) {
+        mmap_args[0] = 0;
+        mmap_args[1] = 4096;
+        mmap_args[2] = PROT_READ;
+        mmap_args[3] = MAP_PRIVATE;
+        mmap_args[4] = (uint32_t)n;
+        mmap_args[5] = 0;
+        addr = sc1(SYS_MMAP, (long)mmap_args);
+        if (!is_linux_error(addr))
+            pass("mmap private file page succeeds");
+        else
+            fail("mmap private file page succeeds", addr, 0);
+        if (!is_linux_error(addr)) {
+            char *p = (char *)(uintptr_t)(uint32_t)addr;
+            if (memeq(p, "Hello", 5))
+                pass("mmap private file contents");
+            else
+                fail("mmap private file contents", p[0], 'H');
+            check_eq("munmap file page succeeds", sc2(SYS_MUNMAP, addr, 4096), 0);
+        }
+        check_eq("close mmap input succeeds", sc1(SYS_CLOSE, n), 0);
+    }
+    mmap_args[0] = 0;
+    mmap_args[1] = 4096;
+    mmap_args[2] = PROT_READ | PROT_WRITE;
+    mmap_args[3] = MAP_PRIVATE | MAP_ANONYMOUS;
+    mmap_args[4] = 0xFFFFFFFFu;
+    mmap_args[5] = 0;
     mmap_args[1] = 0;
     check_eq("mmap rejects zero length", sc1(SYS_MMAP, (long)mmap_args), -1);
     mmap_args[1] = 4096;
@@ -1183,7 +1213,24 @@ static void test_memory_and_time(void)
     else
         fail("prlimit64 reads stack limit", n, 0);
     check_eq("mmap2 rejects zero length", sc6(SYS_MMAP2, 0, 0, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0), -1);
-    check_eq("mmap2 rejects file descriptor", sc6(SYS_MMAP2, 0, 4096, PROT_READ, MAP_PRIVATE, 0, 0), -1);
+    n = sc3(SYS_OPEN, (long)"/hello.txt", 0, 0);
+    check_ok("open hello for mmap2 succeeds", n);
+    if (n >= 0) {
+        addr = sc6(SYS_MMAP2, 0, 4096, PROT_READ, MAP_PRIVATE, n, 0);
+        if (!is_linux_error(addr))
+            pass("mmap2 private file page succeeds");
+        else
+            fail("mmap2 private file page succeeds", addr, 0);
+        if (!is_linux_error(addr)) {
+            char *p = (char *)(uintptr_t)(uint32_t)addr;
+            if (memeq(p, "Hello", 5))
+                pass("mmap2 private file contents");
+            else
+                fail("mmap2 private file contents", p[0], 'H');
+            check_eq("munmap mmap2 file page succeeds", sc2(SYS_MUNMAP, addr, 4096), 0);
+        }
+        check_eq("close mmap2 input succeeds", sc1(SYS_CLOSE, n), 0);
+    }
     addr = sc6(SYS_MMAP2, 0, 4096, PROT_READ | PROT_WRITE,
                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (!is_linux_error(addr))

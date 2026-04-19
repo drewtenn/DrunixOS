@@ -2242,6 +2242,75 @@ static void syscall_apply_mprotect(process_t *proc,
     }
 }
 
+static int syscall_mmap_private_file(process_t *cur, uint32_t hint,
+                                     uint32_t length, uint32_t prot,
+                                     uint32_t fd, uint32_t file_offset,
+                                     uint32_t *addr_out)
+{
+    file_handle_t *fh;
+    uint32_t map_len;
+    uint32_t map_addr = 0;
+    uint32_t vma_flags;
+    uint32_t pte_flags;
+
+    if (!cur || !addr_out || fd >= MAX_FDS || length == 0)
+        return -1;
+    if (file_offset & (PAGE_SIZE - 1u))
+        return -1;
+
+    fh = &proc_fd_entries(cur)[fd];
+    if ((fh->type != FD_TYPE_FILE && fh->type != FD_TYPE_SYSFILE) ||
+        fh->access_mode == LINUX_O_WRONLY)
+        return -1;
+
+    map_len = (length + PAGE_SIZE - 1u) & ~(PAGE_SIZE - 1u);
+    if (map_len == 0)
+        return -1;
+
+    vma_flags = prot_to_vma_flags(prot) & ~(uint32_t)VMA_FLAG_ANON;
+    if (vma_map_anonymous(cur, hint, map_len, vma_flags, &map_addr) != 0)
+        return -1;
+
+    pte_flags = PG_PRESENT;
+    if (prot_has_user_access(prot))
+        pte_flags |= PG_USER;
+    if (prot & PROT_WRITE)
+        pte_flags |= PG_WRITABLE;
+
+    for (uint32_t off = 0; off < map_len; off += PAGE_SIZE) {
+        uint32_t phys = pmm_alloc_page();
+        int n;
+
+        if (!phys)
+            goto fail;
+        if (file_offset > UINT32_MAX - off) {
+            pmm_free_page(phys);
+            goto fail;
+        }
+
+        k_memset((void *)phys, 0, PAGE_SIZE);
+        n = vfs_read(fh->u.file.ref, file_offset + off,
+                     (uint8_t *)phys, PAGE_SIZE);
+        if (n < 0) {
+            pmm_free_page(phys);
+            goto fail;
+        }
+        if (paging_map_page(cur->pd_phys, map_addr + off, phys,
+                            pte_flags) != 0) {
+            pmm_free_page(phys);
+            goto fail;
+        }
+    }
+
+    *addr_out = map_addr;
+    return 0;
+
+fail:
+    syscall_unmap_user_range(cur, map_addr, map_addr + map_len);
+    (void)vma_unmap_range(cur, map_addr, map_addr + map_len);
+    return -1;
+}
+
 static int snapshot_user_string_vector(process_t *proc,
                                        uint32_t uvec,
                                        uint32_t max_count,
@@ -4873,7 +4942,6 @@ static uint32_t SYSCALL_NOINLINE syscall_case_mmap(uint32_t eax, uint32_t ebx,
         old_mmap_args_t args;
         process_t *cur = sched_current();
         uint32_t map_addr = 0;
-        uint32_t required = MAP_PRIVATE | MAP_ANONYMOUS;
 
         if (!cur || ebx == 0)
             return (uint32_t)-1;
@@ -4881,15 +4949,27 @@ static uint32_t SYSCALL_NOINLINE syscall_case_mmap(uint32_t eax, uint32_t ebx,
             return (uint32_t)-1;
         if (args.length == 0 || !prot_is_valid(args.prot))
             return (uint32_t)-1;
-        if ((args.flags & required) != required ||
-            (args.flags & ~required) != 0)
-            return (uint32_t)-1;
-        if (args.fd != (uint32_t)-1 || args.offset != 0)
-            return (uint32_t)-1;
-        if (vma_map_anonymous(cur, args.addr, args.length,
-                              prot_to_vma_flags(args.prot),
-                              &map_addr) != 0)
-            return (uint32_t)-1;
+        if ((args.flags & MAP_ANONYMOUS) != 0) {
+            uint32_t required = MAP_PRIVATE | MAP_ANONYMOUS;
+
+            if ((args.flags & required) != required ||
+                (args.flags & ~required) != 0)
+                return (uint32_t)-1;
+            if (args.offset != 0)
+                return (uint32_t)-1;
+            if (vma_map_anonymous(cur, args.addr, args.length,
+                                  prot_to_vma_flags(args.prot),
+                                  &map_addr) != 0)
+                return (uint32_t)-1;
+        } else {
+            if ((args.flags & ~MAP_PRIVATE) != 0 ||
+                (args.flags & MAP_PRIVATE) == 0)
+                return (uint32_t)-1;
+            if (syscall_mmap_private_file(cur, args.addr, args.length,
+                                          args.prot, args.fd, args.offset,
+                                          &map_addr) != 0)
+                return (uint32_t)-1;
+        }
         return map_addr;
     }
 }
@@ -4904,23 +4984,34 @@ static uint32_t SYSCALL_NOINLINE syscall_case_mmap2(uint32_t eax, uint32_t ebx,
          * Linux i386 mmap2:
          *   ebx=addr, ecx=len, edx=prot, esi=flags, edi=fd, ebp=pgoffset.
          *
-         * For now Drunix supports the static-runtime case: private anonymous
-         * mappings without MAP_FIXED.
+         * Drunix supports private anonymous mappings and eager MAP_PRIVATE
+         * file mappings without MAP_FIXED.
          */
         process_t *cur = sched_current();
         uint32_t map_addr = 0;
-        uint32_t required = MAP_PRIVATE | MAP_ANONYMOUS;
 
         if (!cur || ecx == 0 || !prot_is_valid(edx))
             return (uint32_t)-1;
-        if ((esi & required) != required ||
-            (esi & ~(MAP_PRIVATE | MAP_ANONYMOUS)) != 0)
-            return (uint32_t)-1;
-        if (edi != (uint32_t)-1 || ebp != 0)
-            return (uint32_t)-1;
-        if (vma_map_anonymous(cur, ebx, ecx, prot_to_vma_flags(edx),
-                              &map_addr) != 0)
-            return (uint32_t)-1;
+        if (esi & MAP_ANONYMOUS) {
+            uint32_t required = MAP_PRIVATE | MAP_ANONYMOUS;
+
+            if ((esi & required) != required ||
+                (esi & ~(MAP_PRIVATE | MAP_ANONYMOUS)) != 0)
+                return (uint32_t)-1;
+            if (ebp != 0)
+                return (uint32_t)-1;
+            if (vma_map_anonymous(cur, ebx, ecx, prot_to_vma_flags(edx),
+                                  &map_addr) != 0)
+                return (uint32_t)-1;
+        } else {
+            if ((esi & ~MAP_PRIVATE) != 0 || (esi & MAP_PRIVATE) == 0)
+                return (uint32_t)-1;
+            if (ebp > UINT32_MAX / PAGE_SIZE)
+                return (uint32_t)-1;
+            if (syscall_mmap_private_file(cur, ebx, ecx, edx, edi,
+                                          ebp * PAGE_SIZE, &map_addr) != 0)
+                return (uint32_t)-1;
+        }
         return map_addr;
     }
 }
