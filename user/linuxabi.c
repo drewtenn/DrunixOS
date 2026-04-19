@@ -166,9 +166,12 @@
 #define TIOCGWINSZ 0x5413
 #define FIONREAD 0x541B
 
+#define EPERM 1
 #define ENOENT 2
 #define ESRCH 3
+#define EBADF 9
 #define EAGAIN 11
+#define EFAULT 14
 #define EEXIST 17
 #define ENOTDIR 20
 #define EISDIR 21
@@ -438,15 +441,15 @@ static void test_identity(void)
     check_eq("getegid32 reports root", sc0(SYS_GETEGID32), 0);
     check_eq("setuid32 accepts root", sc1(SYS_SETUID32, 0), 0);
     check_eq("setgid32 accepts root", sc1(SYS_SETGID32, 0), 0);
-    check_eq("setuid32 rejects nonroot", sc1(SYS_SETUID32, 1), -1);
-    check_eq("setgid32 rejects nonroot", sc1(SYS_SETGID32, 1), -1);
+    check_eq("setuid32 rejects nonroot with EPERM", sc1(SYS_SETUID32, 1), -EPERM);
+    check_eq("setgid32 rejects nonroot with EPERM", sc1(SYS_SETGID32, 1), -EPERM);
     check_eq("getuid32 remains root after rejected setuid", sc0(SYS_GETUID32), 0);
     check_eq("set_tid_address returns current tid", sc1(SYS_SET_TID_ADDRESS, (long)&tid_slot), pid);
     check_eq("set_tid_address accepts null pointer", sc1(SYS_SET_TID_ADDRESS, 0), pid);
     check_eq("clone rejects CLONE_SIGHAND without CLONE_VM",
-             sc5(SYS_CLONE, CLONE_SIGHAND | SIGCHLD, 0, 0, 0, 0), -1);
+             sc5(SYS_CLONE, CLONE_SIGHAND | SIGCHLD, 0, 0, 0, 0), -EINVAL);
     check_eq("clone rejects CLONE_THREAD without CLONE_SIGHAND",
-             sc5(SYS_CLONE, CLONE_THREAD | CLONE_VM | SIGCHLD, 0, 0, 0, 0), -1);
+             sc5(SYS_CLONE, CLONE_THREAD | CLONE_VM | SIGCHLD, 0, 0, 0, 0), -EINVAL);
 
     user_desc[0] = 0xFFFFFFFFu;
     user_desc[1] = (uint32_t)&tid_slot;
@@ -458,10 +461,10 @@ static void test_identity(void)
     user_desc[1] = (uint32_t)&tid_slot;
     user_desc[2] = 0xFFFFFu;
     user_desc[3] = 0x51u;
-    check_eq("set_thread_area rejects invalid entry", sc1(SYS_SET_THREAD_AREA, (long)user_desc), -1);
+    check_eq("set_thread_area rejects invalid entry with EINVAL", sc1(SYS_SET_THREAD_AREA, (long)user_desc), -EINVAL);
     user_desc[0] = 0xFFFFFFFFu;
     user_desc[3] = 0x59u;
-    check_eq("set_thread_area rejects expand-down segment", sc1(SYS_SET_THREAD_AREA, (long)user_desc), -1);
+    check_eq("set_thread_area rejects expand-down segment with EINVAL", sc1(SYS_SET_THREAD_AREA, (long)user_desc), -EINVAL);
     user_desc[0] = 7;
     user_desc[3] = 0x20u;
     check_eq("set_thread_area disables TLS descriptor", sc1(SYS_SET_THREAD_AREA, (long)user_desc), 0);
@@ -539,20 +542,20 @@ static void test_process_controls(void)
     check_eq("setsid returns current pid", sc0(SYS_SETSID), pid);
     check_eq("getpgid after setsid returns current pid", sc1(SYS_GETPGID, 0), pid);
     check_eq("getsid after setsid returns current pid", sc1(SYS_GETSID, 0), pid);
-    check_eq("getpgid missing pid fails", sc1(SYS_GETPGID, 99999), -1);
+    check_eq("getpgid missing pid returns ESRCH", sc1(SYS_GETPGID, 99999), -ESRCH);
     check_eq("getsid missing pid returns ESRCH", sc1(SYS_GETSID, 99999), -ESRCH);
     check_eq("setpgid self no-op succeeds", sc2(SYS_SETPGID, 0, 0), 0);
-    check_eq("setpgid session leader other pgid fails", sc2(SYS_SETPGID, 0, pid + 1), -1);
+    check_eq("setpgid session leader other pgid returns EPERM", sc2(SYS_SETPGID, 0, pid + 1), -EPERM);
     check_eq("kill self signal zero succeeds", sc2(SYS_KILL, pid, 0), 0);
     check_eq("kill missing pid signal zero returns ESRCH", sc2(SYS_KILL, 99999, 0), -ESRCH);
-    check_eq("kill rejects negative signal", sc2(SYS_KILL, pid, -1), -1);
-    check_eq("kill rejects signal above NSIG", sc2(SYS_KILL, pid, 32), -1);
+    check_eq("kill rejects negative signal with EINVAL", sc2(SYS_KILL, pid, -1), -EINVAL);
+    check_eq("kill rejects signal above NSIG with EINVAL", sc2(SYS_KILL, pid, 32), -EINVAL);
     check_eq("kill process group signal zero succeeds", sc2(SYS_KILL, -pid, 0), 0);
     check_eq("sched_yield succeeds", sc0(SYS_YIELD), 0);
     req[0] = 0;
     req[1] = 0;
     check_eq("nanosleep zero interval succeeds", sc2(SYS_NANOSLEEP, (long)req, 0), 0);
-    check_eq("nanosleep rejects null request", sc2(SYS_NANOSLEEP, 0, 0), -1);
+    check_eq("nanosleep rejects null request with EFAULT", sc2(SYS_NANOSLEEP, 0, 0), -EFAULT);
 }
 
 static void test_signal_masks(void)
@@ -593,8 +596,8 @@ static void test_signal_masks(void)
     check_eq("sigaction reports old default handler", oldact[0], SIG_DFL);
     check_eq("sigaction restores default handler", sc3(SYS_SIGACTION, SIGTERM, SIG_DFL, (long)&oldact[0]), 0);
     check_eq("sigaction reports old ignore handler", oldact[0], SIG_IGN);
-    check_eq("sigaction rejects SIGKILL", sc3(SYS_SIGACTION, SIGKILL, SIG_IGN, 0), -1);
-    check_eq("sigaction rejects signal zero", sc3(SYS_SIGACTION, 0, SIG_IGN, 0), -1);
+    check_eq("sigaction rejects SIGKILL with EINVAL", sc3(SYS_SIGACTION, SIGKILL, SIG_IGN, 0), -EINVAL);
+    check_eq("sigaction rejects signal zero with EINVAL", sc3(SYS_SIGACTION, 0, SIG_IGN, 0), -EINVAL);
 
     mask2 = 1u << 12;
     check_eq("sigprocmask blocks additional signal", sc3(SYS_SIGPROCMASK, SIG_BLOCK, (long)&mask2, 0), 0);
@@ -612,7 +615,7 @@ static void test_signal_masks(void)
     rt_oldmask[1] = 0xFFFFFFFFu;
     check_eq("rt_sigprocmask setmask succeeds", sc4(SYS_RT_SIGPROCMASK, SIG_SETMASK, (long)rt_new, (long)rt_oldmask, sizeof(rt_new)), 0);
     check_eq("rt_sigprocmask old high word is zero", rt_oldmask[1], 0);
-    check_eq("rt_sigaction rejects small sigset", sc4(SYS_RT_SIGACTION, SIGTERM, 0, 0, 2), -1);
+    check_eq("rt_sigaction rejects small sigset with EINVAL", sc4(SYS_RT_SIGACTION, SIGTERM, 0, 0, 2), -EINVAL);
     oldmask = 0;
     sc3(SYS_SIGPROCMASK, SIG_SETMASK, (long)&oldmask, 0);
 }
@@ -645,7 +648,7 @@ static void test_filesystem(void)
         else
             fail("read returns written bytes", n, 6);
         check_eq("lseek end reports file size", sc3(SYS_LSEEK, fd, 0, SEEK_END), 6);
-        check_eq("lseek rejects invalid whence", sc3(SYS_LSEEK, fd, 0, 99), -1);
+        check_eq("lseek rejects invalid whence with EINVAL", sc3(SYS_LSEEK, fd, 0, 99), -EINVAL);
         check_eq("fstat64 succeeds", sc2(SYS_FSTAT64, fd, (long)st), 0);
         check_eq("fstat64 reports file size", (long)get_u64(st, 44), 6);
         check_eq("fstatfs64 succeeds", sc3(SYS_FSTATFS64, fd, sizeof(sfs), (long)sfs), 0);
@@ -666,7 +669,7 @@ static void test_filesystem(void)
             pass("read hello prefix contents");
         else
             fail("read hello prefix contents", n, 5);
-        check_eq("write read-only file fails", sc3(SYS_WRITE, fd, (long)"x", 1), -1);
+        check_eq("write read-only file returns EBADF", sc3(SYS_WRITE, fd, (long)"x", 1), -EBADF);
         check_eq("close hello read-only succeeds", sc1(SYS_CLOSE, fd), 0);
     }
 
@@ -691,11 +694,11 @@ static void test_filesystem(void)
     check_eq("lchown missing path returns ENOENT", sc3(SYS_LCHOWN, (long)"/missing-linuxabi", 0, 0), -ENOENT);
     check_eq("readlink missing path returns ENOENT", sc3(SYS_READLINK, (long)"/missing-linuxabi", (long)buf, sizeof(buf)), -ENOENT);
     check_eq("statfs64 missing path returns ENOENT", sc3(SYS_STATFS64, (long)"/missing-linuxabi", sizeof(sfs), (long)sfs), -ENOENT);
-    check_eq("fstatfs64 invalid fd fails", sc3(SYS_FSTATFS64, 99, sizeof(sfs), (long)sfs), -1);
+    check_eq("fstatfs64 invalid fd returns EBADF", sc3(SYS_FSTATFS64, 99, sizeof(sfs), (long)sfs), -EBADF);
     check_eq("utimensat missing path returns ENOENT", sc4(SYS_UTIMENSAT, AT_FDCWD, (long)"/missing-linuxabi", 0, 0), -ENOENT);
     check_eq("rename succeeds", sc2(SYS_RENAME, (long)"/linuxabi.tmp", (long)"/linuxabi.renamed"), 0);
     check_eq("unlink renamed file succeeds", sc1(SYS_UNLINK, (long)"/linuxabi.renamed"), 0);
-    check_eq("unlink missing file fails", sc1(SYS_UNLINK, (long)"/linuxabi.renamed"), -1);
+    check_eq("unlink missing file returns ENOENT", sc1(SYS_UNLINK, (long)"/linuxabi.renamed"), -ENOENT);
 }
 
 static void test_directories(void)
@@ -727,7 +730,7 @@ static void test_directories(void)
     else
         fail("getcwd reports root", n, 2);
     check_eq("getcwd tiny buffer returns ERANGE", sc2(SYS_GETCWD, (long)cwd, 1), -ERANGE);
-    check_eq("chdir missing path fails", sc1(SYS_CHDIR, (long)"/missing-dir"), -1);
+    check_eq("chdir missing path returns ENOENT", sc1(SYS_CHDIR, (long)"/missing-dir"), -ENOENT);
 
     fd = (int)sc3(SYS_OPEN, (long)"/", O_DIRECTORY, 0);
     check_ok("open root directory succeeds", fd);
@@ -751,8 +754,8 @@ static void test_directories(void)
         check_eq("getdents lists dotdot", n > 0 && dirents_contains(dents, n, ".."), 1);
         check_eq("close old getdents directory succeeds", sc1(SYS_CLOSE, fd), 0);
     }
-    check_eq("getdents invalid fd fails", sc3(SYS_GETDENTS, 99, (long)dents, sizeof(dents)), -1);
-    check_eq("getdents64 invalid fd fails", sc3(SYS_GETDENTS64, 99, (long)dents, sizeof(dents)), -1);
+    check_eq("getdents invalid fd returns EBADF", sc3(SYS_GETDENTS, 99, (long)dents, sizeof(dents)), -EBADF);
+    check_eq("getdents64 invalid fd returns EBADF", sc3(SYS_GETDENTS64, 99, (long)dents, sizeof(dents)), -EBADF);
     check_eq("rmdir removes empty directory", sc1(SYS_RMDIR, (long)"/linuxabi.dir"), 0);
 }
 
@@ -804,7 +807,7 @@ static void test_file_variants(void)
 
     check_eq("truncate64 missing path returns ENOENT", sc3(SYS_TRUNCATE64, (long)"/missing-linuxabi", 1, 0), -ENOENT);
     check_eq("truncate64 rejects oversize length", sc3(SYS_TRUNCATE64, (long)"/linuxabi.vec", 0, 1), -EINVAL);
-    check_eq("ftruncate64 invalid fd fails", sc3(SYS_FTRUNCATE64, 99, 1, 0), -1);
+    check_eq("ftruncate64 invalid fd returns EBADF", sc3(SYS_FTRUNCATE64, 99, 1, 0), -EBADF);
     check_eq("truncate64 grows vector path", sc3(SYS_TRUNCATE64, (long)"/linuxabi.vec", 5, 0), 0);
     check_eq("stat64 sees truncate size", sc2(SYS_STAT64, (long)"/linuxabi.vec", (long)st), 0);
     check_eq("stat64 reports truncate size", (long)get_u64(st, 44), 5);
@@ -820,7 +823,7 @@ static void test_file_variants(void)
         check_eq("sendfile64 zero count returns zero", sc4(SYS_SENDFILE64, 1, fd, (long)pos, 0), 0);
         check_eq("sendfile64 copies requested bytes", sc4(SYS_SENDFILE64, 1, fd, (long)pos, 5), 5);
         check_eq("sendfile64 advances offset pointer", pos[0], 5);
-        check_eq("sendfile64 bad out fd fails", sc4(SYS_SENDFILE64, 99, fd, (long)pos, 1), -1);
+        check_eq("sendfile64 bad out fd returns EBADF", sc4(SYS_SENDFILE64, 99, fd, (long)pos, 1), -EBADF);
         out = (int)sc3(SYS_OPEN, (long)"/linuxabi.sendfile", O_CREAT | O_RDWR | O_TRUNC, 0644);
         check_ok("open sendfile64 regular output succeeds", out);
         if (out >= 0) {
@@ -893,8 +896,8 @@ static void test_at_syscalls(void)
 
     check_eq("unlinkat AT_FDCWD removes directory", sc3(SYS_UNLINKAT, AT_FDCWD, (long)"/linuxabi.at", AT_REMOVEDIR), 0);
     check_eq("openat missing path returns ENOENT", sc4(SYS_OPENAT, AT_FDCWD, (long)"/missing-at", 0, 0), -ENOENT);
-    check_eq("openat invalid dirfd fails", sc4(SYS_OPENAT, 99, (long)"missing", 0, 0), -1);
-    check_eq("mkdirat invalid dirfd fails", sc3(SYS_MKDIRAT, 99, (long)"missing", 0755), -1);
+    check_eq("openat invalid dirfd returns EBADF", sc4(SYS_OPENAT, 99, (long)"missing", 0, 0), -EBADF);
+    check_eq("mkdirat invalid dirfd returns EBADF", sc3(SYS_MKDIRAT, 99, (long)"missing", 0755), -EBADF);
     check_eq("fstatat64 rejects invalid flags with EINVAL", sc4(SYS_FSTATAT64, AT_FDCWD, (long)"/hello.txt", (long)st, 0x80000000u), -EINVAL);
     check_eq("faccessat rejects invalid mode", sc3(SYS_FACCESSAT, AT_FDCWD, (long)"/hello.txt", 8), -EINVAL);
     check_eq("unlinkat rejects invalid flags", sc3(SYS_UNLINKAT, AT_FDCWD, (long)"/hello.txt", 0x80000000u), -EINVAL);
@@ -1002,7 +1005,7 @@ static void test_at_syscalls(void)
     }
     check_eq("unlinkat removes rename source directory", sc3(SYS_UNLINKAT, AT_FDCWD, (long)"/linuxabi.at-src", AT_REMOVEDIR), 0);
     check_eq("unlinkat removes rename dest directory", sc3(SYS_UNLINKAT, AT_FDCWD, (long)"/linuxabi.at-dst", AT_REMOVEDIR), 0);
-    check_eq("renameat invalid old dirfd fails", sc4(SYS_RENAMEAT, 99, (long)"old", AT_FDCWD, (long)"/missing-at"), -1);
+    check_eq("renameat invalid old dirfd returns EBADF", sc4(SYS_RENAMEAT, 99, (long)"old", AT_FDCWD, (long)"/missing-at"), -EBADF);
     check_eq("fchmodat missing returns ENOENT", sc3(SYS_FCHMODAT, AT_FDCWD, (long)"/missing-at", 0600), -ENOENT);
     check_eq("fchownat missing returns ENOENT", sc5(SYS_FCHOWNAT, AT_FDCWD, (long)"/missing-at", 0, 0, 0), -ENOENT);
     check_eq("futimesat missing returns ENOENT", sc3(SYS_FUTIMESAT, AT_FDCWD, (long)"/missing-at", 0), -ENOENT);
@@ -1088,10 +1091,10 @@ static void test_fds_and_pipes(void)
         check_eq("poll invalid fd reports ready", sc3(SYS_POLL, (long)pfd, 1, 0), 1);
         check_eq("poll invalid fd sets POLLNVAL", get_u32(pfd, 4) >> 16, POLLNVAL);
         check_eq("poll zero nfds returns zero", sc3(SYS_POLL, (long)pfd, 0, 0), 0);
-        check_eq("poll null fds fails", sc3(SYS_POLL, 0, 1, 0), -1);
-        check_eq("pipe null pointer fails", sc1(SYS_PIPE, 0), -1);
-        check_eq("dup invalid fd fails", sc1(SYS_DUP, 99), -1);
-        check_eq("dup2 invalid old fd fails", sc2(SYS_DUP2, 99, 8), -1);
+        check_eq("poll null fds returns EFAULT", sc3(SYS_POLL, 0, 1, 0), -EFAULT);
+        check_eq("pipe null pointer returns EFAULT", sc1(SYS_PIPE, 0), -EFAULT);
+        check_eq("dup invalid fd returns EBADF", sc1(SYS_DUP, 99), -EBADF);
+        check_eq("dup2 invalid old fd returns EBADF", sc2(SYS_DUP2, 99, 8), -EBADF);
         check_eq("close pipe read fd succeeds", sc1(SYS_CLOSE, fds[0]), 0);
         check_eq("close pipe write fd succeeds", sc1(SYS_CLOSE, fds[1]), 0);
     }
@@ -1190,10 +1193,10 @@ static void test_memory_and_time(void)
     mmap_args[4] = 0xFFFFFFFFu;
     mmap_args[5] = 0;
     mmap_args[1] = 0;
-    check_eq("mmap rejects zero length", sc1(SYS_MMAP, (long)mmap_args), -1);
+    check_eq("mmap rejects zero length with EINVAL", sc1(SYS_MMAP, (long)mmap_args), -EINVAL);
     mmap_args[1] = 4096;
     mmap_args[2] = 8;
-    check_eq("mmap rejects invalid protection", sc1(SYS_MMAP, (long)mmap_args), -1);
+    check_eq("mmap rejects invalid protection with EINVAL", sc1(SYS_MMAP, (long)mmap_args), -EINVAL);
     mmap_args[2] = PROT_READ | PROT_WRITE;
     check_eq("clock_gettime realtime succeeds", sc2(SYS_CLOCK_GETTIME, 0, (long)ts), 0);
     check_eq("clock_gettime monotonic succeeds", sc2(SYS_CLOCK_GETTIME, 1, (long)ts), 0);
@@ -1217,7 +1220,7 @@ static void test_memory_and_time(void)
         pass("prlimit64 reads stack limit");
     else
         fail("prlimit64 reads stack limit", n, 0);
-    check_eq("mmap2 rejects zero length", sc6(SYS_MMAP2, 0, 0, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0), -1);
+    check_eq("mmap2 rejects zero length with EINVAL", sc6(SYS_MMAP2, 0, 0, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0), -EINVAL);
     n = sc3(SYS_OPEN, (long)"/hello.txt", 0, 0);
     check_ok("open hello for mmap2 succeeds", n);
     if (n >= 0) {

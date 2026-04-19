@@ -49,6 +49,8 @@ extern void process_exec_launch(void);
 #define TEST_LINUX_O_CREAT    0100u
 #define TEST_LINUX_O_APPEND   02000u
 #define TEST_LINUX_POLLIN     0x0001u
+#define TEST_LINUX_EBADF      9u
+#define TEST_LINUX_EINVAL     22u
 #define TEST_CLONE_VM             0x00000100u
 #define TEST_CLONE_FS             0x00000200u
 #define TEST_CLONE_FILES          0x00000400u
@@ -1097,7 +1099,7 @@ static void test_clone_rejects_sighand_without_vm(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc,
         syscall_handler(SYS_CLONE, TEST_CLONE_SIGHAND | SIGCHLD,
                         USER_STACK_TOP - 0x1000u, 0, 0, 0, 0),
-        (uint32_t)-1);
+        (uint32_t)-TEST_LINUX_EINVAL);
 
     stop_syscall_test_process(cur);
 }
@@ -1111,7 +1113,7 @@ static void test_clone_rejects_thread_without_sighand(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc,
         syscall_handler(SYS_CLONE, TEST_CLONE_THREAD | TEST_CLONE_VM | SIGCHLD,
                         USER_STACK_TOP - 0x1000u, 0, 0, 0, 0),
-        (uint32_t)-1);
+        (uint32_t)-TEST_LINUX_EINVAL);
 
     stop_syscall_test_process(cur);
 }
@@ -1415,7 +1417,7 @@ static void test_linux_syscalls_cover_blockdev_fd_path(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc,
                     syscall_handler(SYS_WRITE, (uint32_t)sys_fd,
                                     0x00800100u, 1u, 0, 0, 0),
-                    (uint32_t)-1);
+                    (uint32_t)-TEST_LINUX_EBADF);
     KTEST_EXPECT_EQ(tc,
                     syscall_handler(SYS_FSTAT64, (uint32_t)sys_fd,
                                     0x00800180u, 0, 0, 0, 0),
@@ -1723,7 +1725,7 @@ static void test_linux_open_create_append_preserves_flags_and_data(ktest_case_t 
     KTEST_EXPECT_EQ(tc,
                     syscall_handler(SYS_WRITE, fd, 0x00800100u, 1u,
                                     0, 0, 0),
-                    (uint32_t)-1);
+                    (uint32_t)-TEST_LINUX_EBADF);
     KTEST_EXPECT_EQ(tc, syscall_handler(SYS_CLOSE, fd, 0, 0, 0, 0, 0), 0u);
 
     KTEST_ASSERT_EQ(tc, (uint32_t)vfs_open_file("_ktopen_", &ref, &size), 0u);

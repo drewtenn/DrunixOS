@@ -415,8 +415,12 @@ typedef struct {
 #define LINUX_O_DIRECTORY 0200000u
 #define LINUX_POLLIN 0x0001u
 #define LINUX_POLLOUT 0x0004u
+#define LINUX_EPERM 1
 #define LINUX_ENOENT 2
+#define LINUX_ESRCH 3
+#define LINUX_EBADF 9
 #define LINUX_EAGAIN 11
+#define LINUX_EFAULT 14
 #define LINUX_EEXIST 17
 #define LINUX_ENOTDIR 20
 #define LINUX_EISDIR 21
@@ -1107,13 +1111,13 @@ static int linux_truncate_fd(process_t *cur, uint32_t fd, uint64_t length)
     file_handle_t *fh;
 
     if (!cur || fd >= MAX_FDS)
-        return -1;
+        return -LINUX_EBADF;
     if (length > 0xFFFFFFFFull)
         return -22;
 
     fh = &proc_fd_entries(cur)[fd];
     if (fh->type != FD_TYPE_FILE || !fh->writable)
-        return -1;
+        return -LINUX_EBADF;
     if (vfs_truncate(fh->u.file.ref, (uint32_t)length) != 0)
         return -1;
 
@@ -1261,7 +1265,7 @@ static uint32_t syscall_write_fd(uint32_t fd, uint32_t user_buf,
     file_handle_t *fh;
 
     if (fd >= MAX_FDS)
-        return (uint32_t)-1;
+        return (uint32_t)-LINUX_EBADF;
 
     cur = sched_current();
     if (!cur)
@@ -1356,7 +1360,7 @@ static uint32_t syscall_write_fd(uint32_t fd, uint32_t user_buf,
         uint32_t written = 0;
 
         if (!fh->writable)
-            return (uint32_t)-1;
+            return (uint32_t)-LINUX_EBADF;
         if (count == 0)
             return 0;
 
@@ -1737,12 +1741,14 @@ static uint32_t syscall_nanosleep(uint32_t user_req, uint32_t user_rem)
     uint32_t deadline;
     uint32_t now;
 
-    if (!cur || user_req == 0)
+    if (!cur)
         return (uint32_t)-1;
+    if (user_req == 0)
+        return (uint32_t)-LINUX_EFAULT;
     if (uaccess_copy_from_user(cur, req, user_req, sizeof(req)) != 0)
-        return (uint32_t)-1;
+        return (uint32_t)-LINUX_EFAULT;
     if (req[1] >= 1000000000u)
-        return (uint32_t)-1;
+        return (uint32_t)-LINUX_EINVAL;
     if (req[0] == 0 && req[1] == 0)
         return 0;
 
@@ -2064,11 +2070,11 @@ static int syscall_seek_handle(process_t *cur, uint32_t fd, int64_t offset,
     int64_t new_off;
 
     if (!cur || fd >= MAX_FDS)
-        return -1;
+        return -LINUX_EBADF;
     fh = &proc_fd_entries(cur)[fd];
     if (fh->type != FD_TYPE_FILE && fh->type != FD_TYPE_SYSFILE &&
         fh->type != FD_TYPE_PROCFILE)
-        return -1;
+        return -LINUX_EBADF;
 
     if (fh->type == FD_TYPE_FILE || fh->type == FD_TYPE_SYSFILE) {
         size = fh->u.file.size;
@@ -2086,7 +2092,7 @@ static int syscall_seek_handle(process_t *cur, uint32_t fd, int64_t offset,
     case 1: base = (int64_t)current; break;   /* SEEK_CUR */
     case 2: base = (int64_t)size; break;      /* SEEK_END */
     default:
-        return -1;
+        return -LINUX_EINVAL;
     }
 
     new_off = base + offset;
@@ -2115,15 +2121,15 @@ static uint32_t syscall_sendfile64(process_t *cur, uint32_t out_fd,
     uint8_t kbuf[USER_IO_CHUNK];
 
     if (!cur || out_fd >= MAX_FDS || in_fd >= MAX_FDS)
-        return (uint32_t)-1;
+        return (uint32_t)-LINUX_EBADF;
     out = &proc_fd_entries(cur)[out_fd];
     in = &proc_fd_entries(cur)[in_fd];
     if (!syscall_fd_is_console_output(out) &&
         (out->type != FD_TYPE_FILE || !out->writable))
-        return (uint32_t)-1;
+        return (uint32_t)-LINUX_EBADF;
     if (in->type != FD_TYPE_FILE && in->type != FD_TYPE_SYSFILE &&
         in->type != FD_TYPE_PROCFILE)
-        return (uint32_t)-1;
+        return (uint32_t)-LINUX_EBADF;
 
     if (offset_ptr) {
         if (uaccess_copy_from_user(cur, off_words, offset_ptr,
@@ -2663,12 +2669,12 @@ static int resolve_user_path_at(process_t *proc, uint32_t dirfd,
 
         if (dirfd >= MAX_FDS) {
             kfree(raw);
-            return -1;
+            return -LINUX_EBADF;
         }
         fh = &proc_fd_entries(proc)[dirfd];
         if (fh->type != FD_TYPE_DIR) {
             kfree(raw);
-            return -1;
+            return -LINUX_EBADF;
         }
         kcwd_resolve(fh->u.dir.path, raw, resolved, (int)resolved_sz);
     }
@@ -2728,9 +2734,11 @@ static uint32_t syscall_with_resolved_path_at(process_t *cur,
     if (!rpath)
         return (uint32_t)-1;
 
-    if (resolve_user_path_at(cur, dirfd, user_path, rpath, 4096) != 0) {
+    ret = (uint32_t)resolve_user_path_at(cur, dirfd, user_path, rpath,
+                                         4096);
+    if ((int32_t)ret != 0) {
         kfree(rpath);
-        return (uint32_t)-1;
+        return ret;
     }
 
     ret = op(rpath);
@@ -2780,13 +2788,15 @@ static uint32_t syscall_with_two_resolved_paths_common(
         return (uint32_t)-1;
     }
 
-    if (old_spec->resolve(cur, old_spec->resolver_arg, old_user_path,
-                          oldpath, 4096) != 0 ||
-        new_spec->resolve(cur, new_spec->resolver_arg, new_user_path,
-                          newpath, 4096) != 0) {
+    ret = (uint32_t)old_spec->resolve(cur, old_spec->resolver_arg,
+                                      old_user_path, oldpath, 4096);
+    if ((int32_t)ret == 0)
+        ret = (uint32_t)new_spec->resolve(cur, new_spec->resolver_arg,
+                                          new_user_path, newpath, 4096);
+    if ((int32_t)ret != 0) {
         kfree(oldpath);
         kfree(newpath);
-        return (uint32_t)-1;
+        return ret;
     }
 
     ret = op(oldpath, newpath);
@@ -2847,7 +2857,7 @@ static uint32_t syscall_vfs_rmdir_op(const char *path)
 
 static uint32_t syscall_vfs_unlink_op(const char *path)
 {
-    return (uint32_t)vfs_unlink(path);
+    return vfs_unlink(path) == 0 ? 0 : (uint32_t)-LINUX_ENOENT;
 }
 
 static uint32_t syscall_vfs_rename_op(const char *oldpath,
@@ -3217,6 +3227,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_openat(uint32_t eax, uint32_t ebx,
         uint32_t flags = edx;
         char *rpath;
         int fd;
+        int rc;
 
         (void)eax;
         (void)esi;
@@ -3228,9 +3239,10 @@ static uint32_t SYSCALL_NOINLINE syscall_case_openat(uint32_t eax, uint32_t ebx,
         rpath = (char *)kmalloc(4096);
         if (!rpath)
             return (uint32_t)-1;
-        if (resolve_user_path_at(cur, ebx, ecx, rpath, 4096) != 0) {
+        rc = resolve_user_path_at(cur, ebx, ecx, rpath, 4096);
+        if (rc != 0) {
             kfree(rpath);
-            return (uint32_t)-1;
+            return (uint32_t)rc;
         }
 
         fd = syscall_open_resolved_path(cur, rpath, flags);
@@ -3693,8 +3705,10 @@ static uint32_t SYSCALL_NOINLINE syscall_case_poll(uint32_t eax, uint32_t ebx,
         process_t *cur = sched_current();
         uint32_t ready = 0;
 
-        if (!cur || ebx == 0 || ecx > 1024u)
+        if (!cur || ecx > 1024u)
             return (uint32_t)-1;
+        if (ecx != 0 && ebx == 0)
+            return (uint32_t)-LINUX_EFAULT;
 
         for (uint32_t i = 0; i < ecx; i++) {
             uint8_t pfd[8];
@@ -3917,9 +3931,9 @@ static int syscall_clone_validate_flags(uint32_t flags)
         return -1;
     }
     if ((flags & CLONE_SIGHAND) && !(flags & CLONE_VM))
-        return -1;
+        return -LINUX_EINVAL;
     if ((flags & CLONE_THREAD) && !(flags & CLONE_SIGHAND))
-        return -1;
+        return -LINUX_EINVAL;
     return 0;
 }
 
@@ -3934,8 +3948,13 @@ static uint32_t SYSCALL_NOINLINE syscall_case_clone(uint32_t eax, uint32_t ebx,
     process_t *child;
     int ctid;
 
-    if (!parent || syscall_clone_validate_flags(ebx) != 0)
+    if (!parent)
         return (uint32_t)-1;
+    {
+        int rc = syscall_clone_validate_flags(ebx);
+        if (rc != 0)
+            return (uint32_t)rc;
+    }
 
     child = (process_t *)kmalloc(sizeof(*child));
     if (!child)
@@ -4218,7 +4237,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_chdir(uint32_t eax, uint32_t ebx,
          *
          * Changes the calling process's current working directory.
          * Special forms handled before VFS validation:
-         *   NULL / "" / "/"  → move to root (cwd = "").
+         *   "" / "/"         → move to root (cwd = "").
          *   ".."             → strip the last component from cwd.
          * All other paths are resolved relative to the current cwd, then
          * validated as an existing directory via vfs_stat before being stored.
@@ -4226,6 +4245,8 @@ static uint32_t SYSCALL_NOINLINE syscall_case_chdir(uint32_t eax, uint32_t ebx,
          */
         process_t *cur = sched_current();
         if (!cur) return (uint32_t)-1;
+        if (ebx == 0)
+            return (uint32_t)-LINUX_EFAULT;
 
         char *path = 0;
         char *cwd;
@@ -4285,7 +4306,12 @@ static uint32_t SYSCALL_NOINLINE syscall_case_chdir(uint32_t eax, uint32_t ebx,
 
         /* Validate: must exist and be a directory (type == 2). */
         vfs_stat_t st;
-        if (vfs_stat(resolved, &st) != 0 || st.type != 2) {
+        if (vfs_stat(resolved, &st) != 0) {
+            klog("CHDIR", "missing directory");
+            kfree(resolved);
+            return (uint32_t)-LINUX_ENOENT;
+        }
+        if (st.type != 2) {
             klog("CHDIR", "not a directory");
             kfree(resolved);
             return (uint32_t)-1;
@@ -4440,8 +4466,11 @@ static uint32_t SYSCALL_NOINLINE syscall_case_getdents(uint32_t eax, uint32_t eb
          */
         process_t *cur = sched_current();
 
-        if (!cur || ebx >= MAX_FDS)
-            return (uint32_t)-1;
+        if (!cur || ebx >= MAX_FDS ||
+            proc_fd_entries(cur)[ebx].type == FD_TYPE_NONE)
+            return (uint32_t)-LINUX_EBADF;
+        if (proc_fd_entries(cur)[ebx].type != FD_TYPE_DIR)
+            return (uint32_t)-LINUX_ENOTDIR;
         return (uint32_t)linux_fill_getdents(cur, &proc_fd_entries(cur)[ebx],
                                              ecx, edx);
     }
@@ -4513,8 +4542,11 @@ static uint32_t SYSCALL_NOINLINE syscall_case_getdents64(uint32_t eax, uint32_t 
          */
         process_t *cur = sched_current();
 
-        if (!cur || ebx >= MAX_FDS)
-            return (uint32_t)-1;
+        if (!cur || ebx >= MAX_FDS ||
+            proc_fd_entries(cur)[ebx].type == FD_TYPE_NONE)
+            return (uint32_t)-LINUX_EBADF;
+        if (proc_fd_entries(cur)[ebx].type != FD_TYPE_DIR)
+            return (uint32_t)-LINUX_ENOTDIR;
         return (uint32_t)linux_fill_getdents64(cur, &proc_fd_entries(cur)[ebx],
                                                ecx, edx);
     }
@@ -4660,7 +4692,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_fstatfs64(uint32_t eax, uint32_t e
         int rc;
 
         if (!cur || ebx >= MAX_FDS || proc_fd_entries(cur)[ebx].type == FD_TYPE_NONE)
-            return (uint32_t)-1;
+            return (uint32_t)-LINUX_EBADF;
         rc = linux_copy_statfs64(cur, edx, ecx);
         return rc == 0 ? 0 : (uint32_t)rc;
     }
@@ -4805,13 +4837,13 @@ static uint32_t SYSCALL_NOINLINE syscall_case_set_thread_area(uint32_t eax, uint
 
         if (desc.entry_number != 0xFFFFFFFFu &&
             desc.entry_number != GDT_USER_TLS_ENTRY)
-            return (uint32_t)-1;
+            return (uint32_t)-LINUX_EINVAL;
 
         contents = (desc.flags >> 1) & 0x3u;
         if (contents != 0)
-            return (uint32_t)-1;
+            return (uint32_t)-LINUX_EINVAL;
         if ((desc.flags & (1u << 3)) != 0)
-            return (uint32_t)-1;
+            return (uint32_t)-LINUX_EINVAL;
 
         desc.entry_number = GDT_USER_TLS_ENTRY;
         limit_in_pages = (desc.flags & (1u << 4)) != 0;
@@ -5008,7 +5040,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_mmap(uint32_t eax, uint32_t ebx,
         if (uaccess_copy_from_user(cur, &args, ebx, sizeof(args)) != 0)
             return (uint32_t)-1;
         if (args.length == 0 || !prot_is_valid(args.prot))
-            return (uint32_t)-1;
+            return (uint32_t)-LINUX_EINVAL;
         if ((args.flags & MAP_ANONYMOUS) != 0) {
             uint32_t required = MAP_PRIVATE | MAP_ANONYMOUS;
 
@@ -5050,8 +5082,10 @@ static uint32_t SYSCALL_NOINLINE syscall_case_mmap2(uint32_t eax, uint32_t ebx,
         process_t *cur = sched_current();
         uint32_t map_addr = 0;
 
-        if (!cur || ecx == 0 || !prot_is_valid(edx))
+        if (!cur)
             return (uint32_t)-1;
+        if (ecx == 0 || !prot_is_valid(edx))
+            return (uint32_t)-LINUX_EINVAL;
         if (esi & MAP_ANONYMOUS) {
             uint32_t required = MAP_PRIVATE | MAP_ANONYMOUS;
 
@@ -5146,6 +5180,8 @@ static uint32_t SYSCALL_NOINLINE syscall_case_pipe(uint32_t eax, uint32_t ebx,
          */
         process_t *cur = sched_current();
         if (!cur) return (uint32_t)-1;
+        if (ebx == 0)
+            return (uint32_t)-LINUX_EFAULT;
 
         int pipe_idx = pipe_alloc();
         if (pipe_idx < 0) {
@@ -5246,7 +5282,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_dup(uint32_t eax, uint32_t ebx,
         (void)ebp;
 
         fd = fd_duplicate_from(cur, ebx, 0, 0);
-        return fd < 0 ? (uint32_t)-1 : (uint32_t)fd;
+        return fd < 0 ? (uint32_t)-LINUX_EBADF : (uint32_t)fd;
     }
 }
 
@@ -5265,12 +5301,14 @@ static uint32_t SYSCALL_NOINLINE syscall_case_dup2(uint32_t eax, uint32_t ebx,
          *
          * Returns new_fd on success, -1 on error.
          */
-        if (ebx >= MAX_FDS || ecx >= MAX_FDS) return (uint32_t)-1;
+        if (ebx >= MAX_FDS || ecx >= MAX_FDS)
+            return (uint32_t)-LINUX_EBADF;
 
         process_t *cur = sched_current();
         if (!cur) return (uint32_t)-1;
 
-        if (proc_fd_entries(cur)[ebx].type == FD_TYPE_NONE) return (uint32_t)-1;
+        if (proc_fd_entries(cur)[ebx].type == FD_TYPE_NONE)
+            return (uint32_t)-LINUX_EBADF;
 
         if (ebx == ecx) return ecx;   /* dup2(fd, fd) is a documented no-op */
 
@@ -5317,7 +5355,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_kill(uint32_t eax, uint32_t ebx,
         int sig = (int)ecx;
         int32_t target = (int32_t)ebx;
         if (sig < 0 || sig >= NSIG)
-            return (uint32_t)-1;
+            return (uint32_t)-LINUX_EINVAL;
         if (target > 0) {
             if (!sched_find_pid((uint32_t)target))
                 return (uint32_t)-3;
@@ -5360,7 +5398,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_sigaction(uint32_t eax, uint32_t e
          * edx = pointer to uint32_t to receive the old handler, or 0
          *
          * Installs a new signal disposition for signal `ebx`.  SIGKILL (9)
-         * and SIGSTOP (19) cannot be caught or ignored — returns -1.
+         * and SIGSTOP (19) cannot be caught or ignored.
          *
          * Returns 0 on success, -1 on error.
          */
@@ -5369,9 +5407,9 @@ static uint32_t SYSCALL_NOINLINE syscall_case_sigaction(uint32_t eax, uint32_t e
 
         int sig = (int)ebx;
         if (sig < 1 || sig >= NSIG)
-            return (uint32_t)-1;
+            return (uint32_t)-LINUX_EINVAL;
         if (sig == SIGKILL || sig == SIGSTOP)
-            return (uint32_t)-1;
+            return (uint32_t)-LINUX_EINVAL;
         if (ecx > SIG_IGN && ecx >= USER_STACK_TOP)
             return (uint32_t)-1;
 
@@ -5405,10 +5443,12 @@ static uint32_t SYSCALL_NOINLINE syscall_case_rt_sigaction(uint32_t eax, uint32_
         uint32_t handler = 0;
         int sig = (int)ebx;
 
-        if (!cur || sig < 1 || sig >= NSIG || sig == SIGKILL || sig == SIGSTOP)
+        if (!cur)
             return (uint32_t)-1;
+        if (sig < 1 || sig >= NSIG || sig == SIGKILL || sig == SIGSTOP)
+            return (uint32_t)-LINUX_EINVAL;
         if (esi < sizeof(uint32_t) || esi > 128u)
-            return (uint32_t)-1;
+            return (uint32_t)-LINUX_EINVAL;
         handlers = cur->sig_actions ? cur->sig_actions->handlers :
                    cur->sig_handlers;
         if (edx != 0) {
@@ -5602,16 +5642,16 @@ static uint32_t SYSCALL_NOINLINE syscall_case_setpgid(uint32_t eax, uint32_t ebx
         } else {
             target = sched_find_pid(target_pid);
             if (!target || target->parent_pid != cur->pid)
-                return (uint32_t)-1;
+                return (uint32_t)-LINUX_ESRCH;
         }
 
         if (target->sid != cur->sid)
-            return (uint32_t)-1;
+            return (uint32_t)-LINUX_EPERM;
         if (target->pid == target->sid && new_pgid != target->pgid)
-            return (uint32_t)-1;
+            return (uint32_t)-LINUX_EPERM;
         if (new_pgid != target_pid &&
             !sched_session_has_pgid(target->sid, new_pgid))
-            return (uint32_t)-1;
+            return (uint32_t)-LINUX_EPERM;
 
         target->pgid = new_pgid;
         return 0;
@@ -5629,7 +5669,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_getpgid(uint32_t eax, uint32_t ebx
         if (!cur) return (uint32_t)-1;
         if (ebx == 0 || ebx == cur->pid) return cur->pgid;
         process_t *target = sched_find_pid(ebx);
-        if (!target) return (uint32_t)-1;
+        if (!target) return (uint32_t)-LINUX_ESRCH;
         return target->pgid;
     }
 }
@@ -5650,9 +5690,11 @@ static uint32_t SYSCALL_NOINLINE syscall_case_lseek(uint32_t eax, uint32_t ebx,
          */
         process_t *cur = sched_current();
         uint64_t new_off = 0;
+        int rc;
 
-        if (syscall_seek_handle(cur, ebx, (int32_t)ecx, edx, &new_off) != 0)
-            return (uint32_t)-1;
+        rc = syscall_seek_handle(cur, ebx, (int32_t)ecx, edx, &new_off);
+        if (rc != 0)
+            return (uint32_t)rc;
         return (uint32_t)new_off;
     }
 }
@@ -5671,11 +5713,13 @@ static uint32_t SYSCALL_NOINLINE syscall_case_llseek(uint32_t eax, uint32_t ebx,
         int64_t signed_off = (int64_t)raw_off;
         uint32_t result[2];
         uint64_t new_off = 0;
+        int rc;
 
         if (!cur || esi == 0)
             return (uint32_t)-1;
-        if (syscall_seek_handle(cur, ebx, signed_off, edi, &new_off) != 0)
-            return (uint32_t)-1;
+        rc = syscall_seek_handle(cur, ebx, signed_off, edi, &new_off);
+        if (rc != 0)
+            return (uint32_t)rc;
         result[0] = (uint32_t)new_off;
         result[1] = (uint32_t)(new_off >> 32);
         if (uaccess_copy_to_user(cur, esi, result, sizeof(result)) != 0)
@@ -5721,7 +5765,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_setuid32_setgid32(uint32_t eax, ui
                               uint32_t edx, uint32_t esi,
                               uint32_t edi, uint32_t ebp)
 {
-        return ebx == 0 ? 0 : (uint32_t)-1;
+        return ebx == 0 ? 0 : (uint32_t)-LINUX_EPERM;
 }
 
 static uint32_t SYSCALL_NOINLINE syscall_case_waitpid(uint32_t eax, uint32_t ebx,
