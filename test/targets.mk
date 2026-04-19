@@ -55,7 +55,7 @@ test-linux-abi:
 	$(call qemu_headless_for,linuxabi,30)
 	$(PYTHON) tools/dufs_extract.py $(IMG_DIR)/dufs-linuxabi.img linuxabi.log $(LOG_DIR)/linuxabi.log
 	cat $(LOG_DIR)/linuxabi.log
-	grep -q "LINUXABI SUMMARY passed 392/392" $(LOG_DIR)/linuxabi.log
+	grep -q "LINUXABI SUMMARY passed 398/398" $(LOG_DIR)/linuxabi.log
 	! grep -q "LINUXABI FAIL" $(LOG_DIR)/linuxabi.log
 	! grep -Eq "unknown syscall|Unhandled syscall" $(LOG_DIR)/debugcon-linuxabi.log
 

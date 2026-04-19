@@ -1206,6 +1206,35 @@ static void test_process_wait(void)
         check_eq("wait4 reports encoded exit status", status, 9 << 8);
         check_eq("wait4 clears rusage", rusage[0], 0);
     }
+
+    pid = sc0(SYS_FORK);
+    if (pid == 0) {
+        sc1(SYS_EXIT, 11);
+        for (;;)
+            ;
+    }
+    check_ok("third fork returns child pid in parent", pid);
+    if (pid > 0) {
+        int status = 0;
+        long waited = sc3(SYS_WAITPID, 0, (long)&status, 0);
+        check_eq("waitpid zero selector returns same-pgrp child", waited, pid);
+        check_eq("waitpid zero selector reports status", status, 11 << 8);
+    }
+
+    pid = sc0(SYS_FORK);
+    if (pid == 0) {
+        sc1(SYS_EXIT, 12);
+        for (;;)
+            ;
+    }
+    check_ok("fourth fork returns child pid in parent", pid);
+    if (pid > 0) {
+        int status = 0;
+        long pgid = sc1(SYS_GETPGID, 0);
+        long waited = sc4(SYS_WAIT4, -pgid, (long)&status, 0, 0);
+        check_eq("wait4 negative pgid selector returns child", waited, pid);
+        check_eq("wait4 negative pgid selector reports status", status, 12 << 8);
+    }
 }
 
 static void write_summary(void)

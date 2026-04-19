@@ -1547,19 +1547,35 @@ static uint32_t syscall_sysinfo(uint32_t user_info)
         : (uint32_t)-1;
 }
 
+static int linux_wait_child_matches(const process_t *cur,
+                                    const process_t *child, int32_t selector)
+{
+    if (!cur || !child || child->parent_pid != cur->pid)
+        return 0;
+    if (selector == -1)
+        return 1;
+    if (selector == 0)
+        return child->pgid == cur->pgid;
+    if (selector < -1)
+        return child->pgid == (uint32_t)(-selector);
+    return child->pid == (uint32_t)selector;
+}
+
 static int linux_wait_child(process_t *cur, uint32_t pid, int options,
                             uint32_t *pid_out)
 {
+    int32_t selector = (int32_t)pid;
+
     if (!cur || !pid_out)
         return -1;
     *pid_out = 0;
 
-    if (pid != 0xFFFFFFFFu) {
+    if (selector > 0) {
         const process_t *target = sched_find_process(pid, 1);
         int target_ready;
         int status;
 
-        if (!target)
+        if (!linux_wait_child_matches(cur, target, selector))
             return -1;
         target_ready = target->state == PROC_ZOMBIE ||
                        ((options & WUNTRACED) &&
@@ -1580,7 +1596,7 @@ static int linux_wait_child(process_t *cur, uint32_t pid, int options,
         for (int i = 0; i < n; i++) {
             const process_t *child = sched_find_process(pids[i], 1);
 
-            if (!child || child->parent_pid != cur->pid)
+            if (!linux_wait_child_matches(cur, child, selector))
                 continue;
             found_child = 1;
             if (child->state == PROC_ZOMBIE ||
