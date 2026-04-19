@@ -1143,7 +1143,7 @@ static void write_summary(void)
 
 int main(void)
 {
-    log_fd = (int)sc3(SYS_OPEN, (long)"/linuxabi.log",
+    log_fd = (int)sc3(SYS_OPEN, (long)"/dufs/linuxabi.log",
                       O_CREAT | O_WRONLY | O_TRUNC, 0644);
     emit_raw("LINUXABI BEGIN\n");
     test_identity();

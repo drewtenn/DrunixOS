@@ -897,6 +897,19 @@ static int ext3_free_inode_blocks(ext3_inode_t *in)
     return 0;
 }
 
+static int ext3_free_inode_payload(ext3_inode_t *in)
+{
+    if (!in)
+        return -1;
+    if ((in->mode & EXT3_S_IFMT) == EXT3_S_IFLNK &&
+        ext3_inode_size(in) <= 60u) {
+        in->size = 0;
+        in->dir_acl = 0;
+        return 0;
+    }
+    return ext3_free_inode_blocks(in);
+}
+
 static int ext3_truncate_blocks(ext3_inode_t *in, uint32_t keep_blocks)
 {
     uint8_t *blk = 0;
@@ -1278,9 +1291,13 @@ static int ext3_stat_common(const char *path, vfs_stat_t *st, uint32_t follow)
 {
     uint32_t ino;
     ext3_inode_t in;
+    int rc;
 
-    if (!st || ext3_resolve(path, follow, &ino) != 0)
+    if (!st)
         return -1;
+    rc = ext3_resolve(path, follow, &ino);
+    if (rc != 0)
+        return rc;
     if (ext3_read_inode(ino, &in) != 0)
         return -1;
     ext3_stat_from_inode(&in, st);
@@ -1304,10 +1321,14 @@ static int ext3_open(void *ctx, const char *path, uint32_t *inode_out,
 {
     uint32_t ino;
     ext3_inode_t in;
+    int rc;
 
     (void)ctx;
-    if (!inode_out || !size_out || ext3_resolve(path, 1, &ino) != 0)
+    if (!inode_out || !size_out)
         return -1;
+    rc = ext3_resolve(path, 1, &ino);
+    if (rc != 0)
+        return rc;
     if (ext3_read_inode(ino, &in) != 0)
         return -1;
     if ((in.mode & EXT3_S_IFMT) != EXT3_S_IFREG)
@@ -1381,12 +1402,18 @@ static int ext3_readlink(void *ctx, const char *path, char *buf,
     uint32_t ino;
     ext3_inode_t in;
     uint32_t size;
+    int rc;
 
     (void)ctx;
-    if (!buf || bufsz == 0 || ext3_resolve(path, 0, &ino) != 0 ||
-        ext3_read_inode(ino, &in) != 0 ||
-        (in.mode & EXT3_S_IFMT) != EXT3_S_IFLNK)
+    if (!buf || bufsz == 0)
+        return -22;
+    rc = ext3_resolve(path, 0, &ino);
+    if (rc != 0)
+        return rc == -40 ? -40 : -2;
+    if (ext3_read_inode(ino, &in) != 0)
         return -1;
+    if ((in.mode & EXT3_S_IFMT) != EXT3_S_IFLNK)
+        return -22;
     size = ext3_inode_size(&in);
     if (size > bufsz)
         size = bufsz;
@@ -1770,7 +1797,7 @@ static int ext3_create_body(void *ctx, const char *path)
         if (ext3_read_inode(existing, &in) != 0 ||
             (in.mode & EXT3_S_IFMT) != EXT3_S_IFREG)
             return -1;
-        if (ext3_free_inode_blocks(&in) != 0)
+        if (ext3_free_inode_payload(&in) != 0)
             return -1;
         in.size = 0;
         in.mtime = in.ctime = clock_unix_time();
@@ -1827,7 +1854,7 @@ static int ext3_unlink_body(void *ctx, const char *path)
     if (in.links_count > 0)
         in.links_count--;
     if (in.links_count == 0) {
-        if (ext3_free_inode_blocks(&in) != 0)
+        if (ext3_free_inode_payload(&in) != 0)
             return -1;
         in.dtime = clock_unix_time();
         if (ext3_write_inode(ino, &in) != 0)
@@ -2020,32 +2047,164 @@ static int ext3_rmdir(void *ctx, const char *path)
     return ext3_tx_end(rc);
 }
 
-static int ext3_readonly_rename(void *ctx, const char *oldpath,
-                                const char *newpath)
+static uint8_t ext3_file_type_from_mode(uint16_t mode)
 {
-    (void)ctx;
-    (void)oldpath;
-    (void)newpath;
-    return -30;
+    switch (mode & EXT3_S_IFMT) {
+    case EXT3_S_IFDIR:
+        return EXT3_FT_DIR;
+    case EXT3_S_IFLNK:
+        return EXT3_FT_SYMLINK;
+    default:
+        return EXT3_FT_REG_FILE;
+    }
 }
 
-static int ext3_readonly_link(void *ctx, const char *oldpath,
-                              const char *newpath, uint32_t follow)
+static int ext3_unlink_existing_nondir(uint32_t dir_ino, const char *leaf)
 {
-    (void)ctx;
-    (void)oldpath;
-    (void)newpath;
-    (void)follow;
-    return -30;
+    uint32_t ino;
+    ext3_inode_t in;
+
+    if (ext3_dir_lookup(dir_ino, leaf, &ino, 0) != 0)
+        return 0;
+    if (ext3_read_inode(ino, &in) != 0 ||
+        (in.mode & EXT3_S_IFMT) == EXT3_S_IFDIR)
+        return -1;
+    if (in.links_count > 0)
+        in.links_count--;
+    if (in.links_count == 0) {
+        if (ext3_free_inode_payload(&in) != 0)
+            return -1;
+        in.dtime = clock_unix_time();
+        if (ext3_write_inode(ino, &in) != 0)
+            return -1;
+        if (ext3_free_inode(ino, 0) != 0)
+            return -1;
+    } else if (ext3_write_inode(ino, &in) != 0) {
+        return -1;
+    }
+    return ext3_dir_remove(dir_ino, leaf);
 }
 
-static int ext3_readonly_symlink(void *ctx, const char *target,
-                                 const char *linkpath)
+static int ext3_rename_body(void *ctx, const char *oldpath,
+                            const char *newpath)
 {
+    uint32_t old_dir;
+    uint32_t new_dir;
+    uint32_t old_ino;
+    uint8_t old_type;
+    char old_leaf[EXT3_NAME_MAX + 1];
+    char new_leaf[EXT3_NAME_MAX + 1];
+
     (void)ctx;
-    (void)target;
-    (void)linkpath;
-    return -30;
+    if (!ext3_can_mutate() ||
+        ext3_split_parent(oldpath, &old_dir, old_leaf) != 0 ||
+        ext3_split_parent(newpath, &new_dir, new_leaf) != 0 ||
+        ext3_dir_lookup(old_dir, old_leaf, &old_ino, &old_type) != 0)
+        return -1;
+    if (old_dir == new_dir && k_strcmp(old_leaf, new_leaf) == 0)
+        return 0;
+    if (ext3_unlink_existing_nondir(new_dir, new_leaf) != 0)
+        return -1;
+    if (ext3_dir_add(new_dir, new_leaf, old_ino, old_type) != 0)
+        return -1;
+    return ext3_dir_remove(old_dir, old_leaf);
+}
+
+static int ext3_rename(void *ctx, const char *oldpath, const char *newpath)
+{
+    int rc;
+
+    if (ext3_tx_begin() != 0)
+        return -1;
+    rc = ext3_rename_body(ctx, oldpath, newpath);
+    return ext3_tx_end(rc);
+}
+
+static int ext3_link_body(void *ctx, const char *oldpath,
+                          const char *newpath, uint32_t follow)
+{
+    uint32_t new_dir;
+    uint32_t old_ino;
+    uint32_t existing;
+    char new_leaf[EXT3_NAME_MAX + 1];
+    ext3_inode_t in;
+
+    (void)ctx;
+    if (!ext3_can_mutate() ||
+        ext3_resolve(oldpath, follow ? 1u : 0u, &old_ino) != 0 ||
+        ext3_split_parent(newpath, &new_dir, new_leaf) != 0 ||
+        ext3_dir_lookup(new_dir, new_leaf, &existing, 0) == 0 ||
+        ext3_read_inode(old_ino, &in) != 0 ||
+        (in.mode & EXT3_S_IFMT) == EXT3_S_IFDIR)
+        return -1;
+    if (ext3_dir_add(new_dir, new_leaf, old_ino,
+                     ext3_file_type_from_mode(in.mode)) != 0)
+        return -1;
+    in.links_count++;
+    in.ctime = clock_unix_time();
+    return ext3_write_inode(old_ino, &in);
+}
+
+static int ext3_link(void *ctx, const char *oldpath,
+                     const char *newpath, uint32_t follow)
+{
+    int rc;
+
+    if (ext3_tx_begin() != 0)
+        return -1;
+    rc = ext3_link_body(ctx, oldpath, newpath, follow);
+    return ext3_tx_end(rc);
+}
+
+static int ext3_symlink_body(void *ctx, const char *target,
+                             const char *linkpath)
+{
+    uint32_t dir_ino;
+    uint32_t existing;
+    uint32_t ino;
+    uint32_t len;
+    uint32_t now;
+    char leaf[EXT3_NAME_MAX + 1];
+    ext3_inode_t in;
+
+    (void)ctx;
+    if (!ext3_can_mutate() || !target || target[0] == '\0' ||
+        ext3_split_parent(linkpath, &dir_ino, leaf) != 0 ||
+        ext3_dir_lookup(dir_ino, leaf, &existing, 0) == 0)
+        return -1;
+    len = k_strlen(target);
+    if (len > 60u)
+        return -1;
+
+    ino = ext3_alloc_inode(0);
+    if (ino == 0)
+        return -1;
+    k_memset(&in, 0, sizeof(in));
+    now = clock_unix_time();
+    in.mode = EXT3_S_IFLNK | 0777u;
+    in.atime = in.ctime = in.mtime = now;
+    in.links_count = 1;
+    in.size = len;
+    k_memcpy(in.block, target, len);
+    if (ext3_write_inode(ino, &in) != 0) {
+        ext3_free_inode(ino, 0);
+        return -1;
+    }
+    if (ext3_dir_add(dir_ino, leaf, ino, EXT3_FT_SYMLINK) != 0) {
+        ext3_free_inode(ino, 0);
+        return -1;
+    }
+    return 0;
+}
+
+static int ext3_symlink(void *ctx, const char *target, const char *linkpath)
+{
+    int rc;
+
+    if (ext3_tx_begin() != 0)
+        return -1;
+    rc = ext3_symlink_body(ctx, target, linkpath);
+    return ext3_tx_end(rc);
 }
 
 typedef struct {
@@ -2691,9 +2850,9 @@ static const fs_ops_t ext3_ops = {
     .unlink   = ext3_unlink,
     .mkdir    = ext3_mkdir,
     .rmdir    = ext3_rmdir,
-    .rename   = ext3_readonly_rename,
-    .link     = ext3_readonly_link,
-    .symlink  = ext3_readonly_symlink,
+    .rename   = ext3_rename,
+    .link     = ext3_link,
+    .symlink  = ext3_symlink,
     .readlink = ext3_readlink,
     .stat     = ext3_stat,
     .lstat    = ext3_lstat,
