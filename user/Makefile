@@ -1,11 +1,12 @@
-PROGS = chello hello shell writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello lsblk linuxhello linuxprobe linuxabi busybox bbcompat dufstest redirtest ext3wtest threadtest
+PROGS = chello hello shell writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello lsblk linuxhello linuxprobe linuxabi busybox tcc bbcompat dufstest redirtest ext3wtest threadtest
 C_PROGS = chello shell bbcompat dufstest redirtest ext3wtest threadtest
 CXX_PROGS = hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello lsblk
-LINUX_PROGS = linuxhello linuxprobe linuxabi busybox
+LINUX_PROGS = linuxhello linuxprobe linuxabi busybox tcc
 LINUX_ASM_PROGS = linuxhello
 LINUX_C_PROGS = linuxprobe linuxabi
 LINUX_BUSYBOX_PROGS = busybox
-CLEAN_PROGS = $(filter-out $(LINUX_BUSYBOX_PROGS),$(PROGS))
+LINUX_TCC_PROGS = tcc
+CLEAN_PROGS = $(filter-out $(LINUX_BUSYBOX_PROGS) $(LINUX_TCC_PROGS),$(PROGS))
 
 all: $(PROGS)
 
@@ -16,6 +17,8 @@ NASM   = nasm
 LINUX_I386_CC ?= i486-linux-musl-gcc
 BUSYBOX_VERSION ?= 1.36.1
 BUSYBOX_BUILD_DIR ?= ../build/busybox
+TCC_VERSION ?= 0.9.27
+TCC_BUILD_DIR ?= ../build/tcc
 CFLAGS = -m32 -ffreestanding -nostdlib -fno-pie -no-pie \
          -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall \
          -fdebug-prefix-map=$(abspath ..)=.
@@ -93,6 +96,9 @@ $(LINUX_C_PROGS): %: %.c
 
 $(LINUX_BUSYBOX_PROGS):
 	../tools/build_linux_busybox.sh $@ $(BUSYBOX_VERSION) $(BUSYBOX_BUILD_DIR)
+
+$(LINUX_TCC_PROGS):
+	../tools/build_linux_tcc.sh $@ $(TCC_VERSION) $(TCC_BUILD_DIR)
 
 clean:
 	find . -name '*.o' -delete

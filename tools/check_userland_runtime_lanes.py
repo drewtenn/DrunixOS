@@ -97,6 +97,8 @@ def main():
         add_failure(failures, "LINUX_PROGS must include linuxprobe as the static Linux i386 C compatibility probe")
     if "busybox" not in linux_set:
         add_failure(failures, "LINUX_PROGS must include busybox as the generated static Linux i386 userland target")
+    if "tcc" not in linux_set:
+        add_failure(failures, "LINUX_PROGS must include tcc as the generated static Linux i386 compiler target")
 
     if "$(C_RUNTIME_OBJS)" not in c_link:
         add_failure(failures, "C_LINK_OBJS must include $(C_RUNTIME_OBJS)")
@@ -115,8 +117,8 @@ def main():
         if (USER / f"{prog}.c").exists():
             add_failure(failures, f"C++ program must not also have C source: user/{prog}.c")
 
-    linux_c_progs = {"linuxprobe"}
-    linux_generated_progs = {"busybox"}
+    linux_c_progs = {"linuxprobe", "linuxabi"}
+    linux_generated_progs = {"busybox", "tcc"}
     for prog in linux_progs:
         has_asm = (USER / f"{prog}.asm").exists()
         has_c = (USER / f"{prog}.c").exists()

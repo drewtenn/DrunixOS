@@ -46,6 +46,8 @@ user/linuxhello
 user/linuxprobe
 user/linuxabi
 user/busybox
+user/tcc
+user/tcccompat
 user/dufstest
 user/redirtest
 user/ext3wtest
