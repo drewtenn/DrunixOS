@@ -111,8 +111,10 @@
 #define O_WRONLY 01
 #define O_RDWR   02
 #define O_CREAT  0100
+#define O_EXCL   0200
 #define O_TRUNC  01000
 #define O_APPEND 02000
+#define O_NONBLOCK 04000
 #define O_CLOEXEC 02000000
 #define O_DIRECTORY 0200000
 
@@ -152,6 +154,7 @@
 #define F_GETFL 3
 #define F_SETFL 4
 #define F_DUPFD_CLOEXEC 1030
+#define FD_CLOEXEC 1
 
 #define POLLIN  0x0001
 #define POLLOUT 0x0004
@@ -164,6 +167,10 @@
 
 #define ENOENT 2
 #define ESRCH 3
+#define EAGAIN 11
+#define EEXIST 17
+#define ENOTDIR 20
+#define EISDIR 21
 #define EINVAL 22
 #define ELOOP 40
 
@@ -666,6 +673,10 @@ static void test_filesystem(void)
     check_eq("statx existing path succeeds", sc5(SYS_STATX, AT_FDCWD, (long)"/linuxabi.tmp", 0, 0x7FF, (long)stx), 0);
     check_eq("statx reports created file size", (long)get_u64(stx, 40), 6);
     check_eq("statfs64 root succeeds", sc3(SYS_STATFS64, (long)"/", sizeof(sfs), (long)sfs), 0);
+    check_eq("open directory write-only returns EISDIR", sc3(SYS_OPEN, (long)"/", O_WRONLY, 0), -EISDIR);
+    check_eq("open regular file with O_DIRECTORY returns ENOTDIR", sc3(SYS_OPEN, (long)"/hello.txt", O_DIRECTORY, 0), -ENOTDIR);
+    check_eq("open existing file with O_CREAT|O_EXCL returns EEXIST",
+             sc3(SYS_OPEN, (long)"/hello.txt", O_CREAT | O_EXCL | O_RDWR, 0644), -EEXIST);
     check_eq("stat64 missing path fails", sc2(SYS_STAT64, (long)"/missing-linuxabi", (long)st), -1);
     check_eq("lstat64 missing path fails", sc2(SYS_LSTAT64, (long)"/missing-linuxabi", (long)st), -1);
     check_eq("statx missing path returns ENOENT", sc5(SYS_STATX, AT_FDCWD, (long)"/missing-linuxabi", 0, 0x7FF, (long)stx), -ENOENT);
@@ -1014,12 +1025,17 @@ static void test_fds_and_pipes(void)
         check_ok("fcntl F_DUPFD duplicates fd", dupfd);
         if (dupfd >= 0)
             check_eq("close fcntl duplicate succeeds", sc1(SYS_CLOSE, dupfd), 0);
+        check_eq("fcntl F_SETFD accepts close-on-exec flag", sc3(SYS_FCNTL64, fds[1], F_SETFD, FD_CLOEXEC), 0);
+        check_eq("fcntl F_GETFD reports close-on-exec", sc3(SYS_FCNTL64, fds[1], F_GETFD, 0), FD_CLOEXEC);
+        check_eq("fcntl F_SETFD clears close-on-exec flag", sc3(SYS_FCNTL64, fds[1], F_SETFD, 0), 0);
+        check_eq("fcntl F_GETFD reports cleared flags", sc3(SYS_FCNTL64, fds[1], F_GETFD, 0), 0);
         dupfd = (int)sc3(SYS_FCNTL64, fds[1], F_DUPFD_CLOEXEC, 10);
         check_ok("fcntl F_DUPFD_CLOEXEC duplicates fd", dupfd);
-        if (dupfd >= 0)
+        if (dupfd >= 0) {
+            check_eq("fcntl F_DUPFD_CLOEXEC sets close-on-exec",
+                     sc3(SYS_FCNTL64, dupfd, F_GETFD, 0), FD_CLOEXEC);
             check_eq("close fcntl cloexec duplicate succeeds", sc1(SYS_CLOSE, dupfd), 0);
-        check_eq("fcntl F_GETFD returns zero flags", sc3(SYS_FCNTL64, fds[1], F_GETFD, 0), 0);
-        check_eq("fcntl F_SETFD accepts close-on-exec flag", sc3(SYS_FCNTL64, fds[1], F_SETFD, 1), 0);
+        }
         n = sc3(SYS_FCNTL64, fds[1], F_GETFL, 0);
         check_ok("fcntl F_GETFL succeeds", n);
         check_eq("fcntl F_SETFL accepts append flag", sc3(SYS_FCNTL64, fds[1], F_SETFL, O_APPEND), 0);
@@ -1038,6 +1054,8 @@ static void test_fds_and_pipes(void)
     }
     check_eq("pipe2 cloexec creates read and write fds", sc2(SYS_PIPE2, (long)fds, O_CLOEXEC), 0);
     if (fds[0] >= 0 && fds[1] >= 0) {
+        check_eq("pipe2 O_CLOEXEC sets read fd flag", sc3(SYS_FCNTL64, fds[0], F_GETFD, 0), FD_CLOEXEC);
+        check_eq("pipe2 O_CLOEXEC sets write fd flag", sc3(SYS_FCNTL64, fds[1], F_GETFD, 0), FD_CLOEXEC);
         check_eq("pipe2 write returns byte count", sc3(SYS_WRITE, fds[1], (long)"q", 1), 1);
         check_eq("pipe2 read returns byte count", sc3(SYS_READ, fds[0], (long)&c, 1), 1);
         if (c == 'q')
@@ -1046,6 +1064,17 @@ static void test_fds_and_pipes(void)
             fail("pipe2 preserves byte value", c, 'q');
         check_eq("close pipe2 read fd succeeds", sc1(SYS_CLOSE, fds[0]), 0);
         check_eq("close pipe2 write fd succeeds", sc1(SYS_CLOSE, fds[1]), 0);
+    }
+    check_eq("pipe2 nonblock creates fds", sc2(SYS_PIPE2, (long)fds, O_NONBLOCK), 0);
+    if (fds[0] >= 0 && fds[1] >= 0) {
+        check_eq("nonblocking empty pipe read returns EAGAIN",
+                 sc3(SYS_READ, fds[0], (long)&c, 1), -EAGAIN);
+        n = sc3(SYS_FCNTL64, fds[0], F_GETFL, 0);
+        check_eq("pipe2 O_NONBLOCK appears in read flags", n & O_NONBLOCK, O_NONBLOCK);
+        n = sc3(SYS_FCNTL64, fds[1], F_GETFL, 0);
+        check_eq("pipe2 O_NONBLOCK appears in write flags", n & O_NONBLOCK, O_NONBLOCK);
+        check_eq("close nonblock pipe read fd succeeds", sc1(SYS_CLOSE, fds[0]), 0);
+        check_eq("close nonblock pipe write fd succeeds", sc1(SYS_CLOSE, fds[1]), 0);
     }
     check_eq("pipe2 rejects unsupported flags", sc2(SYS_PIPE2, (long)fds, 0x80000000u), -EINVAL);
 }
