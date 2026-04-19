@@ -548,6 +548,9 @@ test-tcc:
 	grep -q "TCCCOMPAT: version ok" tcc.log
 	grep -q "TCCCOMPAT: compile ok" tcc.log
 	grep -q "TCCCOMPAT: run ok" tcc.log
+	grep -q "TCCCOMPAT: multi source write ok" tcc.log
+	grep -q "TCCCOMPAT: multi compile ok" tcc.log
+	grep -q "TCCCOMPAT: multi run ok" tcc.log
 	grep -q "TCCCOMPAT PASS" tcc.log
 	! grep -q "TCCCOMPAT FAIL" tcc.log
 	! grep -Eq "unknown syscall|Unhandled syscall" debugcon-tcc.log

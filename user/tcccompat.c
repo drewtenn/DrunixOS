@@ -31,6 +31,36 @@ static const char hello_source[] =
     "    sys_exit(0);\n"
     "}\n";
 
+static const char multi_main_source[] =
+    "static void sys_write(const char *s, unsigned n) {\n"
+    "    int r;\n"
+    "    __asm__ volatile(\"int $0x80\"\n"
+    "        : \"=a\"(r)\n"
+    "        : \"a\"(4), \"b\"(1), \"c\"(s), \"d\"(n)\n"
+    "        : \"memory\");\n"
+    "}\n"
+    "static void sys_exit(int code) {\n"
+    "    __asm__ volatile(\"int $0x80\"\n"
+    "        :: \"a\"(1), \"b\"(code)\n"
+    "        : \"memory\");\n"
+    "    for (;;)\n"
+    "        ;\n"
+    "}\n"
+    "extern int tcc_multi_value(void);\n"
+    "void _start(void) {\n"
+    "    if (tcc_multi_value() == 42) {\n"
+    "        sys_write(\"TCCMULTI OK\\n\", 12);\n"
+    "        sys_exit(0);\n"
+    "    }\n"
+    "    sys_write(\"TCCMULTI BAD\\n\", 13);\n"
+    "    sys_exit(1);\n"
+    "}\n";
+
+static const char multi_util_source[] =
+    "int tcc_multi_value(void) {\n"
+    "    return 42;\n"
+    "}\n";
+
 static int text_contains(const char *haystack, const char *needle)
 {
     int hlen;
@@ -173,6 +203,10 @@ int main(void)
     char *compile_argv[] = { "tcc", "-nostdlib", "-static", "-o", "/tmp/tcchello",
                              "/tmp/tcchello.c", 0 };
     char *run_argv[] = { "/tmp/tcchello", 0 };
+    char *multi_compile_argv[] = { "tcc", "-nostdlib", "-static", "-o",
+                                   "/tmp/tccmulti", "/tmp/tccmain.c",
+                                   "/tmp/tccutil.c", 0 };
+    char *multi_run_argv[] = { "/tmp/tccmulti", 0 };
 
     log_fd = sys_create("/dufs/tcc.log");
 
@@ -180,6 +214,9 @@ int main(void)
     sys_mkdir("/tmp");
     sys_unlink("/tmp/tcchello.c");
     sys_unlink("/tmp/tcchello");
+    sys_unlink("/tmp/tccmain.c");
+    sys_unlink("/tmp/tccutil.c");
+    sys_unlink("/tmp/tccmulti");
     if (write_text_file("/tmp/tcchello.c", hello_source) == 0) {
         emit("TCCCOMPAT: source write ok\n");
     } else {
@@ -195,6 +232,19 @@ int main(void)
         goto fail;
     if (stage_ok("TCCCOMPAT: run", "/tmp/tcchello", run_argv, envp,
                  "TCCHELLO OK\n", out, sizeof(out)) != 0)
+        goto fail;
+    if (write_text_file("/tmp/tccmain.c", multi_main_source) == 0 &&
+        write_text_file("/tmp/tccutil.c", multi_util_source) == 0) {
+        emit("TCCCOMPAT: multi source write ok\n");
+    } else {
+        emit("TCCCOMPAT: multi source write fail\n");
+        goto fail;
+    }
+    if (stage_ok("TCCCOMPAT: multi compile", "/bin/tcc", multi_compile_argv,
+                 envp, 0, out, sizeof(out)) != 0)
+        goto fail;
+    if (stage_ok("TCCCOMPAT: multi run", "/tmp/tccmulti", multi_run_argv, envp,
+                 "TCCMULTI OK\n", out, sizeof(out)) != 0)
         goto fail;
 
     emit("TCCCOMPAT PASS\n");
