@@ -835,6 +835,7 @@ static int linux_fill_getdents(process_t *cur, file_handle_t *fh,
     uint32_t entry = 0;
     uint32_t written = 0;
     uint32_t pos = 0;
+    int full = 0;
 
     if (!cur || !fh || fh->type != FD_TYPE_DIR || user_buf == 0 || count == 0)
         return -1;
@@ -855,7 +856,33 @@ static int linux_fill_getdents(process_t *cur, file_handle_t *fh,
         return -1;
     }
 
-    while (pos < (uint32_t)names_len) {
+    for (uint32_t dot = 0; dot < 2u; dot++) {
+        const char *name = dot ? ".." : ".";
+        uint32_t name_len = dot ? 2u : 1u;
+        uint32_t reclen;
+
+        if (entry++ < fh->u.dir.index)
+            continue;
+
+        reclen = linux_dirent_reclen(name_len);
+        if (written + reclen > count) {
+            full = 1;
+            break;
+        }
+
+        k_memset(out + written, 0, reclen);
+        linux_put_u32(out, written + 0u, entry);
+        linux_put_u32(out, written + 4u, entry);
+        linux_put_u16(out, written + 8u, reclen);
+        for (uint32_t i = 0; i < name_len; i++)
+            out[written + 10u + i] = (uint8_t)name[i];
+        out[written + reclen - 1u] = (uint8_t)LINUX_DT_DIR;
+
+        written += reclen;
+        fh->u.dir.index++;
+    }
+
+    while (!full && pos < (uint32_t)names_len) {
         char *name = names + pos;
         uint32_t raw_len = (uint32_t)k_strlen(name);
         uint32_t name_len = raw_len;
@@ -910,6 +937,7 @@ static int linux_fill_getdents64(process_t *cur, file_handle_t *fh,
     uint32_t entry = 0;
     uint32_t written = 0;
     uint32_t pos = 0;
+    int full = 0;
 
     if (!cur || !fh || fh->type != FD_TYPE_DIR || user_buf == 0 || count == 0)
         return -1;
@@ -930,7 +958,33 @@ static int linux_fill_getdents64(process_t *cur, file_handle_t *fh,
         return -1;
     }
 
-    while (pos < (uint32_t)names_len) {
+    for (uint32_t dot = 0; dot < 2u; dot++) {
+        const char *name = dot ? ".." : ".";
+        uint32_t name_len = dot ? 2u : 1u;
+        uint32_t reclen;
+
+        if (entry++ < fh->u.dir.index)
+            continue;
+
+        reclen = linux_dirent64_reclen(name_len);
+        if (written + reclen > count) {
+            full = 1;
+            break;
+        }
+
+        k_memset(out + written, 0, reclen);
+        linux_put_u64(out, written + 0u, (uint64_t)entry);
+        linux_put_u64(out, written + 8u, (uint64_t)entry);
+        linux_put_u16(out, written + 16u, reclen);
+        out[written + 18u] = (uint8_t)LINUX_DT_DIR;
+        for (uint32_t i = 0; i < name_len; i++)
+            out[written + 19u + i] = (uint8_t)name[i];
+
+        written += reclen;
+        fh->u.dir.index++;
+    }
+
+    while (!full && pos < (uint32_t)names_len) {
         char *name = names + pos;
         uint32_t raw_len = (uint32_t)k_strlen(name);
         uint32_t name_len = raw_len;

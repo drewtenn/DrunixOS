@@ -736,6 +736,8 @@ static void test_directories(void)
             pass("getdents64 lists bin");
         else
             fail("getdents64 lists bin", n, 1);
+        check_eq("getdents64 lists dot", n > 0 && dirents64_contains(dents, n, "."), 1);
+        check_eq("getdents64 lists dotdot", n > 0 && dirents64_contains(dents, n, ".."), 1);
         check_eq("close directory succeeds", sc1(SYS_CLOSE, fd), 0);
     }
     fd = (int)sc3(SYS_OPEN, (long)"/", O_DIRECTORY, 0);
@@ -744,6 +746,8 @@ static void test_directories(void)
         n = sc3(SYS_GETDENTS, fd, (long)dents, sizeof(dents));
         check_ok("getdents reads root entries", n);
         check_eq("getdents lists bin", n > 0 && dirents_contains(dents, n, "bin"), 1);
+        check_eq("getdents lists dot", n > 0 && dirents_contains(dents, n, "."), 1);
+        check_eq("getdents lists dotdot", n > 0 && dirents_contains(dents, n, ".."), 1);
         check_eq("close old getdents directory succeeds", sc1(SYS_CLOSE, fd), 0);
     }
     check_eq("getdents invalid fd fails", sc3(SYS_GETDENTS, 99, (long)dents, sizeof(dents)), -1);
