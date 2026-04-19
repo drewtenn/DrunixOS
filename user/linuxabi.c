@@ -682,8 +682,8 @@ static void test_filesystem(void)
     check_eq("open regular file with O_DIRECTORY returns ENOTDIR", sc3(SYS_OPEN, (long)"/hello.txt", O_DIRECTORY, 0), -ENOTDIR);
     check_eq("open existing file with O_CREAT|O_EXCL returns EEXIST",
              sc3(SYS_OPEN, (long)"/hello.txt", O_CREAT | O_EXCL | O_RDWR, 0644), -EEXIST);
-    check_eq("stat64 missing path fails", sc2(SYS_STAT64, (long)"/missing-linuxabi", (long)st), -1);
-    check_eq("lstat64 missing path fails", sc2(SYS_LSTAT64, (long)"/missing-linuxabi", (long)st), -1);
+    check_eq("stat64 missing path returns ENOENT", sc2(SYS_STAT64, (long)"/missing-linuxabi", (long)st), -ENOENT);
+    check_eq("lstat64 missing path returns ENOENT", sc2(SYS_LSTAT64, (long)"/missing-linuxabi", (long)st), -ENOENT);
     check_eq("statx missing path returns ENOENT", sc5(SYS_STATX, AT_FDCWD, (long)"/missing-linuxabi", 0, 0x7FF, (long)stx), -ENOENT);
     check_eq("chmod missing path returns ENOENT", sc2(SYS_CHMOD, (long)"/missing-linuxabi", 0600), -ENOENT);
     check_eq("chown32 missing path returns ENOENT", sc3(SYS_CHOWN32, (long)"/missing-linuxabi", 0, 0), -ENOENT);

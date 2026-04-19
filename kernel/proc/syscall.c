@@ -415,6 +415,7 @@ typedef struct {
 #define LINUX_O_DIRECTORY 0200000u
 #define LINUX_POLLIN 0x0001u
 #define LINUX_POLLOUT 0x0004u
+#define LINUX_ENOENT 2
 #define LINUX_EAGAIN 11
 #define LINUX_EEXIST 17
 #define LINUX_ENOTDIR 20
@@ -1160,11 +1161,14 @@ static uint32_t syscall_stat64_path_common(uint32_t user_path,
     process_t *cur = sched_current();
     uint8_t st64[144];
     linux_fd_stat_t meta;
+    int rc;
 
-    if (!cur || user_stat == 0 ||
-        (nofollow ? linux_path_lstat_metadata(cur, user_path, &meta) :
-                    linux_path_stat_metadata(cur, user_path, &meta)) != 0)
+    if (!cur || user_stat == 0)
         return (uint32_t)-1;
+    rc = nofollow ? linux_path_lstat_metadata(cur, user_path, &meta) :
+                    linux_path_stat_metadata(cur, user_path, &meta);
+    if (rc != 0)
+        return (uint32_t)-LINUX_ENOENT;
 
         linux_fill_stat64(st64, meta.mode, meta.nlink, meta.size,
                           meta.mtime, meta.rdev_major, meta.rdev_minor,
