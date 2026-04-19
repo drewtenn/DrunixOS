@@ -114,7 +114,13 @@ PARTITION_START ?= 2048
 FS_SECTORS     := $(shell expr $(DISK_SECTORS) - $(PARTITION_START))
 USER_PROGS    := shell chello hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello lsblk linuxhello linuxprobe linuxabi busybox tcc bbcompat dufstest redirtest ext3wtest threadtest tcccompat
 USER_BINS     := $(addprefix user/,$(USER_PROGS))
+USER_RUNTIME_HEADERS := $(wildcard user/lib/*.h)
+USER_RUNTIME_SYSROOT := $(foreach hdr,$(USER_RUNTIME_HEADERS),$(hdr) usr/include/$(notdir $(hdr))) \
+                        user/lib/tcc_crt0.o usr/lib/drunix/crt0.o \
+                        user/lib/libc.a usr/lib/drunix/libc.a \
+                        user/user.ld usr/lib/drunix/user.ld
 DISK_FILES    := $(foreach prog,$(USER_PROGS),user/$(prog) bin/$(prog)) \
+                 $(USER_RUNTIME_SYSROOT) \
                  tools/hello.txt hello.txt \
                  tools/readme.txt readme.txt
 RUN_LOGS      := serial.log debugcon.log
@@ -212,17 +218,20 @@ kernel-vga.elf: kernel/kernel-entry-vga.o $(filter-out kernel/kernel-entry.o,$(K
 $(USER_BINS):
 	$(MAKE) -C user $(@F)
 
+user/lib/libc.a user/lib/tcc_crt0.o:
+	$(MAKE) -C user $(@F:%=lib/%)
+
 # ─── Hard-disk images ────────────────────────────────────────────────────────
 # disk.img is the primary ATA master (sda).  By default it is a deterministic
 # Linux-compatible ext3 root partition.  ROOT_FS=dufs builds sda as DUFS
 # instead.
 ifeq ($(ROOT_FS),dufs)
-disk.fs: $(USER_BINS) tools/hello.txt tools/readme.txt tools/mkfs.py
+disk.fs: $(USER_BINS) user/lib/libc.a user/lib/tcc_crt0.o tools/hello.txt tools/readme.txt tools/mkfs.py
 	$(PYTHON) tools/mkfs.py $@ $(FS_SECTORS) $(DISK_FILES)
 disk.img: disk.fs tools/wrap_mbr.py
 	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0xDA
 else
-disk.fs: $(USER_BINS) tools/hello.txt tools/readme.txt tools/mkext3.py
+disk.fs: $(USER_BINS) user/lib/libc.a user/lib/tcc_crt0.o tools/hello.txt tools/readme.txt tools/mkext3.py
 	$(PYTHON) tools/mkext3.py $@ $(FS_SECTORS) $(DISK_FILES)
 disk.img: disk.fs tools/wrap_mbr.py
 	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0x83
@@ -551,6 +560,9 @@ test-tcc:
 	grep -q "TCCCOMPAT: multi source write ok" tcc.log
 	grep -q "TCCCOMPAT: multi compile ok" tcc.log
 	grep -q "TCCCOMPAT: multi run ok" tcc.log
+	grep -q "TCCCOMPAT: runtime source write ok" tcc.log
+	grep -q "TCCCOMPAT: runtime compile ok" tcc.log
+	grep -q "TCCCOMPAT: runtime run ok" tcc.log
 	grep -q "TCCCOMPAT PASS" tcc.log
 	! grep -q "TCCCOMPAT FAIL" tcc.log
 	! grep -Eq "unknown syscall|Unhandled syscall" debugcon-tcc.log

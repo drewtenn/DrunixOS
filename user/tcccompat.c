@@ -61,6 +61,19 @@ static const char multi_util_source[] =
     "    return 42;\n"
     "}\n";
 
+static const char runtime_source[] =
+    "#include <stdio.h>\n"
+    "#include <string.h>\n"
+    "\n"
+    "int main(void) {\n"
+    "    if (strcmp(\"drunix\", \"drunix\") == 0) {\n"
+    "        printf(\"TCCRT OK\\n\");\n"
+    "        return 0;\n"
+    "    }\n"
+    "    printf(\"TCCRT BAD\\n\");\n"
+    "    return 1;\n"
+    "}\n";
+
 static int text_contains(const char *haystack, const char *needle)
 {
     int hlen;
@@ -207,6 +220,11 @@ int main(void)
                                    "/tmp/tccmulti", "/tmp/tccmain.c",
                                    "/tmp/tccutil.c", 0 };
     char *multi_run_argv[] = { "/tmp/tccmulti", 0 };
+    char *runtime_compile_argv[] = { "tcc", "-nostdlib", "-static",
+                                     "-I/usr/include", "-o", "/tmp/tccrt",
+                                     "/usr/lib/drunix/crt0.o", "/tmp/tccrt.c",
+                                     "/usr/lib/drunix/libc.a", 0 };
+    char *runtime_run_argv[] = { "/tmp/tccrt", 0 };
 
     log_fd = sys_create("/dufs/tcc.log");
 
@@ -217,6 +235,8 @@ int main(void)
     sys_unlink("/tmp/tccmain.c");
     sys_unlink("/tmp/tccutil.c");
     sys_unlink("/tmp/tccmulti");
+    sys_unlink("/tmp/tccrt.c");
+    sys_unlink("/tmp/tccrt");
     if (write_text_file("/tmp/tcchello.c", hello_source) == 0) {
         emit("TCCCOMPAT: source write ok\n");
     } else {
@@ -245,6 +265,18 @@ int main(void)
         goto fail;
     if (stage_ok("TCCCOMPAT: multi run", "/tmp/tccmulti", multi_run_argv, envp,
                  "TCCMULTI OK\n", out, sizeof(out)) != 0)
+        goto fail;
+    if (write_text_file("/tmp/tccrt.c", runtime_source) == 0) {
+        emit("TCCCOMPAT: runtime source write ok\n");
+    } else {
+        emit("TCCCOMPAT: runtime source write fail\n");
+        goto fail;
+    }
+    if (stage_ok("TCCCOMPAT: runtime compile", "/bin/tcc",
+                 runtime_compile_argv, envp, 0, out, sizeof(out)) != 0)
+        goto fail;
+    if (stage_ok("TCCCOMPAT: runtime run", "/tmp/tccrt", runtime_run_argv, envp,
+                 "TCCRT OK\n", out, sizeof(out)) != 0)
         goto fail;
 
     emit("TCCCOMPAT PASS\n");

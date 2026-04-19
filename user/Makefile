@@ -13,6 +13,7 @@ all: $(PROGS)
 CC     = x86_64-elf-gcc
 CXX    = x86_64-elf-g++
 LD     = x86_64-elf-ld
+AR     = x86_64-elf-ar
 NASM   = nasm
 LINUX_I386_CC ?= i486-linux-musl-gcc
 BUSYBOX_VERSION ?= 1.36.1
@@ -32,6 +33,7 @@ CXXLIBS = $(shell $(CXX) -m32 -print-libgcc-file-name)
 C_RUNTIME_OBJS = lib/crt0.o lib/cxx_init.o lib/syscall.o lib/malloc.o \
                  lib/string.o lib/ctype.o lib/stdlib.o lib/stdio.o \
                  lib/unistd.o lib/time.o
+C_RUNTIME_LIB_OBJS = $(filter-out lib/crt0.o,$(C_RUNTIME_OBJS))
 CXX_RUNTIME_OBJS = lib/cxxrt.o lib/cxxabi.o
 C_LINK_OBJS = $(C_RUNTIME_OBJS)
 CXX_LINK_OBJS = $(C_RUNTIME_OBJS) $(CXX_RUNTIME_OBJS)
@@ -65,6 +67,9 @@ lib/unistd.o: lib/unistd.c lib/unistd.h lib/syscall.h
 
 lib/time.o: lib/time.c lib/time.h lib/syscall.h lib/string.h
 	$(CC) $(CFLAGS) -c -o $@ $<
+
+lib/libc.a: $(C_RUNTIME_LIB_OBJS)
+	$(AR) rcs $@ $(C_RUNTIME_LIB_OBJS)
 
 # One pattern rule handles every user-program .o target.
 %.o: %.c
@@ -103,4 +108,5 @@ $(LINUX_TCC_PROGS):
 clean:
 	find . -name '*.o' -delete
 	find . -name '*.elf' -delete
+	$(RM) lib/libc.a
 	$(RM) $(CLEAN_PROGS)
