@@ -894,7 +894,7 @@ static void test_at_syscalls(void)
     check_eq("openat missing path returns ENOENT", sc4(SYS_OPENAT, AT_FDCWD, (long)"/missing-at", 0, 0), -ENOENT);
     check_eq("openat invalid dirfd fails", sc4(SYS_OPENAT, 99, (long)"missing", 0, 0), -1);
     check_eq("mkdirat invalid dirfd fails", sc3(SYS_MKDIRAT, 99, (long)"missing", 0755), -1);
-    check_eq("fstatat64 rejects invalid flags", sc4(SYS_FSTATAT64, AT_FDCWD, (long)"/hello.txt", (long)st, 0x80000000u), -1);
+    check_eq("fstatat64 rejects invalid flags with EINVAL", sc4(SYS_FSTATAT64, AT_FDCWD, (long)"/hello.txt", (long)st, 0x80000000u), -EINVAL);
     check_eq("faccessat rejects invalid mode", sc3(SYS_FACCESSAT, AT_FDCWD, (long)"/hello.txt", 8), -EINVAL);
     check_eq("unlinkat rejects invalid flags", sc3(SYS_UNLINKAT, AT_FDCWD, (long)"/hello.txt", 0x80000000u), -EINVAL);
     check_eq("readlinkat missing returns ENOENT", sc4(SYS_READLINKAT, AT_FDCWD, (long)"/missing-at", (long)buf, sizeof(buf)), -ENOENT);

@@ -4581,7 +4581,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_fstatat64(uint32_t eax, uint32_t e
         if ((esi & ~(LINUX_AT_SYMLINK_NOFOLLOW |
                      LINUX_AT_NO_AUTOMOUNT |
                      LINUX_AT_EMPTY_PATH)) != 0)
-            return (uint32_t)-1;
+            return (uint32_t)-LINUX_EINVAL;
         if (uaccess_copy_from_user(cur, &first, ecx, sizeof(first)) != 0)
             return (uint32_t)-1;
         if (first == '\0') {
