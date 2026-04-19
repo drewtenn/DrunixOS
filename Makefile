@@ -112,16 +112,16 @@ ISO_KERNEL_VGA := iso/boot/kernel-vga.elf
 DISK_SECTORS  := 102400
 PARTITION_START ?= 2048
 FS_SECTORS     := $(shell expr $(DISK_SECTORS) - $(PARTITION_START))
-USER_PROGS    := shell chello hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello lsblk linuxhello linuxprobe linuxabi busybox bbcompat dufstest redirtest ext3wtest threadtest
+USER_PROGS    := shell chello hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello lsblk linuxhello linuxprobe linuxabi busybox tcc bbcompat dufstest redirtest ext3wtest threadtest tcccompat
 USER_BINS     := $(addprefix user/,$(USER_PROGS))
 DISK_FILES    := $(foreach prog,$(USER_PROGS),user/$(prog) bin/$(prog)) \
                  tools/hello.txt hello.txt \
                  tools/readme.txt readme.txt
 RUN_LOGS      := serial.log debugcon.log
-TEST_SUFFIXES := ktest df bbcompat linuxabi ext3w threadtest
+TEST_SUFFIXES := ktest df bbcompat linuxabi ext3w threadtest tcc
 TEST_IMAGES   := $(foreach suffix,$(TEST_SUFFIXES),disk-$(suffix).img dufs-$(suffix).img) disk-ext3-host.img
 TEST_LOGS     := $(foreach suffix,$(TEST_SUFFIXES),serial-$(suffix).log debugcon-$(suffix).log) \
-                 bbcompat.log linuxabi.log ext3wtest.log ext3-host-readback.txt
+                 bbcompat.log linuxabi.log ext3wtest.log threadtest.log tcc.log ext3-host-readback.txt
 SENTINELS     := .ktest-flag .double-fault-test-flag .klog-debugcon-flag \
                  .mouse-speed-flag .init-program-flag .no-desktop-flag .vga-text-flag
 
@@ -539,6 +539,19 @@ test-threadtest:
 	! grep -q "THREADTEST FAIL" threadtest.log
 	! grep -Eq "unknown syscall|Unhandled syscall" debugcon-threadtest.log
 
+test-tcc:
+	$(MAKE) KLOG_TO_DEBUGCON=1 INIT_PROGRAM=bin/tcccompat INIT_ARG0=tcccompat kernel disk
+	$(call prepare_test_images,tcc,tcc.log)
+	$(call qemu_headless_for,tcc,120)
+	$(PYTHON) tools/dufs_extract.py dufs-tcc.img tcc.log tcc.log
+	cat tcc.log
+	grep -q "TCCCOMPAT: version ok" tcc.log
+	grep -q "TCCCOMPAT: compile ok" tcc.log
+	grep -q "TCCCOMPAT: run ok" tcc.log
+	grep -q "TCCCOMPAT PASS" tcc.log
+	! grep -q "TCCCOMPAT FAIL" tcc.log
+	! grep -Eq "unknown syscall|Unhandled syscall" debugcon-tcc.log
+
 # `test-ext3-linux-compat` — verify a freshly generated ext3 root with host
 #                            e2fsprogs, then boot Drunix writable ext3 smoke
 #                            tests and fsck the mutated root image.
@@ -607,7 +620,7 @@ clean:
 .PHONY: all build kernel iso images disk fresh check \
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
-        test test-fresh test-headless test-halt test-busybox-compat test-linux-abi test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all \
+        test test-fresh test-headless test-halt test-busybox-compat test-linux-abi test-threadtest test-tcc test-ext3-linux-compat test-ext3-host-write-interop test-all \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean
