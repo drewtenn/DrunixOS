@@ -18,6 +18,17 @@ i386 TinyCC at `/bin/tcc`.  The probe writes a small no-libc C source file in
 program, and extracts `tcc.log`.  This catches process, pipe, exec, and file-I/O
 semantics that simple syscall probes do not exercise together.
 
+## TinyCC Compatibility Probe
+
+Drunix includes a TinyCC compatibility lane that runs a static Linux i386
+`/bin/tcc` inside the OS.  The `test-tcc` target compiles a no-libc C source
+file in `/tmp`, runs the produced ELF, extracts `/dufs/tcc.log`, and fails if
+the compiler path triggers an unknown Linux syscall.
+
+This is a Linux ABI probe rather than a Drunix-specific compiler port.  Missing
+behavior found by this lane should be fixed in the Linux syscall, VFS, ext3, or
+process compatibility layers.
+
 | Area | Linux i386 syscall surface | Direct ABI coverage | Integration coverage | Current notes |
 | --- | --- | --- | --- | --- |
 | ELF startup | `set_thread_area`, `set_tid_address`, `brk`, `mmap`, `mmap2`, `munmap` | TLS setup, tid-address setup, `brk`, old `mmap`, `mmap2`, `mprotect`, `munmap` | static musl programs, BusyBox startup | Static musl startup and explicit ABI probes both cover the TLS/thread-id path. |
