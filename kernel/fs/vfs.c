@@ -86,7 +86,6 @@ static int devfs_fill_blockdev_node(const char *relpath, vfs_node_t *node_out)
 static int vfs_normalize_path(const char *path, char *out, uint32_t outsz)
 {
     uint32_t w = 0;
-    int prev_slash = 0;
 
     if (!out || outsz == 0)
         return -1;
@@ -96,26 +95,46 @@ static int vfs_normalize_path(const char *path, char *out, uint32_t outsz)
         return 0;
     }
 
-    while (*path == '/')
-        path++;
-
     while (*path) {
-        char c = *path++;
-        if (c == '/') {
-            if (prev_slash)
-                return -1;
-            prev_slash = 1;
-        } else {
-            prev_slash = 0;
+        const char *start;
+        uint32_t len = 0;
+
+        while (*path == '/')
+            path++;
+        if (*path == '\0')
+            break;
+
+        start = path;
+        while (path[len] && path[len] != '/')
+            len++;
+
+        if (len == 1 && start[0] == '.') {
+            path += len;
+            continue;
         }
 
-        if (w + 1 >= outsz)
-            return -1;
-        out[w++] = c;
-    }
+        if (len == 2 && start[0] == '.' && start[1] == '.') {
+            if (w > 0) {
+                while (w > 0 && out[w - 1] != '/')
+                    w--;
+                if (w > 0)
+                    w--;
+            }
+            path += len;
+            continue;
+        }
 
-    while (w > 0 && out[w - 1] == '/')
-        w--;
+        if (w != 0) {
+            if (w + 1 >= outsz)
+                return -1;
+            out[w++] = '/';
+        }
+        if (w + len >= outsz)
+            return -1;
+        k_memcpy(out + w, start, len);
+        w += len;
+        path += len;
+    }
 
     out[w] = '\0';
     return 0;

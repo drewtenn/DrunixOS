@@ -472,6 +472,35 @@ static void test_file_ref_read_uses_owning_mount(ktest_case_t *tc)
     vfs_reset();
 }
 
+static void test_paths_normalize_like_linux(ktest_case_t *tc)
+{
+    vfs_file_ref_t ref;
+    vfs_stat_t st;
+    uint32_t size = 0;
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree(), 0u);
+
+    KTEST_EXPECT_EQ(tc,
+                    (uint32_t)vfs_open_file("//mnt/./ignored/../childfile",
+                                            &ref, &size),
+                    0u);
+    KTEST_EXPECT_EQ(tc, ref.inode_num, CHILD_FILE_INO);
+    KTEST_EXPECT_EQ(tc, size, CHILD_FILE_SIZE);
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)vfs_stat("mnt/./childfile", &st), 0u);
+    KTEST_EXPECT_EQ(tc, st.size, CHILD_FILE_SIZE);
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)vfs_stat("mnt/../hello", &st), 0u);
+    KTEST_EXPECT_EQ(tc, st.size, ROOT_FILE_SIZE);
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)vfs_stat("mnt/../mnt/./childfile", &st), 0u);
+    KTEST_EXPECT_EQ(tc, st.size, CHILD_FILE_SIZE);
+
+    KTEST_EXPECT_EQ(tc, (uint32_t)vfs_stat("mnt/..", &st), 0u);
+    KTEST_EXPECT_EQ(tc, st.type, 2u);
+    vfs_reset();
+}
+
 static void test_root_listing_includes_mount_points_once(ktest_case_t *tc)
 {
     char buf[128];
@@ -943,6 +972,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_unlink_no_mount),
     KTEST_CASE(test_cross_mount_open_prefers_child_mount),
     KTEST_CASE(test_file_ref_read_uses_owning_mount),
+    KTEST_CASE(test_paths_normalize_like_linux),
     KTEST_CASE(test_root_listing_includes_mount_points_once),
     KTEST_CASE(test_mount_root_stat_reports_directory),
     KTEST_CASE(test_dev_namespace_lists_and_resolves_devices),
