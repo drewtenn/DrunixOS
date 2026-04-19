@@ -421,6 +421,7 @@ typedef struct {
 #define LINUX_ENOTDIR 20
 #define LINUX_EISDIR 21
 #define LINUX_EINVAL 22
+#define LINUX_ERANGE 34
 #define USER_IO_CHUNK 512u
 #define TTY_IO_CHUNK \
     ((TTY_CANON_BUF_SIZE > TTY_RAW_BUF_SIZE) ? TTY_CANON_BUF_SIZE : TTY_RAW_BUF_SIZE)
@@ -4330,7 +4331,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_getcwd(uint32_t eax, uint32_t ebx,
         len = k_strnlen(path, 4095u);
         if (len + 1u > ecx) {
             kfree(path);
-            return (uint32_t)-1;
+            return (uint32_t)-LINUX_ERANGE;
         }
         if (uaccess_copy_to_user(cur, ebx, path, len + 1u) != 0) {
             kfree(path);

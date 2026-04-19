@@ -173,6 +173,7 @@
 #define ENOTDIR 20
 #define EISDIR 21
 #define EINVAL 22
+#define ERANGE 34
 #define ELOOP 40
 
 #define SIG_DFL 0
@@ -725,7 +726,7 @@ static void test_directories(void)
         pass("getcwd reports root");
     else
         fail("getcwd reports root", n, 2);
-    check_eq("getcwd tiny buffer fails", sc2(SYS_GETCWD, (long)cwd, 1), -1);
+    check_eq("getcwd tiny buffer returns ERANGE", sc2(SYS_GETCWD, (long)cwd, 1), -ERANGE);
     check_eq("chdir missing path fails", sc1(SYS_CHDIR, (long)"/missing-dir"), -1);
 
     fd = (int)sc3(SYS_OPEN, (long)"/", O_DIRECTORY, 0);
