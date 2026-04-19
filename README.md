@@ -181,26 +181,26 @@ Build-only targets:
 
 - `make kernel` rebuilds `kernel.elf`, `kernel-vga.elf`, and `os.iso`
 - `make iso` rebuilds `os.iso`
-- `make disk` / `make images` rebuild `disk.img` and `dufs.img`
+- `make disk` / `make images` rebuild `img/disk.img` and `img/dufs.img`
 
 Run and debug targets:
 
 - `make run-stdio` same as `run` but streams QEMU's debug console output to the terminal
 - `make run-grub-menu` boots into the GRUB menu so you can pick `nodesktop` or VGA-text entries by hand
 - `make debug` starts QEMU paused with the GDB remote stub and kernel symbols loaded
-- `make debug-fresh` rebuilds `disk.img` first, then starts `make debug`
+- `make debug-fresh` rebuilds `img/disk.img` first, then starts `make debug`
 - `make debug-user APP=shell` starts `debug` and loads symbols for `user/shell`
 
 In-kernel tests (KTEST):
 
 - `make test` boots with the in-kernel unit tests enabled. Test output is
-  routed silently to `debugcon.log` and `/proc/kmsg`, so the on-screen
+  routed silently to `logs/debugcon.log` and `/proc/kmsg`, so the on-screen
   desktop is visually identical to `make run` and you can inspect visual
-  bugs while the suite also runs. Grep `debugcon.log` for
+  bugs while the suite also runs. Grep `logs/debugcon.log` for
   `KTEST: SUMMARY pass=N fail=M` to see the result.
-- `make test-fresh` same as `test` but rebuilds `disk.img` first
+- `make test-fresh` same as `test` but rebuilds `img/disk.img` first
 - `make test-headless` builds with tests enabled, boots QEMU with
-  `-display none`, waits for the summary line in `debugcon-ktest.log`, and
+  `-display none`, waits for the summary line in `logs/debugcon-ktest.log`, and
   exits non-zero if any case failed. Use this in CI / scripted runs.
 - `make check` is a short alias for `make test-headless`
 - `make KTEST=1 run` equivalent to `make test`
@@ -229,6 +229,28 @@ Documentation:
 - `make epub` builds the EPUB edition
 - `make pdf` builds the PDF book from the Markdown sources with Pandoc and Typst
 - `make docs` builds both the EPUB and the PDF
+
+### Build System Layout
+
+The root `Makefile` owns the top-level workflows: kernel and ISO builds, disk
+image packing, QEMU launch commands, cleaning, and short aliases such as
+`check`, `docs`, and `fresh`. Long lists and specialized target families live
+in included fragments so the root file stays small:
+
+- `kernel/objects.mk` lists the normal and VGA kernel object sets
+- `kernel/tests.mk` lists in-kernel test objects, included only when `KTEST=1`
+- `user/programs.mk` is the shared user program manifest used by both the root
+  `Makefile` and `user/Makefile`
+- `docs/sources.mk` lists book chapter sources
+- `docs/build.mk` contains the EPUB, PDF, and diagram build rules
+- `test/targets.mk` contains the headless and integration test targets
+
+When adding a user program to the disk image, update `user/programs.mk` and add
+the build rule or source file in `user/Makefile` as needed. Native Drunix C
+programs go in `C_PROGS`, native Drunix C++ programs go in `CXX_PROGS`, and
+static Linux/i386 compatibility programs go in `LINUX_PROGS`. The root
+Makefile derives disk image contents from `PROGS`, so it does not need another
+per-program edit.
 
 ### Root filesystem selection
 
@@ -298,9 +320,9 @@ The C smoke binary is `/bin/chello`, built from `user/chello.c`. The C++
 smoke binary is `/bin/cpphello`, built from `user/cpphello.cpp`. The Linux
 i386 ABI smoke binary is `/bin/linuxhello`, built from handwritten assembly
 that invokes Linux `write(2)` and `exit(2)` syscall numbers directly.
-`user/Makefile` keeps the runtime lanes explicit: C programs link the C
+`user/programs.mk` keeps the runtime lanes explicit: C programs link the C
 runtime objects, C++ programs link those same C runtime objects plus the C++
-runtime objects, and the Linux smoke binary links no Drunix runtime at all.
+runtime objects, and Linux compatibility binaries link no Drunix runtime at all.
 The book-level walkthrough is Chapter 30, `docs/ch30-cpp-userland.md`.
 
 ## Debugging
@@ -319,7 +341,7 @@ Other useful debug flows:
 
 Runtime logs:
 
-- `serial.log` captures COM1 output
-- `debugcon.log` captures QEMU debug console output on port `0xE9`
+- `logs/serial.log` captures COM1 output
+- `logs/debugcon.log` captures QEMU debug console output on port `0xE9`
 
 Fatal kernel faults write diagnostics to serial and debugcon so they remain visible even when the framebuffer or VGA display path is no longer reliable.

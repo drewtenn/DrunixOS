@@ -8,6 +8,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 USER = ROOT / "user"
 MAKEFILE = USER / "Makefile"
+PROGRAMS_MK = USER / "programs.mk"
+ROOT_MAKEFILE = ROOT / "Makefile"
 
 
 def make_var(text, name):
@@ -29,7 +31,9 @@ def add_failure(failures, message):
 
 
 def main():
-    text = MAKEFILE.read_text()
+    text = PROGRAMS_MK.read_text() + "\n" + MAKEFILE.read_text()
+    makefile_text = MAKEFILE.read_text()
+    root_text = ROOT_MAKEFILE.read_text()
     failures = []
 
     progs = make_var(text, "PROGS")
@@ -99,6 +103,13 @@ def main():
         add_failure(failures, "LINUX_PROGS must include busybox as the generated static Linux i386 userland target")
     if "tcc" not in linux_set:
         add_failure(failures, "LINUX_PROGS must include tcc as the generated static Linux i386 compiler target")
+
+    if "include programs.mk" not in makefile_text:
+        add_failure(failures, "user/Makefile must include user/programs.mk as the shared user program manifest")
+    if not re.search(r"^include\s+user/programs\.mk$", root_text, re.MULTILINE):
+        add_failure(failures, "top-level Makefile must include user/programs.mk for disk image packing")
+    if not re.search(r"USER_PROGS\s*:?\=\s*\$\(PROGS\)", root_text):
+        add_failure(failures, "top-level Makefile must derive USER_PROGS from the shared user/programs.mk manifest")
 
     if "$(C_RUNTIME_OBJS)" not in c_link:
         add_failure(failures, "C_LINK_OBJS must include $(C_RUNTIME_OBJS)")

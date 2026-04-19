@@ -1,0 +1,8 @@
+PROGS = chello hello shell writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello lsblk linuxhello linuxprobe linuxabi busybox tcc bbcompat dufstest redirtest ext3wtest threadtest tcccompat
+C_PROGS = chello shell bbcompat dufstest redirtest ext3wtest threadtest tcccompat
+CXX_PROGS = hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello lsblk
+LINUX_PROGS = linuxhello linuxprobe linuxabi busybox tcc
+LINUX_ASM_PROGS = linuxhello
+LINUX_C_PROGS = linuxprobe linuxabi
+LINUX_BUSYBOX_PROGS = busybox
+LINUX_TCC_PROGS = tcc
