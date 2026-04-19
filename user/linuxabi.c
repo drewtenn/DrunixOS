@@ -808,12 +808,36 @@ static void test_file_variants(void)
     fd = (int)sc3(SYS_OPEN, (long)"/hello.txt", 0, 0);
     check_ok("open hello for sendfile64 succeeds", fd);
     if (fd >= 0) {
+        int out;
+
         pos[0] = 0;
         pos[1] = 0;
         check_eq("sendfile64 zero count returns zero", sc4(SYS_SENDFILE64, 1, fd, (long)pos, 0), 0);
         check_eq("sendfile64 copies requested bytes", sc4(SYS_SENDFILE64, 1, fd, (long)pos, 5), 5);
         check_eq("sendfile64 advances offset pointer", pos[0], 5);
         check_eq("sendfile64 bad out fd fails", sc4(SYS_SENDFILE64, 99, fd, (long)pos, 1), -1);
+        out = (int)sc3(SYS_OPEN, (long)"/linuxabi.sendfile", O_CREAT | O_RDWR | O_TRUNC, 0644);
+        check_ok("open sendfile64 regular output succeeds", out);
+        if (out >= 0) {
+            pos[0] = 0;
+            pos[1] = 0;
+            check_eq("sendfile64 copies to regular output fd",
+                     sc4(SYS_SENDFILE64, out, fd, (long)pos, 5), 5);
+            check_eq("sendfile64 regular output advances offset pointer", pos[0], 5);
+            check_eq("close sendfile output succeeds", sc1(SYS_CLOSE, out), 0);
+        }
+        out = (int)sc3(SYS_OPEN, (long)"/linuxabi.sendfile", 0, 0);
+        check_ok("open sendfile64 output for read succeeds", out);
+        if (out >= 0) {
+            n = sc3(SYS_READ, out, (long)buf, 5);
+            check_eq("read sendfile64 regular output byte count", n, 5);
+            if (n == 5 && memeq(buf, "Hello", 5))
+                pass("sendfile64 regular output contents");
+            else
+                fail("sendfile64 regular output contents", n, 5);
+            check_eq("close sendfile readback succeeds", sc1(SYS_CLOSE, out), 0);
+        }
+        check_eq("unlink sendfile output succeeds", sc1(SYS_UNLINK, (long)"/linuxabi.sendfile"), 0);
         check_eq("close sendfile input succeeds", sc1(SYS_CLOSE, fd), 0);
     }
 }

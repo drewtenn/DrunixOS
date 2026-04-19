@@ -2059,7 +2059,8 @@ static uint32_t syscall_sendfile64(process_t *cur, uint32_t out_fd,
         return (uint32_t)-1;
     out = &proc_fd_entries(cur)[out_fd];
     in = &proc_fd_entries(cur)[in_fd];
-    if (!syscall_fd_is_console_output(out))
+    if (!syscall_fd_is_console_output(out) &&
+        (out->type != FD_TYPE_FILE || !out->writable))
         return (uint32_t)-1;
     if (in->type != FD_TYPE_FILE && in->type != FD_TYPE_SYSFILE &&
         in->type != FD_TYPE_PROCFILE)
@@ -2107,12 +2108,31 @@ static uint32_t syscall_sendfile64(process_t *cur, uint32_t out_fd,
             return copied ? copied : (uint32_t)-1;
         if (n == 0)
             break;
-        if (syscall_write_console_bytes(cur, (const char *)kbuf,
-                                        (uint32_t)n) != n)
-            return copied ? copied : (uint32_t)-1;
+        if (syscall_fd_is_console_output(out)) {
+            if (syscall_write_console_bytes(cur, (const char *)kbuf,
+                                            (uint32_t)n) != n)
+                return copied ? copied : (uint32_t)-1;
+            read_off += (uint32_t)n;
+            copied += (uint32_t)n;
+        } else {
+            int written;
 
-        read_off += (uint32_t)n;
-        copied += (uint32_t)n;
+            if (out->append)
+                out->u.file.offset = out->u.file.size;
+            written = vfs_write(out->u.file.ref, out->u.file.offset, kbuf,
+                                (uint32_t)n);
+            if (written < 0)
+                return copied ? copied : (uint32_t)-1;
+            if (written == 0)
+                break;
+            out->u.file.offset += (uint32_t)written;
+            if (out->u.file.offset > out->u.file.size)
+                out->u.file.size = out->u.file.offset;
+            read_off += (uint32_t)written;
+            copied += (uint32_t)written;
+            if (written < n)
+                break;
+        }
         if ((uint32_t)n < chunk)
             break;
     }
