@@ -22,11 +22,17 @@ Unix programs configure a TTY's behaviour through a structure traditionally call
 
 ```c
 typedef struct {
+    uint32_t c_iflag;   /* input flags */
+    uint32_t c_oflag;   /* output flags */
+    uint32_t c_cflag;   /* control flags */
     uint32_t c_lflag;   /* local flags */
+    uint8_t  c_cc[19];  /* control characters */
 } termios_t;
 ```
 
-The `c_lflag` field is a bitmask. The flags we support at this stage are:
+The TTY starts in the same broad mode as a normal Linux terminal: canonical input, echo, signal-generating control keys, CR-to-NL input translation, and standard control characters such as Ctrl+C, Ctrl+Z, DEL erase, `VMIN=1`, and `VTIME=0`. Interactive programs such as editors can switch to raw mode with the ordinary termios path.
+
+The supported local flags are:
 
 | Flag | Bit | Meaning |
 |------|-----|---------|
@@ -35,7 +41,7 @@ The `c_lflag` field is a bitmask. The flags we support at this stage are:
 | `ECHOE`  | 2 | Echo backspace as BS SP BS (erase the character visually) |
 | `ISIG`   | 3 | Generate terminal signals (`SIGINT` on Ctrl+C, `SIGTSTP` on Ctrl+Z) |
 
-We default to `c_lflag = 0` — raw mode, no echo. That keeps the shell's own readline loop in control of echo and editing until a program explicitly requests canonical mode.
+The supported input flag currently used by the line discipline is `ICRNL`, which maps carriage return to newline unless a program clears it for raw input. The output and control flag fields are stored and reported through both the Drunix and Linux termios APIs so programs can round-trip the settings they expect.
 
 Programs call `sys_tcgetattr` and `sys_tcsetattr` to read and write these settings. The `TCSANOW` action applies the change immediately; `TCSAFLUSH` additionally discards any unread input in the TTY's buffers before applying the new settings.
 

@@ -12,6 +12,7 @@
 #include "pmm.h"
 #include "sched.h"
 #include "klog.h"
+#include "kprintf.h"
 #include "kstring.h"
 #include "mem_forensics.h"
 #include "vma.h"
@@ -20,6 +21,7 @@
 #define ROOT_FILE_SIZE  5u
 #define CHILD_FILE_INO  22u
 #define CHILD_FILE_SIZE 7u
+#define TEST_PARTITION_START 2048u
 
 static int has_entry(const char *buf, int n, const char *want)
 {
@@ -298,8 +300,9 @@ static int add_procfs_test_process(void)
     k_strncpy(proc.psargs, "/bin/shell", sizeof(proc.psargs) - 1);
     proc.open_files[0].type = FD_TYPE_TTY;
     proc.open_files[0].u.tty.tty_idx = 0;
-    proc.open_files[1].type = FD_TYPE_STDOUT;
+    proc.open_files[1].type = FD_TYPE_TTY;
     proc.open_files[1].writable = 1;
+    proc.open_files[1].u.tty.tty_idx = 0;
     return sched_add(&proc);
 }
 
@@ -323,8 +326,9 @@ static void init_procfs_layout_process(process_t *proc, int include_image_vma)
     k_strncpy(proc->psargs, "/bin/shell", sizeof(proc->psargs) - 1);
     proc->open_files[0].type = FD_TYPE_TTY;
     proc->open_files[0].u.tty.tty_idx = 0;
-    proc->open_files[1].type = FD_TYPE_STDOUT;
+    proc->open_files[1].type = FD_TYPE_TTY;
     proc->open_files[1].writable = 1;
+    proc->open_files[1].u.tty.tty_idx = 0;
 
     vma_init(proc);
     if (include_image_vma) {
@@ -539,6 +543,7 @@ static void test_sysfs_block_tree_lists_disks_and_partition_metadata(ktest_case_
 {
     char buf[256];
     char text[64];
+    char expected[64];
     int n;
 
     KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree_with_sys(), 0u);
@@ -571,7 +576,9 @@ static void test_sysfs_block_tree_lists_disks_and_partition_metadata(ktest_case_
     KTEST_ASSERT_TRUE(tc,
                       read_vfs_text_path("/sys/block/sda/size",
                                          text, sizeof(text)) > 0);
-    KTEST_EXPECT_TRUE(tc, k_strcmp(text, "102400\n") == 0);
+    KTEST_ASSERT_TRUE(tc, k_snprintf(expected, sizeof(expected), "%u\n",
+                                     (uint32_t)DRUNIX_DISK_SECTORS) > 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(text, expected) == 0);
     KTEST_ASSERT_TRUE(tc,
                       read_vfs_text_path("/sys/block/sda/dev",
                                          text, sizeof(text)) > 0);
@@ -584,7 +591,11 @@ static void test_sysfs_block_tree_lists_disks_and_partition_metadata(ktest_case_
     KTEST_ASSERT_TRUE(tc,
                       read_vfs_text_path("/sys/block/sda/sda1/size",
                                          text, sizeof(text)) > 0);
-    KTEST_EXPECT_TRUE(tc, k_strcmp(text, "100352\n") == 0);
+    KTEST_ASSERT_TRUE(tc, DRUNIX_DISK_SECTORS > TEST_PARTITION_START);
+    KTEST_ASSERT_TRUE(tc, k_snprintf(expected, sizeof(expected), "%u\n",
+                                     (uint32_t)(DRUNIX_DISK_SECTORS -
+                                                TEST_PARTITION_START)) > 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp(text, expected) == 0);
     KTEST_ASSERT_TRUE(tc,
                       read_vfs_text_path("/sys/block/sda/sda1/dev",
                                          text, sizeof(text)) > 0);

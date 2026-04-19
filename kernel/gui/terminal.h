@@ -19,6 +19,9 @@ typedef struct {
     int wrap_pending;
     int ansi_state;
     int ansi_val;
+    int ansi_params[4];
+    int ansi_param_count;
+    int ansi_private;
     uint8_t attr;
     uint8_t default_attr;
     int view_top;

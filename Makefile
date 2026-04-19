@@ -14,7 +14,7 @@ DEPFLAGS := -MMD -MP
 MOUSE_SPEED ?= 4
 INIT_PROGRAM ?= bin/shell
 INIT_ARG0 ?= shell
-INIT_ENV0 ?= PATH=/bin
+INIT_ENV0 ?= PATH=/usr/bin:/i686-linux-musl/bin:/bin
 ROOT_FS ?= ext3
 CFLAGS += -DMOUSE_FRAMEBUFFER_PIXEL_SCALE=$(MOUSE_SPEED)
 CFLAGS += -DDRUNIX_INIT_PROGRAM=\"$(INIT_PROGRAM)\"
@@ -114,12 +114,12 @@ USER_RUNTIME_SYSROOT := $(foreach hdr,$(USER_RUNTIME_HEADERS),$(hdr) usr/include
                         user/lib/tcc_crt0.o usr/lib/drunix/crt0.o \
                         user/lib/libc.a usr/lib/drunix/libc.a \
                         user/user.ld usr/lib/drunix/user.ld
-USER_GCC_TOOLS := user/gcc-cc1 user/gcc-as
-USER_GCC_SYSROOT := user/gcc bin/i686-linux-musl-gcc \
-                    user/gcc-cc1 bin/cc1 \
-                    user/gcc-cc1 libexec/gcc/i686-linux-musl/11.2.1/cc1 \
-                    user/gcc-as bin/as \
-                    user/gcc-as bin/i686-linux-musl-as
+USER_GCC_TOOLS := user/gcc user/gcc-cc1 user/gcc-as
+USER_GCC_SYSROOT := user/gcc usr/bin/gcc \
+                    user/gcc usr/bin/i686-linux-musl-gcc \
+                    user/gcc-cc1 usr/libexec/gcc/i686-linux-musl/11.2.1/cc1 \
+                    user/gcc-as usr/bin/as \
+                    user/gcc-as i686-linux-musl/bin/as
 DISK_FILES    := $(foreach prog,$(USER_PROGS),user/$(prog) bin/$(prog)) \
                  $(USER_RUNTIME_SYSROOT) \
                  $(USER_GCC_SYSROOT) \
@@ -130,11 +130,12 @@ IMG_DIR       := img
 ROOT_DISK_IMG := $(IMG_DIR)/disk.img
 DUFS_IMG      := $(IMG_DIR)/dufs.img
 RUN_LOGS      := $(LOG_DIR)/serial.log $(LOG_DIR)/debugcon.log
-TEST_SUFFIXES := ktest df bbcompat linuxabi ext3w threadtest tcc
+TEST_SUFFIXES := ktest df bbcompat linuxabi ext3w threadtest tcc nano
 TEST_IMAGES   := $(foreach suffix,$(TEST_SUFFIXES),$(IMG_DIR)/disk-$(suffix).img $(IMG_DIR)/dufs-$(suffix).img) $(IMG_DIR)/disk-ext3-host.img
 TEST_LOGS     := $(foreach suffix,$(TEST_SUFFIXES),$(LOG_DIR)/serial-$(suffix).log $(LOG_DIR)/debugcon-$(suffix).log) \
                  $(LOG_DIR)/bbcompat.log $(LOG_DIR)/linuxabi.log $(LOG_DIR)/ext3wtest.log \
-                 $(LOG_DIR)/threadtest.log $(LOG_DIR)/tcc.log $(LOG_DIR)/ext3-host-readback.txt
+                 $(LOG_DIR)/threadtest.log $(LOG_DIR)/tcc.log $(LOG_DIR)/nano.log \
+                 $(LOG_DIR)/ext3-host-readback.txt
 SENTINELS     := .ktest-flag .double-fault-test-flag .klog-debugcon-flag \
                  .mouse-speed-flag .init-program-flag .no-desktop-flag \
                  .vga-text-flag .disk-sectors-flag
@@ -375,6 +376,7 @@ clean:
 	$(RM) *.elf core.* disk.fs dufs.fs disk-ext3w.fs disk-ext3-host.fs $(ROOT_DISK_IMG) $(DUFS_IMG) $(TEST_IMAGES) os.iso $(ISO_KERNEL) $(ISO_KERNEL_VGA) iso/boot/grub/grub.cfg "$(PDF)" "$(EPUB)" $(SENTINELS)
 	$(RM) $(RUN_LOGS) $(TEST_LOGS) build/ext3-host.txt
 	rm -rf build/busybox
+	rm -rf build/nano
 	$(RM) docs/diagrams/*.png
 	$(MAKE) -C user clean
 
@@ -382,7 +384,7 @@ clean:
         disk.img dufs.img \
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
-        test test-fresh test-headless test-halt test-busybox-compat test-linux-abi test-threadtest test-tcc test-ext3-linux-compat test-ext3-host-write-interop test-all \
+        test test-fresh test-headless test-halt test-busybox-compat test-linux-abi test-threadtest test-tcc test-nano test-ext3-linux-compat test-ext3-host-write-interop test-all \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean

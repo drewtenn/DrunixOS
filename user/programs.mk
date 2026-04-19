@@ -1,11 +1,12 @@
-PROGS = chello hello shell writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello lsblk linuxhello linuxprobe linuxabi busybox tcc readelf objdump gcc bbcompat dufstest redirtest ext3wtest threadtest tcccompat
-C_PROGS = chello shell bbcompat dufstest redirtest ext3wtest threadtest tcccompat
+PROGS = chello hello shell writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello lsblk linuxhello linuxprobe linuxabi busybox tcc readelf objdump nano bbcompat dufstest redirtest ext3wtest threadtest tcccompat nanocompat
+C_PROGS = chello shell bbcompat dufstest redirtest ext3wtest threadtest tcccompat nanocompat
 CXX_PROGS = hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello lsblk
-LINUX_PROGS = linuxhello linuxprobe linuxabi busybox tcc readelf objdump gcc
+LINUX_PROGS = linuxhello linuxprobe linuxabi busybox tcc readelf objdump nano
 LINUX_ASM_PROGS = linuxhello
 LINUX_C_PROGS = linuxprobe linuxabi
 LINUX_BUSYBOX_PROGS = busybox
 LINUX_TCC_PROGS = tcc
 LINUX_BINUTILS_PROGS = readelf objdump
+LINUX_NANO_PROGS = nano
 LINUX_GCC_PROGS = gcc
 LINUX_GCC_HELPER_PROGS = gcc-cc1 gcc-as

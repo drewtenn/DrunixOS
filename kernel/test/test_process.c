@@ -13,11 +13,13 @@
 #include "resources.h"
 #include "sched.h"
 #include "gdt.h"
+#include "kprintf.h"
 #include "kstring.h"
 #include "mem_forensics.h"
 #include "paging.h"
 #include "pmm.h"
 #include "syscall.h"
+#include "tty.h"
 #include "vfs.h"
 #include "vma.h"
 
@@ -38,6 +40,8 @@ extern void process_exec_launch(void);
 #define TEST_LINUX_F_GETFD    1u
 #define TEST_LINUX_F_SETFD    2u
 #define TEST_LINUX_F_GETFL    3u
+#define TEST_LINUX_TCGETS     0x5401u
+#define TEST_LINUX_TCSETS     0x5402u
 #define TEST_LINUX_TIOCGWINSZ 0x5413u
 #define TEST_LINUX_FIONREAD   0x541Bu
 #define TEST_LINUX_O_WRONLY   01u
@@ -192,8 +196,16 @@ static process_t *start_syscall_test_process(process_t *proc)
         return 0;
 
     proc->saved_esp = 1; /* syscall tests do not context-switch this task */
-    proc->open_files[1].type = FD_TYPE_STDOUT;
+    proc->tty_id = 0;
+    proc->open_files[0].type = FD_TYPE_TTY;
+    proc->open_files[0].writable = 1;
+    proc->open_files[0].u.tty.tty_idx = 0;
+    proc->open_files[1].type = FD_TYPE_TTY;
     proc->open_files[1].writable = 1;
+    proc->open_files[1].u.tty.tty_idx = 0;
+    proc->open_files[2].type = FD_TYPE_TTY;
+    proc->open_files[2].writable = 1;
+    proc->open_files[2].u.tty.tty_idx = 0;
     if (proc_resource_init_fresh(proc) != 0) {
         process_release_user_space(proc);
         return 0;
@@ -1215,6 +1227,7 @@ static void test_linux_syscalls_cover_blockdev_fd_path(ktest_case_t *tc)
     uint32_t fstat_ino;
     const blkdev_ops_t *sda_ops;
     uint8_t sector1[BLKDEV_SECTOR_SIZE];
+    char expected_size[32];
 
     vfs_reset();
     dufs_register();
@@ -1343,7 +1356,11 @@ static void test_linux_syscalls_cover_blockdev_fd_path(ktest_case_t *tc)
                     0u);
     stat_mode = test_read_u32_le(stat_base, 16u);
     KTEST_EXPECT_EQ(tc, stat_mode, 0x00008124u);
-    KTEST_EXPECT_EQ(tc, test_read_u32_le(stat_base, 44u), 7u);
+    KTEST_ASSERT_TRUE(tc, k_snprintf(expected_size, sizeof(expected_size),
+                                     "%u\n",
+                                     (uint32_t)DRUNIX_DISK_SECTORS) > 0);
+    KTEST_EXPECT_EQ(tc, test_read_u32_le(stat_base, 44u),
+                    k_strlen(expected_size));
     k_strcpy((char *)page, "/_ktsyslink_");
     KTEST_EXPECT_EQ(tc,
                     syscall_handler(SYS_LSTAT64, 0x00800000u,
@@ -1368,7 +1385,8 @@ static void test_linux_syscalls_cover_blockdev_fd_path(ktest_case_t *tc)
                                     TEST_LINUX_FIONREAD,
                                     0x00800100u, 0, 0, 0),
                     0u);
-    KTEST_EXPECT_EQ(tc, test_read_u32_le(stat_base, 0u), 7u);
+    KTEST_EXPECT_EQ(tc, test_read_u32_le(stat_base, 0u),
+                    k_strlen(expected_size));
     KTEST_EXPECT_EQ(tc,
                     syscall_handler(SYS_LSEEK, (uint32_t)sys_fd,
                                     2u, 0, 0, 0, 0),
@@ -1378,17 +1396,19 @@ static void test_linux_syscalls_cover_blockdev_fd_path(ktest_case_t *tc)
                                     0x00800300u, 5u, 0, 0, 0),
                     5u);
     read_base[5] = '\0';
-    KTEST_EXPECT_TRUE(tc, k_strcmp((char *)read_base, "2400\n") == 0);
+    KTEST_EXPECT_TRUE(tc, k_strcmp((char *)read_base,
+                                   expected_size + 2u) == 0);
     KTEST_EXPECT_EQ(tc,
                     syscall_handler(SYS_LSEEK, (uint32_t)sys_fd,
                                     0u, 0, 0, 0, 0),
                     0u);
     KTEST_EXPECT_EQ(tc,
                     syscall_handler(SYS_READ, (uint32_t)sys_fd,
-                                    0x00800300u, 7u, 0, 0, 0),
-                    7u);
-    read_base[7] = '\0';
-    KTEST_EXPECT_TRUE(tc, k_strcmp((char *)read_base, "102400\n") == 0);
+                                    0x00800300u,
+                                    k_strlen(expected_size), 0, 0, 0),
+                    k_strlen(expected_size));
+    read_base[k_strlen(expected_size)] = '\0';
+    KTEST_EXPECT_TRUE(tc, k_strcmp((char *)read_base, expected_size) == 0);
     KTEST_EXPECT_EQ(tc,
                     syscall_handler(SYS_WRITE, (uint32_t)sys_fd,
                                     0x00800100u, 1u, 0, 0, 0),
@@ -1468,6 +1488,101 @@ static void test_linux_syscalls_support_busybox_identity_and_rt_sigmask(ktest_ca
     stop_syscall_test_process(cur);
 }
 
+static void test_linux_poll_and_select_wait_for_tty_input(ktest_case_t *tc)
+{
+    static process_t seed;
+    process_t *cur;
+    uint8_t *page;
+    uint8_t *poll_base;
+    uint32_t *readfds;
+    tty_t *tty;
+
+    tty_init();
+    tty = tty_get(0);
+    KTEST_ASSERT_NOT_NULL(tc, tty);
+    tty->termios.c_lflag = 0;
+
+    cur = start_syscall_test_process(&seed);
+    KTEST_ASSERT_NOT_NULL(tc, cur);
+    KTEST_ASSERT_EQ(tc, map_test_user_page(cur, 0x00800000u), 0u);
+    page = mapped_alias(cur, 0x00800000u);
+    KTEST_ASSERT_NOT_NULL(tc, page);
+    cur->files->open_files[0].type = FD_TYPE_TTY;
+    cur->files->open_files[0].writable = 0;
+    cur->files->open_files[0].u.tty.tty_idx = 0;
+
+    poll_base = page + 0x100u;
+    ((uint32_t *)poll_base)[0] = 0u;
+    ((uint32_t *)poll_base)[1] = TEST_LINUX_POLLIN;
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_POLL, 0x00800100u, 1u,
+                                    0, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc, ((uint32_t *)poll_base)[1] >> 16, 0u);
+
+    readfds = (uint32_t *)(page + 0x200u);
+    *readfds = 1u;
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS__NEWSELECT, 1u, 0x00800200u,
+                                    0, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc, *readfds, 0u);
+
+    tty_input_char(0, 'q');
+    ((uint32_t *)poll_base)[1] = TEST_LINUX_POLLIN;
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_POLL, 0x00800100u, 1u,
+                                    0, 0, 0, 0),
+                    1u);
+    KTEST_EXPECT_EQ(tc, ((uint32_t *)poll_base)[1] >> 16,
+                    TEST_LINUX_POLLIN);
+
+    stop_syscall_test_process(cur);
+}
+
+static void test_linux_termios_on_stdout_controls_foreground_tty(ktest_case_t *tc)
+{
+    static process_t seed;
+    process_t *cur;
+    uint8_t *page;
+    uint32_t *termios;
+    tty_t *tty;
+
+    tty_init();
+    tty = tty_get(0);
+    KTEST_ASSERT_NOT_NULL(tc, tty);
+    tty->termios.c_lflag = ICANON | ECHO | ISIG;
+
+    cur = start_syscall_test_process(&seed);
+    KTEST_ASSERT_NOT_NULL(tc, cur);
+    KTEST_ASSERT_EQ(tc, map_test_user_page(cur, 0x00800000u), 0u);
+    page = mapped_alias(cur, 0x00800000u);
+    KTEST_ASSERT_NOT_NULL(tc, page);
+    KTEST_EXPECT_EQ(tc, cur->files->open_files[1].type, FD_TYPE_TTY);
+    KTEST_EXPECT_EQ(tc, cur->files->open_files[1].u.tty.tty_idx, 0u);
+
+    termios = (uint32_t *)(page + 0x100u);
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_IOCTL, 1u, TEST_LINUX_TCGETS,
+                                    0x00800100u, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_TRUE(tc, (termios[0] & 0000400u) != 0u);
+    KTEST_EXPECT_TRUE(tc, (termios[3] & 0000002u) != 0u);
+    KTEST_EXPECT_EQ(tc, page[0x100u + 17u + 6u], 1u);
+    KTEST_EXPECT_EQ(tc, page[0x100u + 17u + 0u], 0x03u);
+
+    termios[0] &= ~0000400u;
+    termios[3] &= ~0000002u;
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_IOCTL, 1u, TEST_LINUX_TCSETS,
+                                    0x00800100u, 0, 0, 0),
+                    0u);
+    KTEST_EXPECT_EQ(tc, tty->termios.c_iflag & ICRNL, 0u);
+    KTEST_EXPECT_EQ(tc, tty->termios.c_lflag & ICANON, 0u);
+
+    stop_syscall_test_process(cur);
+}
+
 static void test_linux_syscalls_support_busybox_stdio_helpers(ktest_case_t *tc)
 {
     static process_t seed;
@@ -1494,6 +1609,10 @@ static void test_linux_syscalls_support_busybox_stdio_helpers(ktest_case_t *tc)
                     syscall_handler(SYS_WRITEV, 1, 0x00800000u,
                                     2, 0, 0, 0),
                     5u);
+    KTEST_EXPECT_EQ(tc,
+                    syscall_handler(SYS_WRITE, 1, 0x00800100u,
+                                    3, 0, 0, 0),
+                    3u);
 
     KTEST_EXPECT_EQ(tc,
                     syscall_handler(SYS_GETCWD, 0x00800500u,
@@ -1520,12 +1639,12 @@ static void test_linux_syscalls_support_busybox_stdio_helpers(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc,
                     syscall_handler(SYS_FCNTL64, 1, TEST_LINUX_F_GETFL,
                                     0, 0, 0, 0),
-                    1u);
+                    TEST_LINUX_O_RDWR);
     KTEST_EXPECT_EQ(tc,
                     syscall_handler(SYS_FCNTL64, 1, TEST_LINUX_F_DUPFD,
                                     4, 0, 0, 0),
                     4u);
-    KTEST_EXPECT_EQ(tc, cur->files->open_files[4].type, FD_TYPE_STDOUT);
+    KTEST_EXPECT_EQ(tc, cur->files->open_files[4].type, FD_TYPE_TTY);
 
     cur->files->open_files[3].type = FD_TYPE_FILE;
     cur->files->open_files[3].writable = 0;
@@ -1761,6 +1880,8 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_clone_process_without_vm_gets_distinct_group_and_as),
     KTEST_CASE(test_linux_syscalls_fill_uname_time_and_fstat64),
     KTEST_CASE(test_linux_syscalls_cover_blockdev_fd_path),
+    KTEST_CASE(test_linux_poll_and_select_wait_for_tty_input),
+    KTEST_CASE(test_linux_termios_on_stdout_controls_foreground_tty),
     KTEST_CASE(test_linux_syscalls_support_busybox_identity_and_rt_sigmask),
     KTEST_CASE(test_linux_syscalls_support_busybox_stdio_helpers),
     KTEST_CASE(test_linux_open_create_append_preserves_flags_and_data),

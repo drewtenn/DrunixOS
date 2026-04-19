@@ -170,6 +170,13 @@ static tty_t *syscall_tty_from_fd(process_t *cur, uint32_t fd,
     return tty;
 }
 
+static int syscall_fd_is_console_output(const file_handle_t *fh)
+{
+    if (!fh)
+        return 0;
+    return fh->type == FD_TYPE_TTY && fh->writable;
+}
+
 static int syscall_desktop_should_route_console_output(desktop_state_t *desktop,
                                                        process_t *cur)
 {
@@ -369,6 +376,24 @@ typedef struct {
 #define LINUX_TCSETSF 0x5404u
 #define LINUX_TIOCGWINSZ 0x5413u
 #define LINUX_FIONREAD 0x541Bu
+#define LINUX_ICRNL 0000400u
+#define LINUX_OPOST 0000001u
+#define LINUX_ONLCR 0000004u
+#define LINUX_ISIG 0000001u
+#define LINUX_ICANON 0000002u
+#define LINUX_ECHO 0000010u
+#define LINUX_ECHOE 0000020u
+#define LINUX_CREAD 0000200u
+#define LINUX_CS8 0000060u
+#define LINUX_B38400 0000017u
+#define LINUX_VTIME 5u
+#define LINUX_VMIN 6u
+#define LINUX_VINTR 0u
+#define LINUX_VERASE 2u
+#define LINUX_VEOF 4u
+#define LINUX_VSUSP 10u
+#define LINUX_VSTART 8u
+#define LINUX_VSTOP 9u
 #define LINUX_F_DUPFD 0u
 #define LINUX_F_GETFD 1u
 #define LINUX_F_SETFD 2u
@@ -583,7 +608,6 @@ static int linux_fd_stat_metadata(process_t *cur, uint32_t fd,
         break;
     case FD_TYPE_CHARDEV:
     case FD_TYPE_TTY:
-    case FD_TYPE_STDOUT:
         meta->mode = LINUX_S_IFCHR | 0600u;
         break;
     case FD_TYPE_BLOCKDEV: {
@@ -1179,7 +1203,7 @@ static uint32_t syscall_write_fd(uint32_t fd, uint32_t user_buf,
     if (fh->type == FD_TYPE_BLOCKDEV)
         return (uint32_t)-1;
 
-    if (fh->type == FD_TYPE_STDOUT) {
+    if (syscall_fd_is_console_output(fh)) {
         uint8_t kbuf[USER_IO_CHUNK];
         desktop_state_t *batch_desktop;
         int use_console_batch;
@@ -1657,8 +1681,7 @@ static uint32_t linux_poll_revents(process_t *cur, int32_t fd,
         return 0x0020u; /* POLLNVAL */
 
     if (events & LINUX_POLLOUT) {
-        if (fh->type == FD_TYPE_STDOUT || fh->type == FD_TYPE_PIPE_WRITE ||
-            fh->writable)
+        if (fh->type == FD_TYPE_PIPE_WRITE || fh->writable)
             rev |= LINUX_POLLOUT;
     }
 
@@ -1675,11 +1698,106 @@ static uint32_t linux_poll_revents(process_t *cur, int32_t fd,
             pipe_buf_t *pb = pipe_get((int)fh->u.pipe.pipe_idx);
             if (pb && (pb->count > 0 || pb->write_open == 0))
                 rev |= LINUX_POLLIN;
-        } else if (fh->type == FD_TYPE_TTY)
-            rev |= LINUX_POLLIN;
+        } else if (fh->type == FD_TYPE_TTY) {
+            if (tty_read_available((int)fh->u.tty.tty_idx) > 0)
+                rev |= LINUX_POLLIN;
+        }
     }
 
     return rev;
+}
+
+static uint32_t linux_termios_lflag_from_tty(const tty_t *tty)
+{
+    uint32_t lflag = 0;
+
+    if (!tty)
+        return 0;
+    if (tty->termios.c_lflag & ISIG)
+        lflag |= LINUX_ISIG;
+    if (tty->termios.c_lflag & ICANON)
+        lflag |= LINUX_ICANON;
+    if (tty->termios.c_lflag & ECHO)
+        lflag |= LINUX_ECHO;
+    if (tty->termios.c_lflag & ECHOE)
+        lflag |= LINUX_ECHOE;
+    return lflag;
+}
+
+static void linux_termios_to_tty(tty_t *tty, const uint8_t termios[60])
+{
+    uint32_t iflag;
+    uint32_t oflag;
+    uint32_t cflag;
+    uint32_t lflag;
+    termios_t out;
+    uint32_t i;
+
+    if (!tty || !termios)
+        return;
+
+    iflag = linux_get_u32(termios, 0u);
+    oflag = linux_get_u32(termios, 4u);
+    cflag = linux_get_u32(termios, 8u);
+    lflag = linux_get_u32(termios, 12u);
+    k_memset(&out, 0, sizeof(out));
+    out.c_iflag = 0;
+    if (iflag & LINUX_ICRNL)
+        out.c_iflag |= ICRNL;
+    out.c_oflag = 0;
+    if (oflag & LINUX_OPOST)
+        out.c_oflag |= OPOST;
+    if (oflag & LINUX_ONLCR)
+        out.c_oflag |= ONLCR;
+    out.c_cflag = 0;
+    if (cflag & LINUX_CREAD)
+        out.c_cflag |= CREAD;
+    if ((cflag & LINUX_CS8) == LINUX_CS8)
+        out.c_cflag |= CS8;
+    out.c_lflag = 0;
+    if (lflag & LINUX_ISIG)
+        out.c_lflag |= ISIG;
+    if (lflag & LINUX_ICANON)
+        out.c_lflag |= ICANON;
+    if (lflag & LINUX_ECHO)
+        out.c_lflag |= ECHO;
+    if (lflag & LINUX_ECHOE)
+        out.c_lflag |= ECHOE;
+    for (i = 0; i < NCCS && 17u + i < 60u; i++)
+        out.c_cc[i] = termios[17u + i];
+    tty->termios = out;
+}
+
+static void linux_termios_from_tty(const tty_t *tty, uint8_t termios[60])
+{
+    k_memset(termios, 0, 60u);
+    if (tty && (tty->termios.c_iflag & ICRNL))
+        linux_put_u32(termios, 0u, LINUX_ICRNL);
+    if (tty && (tty->termios.c_oflag & (OPOST | ONLCR))) {
+        uint32_t oflag = 0;
+        if (tty->termios.c_oflag & OPOST)
+            oflag |= LINUX_OPOST;
+        if (tty->termios.c_oflag & ONLCR)
+            oflag |= LINUX_ONLCR;
+        linux_put_u32(termios, 4u, oflag);
+    }
+    {
+        uint32_t cflag = LINUX_B38400;
+        if (!tty || (tty->termios.c_cflag & CS8))
+            cflag |= LINUX_CS8;
+        if (!tty || (tty->termios.c_cflag & CREAD))
+            cflag |= LINUX_CREAD;
+        linux_put_u32(termios, 8u, cflag);
+    }
+    linux_put_u32(termios, 12u, linux_termios_lflag_from_tty(tty));
+    if (tty) {
+        uint32_t i;
+        for (i = 0; i < NCCS && 17u + i < 60u; i++)
+            termios[17u + i] = tty->termios.c_cc[i];
+    } else {
+        termios[17u + LINUX_VTIME] = 0;
+        termios[17u + LINUX_VMIN] = 1;
+    }
 }
 
 static uint32_t syscall_ioctl(uint32_t fd, uint32_t request, uint32_t argp)
@@ -1696,11 +1814,18 @@ static uint32_t syscall_ioctl(uint32_t fd, uint32_t request, uint32_t argp)
     switch (request) {
     case LINUX_TIOCGWINSZ: {
         uint16_t ws[4];
+        desktop_state_t *desktop = desktop_is_active() ? desktop_global() : 0;
 
         if (argp == 0)
             return (uint32_t)-1;
-        ws[0] = 48u;
-        ws[1] = 128u;
+        if (desktop && desktop->shell_terminal.rows > 0 &&
+            desktop->shell_terminal.cols > 0) {
+            ws[0] = (uint16_t)desktop->shell_terminal.rows;
+            ws[1] = (uint16_t)desktop->shell_terminal.cols;
+        } else {
+            ws[0] = 25u;
+            ws[1] = 80u;
+        }
         ws[2] = 0;
         ws[3] = 0;
         if (uaccess_copy_to_user(cur, argp, ws, sizeof(ws)) != 0)
@@ -1727,6 +1852,8 @@ static uint32_t syscall_ioctl(uint32_t fd, uint32_t request, uint32_t argp)
                 return (uint32_t)-1;
             if (fh->u.proc.offset < size)
                 available = size - fh->u.proc.offset;
+        } else if (fh->type == FD_TYPE_TTY) {
+            available = tty_read_available((int)fh->u.tty.tty_idx);
         }
         if (uaccess_copy_to_user(cur, argp, &available,
                                  sizeof(available)) != 0)
@@ -1735,18 +1862,39 @@ static uint32_t syscall_ioctl(uint32_t fd, uint32_t request, uint32_t argp)
     }
     case LINUX_TCGETS: {
         uint8_t termios[60];
+        tty_t *tty;
 
         if (argp == 0)
             return (uint32_t)-1;
-        k_memset(termios, 0, sizeof(termios));
+        tty = syscall_tty_from_fd(cur, fd, 0);
+        if (!tty)
+            return (uint32_t)-1;
+        linux_termios_from_tty(tty, termios);
         if (uaccess_copy_to_user(cur, argp, termios, sizeof(termios)) != 0)
             return (uint32_t)-1;
         return 0;
     }
     case LINUX_TCSETS:
     case LINUX_TCSETSW:
-    case LINUX_TCSETSF:
+    case LINUX_TCSETSF: {
+        uint8_t termios[60];
+        tty_t *tty;
+
+        if (argp == 0)
+            return (uint32_t)-1;
+        tty = syscall_tty_from_fd(cur, fd, 0);
+        if (!tty)
+            return (uint32_t)-1;
+        if (uaccess_copy_from_user(cur, termios, argp, sizeof(termios)) != 0)
+            return (uint32_t)-1;
+        if (request == LINUX_TCSETSF) {
+            tty->raw_head = tty->raw_tail = 0;
+            tty->canon_len = 0;
+            tty->canon_ready = 0;
+        }
+        linux_termios_to_tty(tty, termios);
         return 0;
+    }
     default:
         return (uint32_t)-1;
     }
@@ -1792,7 +1940,7 @@ static uint32_t linux_fd_status_flags(const file_handle_t *fh)
 
     if (!fh)
         return 0;
-    if (fh->type == FD_TYPE_TTY && fh->writable)
+    if (fh->type == FD_TYPE_TTY)
         flags = LINUX_O_RDWR;
     else
         flags = fh->writable ? LINUX_O_WRONLY : 0u;
@@ -1865,7 +2013,7 @@ static uint32_t syscall_sendfile64(process_t *cur, uint32_t out_fd,
         return (uint32_t)-1;
     out = &proc_fd_entries(cur)[out_fd];
     in = &proc_fd_entries(cur)[in_fd];
-    if (out->type != FD_TYPE_STDOUT)
+    if (!syscall_fd_is_console_output(out))
         return (uint32_t)-1;
     if (in->type != FD_TYPE_FILE && in->type != FD_TYPE_SYSFILE &&
         in->type != FD_TYPE_PROCFILE)
@@ -2678,7 +2826,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_write(uint32_t eax, uint32_t ebx,
          * edx = number of bytes to write
          *
          * Dispatches on fd type:
-         *   FD_TYPE_STDOUT  → active desktop shell or legacy VGA console
+         *   writable TTY    → active desktop shell or VGA console
          *   FD_TYPE_FILE    → fs_write() into the DUFS inode
          *
          * Returns the number of bytes written, or -1 on error.

@@ -14,13 +14,12 @@
  * They wrap the per-process file descriptors the kernel pre-wires in
  * process_create():
  *
- *   stdin  → fd 0 (FD_TYPE_TTY, keyboard via TTY line discipline)
- *   stdout → fd 1 (FD_TYPE_STDOUT, VGA — but follows dup2 into a pipe)
- *   stderr → fd 2 (FD_TYPE_STDOUT, same as stdout initially)
+ *   stdin  -> fd 0 (controlling TTY by default)
+ *   stdout -> fd 1 (controlling TTY by default)
+ *   stderr -> fd 2 (controlling TTY by default)
  *
- * Because the kernel SYS_WRITE path already dispatches on fd type (VGA,
- * pipe buffer, or filesystem write), a printf built on sys_fwrite(1, ...)
- * transparently flows through a shell pipeline with zero special cases.
+ * Because the kernel SYS_WRITE path already dispatches on fd type, a printf
+ * built on sys_fwrite(1, ...) transparently flows through a shell pipeline.
  */
 
 #include "stdio.h"

@@ -6,6 +6,17 @@
 #include "../proc/wait.h"
 #include <stdint.h>
 
+/* ── termios input-flag bits (c_iflag) ─────────────────────────────────── */
+#define ICRNL   (1u << 0)   /* map CR to NL on input                    */
+
+/* ── termios output-flag bits (c_oflag) ────────────────────────────────── */
+#define OPOST   (1u << 0)   /* post-process output                      */
+#define ONLCR   (1u << 1)   /* map NL to CR-NL on output                */
+
+/* ── termios control-flag bits (c_cflag) ───────────────────────────────── */
+#define CREAD   (1u << 0)   /* enable receiver                          */
+#define CS8     (1u << 1)   /* 8-bit characters                         */
+
 /* ── termios local-flag bits (c_lflag) ─────────────────────────────────── */
 #define ICANON  (1u << 0)   /* canonical (line-buffered) mode            */
 #define ECHO    (1u << 1)   /* echo each input character back            */
@@ -16,9 +27,25 @@
 #define TCSANOW   0   /* apply change immediately                        */
 #define TCSAFLUSH 2   /* apply change after flushing unread input        */
 
-/* Minimal termios struct — only c_lflag is implemented for now. */
+#define NCCS    19
+#define VINTR   0
+#define VQUIT   1
+#define VERASE  2
+#define VKILL   3
+#define VEOF    4
+#define VTIME   5
+#define VMIN    6
+#define VSTART  8
+#define VSTOP   9
+#define VSUSP   10
+
+/* Minimal termios struct with Linux-shaped fields used by real TTY apps. */
 typedef struct {
+    uint32_t c_iflag;
+    uint32_t c_oflag;
+    uint32_t c_cflag;
     uint32_t c_lflag;
+    uint8_t  c_cc[NCCS];
 } termios_t;
 
 /* ── TTY line discipline ────────────────────────────────────────────────── */
@@ -40,7 +67,7 @@ typedef struct {
     uint32_t canon_len;    /* bytes assembled so far (including \n)      */
     uint32_t canon_ready;  /* 1 = a complete line is waiting to be read  */
 
-    termios_t termios;     /* current terminal settings; default c_lflag=0 */
+    termios_t termios;     /* current terminal settings                    */
     uint32_t  ctrl_sid;    /* controlling session ID (0 = unclaimed)       */
     uint32_t  fg_pgid;     /* foreground process group ID (0 = none set)   */
     wait_queue_t read_waiters; /* readers blocked for line/ring-buffer input */
@@ -49,8 +76,9 @@ typedef struct {
 
 /*
  * tty_init: zero-initialise the TTY table and mark the virtual TTY slots active.
- * Default mode: c_lflag = 0 (raw, no echo) so the existing shell readline
- * loop works unchanged.  Must be called before keyboard_init().
+ * Default mode follows a normal Linux terminal: canonical input, echo, signal
+ * keys, ICRNL, and standard control characters.  Must be called before
+ * keyboard_init().
  */
 void tty_init(void);
 
@@ -61,6 +89,12 @@ void tty_init(void);
  * according to termios.c_lflag.
  */
 void tty_input_char(int tty_idx, char c);
+
+/*
+ * tty_read_available: return the number of bytes currently readable without
+ * blocking from the selected TTY, honoring canonical vs raw mode.
+ */
+uint32_t tty_read_available(int tty_idx);
 
 /*
  * tty_ctrl_c: called when Ctrl+C is pressed.

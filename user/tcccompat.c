@@ -216,7 +216,7 @@ static int stage_ok(const char *stage, const char *path, char **argv, char **env
 int main(void)
 {
     char out[OUT_CAP];
-    char *envp[] = { "PATH=/bin", 0 };
+    char *envp[] = { "PATH=/usr/bin:/i686-linux-musl/bin:/bin", 0 };
     char *version_argv[] = { "tcc", "-v", 0 };
     char *compile_argv[] = { "tcc", "-nostdlib", "-static", "-o", "/tmp/tcchello",
                              "/tmp/tcchello.c", 0 };
@@ -232,7 +232,8 @@ int main(void)
     char *runtime_run_argv[] = { "/tmp/tccrt", 0 };
     char *readelf_argv[] = { "readelf", "-h", "/tmp/tccrt", 0 };
     char *objdump_argv[] = { "objdump", "-f", "/tmp/tccrt", 0 };
-    char *gcc_compile_argv[] = { "gcc", "-c", "-nostdinc", "-B/bin/", "-o",
+    char *gcc_as_argv[] = { "as", "--version", 0 };
+    char *gcc_compile_argv[] = { "gcc", "-c", "-nostdinc", "-o",
                                  "/tmp/gcchello.o", "/tmp/gcchello.c", 0 };
 
     log_fd = sys_create("/dufs/tcc.log");
@@ -301,7 +302,11 @@ int main(void)
         emit("TCCCOMPAT: gcc source write fail\n");
         goto fail;
     }
-    if (stage_ok("TCCCOMPAT: gcc compile", "/bin/gcc", gcc_compile_argv,
+    emit("TCCCOMPAT: gcc path env ok\n");
+    if (stage_ok("TCCCOMPAT: gcc as", "/usr/bin/as", gcc_as_argv,
+                 envp, "GNU assembler", out, sizeof(out)) != 0)
+        goto fail;
+    if (stage_ok("TCCCOMPAT: gcc compile", "/usr/bin/gcc", gcc_compile_argv,
                  envp, 0, out, sizeof(out)) != 0)
         goto fail;
 

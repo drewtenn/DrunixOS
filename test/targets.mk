@@ -87,10 +87,24 @@ test-tcc:
 	grep -q "TCCCOMPAT: readelf ok" $(LOG_DIR)/tcc.log
 	grep -q "TCCCOMPAT: objdump ok" $(LOG_DIR)/tcc.log
 	grep -q "TCCCOMPAT: gcc source write ok" $(LOG_DIR)/tcc.log
+	grep -q "TCCCOMPAT: gcc path env ok" $(LOG_DIR)/tcc.log
+	grep -q "TCCCOMPAT: gcc as ok" $(LOG_DIR)/tcc.log
 	grep -q "TCCCOMPAT: gcc compile ok" $(LOG_DIR)/tcc.log
 	grep -q "TCCCOMPAT PASS" $(LOG_DIR)/tcc.log
 	! grep -q "TCCCOMPAT FAIL" $(LOG_DIR)/tcc.log
 	! grep -Eq "unknown syscall|Unhandled syscall" $(LOG_DIR)/debugcon-tcc.log
+
+test-nano:
+	$(MAKE) KLOG_TO_DEBUGCON=1 INIT_PROGRAM=bin/nanocompat INIT_ARG0=nanocompat kernel disk
+	$(call prepare_test_images,nano,$(LOG_DIR)/nano.log)
+	$(call qemu_headless_for,nano,120)
+	$(PYTHON) tools/dufs_extract.py $(IMG_DIR)/dufs-nano.img nano.log $(LOG_DIR)/nano.log
+	cat $(LOG_DIR)/nano.log
+	grep -q "NANOCOMPAT: version ok" $(LOG_DIR)/nano.log
+	grep -q "NANOCOMPAT: write ok" $(LOG_DIR)/nano.log
+	grep -q "NANOCOMPAT PASS" $(LOG_DIR)/nano.log
+	! grep -q "NANOCOMPAT FAIL" $(LOG_DIR)/nano.log
+	! grep -Eq "unknown syscall|Unhandled syscall" $(LOG_DIR)/debugcon-nano.log
 
 # `test-ext3-linux-compat` — verify a freshly generated ext3 root with host
 #                            e2fsprogs, then boot Drunix writable ext3 smoke
@@ -131,4 +145,5 @@ test-ext3-host-write-interop:
 test-all:
 	$(MAKE) test-headless
 	$(MAKE) test-linux-abi
+	$(MAKE) test-nano
 	$(MAKE) test-halt

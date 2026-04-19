@@ -83,6 +83,9 @@ static int legacy_console_cursor_offset = -1;
 static unsigned char current_color = WHITE_ON_BLACK;
 static int ansi_state = 0;
 static int ansi_val = 0;
+static int ansi_params[4];
+static int ansi_param_count = 0;
+static int ansi_private = 0;
 
 void print_string(char *string);
 void print_bytes(const char *buf, int n);
@@ -1067,6 +1070,322 @@ static int console_putc_at(int offset, char c)
     return offset + 2;
 }
 
+static int console_csi_param(int index, int fallback)
+{
+    if (index < 0 || index >= ansi_param_count)
+        return fallback;
+    if (ansi_params[index] == 0)
+        return fallback;
+    return ansi_params[index];
+}
+
+static int console_move_cursor_to(int col, int row)
+{
+    if (col < 0)
+        col = 0;
+    if (row < 0)
+        row = 0;
+    if (col >= console_cols)
+        col = console_cols - 1;
+    if (row >= console_rows)
+        row = console_rows - 1;
+    return get_offset(col, row);
+}
+
+static void console_clear_line_from(int row, int col)
+{
+    unsigned char old_color = current_color;
+
+    if (row < 0 || row >= console_rows)
+        return;
+    if (col < 0)
+        col = 0;
+    if (col >= console_cols)
+        return;
+
+    current_color = WHITE_ON_BLACK;
+    for (int x = col; x < console_cols; x++)
+        set_char_at_video_memory(' ', get_offset(x, row));
+    current_color = old_color;
+}
+
+static void console_clear_screen_from(int offset)
+{
+    int cell = offset / 2;
+    int row = cell / console_cols;
+    int col = cell % console_cols;
+
+    console_clear_line_from(row, col);
+    for (int y = row + 1; y < console_rows; y++)
+        console_clear_line_from(y, 0);
+}
+
+static void console_erase_chars(int offset, int count)
+{
+    int cell = offset / 2;
+    int row = cell / console_cols;
+    int col = cell % console_cols;
+    unsigned char old_color = current_color;
+
+    if (row < 0 || row >= console_rows || col < 0 || col >= console_cols)
+        return;
+    if (count <= 0)
+        count = 1;
+    if (count > console_cols - col)
+        count = console_cols - col;
+
+    current_color = WHITE_ON_BLACK;
+    for (int i = 0; i < count; i++)
+        set_char_at_video_memory(' ', get_offset(col + i, row));
+    current_color = old_color;
+}
+
+static void console_delete_chars(int offset, int count)
+{
+    int cell = offset / 2;
+    int row = cell / console_cols;
+    int col = cell % console_cols;
+    unsigned char old_color = current_color;
+
+    if (row < 0 || row >= console_rows || col < 0 || col >= console_cols)
+        return;
+    if (count <= 0)
+        count = 1;
+    if (count > console_cols - col)
+        count = console_cols - col;
+
+    for (int x = col; x < console_cols - count; x++) {
+        int from = get_offset(x + count, row);
+        unsigned char ch;
+        unsigned char attr;
+
+        if (legacy_console_fb) {
+            gui_cell_t *src = &boot_fb_cells[row * console_cols + x + count];
+            ch = (unsigned char)src->ch;
+            attr = src->attr;
+        } else {
+            ch = (unsigned char)shadow_vga[row][(x + count) * 2];
+            attr = (unsigned char)shadow_vga[row][(x + count) * 2 + 1];
+        }
+        current_color = attr;
+        set_char_at_video_memory((char)ch, get_offset(x, row));
+        (void)from;
+    }
+    current_color = WHITE_ON_BLACK;
+    for (int x = console_cols - count; x < console_cols; x++)
+        set_char_at_video_memory(' ', get_offset(x, row));
+    current_color = old_color;
+}
+
+static void console_insert_chars(int offset, int count)
+{
+    int cell = offset / 2;
+    int row = cell / console_cols;
+    int col = cell % console_cols;
+    unsigned char old_color = current_color;
+
+    if (row < 0 || row >= console_rows || col < 0 || col >= console_cols)
+        return;
+    if (count <= 0)
+        count = 1;
+    if (count > console_cols - col)
+        count = console_cols - col;
+
+    for (int x = console_cols - count - 1; x >= col; x--) {
+        unsigned char ch;
+        unsigned char attr;
+
+        if (legacy_console_fb) {
+            gui_cell_t *src = &boot_fb_cells[row * console_cols + x];
+            ch = (unsigned char)src->ch;
+            attr = src->attr;
+        } else {
+            ch = (unsigned char)shadow_vga[row][x * 2];
+            attr = (unsigned char)shadow_vga[row][x * 2 + 1];
+        }
+        current_color = attr;
+        set_char_at_video_memory((char)ch, get_offset(x + count, row));
+    }
+    current_color = WHITE_ON_BLACK;
+    for (int x = col; x < col + count; x++)
+        set_char_at_video_memory(' ', get_offset(x, row));
+    current_color = old_color;
+}
+
+static void console_apply_ansi_color(int code)
+{
+    if (code == 0)
+        current_color = WHITE_ON_BLACK;
+    if (code == 31)
+        current_color = 0x0c;
+    if (code == 32)
+        current_color = 0x0a;
+    if (code == 33)
+        current_color = 0x0e;
+    if (code == 36)
+        current_color = 0x0b;
+    if (code == 7)
+        current_color = 0x70;
+    if (code == 27)
+        current_color = WHITE_ON_BLACK;
+}
+
+static void console_apply_csi(int *offset, char final)
+{
+    int n;
+
+    if (ansi_private) {
+        ansi_private = 0;
+        return;
+    }
+
+    switch (final) {
+    case 'm':
+        if (ansi_param_count == 0) {
+            console_apply_ansi_color(0);
+            break;
+        }
+        for (int i = 0; i < ansi_param_count; i++)
+            console_apply_ansi_color(ansi_params[i]);
+        break;
+    case 'H':
+    case 'f': {
+        int row = console_csi_param(0, 1) - 1;
+        int col = console_csi_param(1, 1) - 1;
+
+        *offset = console_move_cursor_to(col, row);
+        break;
+    }
+    case 'J':
+        n = console_csi_param(0, 0);
+        if (n == 0)
+            console_clear_screen_from(*offset);
+        else if (n == 2) {
+            for (int row = 0; row < console_rows; row++)
+                console_clear_line_from(row, 0);
+        }
+        break;
+    case 'K':
+        n = console_csi_param(0, 0);
+        if (n == 0) {
+            int cell = *offset / 2;
+            console_clear_line_from(cell / console_cols, cell % console_cols);
+        } else if (n == 2) {
+            console_clear_line_from((*offset / 2) / console_cols, 0);
+        }
+        break;
+    case 'A':
+        n = console_csi_param(0, 1);
+        *offset = console_move_cursor_to((*offset / 2) % console_cols,
+                                         ((*offset / 2) / console_cols) - n);
+        break;
+    case 'B':
+        n = console_csi_param(0, 1);
+        *offset = console_move_cursor_to((*offset / 2) % console_cols,
+                                         ((*offset / 2) / console_cols) + n);
+        break;
+    case 'C':
+        n = console_csi_param(0, 1);
+        *offset = console_move_cursor_to(((*offset / 2) % console_cols) + n,
+                                         (*offset / 2) / console_cols);
+        break;
+    case 'D':
+        n = console_csi_param(0, 1);
+        *offset = console_move_cursor_to(((*offset / 2) % console_cols) - n,
+                                         (*offset / 2) / console_cols);
+        break;
+    case 'X':
+        n = console_csi_param(0, 1);
+        console_erase_chars(*offset, n);
+        break;
+    case 'P':
+        n = console_csi_param(0, 1);
+        console_delete_chars(*offset, n);
+        break;
+    case '@':
+        n = console_csi_param(0, 1);
+        console_insert_chars(*offset, n);
+        break;
+    case 'r':
+    case 'h':
+    case 'l':
+        break;
+    default:
+        break;
+    }
+}
+
+static int console_consume_ansi(int *offset, char c)
+{
+    if (c == '\x0e' || c == '\x0f')
+        return 1;
+
+    if (c == '\x1b') {
+        ansi_state = 1;
+        ansi_val = 0;
+        ansi_param_count = 0;
+        ansi_private = 0;
+        return 1;
+    }
+
+    if (ansi_state == 1) {
+        if (c == '[') {
+            ansi_state = 2;
+            ansi_param_count = 0;
+            ansi_private = 0;
+        } else if (c == '(' || c == ')') {
+            ansi_state = 3;
+        } else {
+            ansi_state = 0;
+        }
+        return 1;
+    }
+
+    if (ansi_state == 2) {
+        if (c == '?') {
+            ansi_private = 1;
+            return 1;
+        }
+        if (c >= '0' && c <= '9') {
+            if (ansi_param_count == 0)
+                ansi_param_count = 1;
+            if (ansi_val >= 100) {
+                ansi_val = 999;
+            } else {
+                ansi_val = (ansi_val * 10) + (c - '0');
+                if (ansi_val > 999)
+                    ansi_val = 999;
+            }
+            ansi_params[ansi_param_count - 1] = ansi_val;
+            return 1;
+        }
+        if (c == ';') {
+            if (ansi_param_count == 0)
+                ansi_param_count = 1;
+            if (ansi_param_count < 4) {
+                ansi_param_count++;
+                ansi_params[ansi_param_count - 1] = 0;
+            }
+            ansi_val = 0;
+            return 1;
+        }
+        if (c >= '@' && c <= '~')
+            console_apply_csi(offset, c);
+        ansi_state = 0;
+        ansi_val = 0;
+        ansi_param_count = 0;
+        ansi_private = 0;
+        return 1;
+    }
+
+    if (ansi_state == 3) {
+        ansi_state = 0;
+        return 1;
+    }
+
+    return 0;
+}
+
 void print_string(char *string)
 {
     if (sb_view > 0)
@@ -1076,44 +1395,7 @@ void print_string(char *string)
     while (string[i] != 0)
     {
         char c = string[i];
-        if (c == '\x1b')
-        {
-            ansi_state = 1;
-            ansi_val = 0;
-            i++;
-            continue;
-        }
-        if (ansi_state == 1)
-        {
-            ansi_state = (c == '[') ? 2 : 0;
-            i++;
-            continue;
-        }
-        if (ansi_state == 2)
-        {
-            if (c >= '0' && c <= '9')
-            {
-                ansi_val = (ansi_val * 10) + (c - '0');
-                i++;
-                continue;
-            }
-            if (c == 'm')
-            {
-                if (ansi_val == 0)
-                    current_color = WHITE_ON_BLACK;
-                if (ansi_val == 31)
-                    current_color = 0x0c; /* L. Red */
-                if (ansi_val == 32)
-                    current_color = 0x0a; /* L. Green */
-                if (ansi_val == 33)
-                    current_color = 0x0e; /* Yellow */
-                if (ansi_val == 36)
-                    current_color = 0x0b; /* L. Cyan */
-                ansi_state = 0;
-                i++;
-                continue;
-            }
-            ansi_state = 0;
+        if (console_consume_ansi(&offset, c)) {
             i++;
             continue;
         }
@@ -1143,42 +1425,8 @@ void print_bytes(const char *buf, int n)
     for (int i = 0; i < n; i++)
     {
         char c = buf[i];
-        if (c == '\x1b')
-        {
-            ansi_state = 1;
-            ansi_val = 0;
+        if (console_consume_ansi(&offset, c))
             continue;
-        }
-        if (ansi_state == 1)
-        {
-            ansi_state = (c == '[') ? 2 : 0;
-            continue;
-        }
-        if (ansi_state == 2)
-        {
-            if (c >= '0' && c <= '9')
-            {
-                ansi_val = (ansi_val * 10) + (c - '0');
-                continue;
-            }
-            if (c == 'm')
-            {
-                if (ansi_val == 0)
-                    current_color = WHITE_ON_BLACK;
-                if (ansi_val == 31)
-                    current_color = 0x0c;
-                if (ansi_val == 32)
-                    current_color = 0x0a;
-                if (ansi_val == 33)
-                    current_color = 0x0e;
-                if (ansi_val == 36)
-                    current_color = 0x0b;
-                ansi_state = 0;
-                continue;
-            }
-            ansi_state = 0;
-            continue;
-        }
 
         offset = console_putc_at(offset, c);
     }

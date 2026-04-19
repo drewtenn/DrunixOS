@@ -18,14 +18,13 @@ typedef int ssize_t;
  * The three standard streams are static FILE structs in stdio.c that wrap
  * the kernel-provided file descriptors:
  *
- *   stdin  → fd 0 (FD_TYPE_TTY in the kernel, line-disciplined keyboard)
- *   stdout → fd 1 (FD_TYPE_STDOUT, routed to VGA by SYS_WRITE, but will
- *                  transparently follow a dup2 into a pipe or file)
- *   stderr → fd 2 (FD_TYPE_STDOUT, same as stdout by default)
+ *   stdin  -> fd 0 (controlling TTY by default)
+ *   stdout -> fd 1 (controlling TTY by default)
+ *   stderr -> fd 2 (controlling TTY by default)
  *
  * Because the kernel already dispatches SYS_WRITE on the per-process fd type,
- * printf going through sys_fwrite(stdout->fd, ...) flows through a
- * shell pipeline with no special cases in libc.
+ * printf going through sys_fwrite(stdout->fd, ...) flows through a shell
+ * pipeline with no special cases in libc.
  */
 
 #define EOF (-1)

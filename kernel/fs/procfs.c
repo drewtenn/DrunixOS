@@ -324,9 +324,6 @@ static void procfs_render_fd(render_buf_t *rb, const process_t *proc, uint32_t f
         procfs_emitf(rb, "type=chardev name=%s writable=%u\n",
                      fh->u.chardev.name, fh->writable);
         break;
-    case FD_TYPE_STDOUT:
-        procfs_emitf(rb, "type=stdout target=vga writable=%u\n", fh->writable);
-        break;
     case FD_TYPE_PIPE_READ:
         procfs_emitf(rb, "type=pipe dir=read pipe=%u\n", fh->u.pipe.pipe_idx);
         break;

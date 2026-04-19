@@ -55,18 +55,43 @@ typedef struct {
 
 /* ── TTY / termios ─────────────────────────────────────────────────────── */
 
+/* termios c_iflag bits */
+#define ICRNL   (1u << 0)   /* map CR to NL on input       */
+
+/* termios c_oflag bits */
+#define OPOST   (1u << 0)   /* post-process output         */
+#define ONLCR   (1u << 1)   /* map NL to CR-NL on output   */
+
+/* termios c_cflag bits */
+#define CREAD   (1u << 0)   /* enable receiver             */
+#define CS8     (1u << 1)   /* 8-bit characters            */
+
 /* termios c_lflag bits */
 #define ICANON  (1u << 0)   /* canonical (line-buffered) mode */
 #define ECHO    (1u << 1)   /* echo input characters          */
 #define ECHOE   (1u << 2)   /* echo ERASE as BS SP BS         */
 #define ISIG    (1u << 3)   /* generate SIGINT on Ctrl+C      */
 
+#define NCCS    19
+#define VINTR   0
+#define VERASE  2
+#define VEOF    4
+#define VTIME   5
+#define VMIN    6
+#define VSTART  8
+#define VSTOP   9
+#define VSUSP   10
+
 /* sys_tcsetattr `action` values */
 #define TCSANOW   0
 #define TCSAFLUSH 2
 
 typedef struct {
+    unsigned int c_iflag;
+    unsigned int c_oflag;
+    unsigned int c_cflag;
     unsigned int c_lflag;
+    unsigned char c_cc[NCCS];
 } termios_t;
 
 typedef struct {

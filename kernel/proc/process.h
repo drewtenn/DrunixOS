@@ -91,14 +91,13 @@ typedef enum {
     FD_TYPE_NONE       = 0,  /* slot is free                          */
     FD_TYPE_FILE       = 1,  /* VFS-backed regular file               */
     FD_TYPE_CHARDEV    = 2,  /* character device (e.g. keyboard)      */
-    FD_TYPE_STDOUT     = 3,  /* VGA console output via print_bytes()  */
-    FD_TYPE_PIPE_READ  = 4,  /* read end of a kernel pipe             */
-    FD_TYPE_PIPE_WRITE = 5,  /* write end of a kernel pipe            */
-    FD_TYPE_TTY        = 6,  /* TTY line discipline (stdin)           */
-    FD_TYPE_PROCFILE   = 7,  /* synthetic procfs file                 */
-    FD_TYPE_DIR        = 8,  /* directory fd for Linux getdents64     */
-    FD_TYPE_BLOCKDEV   = 9,  /* read-only block device fd             */
-    FD_TYPE_SYSFILE    = 10, /* synthetic sysfs file                  */
+    FD_TYPE_PIPE_READ  = 3,  /* read end of a kernel pipe             */
+    FD_TYPE_PIPE_WRITE = 4,  /* write end of a kernel pipe            */
+    FD_TYPE_TTY        = 5,  /* controlling terminal fd               */
+    FD_TYPE_PROCFILE   = 6,  /* synthetic procfs file                 */
+    FD_TYPE_DIR        = 7,  /* directory fd for Linux getdents64     */
+    FD_TYPE_BLOCKDEV   = 8,  /* read-only block device fd             */
+    FD_TYPE_SYSFILE    = 9,  /* synthetic sysfs file                  */
 } fd_type_t;
 
 /*
@@ -334,7 +333,7 @@ typedef struct process {
  * envc:        number of valid entries in envp (not counting the terminator).
  * inherit_fds: if non-NULL, the new process inherits this fd table (pipe
  *              refcounts are bumped).  Pass NULL to give the process the
- *              default stdin (keyboard) / stdout / stderr (VGA) setup.
+ *              default stdin/stdout/stderr controlling TTY setup.
  *
  * Lays out argc/argv/envp/auxv/strings at the top of the new process's user
  * stack in Linux/System V i386 ABI order, with ESP pointing at argc on entry.

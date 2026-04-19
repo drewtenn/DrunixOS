@@ -16,6 +16,25 @@ void sched_send_signal_to_pgid(uint32_t pgid, int signum);
 
 static tty_t tty_table[MAX_TTYS];
 
+static void tty_termios_set_defaults(termios_t *termios)
+{
+    if (!termios)
+        return;
+    k_memset(termios, 0, sizeof(*termios));
+    termios->c_iflag = ICRNL;
+    termios->c_oflag = OPOST | ONLCR;
+    termios->c_cflag = CREAD | CS8;
+    termios->c_lflag = ICANON | ECHO | ECHOE | ISIG;
+    termios->c_cc[VINTR] = 0x03;
+    termios->c_cc[VEOF] = 0x04;
+    termios->c_cc[VERASE] = 0x7f;
+    termios->c_cc[VMIN] = 1;
+    termios->c_cc[VTIME] = 0;
+    termios->c_cc[VSUSP] = 0x1a;
+    termios->c_cc[VSTART] = 0x11;
+    termios->c_cc[VSTOP] = 0x13;
+}
+
 static void tty_feedback(const char *buf, uint32_t len)
 {
     desktop_state_t *desktop = desktop_is_active() ? desktop_global() : 0;
@@ -36,7 +55,7 @@ void tty_init(void)
         t->raw_head = t->raw_tail = 0;
         t->canon_len = 0;
         t->canon_ready = 0;
-        t->termios.c_lflag = 0; /* raw, no echo — preserves shell readline */
+        tty_termios_set_defaults(&t->termios);
         t->ctrl_sid = 0;
         t->fg_pgid = 0;
         t->read_waiters.head = 0;
@@ -59,6 +78,19 @@ void tty_wake_readers(int tty_idx)
     sched_wake_all(&tty->read_waiters);
 }
 
+uint32_t tty_read_available(int tty_idx)
+{
+    tty_t *tty = tty_get(tty_idx);
+
+    if (!tty)
+        return 0;
+    if (tty->termios.c_lflag & ICANON)
+        return tty->canon_ready ? tty->canon_len : 0;
+    if (tty->raw_head >= tty->raw_tail)
+        return tty->raw_head - tty->raw_tail;
+    return TTY_RAW_BUF_SIZE - tty->raw_tail + tty->raw_head;
+}
+
 /*
  * tty_input_char — called from the keyboard IRQ handler (interrupt context).
  *
@@ -73,21 +105,27 @@ void tty_input_char(int tty_idx, char c)
     tty_t *tty = tty_get(tty_idx);
     if (!tty) return;
 
-    /* Ctrl+C */
-    if (c == 0x03 && (tty->termios.c_lflag & ISIG)) {
+    if (c == '\r' && (tty->termios.c_iflag & ICRNL))
+        c = '\n';
+
+    /* VINTR, usually Ctrl+C. */
+    if (c == (char)tty->termios.c_cc[VINTR] &&
+        (tty->termios.c_lflag & ISIG)) {
         tty_ctrl_c(tty_idx);
         return;
     }
 
-    /* Ctrl+Z (SUB, 0x1A) */
-    if (c == 0x1A && (tty->termios.c_lflag & ISIG)) {
+    /* VSUSP, usually Ctrl+Z. */
+    if (c == (char)tty->termios.c_cc[VSUSP] &&
+        (tty->termios.c_lflag & ISIG)) {
         tty_ctrl_z(tty_idx);
         return;
     }
 
     if (tty->termios.c_lflag & ICANON) {
         /* Canonical mode */
-        if (c == '\b' || c == 0x7f) {
+        if (c == '\b' || c == 0x7f ||
+            c == (char)tty->termios.c_cc[VERASE]) {
             /* Backspace / DEL: erase last character */
             if (tty->canon_len > 0) {
                 tty->canon_len--;
@@ -187,6 +225,8 @@ int tty_read(int tty_idx, char *buf, uint32_t count)
                 }
                 return (int)n;
             }
+            if (tty->termios.c_cc[VMIN] == 0)
+                return 0;
         }
 
         /* No data available — block until the keyboard IRQ wakes us */

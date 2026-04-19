@@ -23,7 +23,7 @@ static const char scancode_ascii[] = {
     '\b', /* 0x0E backspace */
     '\t', /* 0x0F tab */
     'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']',
-    '\n', /* 0x1C enter */
+    '\r', /* 0x1C enter */
     0,    /* 0x1D left ctrl */
     'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`',
     0,    /* 0x2A left shift */
@@ -43,7 +43,7 @@ static const char scancode_ascii_shifted[] = {
     '\b', /* 0x0E backspace */
     '\t', /* 0x0F tab */
     'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}',
-    '\n', /* 0x1C enter */
+    '\r', /* 0x1C enter */
     0,    /* 0x1D left ctrl */
     'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '"', '~',
     0,    /* 0x2A left shift */
@@ -66,6 +66,27 @@ static int  kb_tail = 0;
 static int e0_prefix  = 0;  /* set when 0xE0 extended scancode prefix is seen */
 static int shift_held = 0;  /* non-zero while either shift key is depressed */
 static int ctrl_held  = 0;  /* non-zero while Ctrl is depressed */
+
+int keyboard_ascii_for_scancode_for_test(uint8_t scancode, int shift_down,
+                                         int ctrl_down, char *out)
+{
+    char c;
+
+    if (!out || scancode >= SCANCODE_MAX)
+        return 0;
+    c = shift_down ? scancode_ascii_shifted[scancode]
+                   : scancode_ascii[scancode];
+    if (!c)
+        return 0;
+    if (ctrl_down) {
+        if (c >= 'a' && c <= 'z')
+            c = (char)(c - 'a' + 1);
+        else if (c >= 'A' && c <= 'Z')
+            c = (char)(c - 'A' + 1);
+    }
+    *out = c;
+    return 1;
+}
 
 static void keyboard_deliver_char(char c)
 {
@@ -114,18 +135,6 @@ void keyboard_handler(void) {
     if (scancode == 0x2A || scancode == 0x36) { shift_held = 1; return; }
     if (scancode == 0x1D) { ctrl_held = 1; return; }
 
-    /* Ctrl+C (scancode 0x2E = 'c'): send SIGINT to the foreground process. */
-    if (ctrl_held && scancode == 0x2E) {
-        sched_send_sigint_foreground();
-        return;
-    }
-
-    /* Ctrl+Z (scancode 0x2C = 'z'): send SIGTSTP to the foreground process. */
-    if (ctrl_held && scancode == 0x2C) {
-        tty_ctrl_z(0);
-        return;
-    }
-
     if (e0_prefix) {
         e0_prefix = 0;
         if (scancode == 0x49) keyboard_deliver_char('\x01');  /* Page Up   → SOH */
@@ -135,9 +144,10 @@ void keyboard_handler(void) {
     }
 
     if (scancode < SCANCODE_MAX) {
-        char c = shift_held ? scancode_ascii_shifted[scancode]
-                            : scancode_ascii[scancode];
-        if (c) keyboard_deliver_char(c);
+        char c;
+        if (keyboard_ascii_for_scancode_for_test(scancode, shift_held,
+                                                 ctrl_held, &c))
+            keyboard_deliver_char(c);
     }
 }
 

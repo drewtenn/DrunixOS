@@ -1,5 +1,5 @@
 include programs.mk
-CLEAN_PROGS = $(filter-out $(LINUX_BUSYBOX_PROGS) $(LINUX_TCC_PROGS) $(LINUX_BINUTILS_PROGS) $(LINUX_GCC_PROGS),$(PROGS))
+CLEAN_PROGS = $(filter-out $(LINUX_BUSYBOX_PROGS) $(LINUX_TCC_PROGS) $(LINUX_BINUTILS_PROGS) $(LINUX_NANO_PROGS) $(LINUX_GCC_PROGS),$(PROGS))
 
 all: $(PROGS)
 
@@ -18,6 +18,8 @@ TCC_VERSION ?= 0.9.27
 TCC_BUILD_DIR ?= ../build/tcc
 BINUTILS_VERSION ?= 2.42
 BINUTILS_BUILD_DIR ?= ../build/binutils
+NANO_VERSION ?= 9.0
+NANO_BUILD_DIR ?= ../build/nano
 GCC_TOOLCHAIN_VERSION ?= 11.2.1
 GCC_TOOLCHAIN_BUILD_DIR ?= ../build/gcc
 CFLAGS = -m32 -ffreestanding -nostdlib -fno-pie -no-pie \
@@ -107,6 +109,9 @@ $(LINUX_TCC_PROGS):
 
 $(LINUX_BINUTILS_PROGS):
 	../tools/build_linux_binutils.sh $@ $(BINUTILS_VERSION) $(BINUTILS_BUILD_DIR)
+
+$(LINUX_NANO_PROGS):
+	../tools/build_linux_nano.sh $@ $(NANO_VERSION) $(NANO_BUILD_DIR)
 
 $(LINUX_GCC_PROGS):
 	../tools/build_linux_gcc_tool.sh $@ gcc $(GCC_TOOLCHAIN_VERSION) $(GCC_TOOLCHAIN_BUILD_DIR)

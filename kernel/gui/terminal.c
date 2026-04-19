@@ -9,6 +9,7 @@ static void terminal_clear_line(gui_terminal_t *term, int row);
 static void terminal_push_history(gui_terminal_t *term, const gui_cell_t *row);
 static void terminal_scroll_up(gui_terminal_t *term);
 static void terminal_apply_ansi(gui_terminal_t *term, int code);
+static void terminal_apply_csi(gui_terminal_t *term, char final);
 static void terminal_apply_char(gui_terminal_t *term, char c);
 static int terminal_intersect_pixel_rect(gui_pixel_rect_t a,
                                          gui_pixel_rect_t b,
@@ -16,6 +17,10 @@ static int terminal_intersect_pixel_rect(gui_pixel_rect_t a,
 static void terminal_vga_color(uint8_t color, uint8_t *r, uint8_t *g,
                                uint8_t *b);
 static uint32_t terminal_cell_fg_color(const gui_terminal_t *term,
+                                       const gui_pixel_theme_t *theme,
+                                       const gui_cell_t *cell,
+                                       const framebuffer_info_t *fb);
+static uint32_t terminal_cell_bg_color(const gui_terminal_t *term,
                                        const gui_pixel_theme_t *theme,
                                        const gui_cell_t *cell,
                                        const framebuffer_info_t *fb);
@@ -206,6 +211,130 @@ static void terminal_clear_line(gui_terminal_t *term, int row)
         term->live[base + (uint32_t)col] = blank;
 }
 
+static void terminal_clear_line_from(gui_terminal_t *term, int row, int col)
+{
+    gui_cell_t blank = { ' ', 0 };
+    uint32_t base;
+    uint32_t cols;
+
+    if (!term || !term->live || row < 0 || row >= term->rows)
+        return;
+    if (col < 0)
+        col = 0;
+    if (col >= term->cols)
+        return;
+
+    blank.attr = term->default_attr;
+    cols = (uint32_t)term->cols;
+    base = (uint32_t)row * cols;
+    for (int x = col; x < term->cols; x++)
+        term->live[base + (uint32_t)x] = blank;
+}
+
+static void terminal_clear_screen_from(gui_terminal_t *term)
+{
+    if (!term)
+        return;
+
+    terminal_clear_line_from(term, term->cursor_y, term->cursor_x);
+    for (int row = term->cursor_y + 1; row < term->rows; row++)
+        terminal_clear_line(term, row);
+}
+
+static void terminal_move_cursor(gui_terminal_t *term, int x, int y)
+{
+    if (!term)
+        return;
+
+    if (x < 0)
+        x = 0;
+    if (y < 0)
+        y = 0;
+    if (x >= term->cols)
+        x = term->cols - 1;
+    if (y >= term->rows)
+        y = term->rows - 1;
+
+    term->cursor_x = x;
+    term->cursor_y = y;
+    term->wrap_pending = 0;
+}
+
+static void terminal_erase_chars(gui_terminal_t *term, int count)
+{
+    gui_cell_t blank = { ' ', 0 };
+    uint32_t base;
+
+    if (!term || !term->live || term->cursor_y < 0 ||
+        term->cursor_y >= term->rows)
+        return;
+    if (count <= 0)
+        count = 1;
+    if (term->cursor_x < 0 || term->cursor_x >= term->cols)
+        return;
+    if (count > term->cols - term->cursor_x)
+        count = term->cols - term->cursor_x;
+
+    blank.attr = term->default_attr;
+    base = (uint32_t)term->cursor_y * (uint32_t)term->cols;
+    for (int i = 0; i < count; i++)
+        term->live[base + (uint32_t)(term->cursor_x + i)] = blank;
+}
+
+static void terminal_delete_chars(gui_terminal_t *term, int count)
+{
+    gui_cell_t blank = { ' ', 0 };
+    uint32_t base;
+    int tail;
+
+    if (!term || !term->live || term->cursor_y < 0 ||
+        term->cursor_y >= term->rows)
+        return;
+    if (count <= 0)
+        count = 1;
+    if (term->cursor_x < 0 || term->cursor_x >= term->cols)
+        return;
+    if (count > term->cols - term->cursor_x)
+        count = term->cols - term->cursor_x;
+
+    blank.attr = term->default_attr;
+    base = (uint32_t)term->cursor_y * (uint32_t)term->cols;
+    tail = term->cols - term->cursor_x - count;
+    if (tail > 0)
+        k_memmove(&term->live[base + (uint32_t)term->cursor_x],
+                  &term->live[base + (uint32_t)(term->cursor_x + count)],
+                  (uint32_t)tail * sizeof(gui_cell_t));
+    for (int i = term->cols - count; i < term->cols; i++)
+        term->live[base + (uint32_t)i] = blank;
+}
+
+static void terminal_insert_chars(gui_terminal_t *term, int count)
+{
+    gui_cell_t blank = { ' ', 0 };
+    uint32_t base;
+    int tail;
+
+    if (!term || !term->live || term->cursor_y < 0 ||
+        term->cursor_y >= term->rows)
+        return;
+    if (count <= 0)
+        count = 1;
+    if (term->cursor_x < 0 || term->cursor_x >= term->cols)
+        return;
+    if (count > term->cols - term->cursor_x)
+        count = term->cols - term->cursor_x;
+
+    blank.attr = term->default_attr;
+    base = (uint32_t)term->cursor_y * (uint32_t)term->cols;
+    tail = term->cols - term->cursor_x - count;
+    if (tail > 0)
+        k_memmove(&term->live[base + (uint32_t)(term->cursor_x + count)],
+                  &term->live[base + (uint32_t)term->cursor_x],
+                  (uint32_t)tail * sizeof(gui_cell_t));
+    for (int i = 0; i < count; i++)
+        term->live[base + (uint32_t)(term->cursor_x + i)] = blank;
+}
+
 static void terminal_push_history(gui_terminal_t *term, const gui_cell_t *row)
 {
     uint32_t capacity;
@@ -268,6 +397,99 @@ static void terminal_apply_ansi(gui_terminal_t *term, int code)
         term->attr = 0x0e;
     if (code == 36)
         term->attr = 0x0b;
+    if (code == 7)
+        term->attr = 0x70;
+    if (code == 27)
+        term->attr = term->default_attr;
+}
+
+static int terminal_csi_param(const gui_terminal_t *term, int index, int fallback)
+{
+    if (!term || index < 0 || index >= term->ansi_param_count)
+        return fallback;
+    if (term->ansi_params[index] == 0)
+        return fallback;
+    return term->ansi_params[index];
+}
+
+static void terminal_apply_csi(gui_terminal_t *term, char final)
+{
+    int n;
+
+    if (!term)
+        return;
+    if (term->ansi_private) {
+        term->ansi_private = 0;
+        return;
+    }
+
+    switch (final) {
+    case 'm':
+        if (term->ansi_param_count == 0) {
+            terminal_apply_ansi(term, 0);
+            break;
+        }
+        for (int i = 0; i < term->ansi_param_count; i++)
+            terminal_apply_ansi(term, term->ansi_params[i]);
+        break;
+    case 'H':
+    case 'f': {
+        int row = terminal_csi_param(term, 0, 1) - 1;
+        int col = terminal_csi_param(term, 1, 1) - 1;
+
+        terminal_move_cursor(term, col, row);
+        break;
+    }
+    case 'J':
+        n = terminal_csi_param(term, 0, 0);
+        if (n == 0)
+            terminal_clear_screen_from(term);
+        else if (n == 2)
+            for (int row = 0; row < term->rows; row++)
+                terminal_clear_line(term, row);
+        break;
+    case 'K':
+        n = terminal_csi_param(term, 0, 0);
+        if (n == 0)
+            terminal_clear_line_from(term, term->cursor_y, term->cursor_x);
+        else if (n == 2)
+            terminal_clear_line(term, term->cursor_y);
+        break;
+    case 'A':
+        n = terminal_csi_param(term, 0, 1);
+        terminal_move_cursor(term, term->cursor_x, term->cursor_y - n);
+        break;
+    case 'B':
+        n = terminal_csi_param(term, 0, 1);
+        terminal_move_cursor(term, term->cursor_x, term->cursor_y + n);
+        break;
+    case 'C':
+        n = terminal_csi_param(term, 0, 1);
+        terminal_move_cursor(term, term->cursor_x + n, term->cursor_y);
+        break;
+    case 'D':
+        n = terminal_csi_param(term, 0, 1);
+        terminal_move_cursor(term, term->cursor_x - n, term->cursor_y);
+        break;
+    case 'X':
+        n = terminal_csi_param(term, 0, 1);
+        terminal_erase_chars(term, n);
+        break;
+    case 'P':
+        n = terminal_csi_param(term, 0, 1);
+        terminal_delete_chars(term, n);
+        break;
+    case '@':
+        n = terminal_csi_param(term, 0, 1);
+        terminal_insert_chars(term, n);
+        break;
+    case 'r':
+    case 'h':
+    case 'l':
+        break;
+    default:
+        break;
+    }
 }
 
 static void terminal_apply_char(gui_terminal_t *term, char c)
@@ -278,16 +500,32 @@ static void terminal_apply_char(gui_terminal_t *term, char c)
     if (c == '\x1b') {
         term->ansi_state = 1;
         term->ansi_val = 0;
+        term->ansi_param_count = 0;
+        term->ansi_private = 0;
         return;
     }
 
     if (term->ansi_state == 1) {
-        term->ansi_state = (c == '[') ? 2 : 0;
+        if (c == '[') {
+            term->ansi_state = 2;
+            term->ansi_param_count = 0;
+            term->ansi_private = 0;
+        } else if (c == '(' || c == ')') {
+            term->ansi_state = 3;
+        } else {
+            term->ansi_state = 0;
+        }
         return;
     }
 
     if (term->ansi_state == 2) {
+        if (c == '?') {
+            term->ansi_private = 1;
+            return;
+        }
         if (c >= '0' && c <= '9') {
+            if (term->ansi_param_count == 0)
+                term->ansi_param_count = 1;
             if (term->ansi_val >= 100) {
                 term->ansi_val = 999;
             } else {
@@ -295,16 +533,35 @@ static void terminal_apply_char(gui_terminal_t *term, char c)
                 if (term->ansi_val > 999)
                     term->ansi_val = 999;
             }
+            term->ansi_params[term->ansi_param_count - 1] = term->ansi_val;
             return;
         }
-        if (c == 'm') {
-            terminal_apply_ansi(term, term->ansi_val);
-            term->ansi_state = 0;
+        if (c == ';') {
+            if (term->ansi_param_count == 0)
+                term->ansi_param_count = 1;
+            if (term->ansi_param_count < 4) {
+                term->ansi_param_count++;
+                term->ansi_params[term->ansi_param_count - 1] = 0;
+            }
+            term->ansi_val = 0;
             return;
         }
+        if (c >= '@' && c <= '~')
+            terminal_apply_csi(term, c);
+        term->ansi_state = 0;
+        term->ansi_val = 0;
+        term->ansi_param_count = 0;
+        term->ansi_private = 0;
+        return;
+    }
+
+    if (term->ansi_state == 3) {
         term->ansi_state = 0;
         return;
     }
+
+    if (c == '\x0e' || c == '\x0f')
+        return;
 
     if (c == '\r') {
         term->cursor_x = 0;
@@ -452,6 +709,8 @@ void gui_terminal_clear(gui_terminal_t *term)
     term->wrap_pending = 0;
     term->ansi_state = 0;
     term->ansi_val = 0;
+    term->ansi_param_count = 0;
+    term->ansi_private = 0;
     term->attr = term->default_attr;
     term->view_top = 0;
     term->live_view = 1;
@@ -644,6 +903,31 @@ static uint32_t terminal_cell_fg_color(const gui_terminal_t *term,
     return framebuffer_pack_rgb(fb, r, g, b);
 }
 
+static uint32_t terminal_cell_bg_color(const gui_terminal_t *term,
+                                       const gui_pixel_theme_t *theme,
+                                       const gui_cell_t *cell,
+                                       const framebuffer_info_t *fb)
+{
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+    uint8_t bg;
+    uint8_t default_bg;
+
+    if (!theme)
+        return 0;
+    if (!cell || !term || !fb)
+        return theme->terminal_bg;
+
+    bg = (cell->attr >> 4) & 0x0f;
+    default_bg = (term->default_attr >> 4) & 0x0f;
+    if (cell->attr == term->default_attr || bg == default_bg)
+        return theme->terminal_bg;
+
+    terminal_vga_color(bg, &r, &g, &b);
+    return framebuffer_pack_rgb(fb, r, g, b);
+}
+
 static void terminal_render_cell(const framebuffer_info_t *fb,
                                  const gui_terminal_t *term,
                                  const gui_pixel_theme_t *theme,
@@ -654,6 +938,7 @@ static void terminal_render_cell(const framebuffer_info_t *fb,
 {
     const uint8_t *glyph;
     uint32_t fg;
+    uint32_t bg;
     uintptr_t base;
     uint32_t row_pitch;
     int64_t fb_w;
@@ -718,20 +1003,37 @@ static void terminal_render_cell(const framebuffer_info_t *fb,
     if (col_start >= col_end || row_start >= row_end)
         return;
 
+    bg = terminal_cell_bg_color(term, theme, cell, fb);
+    if (bg != theme->terminal_bg) {
+        int64_t bg_x = cell_x + (int64_t)col_start;
+        int64_t bg_y = cell_y + (int64_t)row_start;
+        int bg_w = col_end - col_start;
+        int bg_h = row_end - row_start;
+
+        for (int row = 0; row < bg_h; row++) {
+            uint32_t *pixels = (uint32_t *)(base +
+                (uintptr_t)(bg_y + row) * row_pitch);
+
+            pixels += (uintptr_t)bg_x;
+            k_memset32(pixels, bg, (uint32_t)bg_w);
+        }
+    }
+
     fg = terminal_cell_fg_color(term, theme, cell, fb);
     glyph = font8x16_glyph((unsigned char)cell->ch);
     for (int row = row_start; row < row_end; row++) {
         uint8_t bits = glyph[row];
         int64_t py = cell_y + row;
+        int64_t px = cell_x + (int64_t)col_start;
         uint32_t *pixels;
 
         if (bits == 0)
             continue;
         pixels = (uint32_t *)(base + (uintptr_t)py * row_pitch);
-        pixels += (uintptr_t)cell_x;
+        pixels += (uintptr_t)px;
         for (int col = col_start; col < col_end; col++) {
             if (bits & (1u << col))
-                pixels[col] = fg;
+                pixels[col - col_start] = fg;
         }
     }
 }

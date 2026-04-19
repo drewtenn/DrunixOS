@@ -61,6 +61,10 @@ extern void print_bytes(const char *buf, int n);
 extern void set_cursor(int offset);
 extern int get_cursor(void);
 extern int get_offset(int col, int row);
+extern int keyboard_ascii_for_scancode_for_test(uint8_t scancode,
+                                                int shift_held,
+                                                int ctrl_held,
+                                                char *out);
 extern void boot_parse_cmdline_for_test(const char *cmdline,
                                         int *nodesktop,
                                         int *vgatext);
@@ -548,6 +552,44 @@ static void test_terminal_render_uses_ansi_foreground_color(ktest_case_t *tc)
     KTEST_EXPECT_EQ(tc, terminal_pixels[0 * 128 + 3], green);
 }
 
+static void test_terminal_render_uses_ansi_background_color(ktest_case_t *tc)
+{
+    gui_terminal_t term;
+    framebuffer_info_t fb;
+    gui_pixel_surface_t surface;
+    gui_pixel_theme_t theme;
+    uint32_t reverse_bg;
+    static const char text[] = "\x1b[7m ";
+
+    terminal_test_fb(&fb);
+    k_memset(&theme, 0, sizeof(theme));
+    theme.terminal_bg = 0x00000000u;
+    theme.terminal_fg = 0x00FFFFFFu;
+    theme.terminal_cursor = 0x00FFCC44u;
+    surface.fb = &fb;
+    surface.clip.x = 0;
+    surface.clip.y = 0;
+    surface.clip.w = 128;
+    surface.clip.h = 96;
+    reverse_bg = framebuffer_pack_rgb(&fb, 0xc8, 0xd1, 0xd9);
+
+    KTEST_ASSERT_EQ(tc,
+                    gui_terminal_init_static(&term,
+                                             terminal_cells,
+                                             terminal_history,
+                                             8, 3, 4, 0x0f),
+                    1);
+    gui_terminal_set_pixel_rect(&term,
+                                (gui_pixel_rect_t){ 0, 0, 80, 60 },
+                                0, 0);
+    KTEST_ASSERT_EQ(tc, gui_terminal_write(&term, text, sizeof(text) - 1),
+                    (int)(sizeof(text) - 1));
+
+    gui_terminal_render(&term, &surface, &theme, 0);
+
+    KTEST_EXPECT_EQ(tc, terminal_pixels[0 * 128 + 0], reverse_bg);
+}
+
 static void test_terminal_ansi_color_does_not_emit_escape_bytes(ktest_case_t *tc)
 {
     gui_terminal_t term;
@@ -566,6 +608,35 @@ static void test_terminal_ansi_color_does_not_emit_escape_bytes(ktest_case_t *tc
     KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 0, 0).attr, 0x0a);
     KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 1, 0).ch, 'W');
     KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 1, 0).attr, 0x0f);
+}
+
+static void test_terminal_vt_sequences_cover_nano_screen_paint(ktest_case_t *tc)
+{
+    gui_terminal_t term;
+    static const char text[] =
+        "\x1b(B\x1b)0\x1b[?7h\x1b[?1h\x1b="
+        "\x1b[H\x1b[J"
+        "\x1b[2;3HHi\x1b[0;7mX\x1b[m"
+        "\x1b[2;4H\x1b[KZ"
+        "\x1b[2;5H12\x1b[2;5H\x1b[1@A\x1b[2;6H\x1b[1P"
+        "\x1b[2;5H\x1b[1X\x0f";
+
+    KTEST_ASSERT_EQ(tc,
+                    gui_terminal_init_static(&term,
+                                             terminal_cells,
+                                             terminal_history,
+                                             8, 3, 4, 0x0f),
+                    1);
+
+    KTEST_EXPECT_EQ(tc, gui_terminal_write(&term, text, sizeof(text) - 1),
+                    (int)(sizeof(text) - 1));
+    KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 0, 0).ch, ' ');
+    KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 2, 1).ch, 'H');
+    KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 3, 1).ch, 'Z');
+    KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 4, 1).ch, ' ');
+    KTEST_EXPECT_EQ(tc, gui_terminal_cell_at(&term, 5, 1).ch, '2');
+    KTEST_EXPECT_EQ(tc, gui_terminal_cursor_x(&term), 4);
+    KTEST_EXPECT_EQ(tc, gui_terminal_cursor_y(&term), 1);
 }
 
 static void test_terminal_clear_discards_history_and_resets_cursor(ktest_case_t *tc)
@@ -1014,6 +1085,28 @@ static void test_vga_text_prompt_after_scrolled_command_output_is_visible(
     KTEST_EXPECT_EQ(tc,
                     legacy_console_shadow_attr_for_test(24, 7),
                     0x0a);
+}
+
+static void test_vga_text_vt_sequences_cover_nano_screen_paint(ktest_case_t *tc)
+{
+    static const char text[] =
+        "\x1b(B\x1b)0\x1b[?7h\x1b[?1h\x1b="
+        "\x1b[H\x1b[J"
+        "\x1b[2;3HHi\x1b[0;7mX\x1b[m"
+        "\x1b[2;4H\x1b[KZ"
+        "\x1b[2;5H12\x1b[2;5H\x1b[1@A\x1b[2;6H\x1b[1P"
+        "\x1b[2;5H\x1b[1X\x0f";
+
+    legacy_console_disable_framebuffer_for_test();
+    set_cursor(get_offset(0, 0));
+    print_bytes("\x1b[0m\x1b[H\x1b[J", 10);
+    print_bytes(text, sizeof(text) - 1);
+
+    KTEST_EXPECT_EQ(tc, legacy_console_shadow_char_for_test(0, 0), ' ');
+    KTEST_EXPECT_EQ(tc, legacy_console_shadow_char_for_test(1, 2), 'H');
+    KTEST_EXPECT_EQ(tc, legacy_console_shadow_char_for_test(1, 3), 'Z');
+    KTEST_EXPECT_EQ(tc, legacy_console_shadow_char_for_test(1, 4), ' ');
+    KTEST_EXPECT_EQ(tc, legacy_console_shadow_char_for_test(1, 5), '2');
 }
 
 static void test_framebuffer_console_handoff_drops_stale_cells_after_cursor(
@@ -2234,6 +2327,58 @@ static void test_tty_ctrl_c_echo_routes_to_desktop_shell_buffer(ktest_case_t *tc
                                         desktop.shell_content.y).ch,
                     'C');
     desktop_test_destroy(&desktop);
+}
+
+static void test_keyboard_ctrl_letter_translation_matches_raw_tty(ktest_case_t *tc)
+{
+    char out = 0;
+
+    KTEST_EXPECT_EQ(tc,
+                    keyboard_ascii_for_scancode_for_test(0x2d, 0, 1, &out),
+                    1);
+    KTEST_EXPECT_EQ(tc, out, 0x18);
+
+    out = 0;
+    KTEST_EXPECT_EQ(tc,
+                    keyboard_ascii_for_scancode_for_test(0x23, 0, 0, &out),
+                    1);
+    KTEST_EXPECT_EQ(tc, out, 'h');
+}
+
+static void test_keyboard_enter_and_tty_icrnl_match_linux(ktest_case_t *tc)
+{
+    tty_t *tty;
+    char out = 0;
+
+    KTEST_EXPECT_EQ(tc,
+                    keyboard_ascii_for_scancode_for_test(0x1c, 0, 0, &out),
+                    1);
+    KTEST_EXPECT_EQ(tc, out, '\r');
+
+    tty_init();
+    tty = tty_get(0);
+    KTEST_ASSERT_NOT_NULL(tc, tty);
+    KTEST_EXPECT_TRUE(tc, (tty->termios.c_lflag & ICANON) != 0u);
+    KTEST_EXPECT_TRUE(tc, (tty->termios.c_lflag & ECHO) != 0u);
+    KTEST_EXPECT_TRUE(tc, (tty->termios.c_lflag & ISIG) != 0u);
+    KTEST_EXPECT_EQ(tc, tty->termios.c_cc[VMIN], 1u);
+    KTEST_EXPECT_EQ(tc, tty->termios.c_cc[VINTR], 0x03u);
+
+    tty->termios.c_lflag = ICANON;
+    tty->termios.c_iflag = ICRNL;
+    tty_input_char(0, '\r');
+    KTEST_EXPECT_EQ(tc, tty->canon_ready, 1u);
+    KTEST_EXPECT_EQ(tc, tty->canon_len, 1u);
+    KTEST_EXPECT_EQ(tc, tty->canon_buf[0], '\n');
+
+    tty_init();
+    tty = tty_get(0);
+    KTEST_ASSERT_NOT_NULL(tc, tty);
+    tty->termios.c_lflag = 0;
+    tty->termios.c_iflag = 0;
+    tty_input_char(0, '\r');
+    KTEST_EXPECT_EQ(tc, tty->raw_head, 1u);
+    KTEST_EXPECT_EQ(tc, tty->raw_buf[0], '\r');
 }
 
 static void test_mouse_packet_decode_preserves_motion_and_buttons(ktest_case_t *tc)
@@ -4366,7 +4511,9 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_terminal_render_clips_cursor_to_surface_clip),
     KTEST_CASE(test_terminal_render_composes_scrollback_before_live_rows),
     KTEST_CASE(test_terminal_render_uses_ansi_foreground_color),
+    KTEST_CASE(test_terminal_render_uses_ansi_background_color),
     KTEST_CASE(test_terminal_ansi_color_does_not_emit_escape_bytes),
+    KTEST_CASE(test_terminal_vt_sequences_cover_nano_screen_paint),
     KTEST_CASE(test_terminal_clear_discards_history_and_resets_cursor),
     KTEST_CASE(test_terminal_writes_to_later_rows_after_hardening),
     KTEST_CASE(test_terminal_init_rejects_overflow_dimensions_without_touching_buffers),
@@ -4384,6 +4531,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_framebuffer_console_handoff_preserves_vga_cursor),
     KTEST_CASE(test_framebuffer_console_handoff_carries_vga_end_to_next_row),
     KTEST_CASE(test_vga_text_prompt_after_scrolled_command_output_is_visible),
+    KTEST_CASE(test_vga_text_vt_sequences_cover_nano_screen_paint),
     KTEST_CASE(test_framebuffer_console_handoff_drops_stale_cells_after_cursor),
     KTEST_CASE(test_framebuffer_console_uses_columns_beyond_vga_width),
     KTEST_CASE(test_framebuffer_console_uses_rows_beyond_vga_height),
@@ -4432,6 +4580,8 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_new_output_snaps_scrollback_to_live),
     KTEST_CASE(test_syscall_clear_clears_desktop_shell_buffer),
     KTEST_CASE(test_tty_ctrl_c_echo_routes_to_desktop_shell_buffer),
+    KTEST_CASE(test_keyboard_ctrl_letter_translation_matches_raw_tty),
+    KTEST_CASE(test_keyboard_enter_and_tty_icrnl_match_linux),
     KTEST_CASE(test_mouse_packet_decode_preserves_motion_and_buttons),
     KTEST_CASE(test_mouse_packet_decode_saturates_overflow_motion),
     KTEST_CASE(test_mouse_stream_resyncs_after_noise),
