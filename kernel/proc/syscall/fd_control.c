@@ -6,7 +6,6 @@
  * lseek/_llseek helpers for open file descriptors.
  */
 
-#include "../syscall.h"
 #include "syscall_internal.h"
 #include "syscall_linux.h"
 #include "klog.h"

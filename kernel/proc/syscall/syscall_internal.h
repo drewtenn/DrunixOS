@@ -159,7 +159,7 @@ uint32_t syscall_case_fstatfs64(uint32_t ebx, uint32_t ecx, uint32_t edx);
 uint32_t syscall_case_set_thread_area(uint32_t ebx);
 uint32_t syscall_case_set_tid_address(void);
 uint32_t syscall_case_drunix_modload(uint32_t ebx);
-uint32_t syscall_case_exit_exit_group(uint32_t eax, uint32_t ebx);
+uint32_t syscall_case_exit_exit_group(uint32_t exit_group, uint32_t ebx);
 uint32_t syscall_case_brk(uint32_t ebx);
 uint32_t syscall_case_mmap(uint32_t ebx);
 uint32_t syscall_case_mmap2(uint32_t ebx,

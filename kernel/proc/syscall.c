@@ -268,7 +268,7 @@ uint32_t syscall_handler(uint32_t eax,
 
 	case SYS_EXIT:
 	case SYS_EXIT_GROUP:
-		return syscall_case_exit_exit_group(eax, ebx);
+		return syscall_case_exit_exit_group(eax == SYS_EXIT_GROUP, ebx);
 
 	case SYS_BRK:
 		return syscall_case_brk(ebx);

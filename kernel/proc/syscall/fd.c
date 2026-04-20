@@ -6,7 +6,6 @@
  * lseek/_llseek, sendfile64, and helpers that operate on open fd slots.
  */
 
-#include "../syscall.h"
 #include "syscall_internal.h"
 #include "syscall_linux.h"
 #include "blkdev.h"
@@ -25,6 +24,10 @@
 #define TTY_IO_CHUNK                                                           \
 	((TTY_CANON_BUF_SIZE > TTY_RAW_BUF_SIZE) ? TTY_CANON_BUF_SIZE              \
 	                                         : TTY_RAW_BUF_SIZE)
+
+typedef uint32_t (*syscall_fd_io_op_t)(uint32_t fd,
+                                       uint32_t user_buf,
+                                       uint32_t count);
 
 static uint32_t syscall_read_blockdev(process_t *cur,
                                       file_handle_t *fh,
@@ -531,6 +534,39 @@ static uint32_t syscall_sendfile64(process_t *cur,
 	return copied;
 }
 
+static uint32_t syscall_iov_fd_op(uint32_t fd,
+                                  uint32_t user_iov,
+                                  uint32_t iovcnt,
+                                  syscall_fd_io_op_t op)
+{
+	process_t *cur = sched_current();
+	uint32_t total = 0;
+
+	if (!cur || !op || fd >= MAX_FDS || user_iov == 0 || iovcnt > 1024u)
+		return (uint32_t)-1;
+	if (proc_fd_entries(cur)[fd].type == FD_TYPE_NONE)
+		return (uint32_t)-1;
+
+	for (uint32_t i = 0; i < iovcnt; i++) {
+		uint32_t iov[2];
+		uint32_t n;
+
+		if (uaccess_copy_from_user(
+		        cur, iov, user_iov + i * sizeof(iov), sizeof(iov)) != 0)
+			return total ? total : (uint32_t)-1;
+		if (iov[1] == 0)
+			continue;
+
+		n = op(fd, iov[0], iov[1]);
+		if (n == (uint32_t)-1)
+			return total ? total : (uint32_t)-1;
+		total += n;
+		if (n < iov[1])
+			break;
+	}
+	return total;
+}
+
 uint32_t SYSCALL_NOINLINE syscall_case_write(uint32_t ebx,
                                              uint32_t ecx,
                                              uint32_t edx)
@@ -560,32 +596,7 @@ uint32_t SYSCALL_NOINLINE syscall_case_writev(uint32_t ebx,
          * Linux i386 writev(fd, iov, iovcnt).  Each iovec is two 32-bit
          * words: base pointer, byte length.
          */
-		process_t *cur = sched_current();
-		uint32_t total = 0;
-
-		if (!cur || ebx >= MAX_FDS || ecx == 0 || edx > 1024u)
-			return (uint32_t)-1;
-		if (proc_fd_entries(cur)[ebx].type == FD_TYPE_NONE)
-			return (uint32_t)-1;
-
-		for (uint32_t i = 0; i < edx; i++) {
-			uint32_t iov[2];
-			uint32_t n;
-
-			if (uaccess_copy_from_user(
-			        cur, iov, ecx + i * sizeof(iov), sizeof(iov)) != 0)
-				return total ? total : (uint32_t)-1;
-			if (iov[1] == 0)
-				continue;
-
-			n = syscall_handler(SYS_WRITE, ebx, iov[0], iov[1], 0, 0, 0);
-			if (n == (uint32_t)-1)
-				return total ? total : (uint32_t)-1;
-			total += n;
-			if (n < iov[1])
-				break;
-		}
-		return total;
+		return syscall_iov_fd_op(ebx, ecx, edx, syscall_write_fd);
 	}
 }
 
@@ -598,32 +609,7 @@ uint32_t SYSCALL_NOINLINE syscall_case_readv(uint32_t ebx,
          * Linux i386 readv(fd, iov, iovcnt).  Each iovec is two 32-bit
          * words: base pointer, byte length.
          */
-		process_t *cur = sched_current();
-		uint32_t total = 0;
-
-		if (!cur || ebx >= MAX_FDS || ecx == 0 || edx > 1024u)
-			return (uint32_t)-1;
-		if (proc_fd_entries(cur)[ebx].type == FD_TYPE_NONE)
-			return (uint32_t)-1;
-
-		for (uint32_t i = 0; i < edx; i++) {
-			uint32_t iov[2];
-			uint32_t n;
-
-			if (uaccess_copy_from_user(
-			        cur, iov, ecx + i * sizeof(iov), sizeof(iov)) != 0)
-				return total ? total : (uint32_t)-1;
-			if (iov[1] == 0)
-				continue;
-
-			n = syscall_handler(SYS_READ, ebx, iov[0], iov[1], 0, 0, 0);
-			if (n == (uint32_t)-1)
-				return total ? total : (uint32_t)-1;
-			total += n;
-			if (n < iov[1])
-				break;
-		}
-		return total;
+		return syscall_iov_fd_op(ebx, ecx, edx, syscall_read_fd);
 	}
 }
 

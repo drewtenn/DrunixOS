@@ -6,7 +6,6 @@
  * plus helpers for installing VFS nodes into fd slots.
  */
 
-#include "../../syscall.h"
 #include "../syscall_internal.h"
 #include "../syscall_linux.h"
 #include "blkdev.h"

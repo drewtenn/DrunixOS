@@ -6,7 +6,6 @@
  * set_tid_address, process/module image loading, and exit/exit_group.
  */
 
-#include "../syscall.h"
 #include "syscall_internal.h"
 #include "syscall_linux.h"
 #include "gdt.h"
@@ -562,7 +561,7 @@ uint32_t SYSCALL_NOINLINE syscall_case_drunix_modload(uint32_t ebx)
 	}
 }
 
-uint32_t SYSCALL_NOINLINE syscall_case_exit_exit_group(uint32_t eax,
+uint32_t SYSCALL_NOINLINE syscall_case_exit_exit_group(uint32_t exit_group,
                                                        uint32_t ebx)
 {
 	/*
@@ -571,7 +570,7 @@ uint32_t SYSCALL_NOINLINE syscall_case_exit_exit_group(uint32_t eax,
          * away.  schedule() never returns here — the zombie's kernel stack
          * is abandoned and will be freed when the slot is reused.
          */
-	if (eax == SYS_EXIT_GROUP) {
+	if (exit_group) {
 		sched_mark_group_exit(ebx);
 	} else {
 		sched_set_exit_status(ebx);

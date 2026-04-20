@@ -8,7 +8,6 @@
 
 #include "syscall_internal.h"
 #include "syscall_linux.h"
-#include "../syscall.h"
 #include "kheap.h"
 #include "klog.h"
 #include "kstring.h"
@@ -28,23 +27,24 @@ void syscall_invlpg(uint32_t virt)
 
 static int prot_is_valid(uint32_t prot)
 {
-	return (prot & ~(PROT_READ | PROT_WRITE | PROT_EXEC)) == 0;
+	return (prot & ~(LINUX_PROT_READ | LINUX_PROT_WRITE | LINUX_PROT_EXEC)) ==
+	       0;
 }
 
 static int prot_has_user_access(uint32_t prot)
 {
-	return (prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) != 0;
+	return (prot & (LINUX_PROT_READ | LINUX_PROT_WRITE | LINUX_PROT_EXEC)) != 0;
 }
 
 static uint32_t prot_to_vma_flags(uint32_t prot)
 {
 	uint32_t flags = VMA_FLAG_ANON | VMA_FLAG_PRIVATE;
 
-	if (prot & PROT_READ)
+	if (prot & LINUX_PROT_READ)
 		flags |= VMA_FLAG_READ;
-	if (prot & PROT_WRITE)
+	if (prot & LINUX_PROT_WRITE)
 		flags |= VMA_FLAG_WRITE;
-	if (prot & PROT_EXEC)
+	if (prot & LINUX_PROT_EXEC)
 		flags |= VMA_FLAG_EXEC;
 	return flags;
 }
@@ -103,7 +103,7 @@ static void syscall_apply_mprotect(process_t *proc,
 		else
 			flags &= ~(uint32_t)PG_USER;
 
-		if ((prot & PROT_WRITE) != 0 && (flags & PG_COW) == 0)
+		if ((prot & LINUX_PROT_WRITE) != 0 && (flags & PG_COW) == 0)
 			flags |= PG_WRITABLE;
 		else
 			flags &= ~(uint32_t)PG_WRITABLE;
@@ -153,7 +153,7 @@ static int syscall_mmap_private_file(process_t *cur,
 	pte_flags = PG_PRESENT;
 	if (prot_has_user_access(prot))
 		pte_flags |= PG_USER;
-	if (prot & PROT_WRITE)
+	if (prot & LINUX_PROT_WRITE)
 		pte_flags |= PG_WRITABLE;
 
 	for (uint32_t off = 0; off < map_len; off += PAGE_SIZE) {
@@ -277,8 +277,8 @@ uint32_t SYSCALL_NOINLINE syscall_case_mmap(uint32_t ebx)
 			return (uint32_t)-1;
 		if (args.length == 0 || !prot_is_valid(args.prot))
 			return (uint32_t)-LINUX_EINVAL;
-		if ((args.flags & MAP_ANONYMOUS) != 0) {
-			uint32_t required = MAP_PRIVATE | MAP_ANONYMOUS;
+		if ((args.flags & LINUX_MAP_ANONYMOUS) != 0) {
+			uint32_t required = LINUX_MAP_PRIVATE | LINUX_MAP_ANONYMOUS;
 
 			if ((args.flags & required) != required ||
 			    (args.flags & ~required) != 0)
@@ -292,8 +292,8 @@ uint32_t SYSCALL_NOINLINE syscall_case_mmap(uint32_t ebx)
 			                      &map_addr) != 0)
 				return (uint32_t)-1;
 		} else {
-			if ((args.flags & ~MAP_PRIVATE) != 0 ||
-			    (args.flags & MAP_PRIVATE) == 0)
+			if ((args.flags & ~LINUX_MAP_PRIVATE) != 0 ||
+			    (args.flags & LINUX_MAP_PRIVATE) == 0)
 				return (uint32_t)-1;
 			if (syscall_mmap_private_file(cur,
 			                              args.addr,
@@ -330,11 +330,11 @@ uint32_t SYSCALL_NOINLINE syscall_case_mmap2(uint32_t ebx,
 			return (uint32_t)-1;
 		if (ecx == 0 || !prot_is_valid(edx))
 			return (uint32_t)-LINUX_EINVAL;
-		if (esi & MAP_ANONYMOUS) {
-			uint32_t required = MAP_PRIVATE | MAP_ANONYMOUS;
+		if (esi & LINUX_MAP_ANONYMOUS) {
+			uint32_t required = LINUX_MAP_PRIVATE | LINUX_MAP_ANONYMOUS;
 
 			if ((esi & required) != required ||
-			    (esi & ~(MAP_PRIVATE | MAP_ANONYMOUS)) != 0)
+			    (esi & ~(LINUX_MAP_PRIVATE | LINUX_MAP_ANONYMOUS)) != 0)
 				return (uint32_t)-1;
 			if (ebp != 0)
 				return (uint32_t)-1;
@@ -342,7 +342,8 @@ uint32_t SYSCALL_NOINLINE syscall_case_mmap2(uint32_t ebx,
 			        cur, ebx, ecx, prot_to_vma_flags(edx), &map_addr) != 0)
 				return (uint32_t)-1;
 		} else {
-			if ((esi & ~MAP_PRIVATE) != 0 || (esi & MAP_PRIVATE) == 0)
+			if ((esi & ~LINUX_MAP_PRIVATE) != 0 ||
+			    (esi & LINUX_MAP_PRIVATE) == 0)
 				return (uint32_t)-1;
 			if (ebp > UINT32_MAX / PAGE_SIZE)
 				return (uint32_t)-1;

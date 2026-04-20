@@ -6,7 +6,6 @@
  * rename, hard-link, and symlink syscall cases.
  */
 
-#include "../../syscall.h"
 #include "../syscall_internal.h"
 #include "../syscall_linux.h"
 #include "kheap.h"

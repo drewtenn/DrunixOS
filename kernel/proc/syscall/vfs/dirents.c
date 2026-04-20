@@ -5,7 +5,6 @@
  * This file owns getdents/getdents64 packing for fd-backed directories.
  */
 
-#include "../../syscall.h"
 #include "../syscall_internal.h"
 #include "../syscall_linux.h"
 #include "kheap.h"
