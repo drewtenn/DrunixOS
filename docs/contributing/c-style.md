@@ -16,6 +16,10 @@ C files:
 - Avoid multiple statements on one line.
 - Keep functions focused. Split complex functions into named helpers when that
   makes the code easier to review and test.
+- Keep source files focused. When a C file grows beyond 1000 lines, treat that
+  as a signal to split it into smaller implementation files with clear scopes.
+  Place those related pieces in a subsystem subdirectory when the split would
+  otherwise clutter the parent directory.
 - Use a shared cleanup exit when a function owns resources that must be released
   on several error paths.
 - Prefer comments that explain what or why. Do not comment obvious mechanics.

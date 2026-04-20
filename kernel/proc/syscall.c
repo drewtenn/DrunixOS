@@ -8,7 +8,7 @@
  */
 
 #include "syscall.h"
-#include "syscall_internal.h"
+#include "syscall/syscall_internal.h"
 #include "klog.h"
 #include <stdint.h>
 
@@ -228,7 +228,7 @@ uint32_t syscall_handler(uint32_t eax,
 
 	case SYS_STAT64:
 	case SYS_LSTAT64:
-		return syscall_case_stat64_lstat64(eax, ebx, ecx);
+		return syscall_case_stat64_lstat64(eax == SYS_LSTAT64, ebx, ecx);
 
 	case SYS_FSTATAT64:
 		return syscall_case_fstatat64(ebx, ecx, edx, esi);
