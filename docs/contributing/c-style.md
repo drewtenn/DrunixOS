@@ -73,8 +73,10 @@ The build exposes the current mechanical checks as separate targets:
 - `make format-check` runs `clang-format` in dry-run mode with the repo
   `.clang-format` file.
 - `make cppcheck` runs Cppcheck through the generated compilation database.
+- `make clang-tidy-include-check` runs clang-tidy's `misc-include-cleaner`
+  check over kernel C sources.
 - `make sparse-check` runs Sparse over kernel C sources.
-- `make scan` runs the formatter check and both scanners.
+- `make scan` runs the formatter check and scanners.
 
 These targets fail by default when they find issues. Use `SCAN_FAIL=0` for a
 reporting-only scan while paying down the existing baseline.

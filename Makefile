@@ -5,6 +5,7 @@ PYTHON  := python3
 QEMU    := qemu-system-i386
 GDB     := i386-elf-gdb
 CLANG_FORMAT ?= clang-format
+CLANG_TIDY ?= clang-tidy
 CPPCHECK ?= cppcheck
 SPARSE ?= sparse
 SPARSEFLAGS ?= -Wno-non-pointer-null -nostdinc -I tools/sparse-include -I user/lib
@@ -299,7 +300,7 @@ build: kernel disk
 iso: os.iso
 images: disk
 fresh: run-fresh
-check: test-headless
+check: clang-tidy-include-check test-headless
 
 validate-ext3-linux: $(ROOT_DISK_IMG) tools/check_ext3_linux_compat.py tools/check_ext3_journal_activity.py
 	$(PYTHON) tools/check_ext3_linux_compat.py $(ROOT_DISK_IMG)
@@ -368,7 +369,18 @@ sparse-check:
 		test "$(SCAN_FAIL)" != "1"; \
 	fi
 
-scan: format-check cppcheck sparse-check
+clang-tidy-include-check: compile_commands.json
+	$(call require_tool,$(CLANG_TIDY))
+	@mkdir -p build
+	@$(CLANG_TIDY) -p compile_commands.json --quiet \
+		--checks=-*,misc-include-cleaner \
+		$(SCAN_KERNEL_C_SOURCES) > build/clang-tidy-include.log 2>&1 || { \
+		sed -n '1,180p' build/clang-tidy-include.log; \
+		echo "... full clang-tidy include report: build/clang-tidy-include.log"; \
+		test "$(SCAN_FAIL)" != "1"; \
+	}
+
+scan: format-check cppcheck clang-tidy-include-check sparse-check
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RUN TARGETS  (boot QEMU with the current img/disk.img — no filesystem rebuild)
@@ -460,7 +472,7 @@ clean:
 	$(MAKE) -C user clean
 
 .PHONY: all build kernel iso images disk fresh check \
-        compile-commands format-check cppcheck sparse-check scan \
+        compile-commands format-check cppcheck sparse-check clang-tidy-include-check scan \
         disk.img dufs.img \
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \

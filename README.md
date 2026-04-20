@@ -28,8 +28,9 @@ Required:
 Optional:
 
 - `i386-elf-gdb` for `make debug`
-- `clang-format`, `cppcheck`, and `sparse` for `make scan`,
-  `make format-check`, `make cppcheck`, and `make sparse-check`
+- `clang-format`, `clang-tidy`, `cppcheck`, and `sparse` for `make scan`,
+  `make check`, `make format-check`, `make clang-tidy-include-check`,
+  `make cppcheck`, and `make sparse-check`
 - `pandoc` for `make epub`, `make pdf`, and `make docs`
 - `typst` for `make pdf` and `make docs`
 - `rsvg-convert` from `librsvg` for `make epub` and `make docs` — converts SVG diagrams to PNG
@@ -44,7 +45,7 @@ Install Homebrew first, then:
 ```sh
 brew install make nasm python qemu x86_64-elf-gcc i686-elf-grub xorriso
 brew install i386-elf-gdb pandoc typst
-brew install clang-format cppcheck sparse
+brew install clang-format llvm cppcheck sparse
 brew install librsvg
 ```
 Verify the compiler tools you need are on `PATH`:
@@ -54,6 +55,14 @@ x86_64-elf-gcc --version
 x86_64-elf-g++ --version
 x86_64-elf-ld --version
 i486-linux-musl-gcc --version
+```
+
+Homebrew's `clang-tidy` is provided by LLVM. If `clang-tidy` is not on `PATH`
+after installing `llvm`, either add LLVM's bin directory to `PATH` or pass it to
+make explicitly:
+
+```sh
+make CLANG_TIDY="$(brew --prefix llvm)/bin/clang-tidy" clang-tidy-include-check
 ```
 
 The `x86_64-elf-*` tools build the freestanding Drunix kernel and native
@@ -74,7 +83,7 @@ The simplest supported setup is WSL2 with Ubuntu. Inside the WSL shell:
 
 ```sh
 sudo apt update
-sudo apt install -y build-essential python3 curl nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl librsvg2-bin clang-format cppcheck sparse
+sudo apt install -y build-essential python3 curl nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl librsvg2-bin clang-format clang-tidy cppcheck sparse
 ```
 
 You still need an `x86_64-elf` cross toolchain and `i386-elf-gdb` on your `PATH`. If your package set does not provide them directly, build and install the usual OSDev cross toolchain, then verify these commands exist:
@@ -109,7 +118,7 @@ Ubuntu / Debian:
 
 ```sh
 sudo apt update
-sudo apt install -y build-essential python3 curl nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl librsvg2-bin clang-format cppcheck sparse
+sudo apt install -y build-essential python3 curl nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl librsvg2-bin clang-format clang-tidy cppcheck sparse
 ```
 
 Fedora:
@@ -193,13 +202,14 @@ Static analysis and style targets:
 - `make format-check` runs `clang-format --dry-run --Werror` using the repo's
   `.clang-format` policy
 - `make cppcheck` runs Cppcheck against the generated compilation database
+- `make clang-tidy-include-check` runs clang-tidy's `misc-include-cleaner`
+  check over kernel C sources to catch unused or missing direct includes
 - `make sparse-check` runs Sparse over kernel C sources with the kernel build
   flags
-- `make scan` runs all three scanner targets
+- `make scan` runs all scanner targets
 
-The scanner targets are reporting-only by default so the current cleanup
-backlog does not break normal local builds. Add `SCAN_FAIL=1` to make scanner
-findings fail the target, for example `make SCAN_FAIL=1 cppcheck`.
+The scanner targets fail by default when they find issues. Use `SCAN_FAIL=0`
+for reporting-only cleanup passes, for example `make SCAN_FAIL=0 cppcheck`.
 
 Run and debug targets:
 
