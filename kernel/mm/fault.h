@@ -13,7 +13,10 @@
  * instruction. Returns -1 if the fault should fall through to the existing
  * SIGSEGV or kernel-panic path.
  */
-int paging_handle_fault(uint32_t pd_phys, uint32_t cr2,
-                        uint32_t err, uint32_t user_esp, process_t *cur);
+int paging_handle_fault(uint32_t pd_phys,
+                        uint32_t cr2,
+                        uint32_t err,
+                        uint32_t user_esp,
+                        process_t *cur);
 
 #endif

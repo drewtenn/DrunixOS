@@ -20,18 +20,18 @@
  * To expose a new kernel function to modules, add an entry here.
  */
 const ksym_t kernel_exports[] = {
-    { "kmalloc",          (void *)kmalloc          },
-    { "kfree",            (void *)kfree             },
-    { "klog",             (void *)klog              },
-    { "klog_uint",        (void *)klog_uint         },
-    { "klog_hex",         (void *)klog_hex          },
-    { "blkdev_register",  (void *)blkdev_register   },
-    { "blkdev_get",       (void *)blkdev_get        },
-    { "chardev_register", (void *)chardev_register  },
-    { "chardev_get",      (void *)chardev_get       },
-    { "irq_register",     (void *)irq_register      },
-    { "vfs_register",     (void *)vfs_register      },
-    { NULL,               NULL                      }  /* sentinel */
+    {"kmalloc", (void *)kmalloc},
+    {"kfree", (void *)kfree},
+    {"klog", (void *)klog},
+    {"klog_uint", (void *)klog_uint},
+    {"klog_hex", (void *)klog_hex},
+    {"blkdev_register", (void *)blkdev_register},
+    {"blkdev_get", (void *)blkdev_get},
+    {"chardev_register", (void *)chardev_register},
+    {"chardev_get", (void *)chardev_get},
+    {"irq_register", (void *)irq_register},
+    {"vfs_register", (void *)vfs_register},
+    {NULL, NULL} /* sentinel */
 };
 
 const uint32_t kernel_exports_count =

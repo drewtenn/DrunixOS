@@ -20,7 +20,7 @@
  * write-through entry point.
  */
 
-#define BCACHE_BLOCK_SIZE   4096u
+#define BCACHE_BLOCK_SIZE 4096u
 #define BCACHE_SECS_PER_BLK 8u
 
 int bcache_init(void);
@@ -36,7 +36,8 @@ int bcache_write(const blkdev_ops_t *dev, uint32_t lba, const uint8_t *buf);
 /* Write-through: write to disk immediately. Any cached copy of the same
  * range is updated to match (and its dirty flag cleared). Used for journal
  * blocks whose durability is required before a later commit. */
-int bcache_write_through(const blkdev_ops_t *dev, uint32_t lba,
+int bcache_write_through(const blkdev_ops_t *dev,
+                         uint32_t lba,
                          const uint8_t *buf);
 
 /* Flush every dirty block belonging to dev to disk. Pass NULL to flush
@@ -49,11 +50,11 @@ void bcache_invalidate(const blkdev_ops_t *dev, uint32_t lba);
 
 /* Telemetry, exposed for tests and for the chapter's measurement story. */
 typedef struct {
-    uint32_t hits;
-    uint32_t misses;
-    uint32_t writebacks;
-    uint32_t write_through;
-    uint32_t evictions;
+	uint32_t hits;
+	uint32_t misses;
+	uint32_t writebacks;
+	uint32_t write_through;
+	uint32_t evictions;
 } bcache_stats_t;
 
 void bcache_get_stats(bcache_stats_t *out);

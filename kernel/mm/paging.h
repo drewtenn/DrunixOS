@@ -6,39 +6,39 @@
 #include <stdint.h>
 
 /* Physical addresses for paging structures */
-#define PAGE_DIR_ADDR  0x00011000u   /* page directory: 4 KB, 1024 PDEs */
-#define PAGE_TAB_BASE  0x00012000u   /* first of 32 page tables          */
+#define PAGE_DIR_ADDR 0x00011000u /* page directory: 4 KB, 1024 PDEs */
+#define PAGE_TAB_BASE 0x00012000u /* first of 32 page tables          */
 
 /* PDE / PTE flag bits */
-#define PG_PRESENT  0x1
+#define PG_PRESENT 0x1
 #define PG_WRITABLE 0x2
-#define PG_USER     0x4
-#define PG_PWT      0x8
-#define PG_PCD      0x10
-#define PG_PAT_4K   0x80   /* Bit 7 on a 4 KB PTE selects the upper PAT half */
-#define PG_COW      (1u << 9)
+#define PG_USER 0x4
+#define PG_PWT 0x8
+#define PG_PCD 0x10
+#define PG_PAT_4K 0x80 /* Bit 7 on a 4 KB PTE selects the upper PAT half */
+#define PG_COW (1u << 9)
 
-#define PG_ENTRY_ADDR_MASK  0xFFFFF000u
+#define PG_ENTRY_ADDR_MASK 0xFFFFF000u
 #define PG_ENTRY_FLAGS_MASK 0x00000FFFu
 
 static inline uint32_t paging_entry_addr(uint32_t entry)
 {
-    return entry & PG_ENTRY_ADDR_MASK;
+	return entry & PG_ENTRY_ADDR_MASK;
 }
 
 static inline uint32_t paging_entry_flags(uint32_t entry)
 {
-    return entry & PG_ENTRY_FLAGS_MASK;
+	return entry & PG_ENTRY_FLAGS_MASK;
 }
 
 static inline uint32_t paging_entry_build(uint32_t addr, uint32_t flags)
 {
-    return paging_entry_addr(addr) | paging_entry_flags(flags);
+	return paging_entry_addr(addr) | paging_entry_flags(flags);
 }
 
 static inline uint32_t paging_entry_replace_addr(uint32_t entry, uint32_t addr)
 {
-    return paging_entry_build(addr, entry);
+	return paging_entry_build(addr, entry);
 }
 
 void paging_init(void);
@@ -75,8 +75,7 @@ int paging_identity_map_kernel_range(uint32_t phys_start,
  * Returns 0 on success, -1 if the CPU doesn't support PAT, -2 if the PTE
  * for any page in the range is not present.
  */
-int paging_mark_range_write_combining(uint32_t phys_start,
-                                      uint32_t byte_len);
+int paging_mark_range_write_combining(uint32_t phys_start, uint32_t byte_len);
 
 /* Implemented in paging.asm — CR3/CR0 cannot be written from plain C */
 extern void paging_load_cr3(uint32_t pd_phys);
@@ -104,8 +103,10 @@ uint32_t paging_create_user_space(void);
  * Allocates a new page table via pmm_alloc_page() if the PDE is not yet present.
  * Returns 0 on success, -1 if a page table could not be allocated.
  */
-int paging_map_page(uint32_t pd_phys, uint32_t virt,
-                    uint32_t phys, uint32_t flags);
+int paging_map_page(uint32_t pd_phys,
+                    uint32_t virt,
+                    uint32_t phys,
+                    uint32_t flags);
 
 /*
  * paging_walk: locate the live PTE slot for a virtual address.

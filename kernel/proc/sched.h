@@ -7,10 +7,10 @@
 #include <stdint.h>
 
 /* Maximum number of concurrent processes (shell + up to 7 children). */
-#define MAX_PROCS  8
+#define MAX_PROCS 8
 
 /* PIT frequency programmed in idt.c: 1193182 / 11932 ≈ 100 Hz. */
-#define SCHED_HZ   100u
+#define SCHED_HZ 100u
 
 /*
  * sched_init: zero the process table.  Call once at kernel startup before
@@ -123,8 +123,8 @@ uint32_t sched_ticks(void);
 /*
  * Wait-option flags for sched_waitpid / sys_waitpid.
  */
-#define WNOHANG    1   /* return immediately if no child has changed state */
-#define WUNTRACED  2   /* also return when a child stops (SIGSTOP/SIGTSTP) */
+#define WNOHANG 1   /* return immediately if no child has changed state */
+#define WUNTRACED 2 /* also return when a child stops (SIGSTOP/SIGTSTP) */
 
 /*
  * sched_wait: block the current process until the process with the given PID
@@ -269,7 +269,9 @@ void sched_send_sigint_foreground(void);
  * path.  The signal is forcibly unmasked so synchronous faults do not spin
  * forever re-entering the same exception.
  */
-void sched_record_user_fault(const trap_frame_t *frame, uint32_t cr2, int signum);
+void sched_record_user_fault(const trap_frame_t *frame,
+                             uint32_t cr2,
+                             int signum);
 
 /*
  * sched_signal_check: inspect the current process's pending signals and,

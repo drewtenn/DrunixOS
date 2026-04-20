@@ -14,15 +14,15 @@
  * functions directly.
  */
 
-#define CHARDEV_NAME_MAX  8    /* max name length including NUL */
-#define CHARDEV_MAX       4    /* max registered char devices */
+#define CHARDEV_NAME_MAX 8 /* max name length including NUL */
+#define CHARDEV_MAX 4      /* max registered char devices */
 
 typedef struct {
-    /* Read one character; returns 0 if no data is available (non-blocking). */
-    char (*read_char)(void);
+	/* Read one character; returns 0 if no data is available (non-blocking). */
+	char (*read_char)(void);
 
-    /* Write one character.  May be NULL for input-only devices. */
-    void (*write_char)(char c);
+	/* Write one character.  May be NULL for input-only devices. */
+	void (*write_char)(char c);
 } chardev_ops_t;
 
 /*

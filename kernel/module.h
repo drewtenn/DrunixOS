@@ -22,7 +22,7 @@
  * lifetime of the kernel.
  */
 
-#define MODULE_MAX_SIZE  65536u   /* reject modules larger than 64 KB */
+#define MODULE_MAX_SIZE 65536u /* reject modules larger than 64 KB */
 #define MODULE_MAX_LOADED 16u
 
 /*
@@ -37,18 +37,18 @@ typedef int (*module_init_fn)(void);
  * The table is defined in kernel/module_exports.c.
  */
 typedef struct {
-    const char *name;
-    void       *addr;
+	const char *name;
+	void *addr;
 } ksym_t;
 
 typedef struct {
-    uint32_t loaded;
-    char     name[32];
-    uint32_t base;
-    uint32_t size;
+	uint32_t loaded;
+	char name[32];
+	uint32_t base;
+	uint32_t size;
 } module_info_t;
 
-extern const ksym_t   kernel_exports[];
+extern const ksym_t kernel_exports[];
 extern const uint32_t kernel_exports_count;
 
 /*
@@ -65,7 +65,8 @@ extern const uint32_t kernel_exports_count;
  *   -4  module_init returned a non-zero error code
  *   -5  module too large (size > MODULE_MAX_SIZE)
  */
-int module_load_file(const char *module_name, vfs_file_ref_t file_ref,
+int module_load_file(const char *module_name,
+                     vfs_file_ref_t file_ref,
                      uint32_t size);
 
 /*

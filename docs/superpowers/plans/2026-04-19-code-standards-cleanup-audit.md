@@ -124,7 +124,9 @@
 - Long-line scan finds many real long lines, plus legitimate table/generated exceptions such as `kernel/gui/font8x16.c`.
 - Trailing whitespace scan across `kernel` and `user` C files found no matches, which is good.
 
-**Candidate decision:** Add a lightweight `tools/check_c_style.py` or Make target that reports, but initially does not fail, on:
+**Candidate decision:** Keep the existing `make scan` entry point and make it
+enforcing by default, with `SCAN_FAIL=0` available only for local reporting
+while paying down existing findings. The scan covers:
 - trailing whitespace
 - long lines outside allowlisted generated/table files
 - same-line function opening braces
@@ -145,6 +147,7 @@
 - Run `git diff --check`.
 - Run `make kernel`.
 - Run `make check`.
+- Run `make scan`; it should pass cleanly or fail the build.
 - For syscall or Linux ABI changes, run the Linux ABI compatibility target or harness used by `user/linuxabi.c`.
 - For filesystem changes, run focused VFS/FS tests plus the full suite.
 

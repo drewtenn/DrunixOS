@@ -20,7 +20,7 @@ void *sbrk(int increment);
 
 /* Standard heap allocation functions. */
 void *malloc(size_t size);
-void  free(void *ptr);
+void free(void *ptr);
 void *realloc(void *ptr, size_t new_size);
 
 #ifdef __cplusplus

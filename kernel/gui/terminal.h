@@ -6,29 +6,29 @@
 #include <stdint.h>
 
 typedef struct {
-    gui_cell_t *live;
-    gui_cell_t *history;
-    int cols;
-    int rows;
-    int history_rows;
-    int owns_buffers;
-    int history_head;
-    int history_count;
-    int cursor_x;
-    int cursor_y;
-    int wrap_pending;
-    int ansi_state;
-    int ansi_val;
-    int ansi_params[4];
-    int ansi_param_count;
-    int ansi_private;
-    uint8_t attr;
-    uint8_t default_attr;
-    int view_top;
-    int live_view;
-    gui_pixel_rect_t pixel_rect;
-    int padding_x;
-    int padding_y;
+	gui_cell_t *live;
+	gui_cell_t *history;
+	int cols;
+	int rows;
+	int history_rows;
+	int owns_buffers;
+	int history_head;
+	int history_count;
+	int cursor_x;
+	int cursor_y;
+	int wrap_pending;
+	int ansi_state;
+	int ansi_val;
+	int ansi_params[4];
+	int ansi_param_count;
+	int ansi_private;
+	uint8_t attr;
+	uint8_t default_attr;
+	int view_top;
+	int live_view;
+	gui_pixel_rect_t pixel_rect;
+	int padding_x;
+	int padding_y;
 } gui_terminal_t;
 
 int gui_terminal_init_static(gui_terminal_t *term,

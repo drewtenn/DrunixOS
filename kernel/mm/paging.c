@@ -27,231 +27,236 @@ static int g_pat_wc_slot_ready;
 
 static void paging_invlpg(uint32_t virt)
 {
-    __asm__ volatile("invlpg (%0)" :: "r"(virt) : "memory");
+	__asm__ volatile("invlpg (%0)" ::"r"(virt) : "memory");
 }
 
 static int paging_cpu_supports_pat(void)
 {
-    uint32_t eax;
-    uint32_t ebx;
-    uint32_t ecx;
-    uint32_t edx;
+	uint32_t eax;
+	uint32_t ebx;
+	uint32_t ecx;
+	uint32_t edx;
 
-    __asm__ volatile("cpuid"
-                     : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
-                     : "a"(1u), "c"(0u));
-    /* CPUID.01H:EDX bit 16 = PAT supported. */
-    return (edx & (1u << 16)) != 0;
+	__asm__ volatile("cpuid"
+	                 : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+	                 : "a"(1u), "c"(0u));
+	/* CPUID.01H:EDX bit 16 = PAT supported. */
+	return (edx & (1u << 16)) != 0;
 }
 
 static uint64_t paging_read_msr(uint32_t msr)
 {
-    uint32_t lo;
-    uint32_t hi;
+	uint32_t lo;
+	uint32_t hi;
 
-    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
-    return ((uint64_t)hi << 32) | lo;
+	__asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+	return ((uint64_t)hi << 32) | lo;
 }
 
 static void paging_write_msr(uint32_t msr, uint64_t value)
 {
-    uint32_t lo = (uint32_t)value;
-    uint32_t hi = (uint32_t)(value >> 32);
+	uint32_t lo = (uint32_t)value;
+	uint32_t hi = (uint32_t)(value >> 32);
 
-    __asm__ volatile("wrmsr" :: "c"(msr), "a"(lo), "d"(hi));
+	__asm__ volatile("wrmsr" ::"c"(msr), "a"(lo), "d"(hi));
 }
 
 static int paging_prepare_wc_slot(void)
 {
-    uint64_t pat;
-    unsigned int shift;
-    uint64_t mask;
+	uint64_t pat;
+	unsigned int shift;
+	uint64_t mask;
 
-    if (g_pat_wc_slot_ready)
-        return 0;
-    if (!paging_cpu_supports_pat())
-        return -1;
+	if (g_pat_wc_slot_ready)
+		return 0;
+	if (!paging_cpu_supports_pat())
+		return -1;
 
-    pat = paging_read_msr(PAGING_IA32_PAT_MSR);
-    shift = PAGING_PAT_WC_SLOT * 8u;
-    mask = 0x7ull << shift;
-    pat = (pat & ~mask) | ((uint64_t)PAGING_PAT_TYPE_WC << shift);
-    paging_write_msr(PAGING_IA32_PAT_MSR, pat);
+	pat = paging_read_msr(PAGING_IA32_PAT_MSR);
+	shift = PAGING_PAT_WC_SLOT * 8u;
+	mask = 0x7ull << shift;
+	pat = (pat & ~mask) | ((uint64_t)PAGING_PAT_TYPE_WC << shift);
+	paging_write_msr(PAGING_IA32_PAT_MSR, pat);
 
-    g_pat_wc_slot_ready = 1;
-    return 0;
+	g_pat_wc_slot_ready = 1;
+	return 0;
 }
 
 int paging_mark_range_write_combining(uint32_t phys_start, uint32_t byte_len)
 {
-    uint32_t *pd = (uint32_t *)PAGE_DIR_ADDR;
-    uint32_t start;
-    uint64_t end64;
-    uint32_t end;
+	uint32_t *pd = (uint32_t *)PAGE_DIR_ADDR;
+	uint32_t start;
+	uint64_t end64;
+	uint32_t end;
 
-    if (byte_len == 0)
-        return 0;
-    if (paging_prepare_wc_slot() != 0)
-        return -1;
-    if (phys_start > UINT32_MAX - (byte_len - 1u))
-        return -1;
+	if (byte_len == 0)
+		return 0;
+	if (paging_prepare_wc_slot() != 0)
+		return -1;
+	if (phys_start > UINT32_MAX - (byte_len - 1u))
+		return -1;
 
-    start = phys_start & ~0xFFFu;
-    end64 = ((uint64_t)phys_start + byte_len + 0xFFFu) & ~0xFFFull;
-    if (end64 > UINT32_MAX)
-        return -1;
-    end = (uint32_t)end64;
+	start = phys_start & ~0xFFFu;
+	end64 = ((uint64_t)phys_start + byte_len + 0xFFFu) & ~0xFFFull;
+	if (end64 > UINT32_MAX)
+		return -1;
+	end = (uint32_t)end64;
 
-    for (uint32_t virt = start; virt < end; virt += 0x1000u) {
-        uint32_t pdi = virt >> 22;
-        uint32_t pti = (virt >> 12) & 0x3FFu;
-        uint32_t *pt;
-        uint32_t pte;
-        uint32_t flags;
+	for (uint32_t virt = start; virt < end; virt += 0x1000u) {
+		uint32_t pdi = virt >> 22;
+		uint32_t pti = (virt >> 12) & 0x3FFu;
+		uint32_t *pt;
+		uint32_t pte;
+		uint32_t flags;
 
-        if (!(pd[pdi] & PG_PRESENT))
-            return -2;
-        pt = (uint32_t *)paging_entry_addr(pd[pdi]);
-        pte = pt[pti];
-        if (!(pte & PG_PRESENT))
-            return -2;
-        /*
+		if (!(pd[pdi] & PG_PRESENT))
+			return -2;
+		pt = (uint32_t *)paging_entry_addr(pd[pdi]);
+		pte = pt[pti];
+		if (!(pte & PG_PRESENT))
+			return -2;
+		/*
          * PAT=1, PCD=0, PWT=0 selects PA4, which we just programmed to
          * WC. Clear PCD/PWT explicitly in case the BIOS set them for the
          * framebuffer range (common for UC defaults).
          */
-        flags = paging_entry_flags(pte);
-        flags = (flags & ~(PG_PCD | PG_PWT)) | PG_PAT_4K;
-        pt[pti] = paging_entry_build(pte, flags);
-        paging_invlpg(virt);
-    }
-    return 0;
+		flags = paging_entry_flags(pte);
+		flags = (flags & ~(PG_PCD | PG_PWT)) | PG_PAT_4K;
+		pt[pti] = paging_entry_build(pte, flags);
+		paging_invlpg(virt);
+	}
+	return 0;
 }
 
-void paging_init(void) {
-    uint32_t *pd = (uint32_t *)PAGE_DIR_ADDR;
+void paging_init(void)
+{
+	uint32_t *pd = (uint32_t *)PAGE_DIR_ADDR;
 
-    /* Clear the entire page directory */
-    for (int i = 0; i < 1024; i++)
-        pd[i] = 0;
+	/* Clear the entire page directory */
+	for (int i = 0; i < 1024; i++)
+		pd[i] = 0;
 
-    /*
+	/*
      * Identity-map 0 – 128 MB using 32 page tables (each covers 4 MB).
      * Virtual address == physical address throughout this range, so the
      * kernel, VGA buffer, stack, and all our structures remain accessible
      * at the same addresses after paging is enabled.
      */
-    for (int i = 0; i < 32; i++) {
-        uint32_t  pt_phys = PAGE_TAB_BASE + (uint32_t)i * 0x1000;
-        uint32_t *pt      = (uint32_t *)pt_phys;
+	for (int i = 0; i < 32; i++) {
+		uint32_t pt_phys = PAGE_TAB_BASE + (uint32_t)i * 0x1000;
+		uint32_t *pt = (uint32_t *)pt_phys;
 
-        for (int j = 0; j < 1024; j++) {
-            uint32_t phys = (uint32_t)i * 0x400000 + (uint32_t)j * 0x1000;
-            pt[j] = phys | PG_PRESENT | PG_WRITABLE;
-        }
+		for (int j = 0; j < 1024; j++) {
+			uint32_t phys = (uint32_t)i * 0x400000 + (uint32_t)j * 0x1000;
+			pt[j] = phys | PG_PRESENT | PG_WRITABLE;
+		}
 
-        pd[i] = pt_phys | PG_PRESENT | PG_WRITABLE;
-    }
+		pd[i] = pt_phys | PG_PRESENT | PG_WRITABLE;
+	}
 
-    /* Load CR3 first, then set CR0.PG — order is critical */
-    paging_load_cr3(PAGE_DIR_ADDR);
-    paging_enable();
+	/* Load CR3 first, then set CR0.PG — order is critical */
+	paging_load_cr3(PAGE_DIR_ADDR);
+	paging_enable();
 }
 
 int paging_identity_map_kernel_range(uint32_t phys_start,
                                      uint32_t byte_len,
                                      uint32_t flags)
 {
-    uint32_t *pd = (uint32_t *)PAGE_DIR_ADDR;
-    uint32_t start = phys_start & ~0xFFFu;
-    uint64_t end64;
-    uint32_t end;
-    uint32_t page_flags;
+	uint32_t *pd = (uint32_t *)PAGE_DIR_ADDR;
+	uint32_t start = phys_start & ~0xFFFu;
+	uint64_t end64;
+	uint32_t end;
+	uint32_t page_flags;
 
-    if (byte_len == 0)
-        return 0;
-    if (phys_start > UINT32_MAX - (byte_len - 1u))
-        return -1;
+	if (byte_len == 0)
+		return 0;
+	if (phys_start > UINT32_MAX - (byte_len - 1u))
+		return -1;
 
-    end64 = ((uint64_t)phys_start + byte_len + 0xFFFu) & ~0xFFFull;
-    if (end64 > UINT32_MAX)
-        return -1;
-    end = (uint32_t)end64;
+	end64 = ((uint64_t)phys_start + byte_len + 0xFFFu) & ~0xFFFull;
+	if (end64 > UINT32_MAX)
+		return -1;
+	end = (uint32_t)end64;
 
-    page_flags = (flags | PG_PRESENT) & ~(uint32_t)PG_USER;
-    for (uint32_t virt = start; virt < end; virt += 0x1000u) {
-        uint32_t pdi = virt >> 22;
-        uint32_t pti = (virt >> 12) & 0x3FFu;
-        uint32_t *pt;
+	page_flags = (flags | PG_PRESENT) & ~(uint32_t)PG_USER;
+	for (uint32_t virt = start; virt < end; virt += 0x1000u) {
+		uint32_t pdi = virt >> 22;
+		uint32_t pti = (virt >> 12) & 0x3FFu;
+		uint32_t *pt;
 
-        if (!(pd[pdi] & PG_PRESENT)) {
-            uint32_t pt_phys = pmm_alloc_page();
-            if (!pt_phys)
-                return -1;
+		if (!(pd[pdi] & PG_PRESENT)) {
+			uint32_t pt_phys = pmm_alloc_page();
+			if (!pt_phys)
+				return -1;
 
-            pt = (uint32_t *)pt_phys;
-            for (int i = 0; i < 1024; i++)
-                pt[i] = 0;
-            pd[pdi] = paging_entry_build(pt_phys,
-                                         PG_PRESENT | PG_WRITABLE);
-        } else {
-            pt = (uint32_t *)paging_entry_addr(pd[pdi]);
-        }
+			pt = (uint32_t *)pt_phys;
+			for (int i = 0; i < 1024; i++)
+				pt[i] = 0;
+			pd[pdi] = paging_entry_build(pt_phys, PG_PRESENT | PG_WRITABLE);
+		} else {
+			pt = (uint32_t *)paging_entry_addr(pd[pdi]);
+		}
 
-        pt[pti] = paging_entry_build(virt, page_flags);
-        paging_invlpg(virt);
-    }
-    return 0;
+		pt[pti] = paging_entry_build(virt, page_flags);
+		paging_invlpg(virt);
+	}
+	return 0;
 }
 
 uint32_t paging_create_user_space(void)
 {
-    uint32_t pd_phys = pmm_alloc_page();
-    if (!pd_phys) return 0;
+	uint32_t pd_phys = pmm_alloc_page();
+	if (!pd_phys)
+		return 0;
 
-    uint32_t *new_pd    = (uint32_t *)pd_phys;      /* identity-mapped: virt == phys */
-    uint32_t *kernel_pd = (uint32_t *)PAGE_DIR_ADDR;
+	uint32_t *new_pd = (uint32_t *)pd_phys; /* identity-mapped: virt == phys */
+	uint32_t *kernel_pd = (uint32_t *)PAGE_DIR_ADDR;
 
-    /* Zero all 1024 PDEs */
-    for (int i = 0; i < 1024; i++)
-        new_pd[i] = 0;
+	/* Zero all 1024 PDEs */
+	for (int i = 0; i < 1024; i++)
+		new_pd[i] = 0;
 
-    /*
+	/*
      * Copy every supervisor-only kernel PDE, including device mappings added
      * after paging_init(). These entries do NOT have PG_USER set, so ring-3
      * code cannot read or write kernel memory even though supervisor code can
      * still use the mappings while running on a process page directory.
      */
-    for (int i = 0; i < 1024; i++) {
-        if ((kernel_pd[i] & (PG_PRESENT | PG_USER)) == PG_PRESENT)
-            new_pd[i] = kernel_pd[i];
-    }
+	for (int i = 0; i < 1024; i++) {
+		if ((kernel_pd[i] & (PG_PRESENT | PG_USER)) == PG_PRESENT)
+			new_pd[i] = kernel_pd[i];
+	}
 
-    return pd_phys;
+	return pd_phys;
 }
 
-int paging_map_page(uint32_t pd_phys, uint32_t virt,
-                    uint32_t phys, uint32_t flags)
+int paging_map_page(uint32_t pd_phys,
+                    uint32_t virt,
+                    uint32_t phys,
+                    uint32_t flags)
 {
-    uint32_t *pd  = (uint32_t *)pd_phys;
-    uint32_t  pdi = virt >> 22;            /* bits 31–22: PD index */
-    uint32_t  pti = (virt >> 12) & 0x3FF; /* bits 21–12: PT index */
+	uint32_t *pd = (uint32_t *)pd_phys;
+	uint32_t pdi = virt >> 22;           /* bits 31–22: PD index */
+	uint32_t pti = (virt >> 12) & 0x3FF; /* bits 21–12: PT index */
 
-    uint32_t *pt;
+	uint32_t *pt;
 
-    if (!(pd[pdi] & PG_PRESENT)) {
-        /* No page table yet for this PDE — allocate one */
-        uint32_t pt_phys = pmm_alloc_page();
-        if (!pt_phys) return -1;
+	if (!(pd[pdi] & PG_PRESENT)) {
+		/* No page table yet for this PDE — allocate one */
+		uint32_t pt_phys = pmm_alloc_page();
+		if (!pt_phys)
+			return -1;
 
-        pt = (uint32_t *)pt_phys;
-        for (int i = 0; i < 1024; i++)
-            pt[i] = 0;
+		pt = (uint32_t *)pt_phys;
+		for (int i = 0; i < 1024; i++)
+			pt[i] = 0;
 
-        /* PDE must have PG_USER so the CPU will walk into it for ring-3 */
-        pd[pdi] = paging_entry_build(pt_phys, PG_PRESENT | PG_WRITABLE | PG_USER);
-    } else if ((flags & PG_USER) && !(pd[pdi] & PG_USER)) {
-        /*
+		/* PDE must have PG_USER so the CPU will walk into it for ring-3 */
+		pd[pdi] =
+		    paging_entry_build(pt_phys, PG_PRESENT | PG_WRITABLE | PG_USER);
+	} else if ((flags & PG_USER) && !(pd[pdi] & PG_USER)) {
+		/*
          * The PDE points to a kernel-inherited page table (no PG_USER set).
          * Writing user PTEs into the shared kernel page table would make
          * every process's mappings visible to every other process — each
@@ -261,46 +266,48 @@ int paging_map_page(uint32_t pd_phys, uint32_t virt,
          * existing kernel entries so ring-0 code still reaches kernel memory
          * in this address space, then replace the PDE.
          */
-        uint32_t pt_phys = pmm_alloc_page();
-        if (!pt_phys) return -1;
+		uint32_t pt_phys = pmm_alloc_page();
+		if (!pt_phys)
+			return -1;
 
-        uint32_t *old_pt = (uint32_t *)paging_entry_addr(pd[pdi]);
-        pt = (uint32_t *)pt_phys;
-        for (int i = 0; i < 1024; i++)
-            pt[i] = old_pt[i];
+		uint32_t *old_pt = (uint32_t *)paging_entry_addr(pd[pdi]);
+		pt = (uint32_t *)pt_phys;
+		for (int i = 0; i < 1024; i++)
+			pt[i] = old_pt[i];
 
-        pd[pdi] = paging_entry_build(pt_phys, PG_PRESENT | PG_WRITABLE | PG_USER);
-    } else {
-        pt = (uint32_t *)paging_entry_addr(pd[pdi]);
-        if (flags & PG_USER)
-            pd[pdi] |= PG_USER;
-    }
+		pd[pdi] =
+		    paging_entry_build(pt_phys, PG_PRESENT | PG_WRITABLE | PG_USER);
+	} else {
+		pt = (uint32_t *)paging_entry_addr(pd[pdi]);
+		if (flags & PG_USER)
+			pd[pdi] |= PG_USER;
+	}
 
-    pt[pti] = paging_entry_build(phys, flags);
-    paging_invlpg(virt);
-    return 0;
+	pt[pti] = paging_entry_build(phys, flags);
+	paging_invlpg(virt);
+	return 0;
 }
 
 int paging_walk(uint32_t pd_phys, uint32_t virt, uint32_t **pte_out)
 {
-    uint32_t *pd  = (uint32_t *)pd_phys;
-    uint32_t  pdi = virt >> 22;
-    uint32_t  pti = (virt >> 12) & 0x3FF;
+	uint32_t *pd = (uint32_t *)pd_phys;
+	uint32_t pdi = virt >> 22;
+	uint32_t pti = (virt >> 12) & 0x3FF;
 
-    if (!(pd[pdi] & PG_PRESENT))
-        return -1;
+	if (!(pd[pdi] & PG_PRESENT))
+		return -1;
 
-    uint32_t *pt = (uint32_t *)(pd[pdi] & ~0xFFFu);
-    if (!(pt[pti] & PG_PRESENT))
-        return -1;
+	uint32_t *pt = (uint32_t *)(pd[pdi] & ~0xFFFu);
+	if (!(pt[pti] & PG_PRESENT))
+		return -1;
 
-    *pte_out = &pt[pti];
-    return 0;
+	*pte_out = &pt[pti];
+	return 0;
 }
 
 void paging_switch_directory(uint32_t pd_phys)
 {
-    paging_load_cr3(pd_phys);
+	paging_load_cr3(pd_phys);
 }
 
 /*
@@ -315,11 +322,11 @@ void paging_switch_directory(uint32_t pd_phys)
  */
 void paging_guard_page(uint32_t virt)
 {
-    uint32_t pde_idx = virt >> 22;
-    uint32_t pte_idx = (virt >> 12) & 0x3FF;
-    uint32_t *pt = (uint32_t *)(PAGE_TAB_BASE + pde_idx * 0x1000);
-    pt[pte_idx] &= ~(uint32_t)PG_PRESENT;
-    paging_invlpg(virt);
+	uint32_t pde_idx = virt >> 22;
+	uint32_t pte_idx = (virt >> 12) & 0x3FF;
+	uint32_t *pt = (uint32_t *)(PAGE_TAB_BASE + pde_idx * 0x1000);
+	pt[pte_idx] &= ~(uint32_t)PG_PRESENT;
+	paging_invlpg(virt);
 }
 
 /*
@@ -331,24 +338,26 @@ void paging_guard_page(uint32_t virt)
  */
 void paging_unguard_page(uint32_t virt)
 {
-    uint32_t pde_idx = virt >> 22;
-    uint32_t pte_idx = (virt >> 12) & 0x3FF;
-    uint32_t *pt = (uint32_t *)(PAGE_TAB_BASE + pde_idx * 0x1000);
-    pt[pte_idx] |= PG_PRESENT | PG_WRITABLE;
-    paging_invlpg(virt);
+	uint32_t pde_idx = virt >> 22;
+	uint32_t pte_idx = (virt >> 12) & 0x3FF;
+	uint32_t *pt = (uint32_t *)(PAGE_TAB_BASE + pde_idx * 0x1000);
+	pt[pte_idx] |= PG_PRESENT | PG_WRITABLE;
+	paging_invlpg(virt);
 }
 
 uint32_t paging_clone_user_space(uint32_t src_pd_phys)
 {
-    uint32_t new_pd_phys = pmm_alloc_page();
-    if (!new_pd_phys) return 0;
+	uint32_t new_pd_phys = pmm_alloc_page();
+	if (!new_pd_phys)
+		return 0;
 
-    uint32_t *new_pd = (uint32_t *)new_pd_phys;
-    uint32_t *src_pd = (uint32_t *)src_pd_phys;
+	uint32_t *new_pd = (uint32_t *)new_pd_phys;
+	uint32_t *src_pd = (uint32_t *)src_pd_phys;
 
-    for (int i = 0; i < 1024; i++) new_pd[i] = 0;
+	for (int i = 0; i < 1024; i++)
+		new_pd[i] = 0;
 
-    /*
+	/*
      * Two-pass clone to guarantee safe rollback on OOM.
      *
      * Pass 1 — allocate child page tables.
@@ -359,70 +368,77 @@ uint32_t paging_clone_user_space(uint32_t src_pd_phys)
      * All allocations have already succeeded so this pass cannot fail.
      */
 
-    /* ── Pass 1: allocate child page tables ─────────────────────────────── */
-    for (int i = 0; i < 1024; i++) {
-        if (!(src_pd[i] & PG_PRESENT)) continue;
+	/* ── Pass 1: allocate child page tables ─────────────────────────────── */
+	for (int i = 0; i < 1024; i++) {
+		if (!(src_pd[i] & PG_PRESENT))
+			continue;
 
-        uint32_t *src_pt = (uint32_t *)paging_entry_addr(src_pd[i]);
-        int has_user_pte = 0;
-        for (int j = 0; j < 1024; j++) {
-            if ((src_pt[j] & (PG_PRESENT | PG_USER)) == (PG_PRESENT | PG_USER)) {
-                has_user_pte = 1;
-                break;
-            }
-        }
+		uint32_t *src_pt = (uint32_t *)paging_entry_addr(src_pd[i]);
+		int has_user_pte = 0;
+		for (int j = 0; j < 1024; j++) {
+			if ((src_pt[j] & (PG_PRESENT | PG_USER)) ==
+			    (PG_PRESENT | PG_USER)) {
+				has_user_pte = 1;
+				break;
+			}
+		}
 
-        if (!has_user_pte) {
-            new_pd[i] = src_pd[i];
-            continue;
-        }
+		if (!has_user_pte) {
+			new_pd[i] = src_pd[i];
+			continue;
+		}
 
-        uint32_t new_pt_phys = pmm_alloc_page();
-        if (!new_pt_phys) {
-            /* Free only the child page tables we allocated (not shared ones).
+		uint32_t new_pt_phys = pmm_alloc_page();
+		if (!new_pt_phys) {
+			/* Free only the child page tables we allocated (not shared ones).
              * A shared PDE has the same PT base as the source; an allocated
              * one differs. */
-            for (int k = 0; k < i; k++) {
-                if (!(new_pd[k] & PG_PRESENT)) continue;
-                if (paging_entry_addr(new_pd[k]) != paging_entry_addr(src_pd[k]))
-                    pmm_free_page(paging_entry_addr(new_pd[k]));
-            }
-            pmm_free_page(new_pd_phys);
-            return 0;
-        }
+			for (int k = 0; k < i; k++) {
+				if (!(new_pd[k] & PG_PRESENT))
+					continue;
+				if (paging_entry_addr(new_pd[k]) !=
+				    paging_entry_addr(src_pd[k]))
+					pmm_free_page(paging_entry_addr(new_pd[k]));
+			}
+			pmm_free_page(new_pd_phys);
+			return 0;
+		}
 
-        new_pd[i] = paging_entry_build(new_pt_phys, paging_entry_flags(src_pd[i]));
-    }
+		new_pd[i] =
+		    paging_entry_build(new_pt_phys, paging_entry_flags(src_pd[i]));
+	}
 
-    /* ── Pass 2: apply CoW flags and populate child PTs ─────────────────── */
-    for (int i = 0; i < 1024; i++) {
-        if (!(new_pd[i] & PG_PRESENT)) continue;
+	/* ── Pass 2: apply CoW flags and populate child PTs ─────────────────── */
+	for (int i = 0; i < 1024; i++) {
+		if (!(new_pd[i] & PG_PRESENT))
+			continue;
 
-        /* Skip shared kernel page tables (same PT base as source) */
-        if (paging_entry_addr(new_pd[i]) == paging_entry_addr(src_pd[i])) continue;
+		/* Skip shared kernel page tables (same PT base as source) */
+		if (paging_entry_addr(new_pd[i]) == paging_entry_addr(src_pd[i]))
+			continue;
 
-        uint32_t *src_pt = (uint32_t *)paging_entry_addr(src_pd[i]);
-        uint32_t *new_pt = (uint32_t *)paging_entry_addr(new_pd[i]);
+		uint32_t *src_pt = (uint32_t *)paging_entry_addr(src_pd[i]);
+		uint32_t *new_pt = (uint32_t *)paging_entry_addr(new_pd[i]);
 
-        /* Copy all entries (kernel + user) into the child PT */
-        for (int j = 0; j < 1024; j++)
-            new_pt[j] = src_pt[j];
+		/* Copy all entries (kernel + user) into the child PT */
+		for (int j = 0; j < 1024; j++)
+			new_pt[j] = src_pt[j];
 
-        /* Mark user entries CoW in parent and child, bump refcounts */
-        for (int j = 0; j < 1024; j++) {
-            if ((src_pt[j] & (PG_PRESENT | PG_USER)) != (PG_PRESENT | PG_USER))
-                continue;
+		/* Mark user entries CoW in parent and child, bump refcounts */
+		for (int j = 0; j < 1024; j++) {
+			if ((src_pt[j] & (PG_PRESENT | PG_USER)) != (PG_PRESENT | PG_USER))
+				continue;
 
-            uint32_t virt = ((uint32_t)i << 22) | ((uint32_t)j << 12);
-            if (src_pt[j] & PG_WRITABLE) {
-                src_pt[j] = (src_pt[j] & ~PG_WRITABLE) | PG_COW;
-                paging_invlpg(virt);
-            }
+			uint32_t virt = ((uint32_t)i << 22) | ((uint32_t)j << 12);
+			if (src_pt[j] & PG_WRITABLE) {
+				src_pt[j] = (src_pt[j] & ~PG_WRITABLE) | PG_COW;
+				paging_invlpg(virt);
+			}
 
-            new_pt[j] = src_pt[j];
-            pmm_incref(paging_entry_addr(src_pt[j]));
-        }
-    }
+			new_pt[j] = src_pt[j];
+			pmm_incref(paging_entry_addr(src_pt[j]));
+		}
+	}
 
-    return new_pd_phys;
+	return new_pd_phys;
 }

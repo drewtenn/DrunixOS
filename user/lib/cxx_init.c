@@ -11,24 +11,24 @@ extern cxx_init_fn_t __dtors_end[];
 
 static void run_forward(cxx_init_fn_t *start, cxx_init_fn_t *end)
 {
-    for (cxx_init_fn_t *fn = start; fn < end; ++fn)
-        (*fn)();
+	for (cxx_init_fn_t *fn = start; fn < end; ++fn)
+		(*fn)();
 }
 
 static void run_reverse(cxx_init_fn_t *start, cxx_init_fn_t *end)
 {
-    while (end > start)
-        (*--end)();
+	while (end > start)
+		(*--end)();
 }
 
 void __drunix_run_constructors(void)
 {
-    run_forward(__init_array_start, __init_array_end);
-    run_forward(__ctors_start, __ctors_end);
+	run_forward(__init_array_start, __init_array_end);
+	run_forward(__ctors_start, __ctors_end);
 }
 
 void __drunix_run_destructors(void)
 {
-    run_reverse(__fini_array_start, __fini_array_end);
-    run_reverse(__dtors_start, __dtors_end);
+	run_reverse(__fini_array_start, __fini_array_end);
+	run_reverse(__dtors_start, __dtors_end);
 }

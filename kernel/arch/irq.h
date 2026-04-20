@@ -17,7 +17,7 @@
  * Only one handler per line is supported — last registration wins.
  */
 
-#define IRQ_COUNT 16    /* vectors 32–47 */
+#define IRQ_COUNT 16 /* vectors 32–47 */
 
 typedef void (*irq_handler_fn)(void);
 

@@ -58,8 +58,9 @@ At minimum, style review should check:
 - one-line conditionals in kernel code
 - repeated literal capacities that should have a named constant
 
-Style tooling should start as reporting-only. Make it enforcement once the
-existing codebase has been cleaned enough that failures are signal, not noise.
+Style tooling is enforced by default: `make scan` must either complete cleanly
+or fail the build. Use `SCAN_FAIL=0` only for local auditing when you need the
+full report without stopping at the first failing scanner.
 
 The build exposes the current mechanical checks as separate targets:
 
@@ -71,6 +72,5 @@ The build exposes the current mechanical checks as separate targets:
 - `make sparse-check` runs Sparse over kernel C sources.
 - `make scan` runs the formatter check and both scanners.
 
-These targets are reporting-only by default while the baseline is noisy. Use
-`SCAN_FAIL=1` when running them in an enforcement context or when a specific
-area has been cleaned up enough to treat new findings as regressions.
+These targets fail by default when they find issues. Use `SCAN_FAIL=0` for a
+reporting-only scan while paying down the existing baseline.

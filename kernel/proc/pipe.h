@@ -6,8 +6,8 @@
 #include "wait.h"
 #include <stdint.h>
 
-#define PIPE_BUF_SIZE  4096u  /* bytes per pipe ring buffer           */
-#define MAX_PIPES      8u     /* maximum simultaneous kernel pipes    */
+#define PIPE_BUF_SIZE 4096u /* bytes per pipe ring buffer           */
+#define MAX_PIPES 8u        /* maximum simultaneous kernel pipes    */
 
 /*
  * pipe_buf_t — one kernel pipe.
@@ -21,14 +21,14 @@
  * EOF.  When read_open reaches 0, a writer gets a broken-pipe error.
  */
 typedef struct {
-    uint8_t  buf[PIPE_BUF_SIZE];
-    uint32_t read_idx;    /* index of the next byte to read    */
-    uint32_t write_idx;   /* index of the next byte to write   */
-    uint32_t count;       /* bytes currently in the buffer     */
-    uint32_t read_open;   /* open read-end fds (all processes) */
-    uint32_t write_open;  /* open write-end fds (all processes)*/
-    wait_queue_t waiters; /* readers and writers blocked on this pipe */
-    uint32_t in_use;      /* 1 if this slot is allocated       */
+	uint8_t buf[PIPE_BUF_SIZE];
+	uint32_t read_idx;    /* index of the next byte to read    */
+	uint32_t write_idx;   /* index of the next byte to write   */
+	uint32_t count;       /* bytes currently in the buffer     */
+	uint32_t read_open;   /* open read-end fds (all processes) */
+	uint32_t write_open;  /* open write-end fds (all processes)*/
+	wait_queue_t waiters; /* readers and writers blocked on this pipe */
+	uint32_t in_use;      /* 1 if this slot is allocated       */
 } pipe_buf_t;
 
 /*

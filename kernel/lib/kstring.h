@@ -19,11 +19,11 @@
 
 /* ── Memory ───────────────────────────────────────────────────────────── */
 
-void    *k_memcpy(void *dst, const void *src, uint32_t n);
-void    *k_memset(void *s, int c, uint32_t n);
-void     k_memset32(void *s, uint32_t value, uint32_t count);
-void    *k_memmove(void *dst, const void *src, uint32_t n);
-int      k_memcmp(const void *a, const void *b, uint32_t n);
+void *k_memcpy(void *dst, const void *src, uint32_t n);
+void *k_memset(void *s, int c, uint32_t n);
+void k_memset32(void *s, uint32_t value, uint32_t count);
+void *k_memmove(void *dst, const void *src, uint32_t n);
+int k_memcmp(const void *a, const void *b, uint32_t n);
 
 /* ── String length ────────────────────────────────────────────────────── */
 
@@ -32,20 +32,20 @@ uint32_t k_strnlen(const char *s, uint32_t max);
 
 /* ── String copy / concatenation ──────────────────────────────────────── */
 
-char    *k_strcpy(char *dst, const char *src);
-char    *k_strncpy(char *dst, const char *src, uint32_t n);
-char    *k_strcat(char *dst, const char *src);
-char    *k_strncat(char *dst, const char *src, uint32_t n);
+char *k_strcpy(char *dst, const char *src);
+char *k_strncpy(char *dst, const char *src, uint32_t n);
+char *k_strcat(char *dst, const char *src);
+char *k_strncat(char *dst, const char *src, uint32_t n);
 
 /* ── String comparison ────────────────────────────────────────────────── */
 
-int      k_strcmp(const char *a, const char *b);
-int      k_strncmp(const char *a, const char *b, uint32_t n);
+int k_strcmp(const char *a, const char *b);
+int k_strncmp(const char *a, const char *b, uint32_t n);
 
 /* ── String search ────────────────────────────────────────────────────── */
 
-char    *k_strchr(const char *s, int c);
-char    *k_strrchr(const char *s, int c);
-char    *k_strstr(const char *haystack, const char *needle);
+char *k_strchr(const char *s, int c);
+char *k_strrchr(const char *s, int c);
+char *k_strstr(const char *haystack, const char *needle);
 
 #endif

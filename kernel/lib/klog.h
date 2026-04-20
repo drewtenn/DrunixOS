@@ -6,10 +6,10 @@
 #include <stdint.h>
 
 typedef enum {
-    KLOG_LEVEL_DEBUG = 0,
-    KLOG_LEVEL_INFO  = 1,
-    KLOG_LEVEL_WARN  = 2,
-    KLOG_LEVEL_ERROR = 3,
+	KLOG_LEVEL_DEBUG = 0,
+	KLOG_LEVEL_INFO = 1,
+	KLOG_LEVEL_WARN = 2,
+	KLOG_LEVEL_ERROR = 3,
 } klog_level_t;
 
 /*

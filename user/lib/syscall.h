@@ -8,118 +8,118 @@
  * type: 1 = regular file, 2 = directory.
  */
 typedef struct {
-    unsigned int type;
-    unsigned int size;
-    unsigned int link_count;
-    unsigned int mtime;
+	unsigned int type;
+	unsigned int size;
+	unsigned int link_count;
+	unsigned int mtime;
 } dufs_stat_t;
 
 /* ── Signal constants ──────────────────────────────────────────────────── */
 
 /* Signal dispositions for sys_sigaction(). */
-#define SIG_DFL  ((void (*)(int))0)   /* default action */
-#define SIG_IGN  ((void (*)(int))1)   /* ignore signal  */
+#define SIG_DFL ((void (*)(int))0) /* default action */
+#define SIG_IGN ((void (*)(int))1) /* ignore signal  */
 
 /* Signal numbers (Linux-compatible). */
-#define SIGINT   2    /* Ctrl-C                  — default: terminate */
-#define SIGILL   4    /* illegal instruction                        */
-#define SIGTRAP  5    /* breakpoint / trap                          */
-#define SIGABRT  6    /* abort                                      */
-#define SIGFPE   8    /* arithmetic exception                       */
-#define SIGKILL  9    /* uncatchable kill         — default: terminate */
-#define SIGSEGV  11   /* invalid memory reference                    */
-#define SIGPIPE  13   /* write to broken pipe     — default: terminate */
-#define SIGTERM  15   /* polite termination       — default: terminate */
-#define SIGCHLD  17   /* child process exited     — default: ignore    */
-#define SIGCONT  18   /* continue a stopped proc  — default: continue  */
-#define SIGSTOP  19   /* uncatchable stop         — default: stop      */
-#define SIGTSTP  20   /* terminal stop (Ctrl-Z)   — default: stop      */
+#define SIGINT 2   /* Ctrl-C                  — default: terminate */
+#define SIGILL 4   /* illegal instruction                        */
+#define SIGTRAP 5  /* breakpoint / trap                          */
+#define SIGABRT 6  /* abort                                      */
+#define SIGFPE 8   /* arithmetic exception                       */
+#define SIGKILL 9  /* uncatchable kill         — default: terminate */
+#define SIGSEGV 11 /* invalid memory reference                    */
+#define SIGPIPE 13 /* write to broken pipe     — default: terminate */
+#define SIGTERM 15 /* polite termination       — default: terminate */
+#define SIGCHLD 17 /* child process exited     — default: ignore    */
+#define SIGCONT 18 /* continue a stopped proc  — default: continue  */
+#define SIGSTOP 19 /* uncatchable stop         — default: stop      */
+#define SIGTSTP 20 /* terminal stop (Ctrl-Z)   — default: stop      */
 
 /* sys_sigprocmask `how` values. */
-#define SIG_BLOCK    0
-#define SIG_UNBLOCK  1
-#define SIG_SETMASK  2
+#define SIG_BLOCK 0
+#define SIG_UNBLOCK 1
+#define SIG_SETMASK 2
 
 /* sys_waitpid option flags. */
-#define WNOHANG    1   /* return immediately if no child has changed state */
-#define WUNTRACED  2   /* also return when a child stops (SIGSTOP/SIGTSTP) */
+#define WNOHANG 1   /* return immediately if no child has changed state */
+#define WUNTRACED 2 /* also return when a child stops (SIGSTOP/SIGTSTP) */
 
 /* Wait status decoding macros (Linux-compatible encoding). */
-#define WIFEXITED(s)    (((s) & 0x7F) == 0)
-#define WEXITSTATUS(s)  (((s) >> 8) & 0xFF)
-#define WIFSIGNALED(s)  (((s) & 0x7F) != 0 && ((s) & 0x7F) != 0x7F)
-#define WTERMSIG(s)     ((s) & 0x7F)
-#define WCOREDUMP(s)    (((s) & 0x80) != 0)
-#define WIFSTOPPED(s)   (((s) & 0xFF) == 0x7F)
-#define WSTOPSIG(s)     (((s) >> 8) & 0xFF)
+#define WIFEXITED(s) (((s) & 0x7F) == 0)
+#define WEXITSTATUS(s) (((s) >> 8) & 0xFF)
+#define WIFSIGNALED(s) (((s) & 0x7F) != 0 && ((s) & 0x7F) != 0x7F)
+#define WTERMSIG(s) ((s) & 0x7F)
+#define WCOREDUMP(s) (((s) & 0x80) != 0)
+#define WIFSTOPPED(s) (((s) & 0xFF) == 0x7F)
+#define WSTOPSIG(s) (((s) >> 8) & 0xFF)
 
 /* ── TTY / termios ─────────────────────────────────────────────────────── */
 
 /* termios c_iflag bits */
-#define ICRNL   (1u << 0)   /* map CR to NL on input       */
+#define ICRNL (1u << 0) /* map CR to NL on input       */
 
 /* termios c_oflag bits */
-#define OPOST   (1u << 0)   /* post-process output         */
-#define ONLCR   (1u << 1)   /* map NL to CR-NL on output   */
+#define OPOST (1u << 0) /* post-process output         */
+#define ONLCR (1u << 1) /* map NL to CR-NL on output   */
 
 /* termios c_cflag bits */
-#define CREAD   (1u << 0)   /* enable receiver             */
-#define CS8     (1u << 1)   /* 8-bit characters            */
+#define CREAD (1u << 0) /* enable receiver             */
+#define CS8 (1u << 1)   /* 8-bit characters            */
 
 /* termios c_lflag bits */
-#define ICANON  (1u << 0)   /* canonical (line-buffered) mode */
-#define ECHO    (1u << 1)   /* echo input characters          */
-#define ECHOE   (1u << 2)   /* echo ERASE as BS SP BS         */
-#define ISIG    (1u << 3)   /* generate SIGINT on Ctrl+C      */
+#define ICANON (1u << 0) /* canonical (line-buffered) mode */
+#define ECHO (1u << 1)   /* echo input characters          */
+#define ECHOE (1u << 2)  /* echo ERASE as BS SP BS         */
+#define ISIG (1u << 3)   /* generate SIGINT on Ctrl+C      */
 
-#define NCCS    19
-#define VINTR   0
-#define VERASE  2
-#define VEOF    4
-#define VTIME   5
-#define VMIN    6
-#define VSTART  8
-#define VSTOP   9
-#define VSUSP   10
+#define NCCS 19
+#define VINTR 0
+#define VERASE 2
+#define VEOF 4
+#define VTIME 5
+#define VMIN 6
+#define VSTART 8
+#define VSTOP 9
+#define VSUSP 10
 
 /* sys_tcsetattr `action` values */
-#define TCSANOW   0
+#define TCSANOW 0
 #define TCSAFLUSH 2
 
 typedef struct {
-    unsigned int c_iflag;
-    unsigned int c_oflag;
-    unsigned int c_cflag;
-    unsigned int c_lflag;
-    unsigned char c_cc[NCCS];
+	unsigned int c_iflag;
+	unsigned int c_oflag;
+	unsigned int c_cflag;
+	unsigned int c_lflag;
+	unsigned char c_cc[NCCS];
 } termios_t;
 
 typedef struct {
-    long tv_sec;
-    long tv_nsec;
+	long tv_sec;
+	long tv_nsec;
 } sys_timespec_t;
 
 /* ── Memory mapping ───────────────────────────────────────────────────── */
 
-#define PROT_NONE      0x0u
-#define PROT_READ      0x1u
-#define PROT_WRITE     0x2u
-#define PROT_EXEC      0x4u
+#define PROT_NONE 0x0u
+#define PROT_READ 0x1u
+#define PROT_WRITE 0x2u
+#define PROT_EXEC 0x4u
 
-#define MAP_PRIVATE    0x02u
-#define MAP_ANONYMOUS  0x20u
-#define MAP_ANON       MAP_ANONYMOUS
-#define MAP_FAILED     ((void *)-1)
+#define MAP_PRIVATE 0x02u
+#define MAP_ANONYMOUS 0x20u
+#define MAP_ANON MAP_ANONYMOUS
+#define MAP_FAILED ((void *)-1)
 
-#define CLONE_VM             0x00000100u
-#define CLONE_FS             0x00000200u
-#define CLONE_FILES          0x00000400u
-#define CLONE_SIGHAND        0x00000800u
-#define CLONE_THREAD         0x00010000u
-#define CLONE_SETTLS         0x00080000u
-#define CLONE_PARENT_SETTID  0x00100000u
+#define CLONE_VM 0x00000100u
+#define CLONE_FS 0x00000200u
+#define CLONE_FILES 0x00000400u
+#define CLONE_SIGHAND 0x00000800u
+#define CLONE_THREAD 0x00010000u
+#define CLONE_SETTLS 0x00080000u
+#define CLONE_PARENT_SETTID 0x00100000u
 #define CLONE_CHILD_CLEARTID 0x00200000u
-#define CLONE_CHILD_SETTID   0x01000000u
+#define CLONE_CHILD_SETTID 0x01000000u
 
 #ifdef __cplusplus
 extern "C" {
@@ -150,9 +150,9 @@ int sys_read(int fd, char *buf, int count);
 
 #define SYS_O_RDONLY 0
 #define SYS_O_WRONLY 01
-#define SYS_O_RDWR   02
-#define SYS_O_CREAT  0100
-#define SYS_O_TRUNC  01000
+#define SYS_O_RDWR 02
+#define SYS_O_CREAT 0100
+#define SYS_O_TRUNC 01000
 #define SYS_O_APPEND 02000
 
 /* Open a file by name (read-only). Returns a file descriptor (>=3) or -1 if not found. */
@@ -291,8 +291,12 @@ int sys_dup2(int old_fd, int new_fd);
  * the unchanged old break — callers must compare to detect failure.
  */
 unsigned int sys_brk(unsigned int new_brk);
-void *sys_mmap(void *addr, unsigned int length, int prot, int flags,
-               int fd, unsigned int offset);
+void *sys_mmap(void *addr,
+               unsigned int length,
+               int prot,
+               int flags,
+               int fd,
+               unsigned int offset);
 int sys_munmap(void *addr, unsigned int length);
 int sys_mprotect(void *addr, unsigned int length, int prot);
 
@@ -377,9 +381,9 @@ int sys_getpgid(int pid);
 
 /* ── File seeking ─────────────────────────────────────────────────────── */
 
-#define SEEK_SET  0   /* set offset to `offset` bytes from start    */
-#define SEEK_CUR  1   /* set offset to current position + `offset`  */
-#define SEEK_END  2   /* set offset to file size + `offset`         */
+#define SEEK_SET 0 /* set offset to `offset` bytes from start    */
+#define SEEK_CUR 1 /* set offset to current position + `offset`  */
+#define SEEK_END 2 /* set offset to file size + `offset`         */
 
 /*
  * Reposition the file offset of an open fd.
@@ -392,8 +396,11 @@ int sys_lseek(int fd, int offset, int whence);
 /* Return the PID of the calling process. */
 int sys_getpid(void);
 
-int sys_clone(unsigned int flags, void *child_stack, int *parent_tid,
-              void *tls, int *child_tid);
+int sys_clone(unsigned int flags,
+              void *child_stack,
+              int *parent_tid,
+              void *tls,
+              int *child_tid);
 int sys_gettid(void);
 int sys_set_tid_address(int *tidptr);
 int sys_yield(void);

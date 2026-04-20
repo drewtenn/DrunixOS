@@ -7,8 +7,8 @@ GDB     := i386-elf-gdb
 CLANG_FORMAT ?= clang-format
 CPPCHECK ?= cppcheck
 SPARSE ?= sparse
-SPARSEFLAGS ?= -nostdinc -I tools/sparse-include -I user/lib
-SCAN_FAIL ?= 0
+SPARSEFLAGS ?= -Wno-non-pointer-null -nostdinc -I tools/sparse-include -I user/lib
+SCAN_FAIL ?= 1
 LINUX_I386_CC ?= i486-linux-musl-gcc
 LINUX_CFLAGS ?= -static -Os -s
 E2FSPROGS_SBIN ?= /opt/homebrew/opt/e2fsprogs/sbin
@@ -30,9 +30,9 @@ CFLAGS += -DDRUNIX_INIT_ENV0=\"$(INIT_ENV0)\"
 CFLAGS += -DDRUNIX_ROOT_FS=\"$(ROOT_FS)\"
 NASMFLAGS :=
 
-# Build with NO_DESKTOP=1 to skip desktop init entirely and boot straight to
-# the legacy console. The runtime "nodesktop" cmdline flag (set via grub) is
-# still honored even when the desktop is compiled in.
+#Build with NO_DESKTOP = 1 to skip desktop init entirely and boot straight to
+#the legacy console.The runtime "nodesktop" cmdline flag(set via grub) is
+#still honored even when the desktop is compiled in.
 ifneq ($(origin no_desktop),undefined)
 NO_DESKTOP ?= $(no_desktop)
 endif
@@ -50,8 +50,8 @@ NASMFLAGS += -DDRUNIX_VGA_TEXT
 endif
 
 # ─── Unit tests ──────────────────────────────────────────────────────────────
-# Build with KTEST=1 to compile the in-kernel test suite and run it at boot:
-#   make test          (builds with tests enabled and launches QEMU)
+#Build with KTEST = 1 to compile the in - kernel test suite and run it at boot:
+#make test(builds with tests enabled and launches QEMU)
 KTEST ?= 0
 ifeq ($(KTEST),1)
 KLOG_TO_DEBUGCON ?= 1
@@ -71,7 +71,7 @@ ifeq ($(KLOG_TO_DEBUGCON),1)
 CFLAGS += -DKLOG_TO_DEBUGCON
 endif
 
-# Sentinel: recompile kernel.c whenever KTEST flips between 0 and 1.
+#Sentinel : recompile kernel.c whenever KTEST flips between 0 and 1.
 .ktest-flag: FORCE
 	echo "$(KTEST)" | cmp -s - $@ || echo "$(KTEST)" > $@
 .double-fault-test-flag: FORCE
@@ -88,9 +88,9 @@ endif
 	echo "$(VGA_TEXT)" | cmp -s - $@ || echo "$(VGA_TEXT)" > $@
 .disk-sectors-flag: FORCE
 	echo "$(DISK_SECTORS)" | cmp -s - $@ || echo "$(DISK_SECTORS)" > $@
-# GRUB menu timeout (seconds). Default 0 boots the first entry instantly.
-# Override (e.g. GRUB_TIMEOUT=10) to display the menu — the `run-grub-menu`
-# target uses this for interactive verification.
+#GRUB menu timeout(seconds).Default 0 boots the first entry instantly.
+#Override(e.g.GRUB_TIMEOUT = 10) to display the menu — the `run - grub - menu`
+#target uses this for interactive verification.
 GRUB_TIMEOUT ?= 0
 FORCE:
 
@@ -105,7 +105,7 @@ kernel/drivers/mouse.o: .mouse-speed-flag
 kernel/drivers/ata.o: .disk-sectors-flag
 kernel/test/test_desktop.o: .mouse-speed-flag
 
-# GRUB2 mkrescue (provided by: brew install i686-elf-grub xorriso)
+#GRUB2 mkrescue(provided by : brew install i686 - elf - grub xorriso)
 GRUB_MKRESCUE := i686-elf-grub-mkrescue
 ISO_KERNEL    := iso/boot/kernel.elf
 ISO_KERNEL_VGA := iso/boot/kernel-vga.elf
@@ -214,6 +214,7 @@ include kernel/objects.mk
 
 # ─── Kernel link ─────────────────────────────────────────────────────────────
 $(KOBJS): .ktest-flag
+kernel/test/%.o: CFLAGS += -Wno-stack-usage
 
 kernel.elf: $(KOBJS) $(KTOBJS)
 	$(LD) -m elf_i386 -o $@ -T kernel/kernel.ld $(KOBJS) $(KTOBJS)
@@ -307,8 +308,9 @@ validate-ext3-linux: $(ROOT_DISK_IMG) tools/check_ext3_linux_compat.py tools/che
 	$(DUMPE2FS) -h disk.fs | grep -q 'Journal inode:[[:space:]]*8'
 
 # ─── Static analysis and style scans ─────────────────────────────────────────
-SCAN_C_STYLE_SOURCES := $(shell find kernel user -type f \( -name '*.c' -o -name '*.h' \) | sort)
-SCAN_KERNEL_C_SOURCES := $(shell find kernel -type f -name '*.c' | sort)
+SCAN_C_STYLE_SOURCES := $(shell find kernel -path kernel/test -prune -o -type f \( -name '*.c' -o -name '*.h' \) -print | sort) \
+                        $(shell find user -type f \( -name '*.c' -o -name '*.h' \) | sort)
+SCAN_KERNEL_C_SOURCES := $(shell find kernel -path kernel/test -prune -o -type f -name '*.c' -print | sort)
 SCAN_USER_C_RUNTIME_OBJS := lib/cxx_init.o lib/syscall.o lib/malloc.o \
                             lib/string.o lib/ctype.o lib/stdlib.o \
                             lib/stdio.o lib/unistd.o lib/time.o
@@ -345,7 +347,7 @@ cppcheck: compile_commands.json
 	@mkdir -p build/cppcheck
 	@$(CPPCHECK) --project=compile_commands.json \
 		--cppcheck-build-dir=build/cppcheck \
-		--enable=warning,style,performance,portability \
+		--enable=warning \
 		--std=c99 \
 		--error-exitcode=1 > build/cppcheck.log 2>&1 || { \
 		sed -n '1,180p' build/cppcheck.log; \

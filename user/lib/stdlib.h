@@ -18,10 +18,12 @@
 extern "C" {
 #endif
 
-int  atoi(const char *s);
-int  abs(int x);
+int atoi(const char *s);
+int abs(int x);
 char *getenv(const char *name);
-void qsort(void *base, size_t nmemb, size_t size,
+void qsort(void *base,
+           size_t nmemb,
+           size_t size,
            int (*compar)(const void *, const void *));
 
 /*

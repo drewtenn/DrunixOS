@@ -15,10 +15,10 @@
  * separate free-list array is needed.
  */
 typedef struct slab_hdr {
-    struct slab_hdr *next;       /* intrusive link: partial or full list   */
-    uint32_t         n_free;     /* number of free objects in this slab    */
-    void            *free_head;  /* head of the embedded free-object chain */
-} slab_hdr_t;                   /* 12 bytes on i386                        */
+	struct slab_hdr *next; /* intrusive link: partial or full list   */
+	uint32_t n_free;       /* number of free objects in this slab    */
+	void *free_head;       /* head of the embedded free-object chain */
+} slab_hdr_t;              /* 12 bytes on i386                        */
 
 /*
  * kmem_cache_t: descriptor for a fixed-size object pool.
@@ -32,11 +32,11 @@ typedef struct slab_hdr {
  * For objects larger than 4084 bytes use kmalloc / pmm_alloc_page directly.
  */
 typedef struct kmem_cache {
-    const char  *name;           /* human-readable label for debugging     */
-    uint32_t     obj_size;       /* bytes per object (4-byte-aligned)      */
-    uint32_t     objs_per_slab;  /* objects that fit in one 4 KB slab page */
-    slab_hdr_t  *partial;        /* slabs with at least one free object    */
-    slab_hdr_t  *full;           /* slabs with no free objects             */
+	const char *name;       /* human-readable label for debugging     */
+	uint32_t obj_size;      /* bytes per object (4-byte-aligned)      */
+	uint32_t objs_per_slab; /* objects that fit in one 4 KB slab page */
+	slab_hdr_t *partial;    /* slabs with at least one free object    */
+	slab_hdr_t *full;       /* slabs with no free objects             */
 } kmem_cache_t;
 
 /*

@@ -30,9 +30,9 @@ extern "C" {
 
 /* ── Process control ─────────────────────────────────────────────────── */
 
-int  fork(void);
-int  execv (const char *path, char *const argv[]);
-int  execve(const char *path, char *const argv[], char *const envp[]);
+int fork(void);
+int execv(const char *path, char *const argv[]);
+int execve(const char *path, char *const argv[], char *const envp[]);
 extern char **environ;
 
 /* Terminate the calling process without running any atexit() / stdio
@@ -41,8 +41,8 @@ extern char **environ;
  * exit() up in stdlib.h. */
 void _exit(int status);
 
-int  getpid (void);
-int  getppid(void);
+int getpid(void);
+int getppid(void);
 
 /* ── Sleep ───────────────────────────────────────────────────────────── */
 
@@ -57,18 +57,18 @@ unsigned int sleep(unsigned int seconds);
 
 /* ── File descriptors ────────────────────────────────────────────────── */
 
-int   read (int fd, void *buf, size_t count);
-int   write(int fd, const void *buf, size_t count);
-int   close(int fd);
+int read(int fd, void *buf, size_t count);
+int write(int fd, const void *buf, size_t count);
+int close(int fd);
 
-int   dup2(int oldfd, int newfd);
-int   pipe(int fds[2]);
+int dup2(int oldfd, int newfd);
+int pipe(int fds[2]);
 
 /* ── Filesystem ──────────────────────────────────────────────────────── */
 
-int   unlink(const char *path);
-int   rmdir (const char *path);
-int   chdir (const char *path);
+int unlink(const char *path);
+int rmdir(const char *path);
+int chdir(const char *path);
 
 /* POSIX getcwd returns buf on success or NULL on error; our sys_getcwd
  * returns a character count.  This wrapper adapts between the two. */
@@ -77,12 +77,12 @@ char *getcwd(char *buf, size_t size);
 /* ── File seeking ────────────────────────────────────────────────────── */
 
 #ifndef SEEK_SET
-#define SEEK_SET  0
-#define SEEK_CUR  1
-#define SEEK_END  2
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
 #endif
 
-long  lseek(int fd, long offset, int whence);
+long lseek(int fd, long offset, int whence);
 
 /* ── Terminal interrogation ──────────────────────────────────────────── */
 

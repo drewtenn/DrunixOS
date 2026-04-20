@@ -16,7 +16,9 @@
  *
  * O(n log n) worst case, O(1) extra space.  Not stable.
  */
-void k_sort(void *base, uint32_t n, uint32_t size,
+void k_sort(void *base,
+            uint32_t n,
+            uint32_t size,
             int (*cmp)(const void *a, const void *b));
 
 #endif

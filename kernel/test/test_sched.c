@@ -29,136 +29,145 @@
  * path.
  */
 
-static void init_dummy_proc(process_t *proc) {
-    k_memset(proc, 0, sizeof(*proc));
-    proc->saved_esp = 1;
+static void init_dummy_proc(process_t *proc)
+{
+	k_memset(proc, 0, sizeof(*proc));
+	proc->saved_esp = 1;
 }
 
 static void queue_blocked_proc(wait_queue_t *queue, process_t *proc)
 {
-    proc->state = PROC_BLOCKED;
-    proc->wait_queue = queue;
-    proc->wait_next = 0;
+	proc->state = PROC_BLOCKED;
+	proc->wait_queue = queue;
+	proc->wait_next = 0;
 
-    if (queue->tail)
-        queue->tail->wait_next = proc;
-    else
-        queue->head = proc;
-    queue->tail = proc;
+	if (queue->tail)
+		queue->tail->wait_next = proc;
+	else
+		queue->head = proc;
+	queue->tail = proc;
 }
 
-static void test_no_running_process_after_init(ktest_case_t *tc) {
-    sched_init();
-    KTEST_EXPECT_NULL(tc, sched_current());
+static void test_no_running_process_after_init(ktest_case_t *tc)
+{
+	sched_init();
+	KTEST_EXPECT_NULL(tc, sched_current());
 }
 
-static void test_add_returns_valid_pid(ktest_case_t *tc) {
-    sched_init();
-    static process_t proc;
-    init_dummy_proc(&proc);
-    int pid = sched_add(&proc);
-    KTEST_EXPECT_GE(tc, (uint32_t)pid, 1u);
+static void test_add_returns_valid_pid(ktest_case_t *tc)
+{
+	sched_init();
+	static process_t proc;
+	init_dummy_proc(&proc);
+	int pid = sched_add(&proc);
+	KTEST_EXPECT_GE(tc, (uint32_t)pid, 1u);
 }
 
-static void test_add_two_pids_are_unique(ktest_case_t *tc) {
-    sched_init();
-    static process_t p1, p2;
-    init_dummy_proc(&p1);
-    init_dummy_proc(&p2);
-    int pid1 = sched_add(&p1);
-    int pid2 = sched_add(&p2);
-    KTEST_EXPECT_GE(tc, (uint32_t)pid1, 1u);
-    KTEST_EXPECT_GE(tc, (uint32_t)pid2, 1u);
-    KTEST_EXPECT_NE(tc, (uint32_t)pid1, (uint32_t)pid2);
+static void test_add_two_pids_are_unique(ktest_case_t *tc)
+{
+	sched_init();
+	static process_t p1, p2;
+	init_dummy_proc(&p1);
+	init_dummy_proc(&p2);
+	int pid1 = sched_add(&p1);
+	int pid2 = sched_add(&p2);
+	KTEST_EXPECT_GE(tc, (uint32_t)pid1, 1u);
+	KTEST_EXPECT_GE(tc, (uint32_t)pid2, 1u);
+	KTEST_EXPECT_NE(tc, (uint32_t)pid1, (uint32_t)pid2);
 }
 
 static void test_sched_add_assigns_tid_and_default_tgid(ktest_case_t *tc)
 {
-    sched_init();
-    static process_t proc;
-    init_dummy_proc(&proc);
+	sched_init();
+	static process_t proc;
+	init_dummy_proc(&proc);
 
-    int tid = sched_add(&proc);
-    KTEST_ASSERT_TRUE(tc, tid >= 1);
+	int tid = sched_add(&proc);
+	KTEST_ASSERT_TRUE(tc, tid >= 1);
 
-    process_t *slot = sched_find_pid((uint32_t)tid);
-    KTEST_ASSERT_NOT_NULL(tc, slot);
-    KTEST_EXPECT_EQ(tc, slot->tid, (uint32_t)tid);
-    KTEST_EXPECT_EQ(tc, slot->tgid, (uint32_t)tid);
-    KTEST_ASSERT_NOT_NULL(tc, slot->group);
-    KTEST_EXPECT_EQ(tc, task_group_tgid(slot->group), (uint32_t)tid);
-    KTEST_EXPECT_EQ(tc, task_group_live_count(slot->group), 1u);
+	process_t *slot = sched_find_pid((uint32_t)tid);
+	KTEST_ASSERT_NOT_NULL(tc, slot);
+	KTEST_EXPECT_EQ(tc, slot->tid, (uint32_t)tid);
+	KTEST_EXPECT_EQ(tc, slot->tgid, (uint32_t)tid);
+	KTEST_ASSERT_NOT_NULL(tc, slot->group);
+	KTEST_EXPECT_EQ(tc, task_group_tgid(slot->group), (uint32_t)tid);
+	KTEST_EXPECT_EQ(tc, task_group_live_count(slot->group), 1u);
 }
 
 static void test_sched_current_tid_and_tgid_split(ktest_case_t *tc)
 {
-    sched_init();
-    static process_t leader;
-    init_dummy_proc(&leader);
+	sched_init();
+	static process_t leader;
+	init_dummy_proc(&leader);
 
-    int tid = sched_add(&leader);
-    KTEST_ASSERT_TRUE(tc, tid >= 1);
-    KTEST_ASSERT_NOT_NULL(tc, sched_bootstrap());
+	int tid = sched_add(&leader);
+	KTEST_ASSERT_TRUE(tc, tid >= 1);
+	KTEST_ASSERT_NOT_NULL(tc, sched_bootstrap());
 
-    KTEST_EXPECT_EQ(tc, sched_current_tid(), (uint32_t)tid);
-    KTEST_EXPECT_EQ(tc, sched_current_tgid(), (uint32_t)tid);
+	KTEST_EXPECT_EQ(tc, sched_current_tid(), (uint32_t)tid);
+	KTEST_EXPECT_EQ(tc, sched_current_tgid(), (uint32_t)tid);
 }
 
-static void test_table_full_returns_error(ktest_case_t *tc) {
-    sched_init();
-    /* Fill every slot. */
-    static process_t procs[MAX_PROCS];
-    for (int i = 0; i < MAX_PROCS; i++) {
-        init_dummy_proc(&procs[i]);
-        int pid = sched_add(&procs[i]);
-        KTEST_ASSERT_TRUE(tc, pid >= 1);
-    }
-    /* One more must fail. */
-    static process_t extra;
-    init_dummy_proc(&extra);
-    int rc = sched_add(&extra);
-    KTEST_EXPECT_TRUE(tc, rc < 0);
+static void test_table_full_returns_error(ktest_case_t *tc)
+{
+	sched_init();
+	/* Fill every slot. */
+	static process_t procs[MAX_PROCS];
+	for (int i = 0; i < MAX_PROCS; i++) {
+		init_dummy_proc(&procs[i]);
+		int pid = sched_add(&procs[i]);
+		KTEST_ASSERT_TRUE(tc, pid >= 1);
+	}
+	/* One more must fail. */
+	static process_t extra;
+	init_dummy_proc(&extra);
+	int rc = sched_add(&extra);
+	KTEST_EXPECT_TRUE(tc, rc < 0);
 }
 
-static void test_current_pid_zero_after_init(ktest_case_t *tc) {
-    sched_init();
-    KTEST_EXPECT_EQ(tc, sched_current_pid(), 0u);
+static void test_current_pid_zero_after_init(ktest_case_t *tc)
+{
+	sched_init();
+	KTEST_EXPECT_EQ(tc, sched_current_pid(), 0u);
 }
 
-static void test_sched_bootstrap_null_when_empty(ktest_case_t *tc) {
-    sched_init();
-    /* With no processes added, bootstrap must return NULL rather than crash. */
-    process_t *p = sched_bootstrap();
-    KTEST_EXPECT_NULL(tc, p);
+static void test_sched_bootstrap_null_when_empty(ktest_case_t *tc)
+{
+	sched_init();
+	/* With no processes added, bootstrap must return NULL rather than crash. */
+	process_t *p = sched_bootstrap();
+	KTEST_EXPECT_NULL(tc, p);
 }
 
-static void test_sched_bootstrap_finds_ready(ktest_case_t *tc) {
-    sched_init();
-    static process_t proc;
-    init_dummy_proc(&proc);
-    int pid = sched_add(&proc);
-    KTEST_ASSERT_TRUE(tc, pid >= 1);
+static void test_sched_bootstrap_finds_ready(ktest_case_t *tc)
+{
+	sched_init();
+	static process_t proc;
+	init_dummy_proc(&proc);
+	int pid = sched_add(&proc);
+	KTEST_ASSERT_TRUE(tc, pid >= 1);
 
-    /* bootstrap should find the READY process and return a non-NULL pointer. */
-    process_t *running = sched_bootstrap();
-    KTEST_EXPECT_NOT_NULL(tc, running);
+	/* bootstrap should find the READY process and return a non-NULL pointer. */
+	process_t *running = sched_bootstrap();
+	KTEST_EXPECT_NOT_NULL(tc, running);
 }
 
-static void test_sched_add_unique_pids_three(ktest_case_t *tc) {
-    sched_init();
-    static process_t p1, p2, p3;
-    init_dummy_proc(&p1);
-    init_dummy_proc(&p2);
-    init_dummy_proc(&p3);
-    int pid1 = sched_add(&p1);
-    int pid2 = sched_add(&p2);
-    int pid3 = sched_add(&p3);
-    KTEST_EXPECT_GE(tc, (uint32_t)pid1, 1u);
-    KTEST_EXPECT_GE(tc, (uint32_t)pid2, 1u);
-    KTEST_EXPECT_GE(tc, (uint32_t)pid3, 1u);
-    KTEST_EXPECT_NE(tc, (uint32_t)pid1, (uint32_t)pid2);
-    KTEST_EXPECT_NE(tc, (uint32_t)pid2, (uint32_t)pid3);
-    KTEST_EXPECT_NE(tc, (uint32_t)pid1, (uint32_t)pid3);
+static void test_sched_add_unique_pids_three(ktest_case_t *tc)
+{
+	sched_init();
+	static process_t p1, p2, p3;
+	init_dummy_proc(&p1);
+	init_dummy_proc(&p2);
+	init_dummy_proc(&p3);
+	int pid1 = sched_add(&p1);
+	int pid2 = sched_add(&p2);
+	int pid3 = sched_add(&p3);
+	KTEST_EXPECT_GE(tc, (uint32_t)pid1, 1u);
+	KTEST_EXPECT_GE(tc, (uint32_t)pid2, 1u);
+	KTEST_EXPECT_GE(tc, (uint32_t)pid3, 1u);
+	KTEST_EXPECT_NE(tc, (uint32_t)pid1, (uint32_t)pid2);
+	KTEST_EXPECT_NE(tc, (uint32_t)pid2, (uint32_t)pid3);
+	KTEST_EXPECT_NE(tc, (uint32_t)pid1, (uint32_t)pid3);
 }
 
 /*
@@ -172,247 +181,250 @@ static void test_sched_add_unique_pids_three(ktest_case_t *tc) {
  * stack. pd_phys and kstack_bottom remain 0 so sched_reap's teardown helpers
  * are safe no-ops.
  */
-static void test_waitpid_reaps_zombie(ktest_case_t *tc) {
-    sched_init();
+static void test_waitpid_reaps_zombie(ktest_case_t *tc)
+{
+	sched_init();
 
-    /* Add a "parent" process so sched_bootstrap sets g_current. */
-    static process_t parent;
-    init_dummy_proc(&parent);
-    int ppid = sched_add(&parent);
-    KTEST_ASSERT_TRUE(tc, ppid >= 1);
-    process_t *running = sched_bootstrap();
-    KTEST_ASSERT_NOT_NULL(tc, running);
+	/* Add a "parent" process so sched_bootstrap sets g_current. */
+	static process_t parent;
+	init_dummy_proc(&parent);
+	int ppid = sched_add(&parent);
+	KTEST_ASSERT_TRUE(tc, ppid >= 1);
+	process_t *running = sched_bootstrap();
+	KTEST_ASSERT_NOT_NULL(tc, running);
 
-    /* Add a "child" process to get a valid PID in the table. */
-    static process_t child;
-    init_dummy_proc(&child);
-    child.pd_phys = 0;
-    child.kstack_bottom = 0;
-    int cpid = sched_add(&child);
-    KTEST_ASSERT_TRUE(tc, cpid >= 1);
+	/* Add a "child" process to get a valid PID in the table. */
+	static process_t child;
+	init_dummy_proc(&child);
+	child.pd_phys = 0;
+	child.kstack_bottom = 0;
+	int cpid = sched_add(&child);
+	KTEST_ASSERT_TRUE(tc, cpid >= 1);
 
-    /* Reach into the table via sched_find_pid and zombify. */
-    process_t *slot = sched_find_pid((uint32_t)cpid);
-    KTEST_ASSERT_NOT_NULL(tc, slot);
-    slot->state = PROC_ZOMBIE;
-    slot->exit_status = 0x2A00;  /* encodes exit code 42 */
+	/* Reach into the table via sched_find_pid and zombify. */
+	process_t *slot = sched_find_pid((uint32_t)cpid);
+	KTEST_ASSERT_NOT_NULL(tc, slot);
+	slot->state = PROC_ZOMBIE;
+	slot->exit_status = 0x2A00; /* encodes exit code 42 */
 
-    /* waitpid should return the encoded exit status. */
-    int status = sched_waitpid((uint32_t)cpid, 0);
-    KTEST_EXPECT_EQ(tc, (uint32_t)status, 0x2A00u);
+	/* waitpid should return the encoded exit status. */
+	int status = sched_waitpid((uint32_t)cpid, 0);
+	KTEST_EXPECT_EQ(tc, (uint32_t)status, 0x2A00u);
 
-    /* The slot should now be PROC_UNUSED; a second waitpid returns -1. */
-    int again = sched_waitpid((uint32_t)cpid, 0);
-    KTEST_EXPECT_EQ(tc, (uint32_t)again, (uint32_t)-1);
+	/* The slot should now be PROC_UNUSED; a second waitpid returns -1. */
+	int again = sched_waitpid((uint32_t)cpid, 0);
+	KTEST_EXPECT_EQ(tc, (uint32_t)again, (uint32_t)-1);
 }
 
 static void test_wait_queue_init_clears_links(ktest_case_t *tc)
 {
-    wait_queue_t queue;
-    queue.head = (process_t *)1;
-    queue.tail = (process_t *)1;
+	wait_queue_t queue;
+	queue.head = (process_t *)1;
+	queue.tail = (process_t *)1;
 
-    sched_wait_queue_init(&queue);
+	sched_wait_queue_init(&queue);
 
-    KTEST_EXPECT_NULL(tc, queue.head);
-    KTEST_EXPECT_NULL(tc, queue.tail);
+	KTEST_EXPECT_NULL(tc, queue.head);
+	KTEST_EXPECT_NULL(tc, queue.tail);
 }
 
-static void test_sched_wake_all_wakes_only_queued_blocked_procs(ktest_case_t *tc)
+static void
+test_sched_wake_all_wakes_only_queued_blocked_procs(ktest_case_t *tc)
 {
-    wait_queue_t queue;
-    static process_t sleeper1, sleeper2, unaffected;
+	wait_queue_t queue;
+	static process_t sleeper1, sleeper2, unaffected;
 
-    sched_wait_queue_init(&queue);
-    init_dummy_proc(&sleeper1);
-    init_dummy_proc(&sleeper2);
-    init_dummy_proc(&unaffected);
+	sched_wait_queue_init(&queue);
+	init_dummy_proc(&sleeper1);
+	init_dummy_proc(&sleeper2);
+	init_dummy_proc(&unaffected);
 
-    queue_blocked_proc(&queue, &sleeper1);
-    queue_blocked_proc(&queue, &sleeper2);
-    unaffected.state = PROC_READY;
+	queue_blocked_proc(&queue, &sleeper1);
+	queue_blocked_proc(&queue, &sleeper2);
+	unaffected.state = PROC_READY;
 
-    sched_wake_all(&queue);
+	sched_wake_all(&queue);
 
-    KTEST_EXPECT_EQ(tc, sleeper1.state, PROC_READY);
-    KTEST_EXPECT_EQ(tc, sleeper2.state, PROC_READY);
-    KTEST_EXPECT_EQ(tc, unaffected.state, PROC_READY);
-    KTEST_EXPECT_NULL(tc, sleeper1.wait_queue);
-    KTEST_EXPECT_NULL(tc, sleeper2.wait_queue);
-    KTEST_EXPECT_NULL(tc, sleeper1.wait_next);
-    KTEST_EXPECT_NULL(tc, sleeper2.wait_next);
-    KTEST_EXPECT_EQ(tc, sleeper1.wait_deadline_set, 0u);
-    KTEST_EXPECT_EQ(tc, sleeper2.wait_deadline_set, 0u);
-    KTEST_EXPECT_NULL(tc, queue.head);
-    KTEST_EXPECT_NULL(tc, queue.tail);
+	KTEST_EXPECT_EQ(tc, sleeper1.state, PROC_READY);
+	KTEST_EXPECT_EQ(tc, sleeper2.state, PROC_READY);
+	KTEST_EXPECT_EQ(tc, unaffected.state, PROC_READY);
+	KTEST_EXPECT_NULL(tc, sleeper1.wait_queue);
+	KTEST_EXPECT_NULL(tc, sleeper2.wait_queue);
+	KTEST_EXPECT_NULL(tc, sleeper1.wait_next);
+	KTEST_EXPECT_NULL(tc, sleeper2.wait_next);
+	KTEST_EXPECT_EQ(tc, sleeper1.wait_deadline_set, 0u);
+	KTEST_EXPECT_EQ(tc, sleeper2.wait_deadline_set, 0u);
+	KTEST_EXPECT_NULL(tc, queue.head);
+	KTEST_EXPECT_NULL(tc, queue.tail);
 }
 
-static void test_sched_send_signal_wakes_blocked_process_and_unqueues_it(ktest_case_t *tc)
+static void
+test_sched_send_signal_wakes_blocked_process_and_unqueues_it(ktest_case_t *tc)
 {
-    wait_queue_t queue;
-    static process_t proc;
+	wait_queue_t queue;
+	static process_t proc;
 
-    sched_init();
-    sched_wait_queue_init(&queue);
-    init_dummy_proc(&proc);
+	sched_init();
+	sched_wait_queue_init(&queue);
+	init_dummy_proc(&proc);
 
-    int pid = sched_add(&proc);
-    KTEST_ASSERT_TRUE(tc, pid >= 1);
+	int pid = sched_add(&proc);
+	KTEST_ASSERT_TRUE(tc, pid >= 1);
 
-    process_t *slot = sched_find_pid((uint32_t)pid);
-    KTEST_ASSERT_NOT_NULL(tc, slot);
+	process_t *slot = sched_find_pid((uint32_t)pid);
+	KTEST_ASSERT_NOT_NULL(tc, slot);
 
-    queue_blocked_proc(&queue, slot);
-    slot->wait_deadline = 99;
-    slot->wait_deadline_set = 1;
+	queue_blocked_proc(&queue, slot);
+	slot->wait_deadline = 99;
+	slot->wait_deadline_set = 1;
 
-    sched_send_signal((uint32_t)pid, SIGTERM);
+	sched_send_signal((uint32_t)pid, SIGTERM);
 
-    KTEST_EXPECT_EQ(tc, slot->state, PROC_READY);
-    KTEST_ASSERT_NOT_NULL(tc, slot->group);
-    KTEST_EXPECT_TRUE(tc, (slot->group->sig_pending & (1u << SIGTERM)) != 0);
-    KTEST_EXPECT_NULL(tc, slot->wait_queue);
-    KTEST_EXPECT_NULL(tc, slot->wait_next);
-    KTEST_EXPECT_EQ(tc, slot->wait_deadline, 0u);
-    KTEST_EXPECT_EQ(tc, slot->wait_deadline_set, 0u);
-    KTEST_EXPECT_NULL(tc, queue.head);
-    KTEST_EXPECT_NULL(tc, queue.tail);
+	KTEST_EXPECT_EQ(tc, slot->state, PROC_READY);
+	KTEST_ASSERT_NOT_NULL(tc, slot->group);
+	KTEST_EXPECT_TRUE(tc, (slot->group->sig_pending & (1u << SIGTERM)) != 0);
+	KTEST_EXPECT_NULL(tc, slot->wait_queue);
+	KTEST_EXPECT_NULL(tc, slot->wait_next);
+	KTEST_EXPECT_EQ(tc, slot->wait_deadline, 0u);
+	KTEST_EXPECT_EQ(tc, slot->wait_deadline_set, 0u);
+	KTEST_EXPECT_NULL(tc, queue.head);
+	KTEST_EXPECT_NULL(tc, queue.tail);
 }
 
 static void test_sched_tick_wakes_timed_blocked_process(ktest_case_t *tc)
 {
-    static process_t proc;
+	static process_t proc;
 
-    sched_init();
-    init_dummy_proc(&proc);
+	sched_init();
+	init_dummy_proc(&proc);
 
-    int pid = sched_add(&proc);
-    KTEST_ASSERT_TRUE(tc, pid >= 1);
+	int pid = sched_add(&proc);
+	KTEST_ASSERT_TRUE(tc, pid >= 1);
 
-    process_t *slot = sched_find_pid((uint32_t)pid);
-    KTEST_ASSERT_NOT_NULL(tc, slot);
+	process_t *slot = sched_find_pid((uint32_t)pid);
+	KTEST_ASSERT_NOT_NULL(tc, slot);
 
-    slot->state = PROC_BLOCKED;
-    slot->wait_deadline = sched_ticks() + 1u;
-    slot->wait_deadline_set = 1;
+	slot->state = PROC_BLOCKED;
+	slot->wait_deadline = sched_ticks() + 1u;
+	slot->wait_deadline_set = 1;
 
-    sched_tick();
+	sched_tick();
 
-    KTEST_EXPECT_EQ(tc, slot->state, PROC_READY);
-    KTEST_EXPECT_EQ(tc, slot->wait_deadline, 0u);
-    KTEST_EXPECT_EQ(tc, slot->wait_deadline_set, 0u);
+	KTEST_EXPECT_EQ(tc, slot->state, PROC_READY);
+	KTEST_EXPECT_EQ(tc, slot->wait_deadline, 0u);
+	KTEST_EXPECT_EQ(tc, slot->wait_deadline_set, 0u);
 }
 
 static void test_sched_mark_exit_wakes_child_state_waiters(ktest_case_t *tc)
 {
-    static process_t child;
-    static process_t waiter;
+	static process_t child;
+	static process_t waiter;
 
-    sched_init();
-    init_dummy_proc(&child);
-    init_dummy_proc(&waiter);
+	sched_init();
+	init_dummy_proc(&child);
+	init_dummy_proc(&waiter);
 
-    int child_pid = sched_add(&child);
-    KTEST_ASSERT_TRUE(tc, child_pid >= 1);
+	int child_pid = sched_add(&child);
+	KTEST_ASSERT_TRUE(tc, child_pid >= 1);
 
-    process_t *running = sched_bootstrap();
-    KTEST_ASSERT_NOT_NULL(tc, running);
+	process_t *running = sched_bootstrap();
+	KTEST_ASSERT_NOT_NULL(tc, running);
 
-    int waiter_pid = sched_add(&waiter);
-    KTEST_ASSERT_TRUE(tc, waiter_pid >= 1);
+	int waiter_pid = sched_add(&waiter);
+	KTEST_ASSERT_TRUE(tc, waiter_pid >= 1);
 
-    process_t *waiter_slot = sched_find_pid((uint32_t)waiter_pid);
-    KTEST_ASSERT_NOT_NULL(tc, waiter_slot);
+	process_t *waiter_slot = sched_find_pid((uint32_t)waiter_pid);
+	KTEST_ASSERT_NOT_NULL(tc, waiter_slot);
 
-    queue_blocked_proc(&running->state_waiters, waiter_slot);
+	queue_blocked_proc(&running->state_waiters, waiter_slot);
 
-    sched_mark_exit();
+	sched_mark_exit();
 
-    KTEST_EXPECT_EQ(tc, running->state, PROC_ZOMBIE);
-    KTEST_EXPECT_EQ(tc, waiter_slot->state, PROC_READY);
-    KTEST_EXPECT_NULL(tc, waiter_slot->wait_queue);
-    KTEST_EXPECT_NULL(tc, waiter_slot->wait_next);
-    KTEST_EXPECT_NULL(tc, running->state_waiters.head);
-    KTEST_EXPECT_NULL(tc, running->state_waiters.tail);
+	KTEST_EXPECT_EQ(tc, running->state, PROC_ZOMBIE);
+	KTEST_EXPECT_EQ(tc, waiter_slot->state, PROC_READY);
+	KTEST_EXPECT_NULL(tc, waiter_slot->wait_queue);
+	KTEST_EXPECT_NULL(tc, waiter_slot->wait_next);
+	KTEST_EXPECT_NULL(tc, running->state_waiters.head);
+	KTEST_EXPECT_NULL(tc, running->state_waiters.tail);
 }
 
 static void test_sched_mark_exit_closes_pipe_fds_before_reap(ktest_case_t *tc)
 {
-    static process_t child;
-    int pipe_idx;
-    pipe_buf_t *pb;
+	static process_t child;
+	int pipe_idx;
+	pipe_buf_t *pb;
 
-    sched_init();
-    init_dummy_proc(&child);
-    KTEST_ASSERT_EQ(tc, (uint32_t)proc_resource_init_fresh(&child), 0u);
+	sched_init();
+	init_dummy_proc(&child);
+	KTEST_ASSERT_EQ(tc, (uint32_t)proc_resource_init_fresh(&child), 0u);
 
-    pipe_idx = pipe_alloc();
-    KTEST_ASSERT_TRUE(tc, pipe_idx >= 0);
-    pb = pipe_get(pipe_idx);
-    KTEST_ASSERT_NOT_NULL(tc, pb);
+	pipe_idx = pipe_alloc();
+	KTEST_ASSERT_TRUE(tc, pipe_idx >= 0);
+	pb = pipe_get(pipe_idx);
+	KTEST_ASSERT_NOT_NULL(tc, pb);
 
-    child.files->open_files[3].type = FD_TYPE_PIPE_READ;
-    child.files->open_files[3].u.pipe.pipe_idx = (uint32_t)pipe_idx;
-    child.files->open_files[4].type = FD_TYPE_PIPE_WRITE;
-    child.files->open_files[4].writable = 1;
-    child.files->open_files[4].u.pipe.pipe_idx = (uint32_t)pipe_idx;
+	child.files->open_files[3].type = FD_TYPE_PIPE_READ;
+	child.files->open_files[3].u.pipe.pipe_idx = (uint32_t)pipe_idx;
+	child.files->open_files[4].type = FD_TYPE_PIPE_WRITE;
+	child.files->open_files[4].writable = 1;
+	child.files->open_files[4].u.pipe.pipe_idx = (uint32_t)pipe_idx;
 
-    KTEST_EXPECT_EQ(tc, pb->read_open, 1u);
-    KTEST_EXPECT_EQ(tc, pb->write_open, 1u);
-    KTEST_ASSERT_TRUE(tc, sched_add(&child) >= 1);
-    KTEST_ASSERT_NOT_NULL(tc, sched_bootstrap());
+	KTEST_EXPECT_EQ(tc, pb->read_open, 1u);
+	KTEST_EXPECT_EQ(tc, pb->write_open, 1u);
+	KTEST_ASSERT_TRUE(tc, sched_add(&child) >= 1);
+	KTEST_ASSERT_NOT_NULL(tc, sched_bootstrap());
 
-    sched_mark_exit();
+	sched_mark_exit();
 
-    KTEST_EXPECT_NULL(tc, pipe_get(pipe_idx));
+	KTEST_EXPECT_NULL(tc, pipe_get(pipe_idx));
 }
 
 static void test_thread_exit_keeps_group_alive_until_last_task(ktest_case_t *tc)
 {
-    sched_init();
-    static process_t leader, worker;
-    init_dummy_proc(&leader);
-    int leader_tid = sched_add(&leader);
-    KTEST_ASSERT_TRUE(tc, leader_tid >= 1);
-    process_t *leader_slot = sched_find_pid((uint32_t)leader_tid);
-    KTEST_ASSERT_NOT_NULL(tc, leader_slot);
+	sched_init();
+	static process_t leader, worker;
+	init_dummy_proc(&leader);
+	int leader_tid = sched_add(&leader);
+	KTEST_ASSERT_TRUE(tc, leader_tid >= 1);
+	process_t *leader_slot = sched_find_pid((uint32_t)leader_tid);
+	KTEST_ASSERT_NOT_NULL(tc, leader_slot);
 
-    init_dummy_proc(&worker);
-    worker.group = leader_slot->group;
-    worker.tgid = leader_slot->tgid;
-    int worker_tid = sched_add(&worker);
-    KTEST_ASSERT_TRUE(tc, worker_tid >= 1);
-    KTEST_EXPECT_EQ(tc, task_group_live_count(leader_slot->group), 2u);
+	init_dummy_proc(&worker);
+	worker.group = leader_slot->group;
+	worker.tgid = leader_slot->tgid;
+	int worker_tid = sched_add(&worker);
+	KTEST_ASSERT_TRUE(tc, worker_tid >= 1);
+	KTEST_EXPECT_EQ(tc, task_group_live_count(leader_slot->group), 2u);
 
-    KTEST_ASSERT_NOT_NULL(tc, sched_bootstrap());
-    sched_mark_exit();
-    KTEST_EXPECT_EQ(tc, task_group_live_count(leader_slot->group), 1u);
-    KTEST_EXPECT_TRUE(tc, leader_slot->group->group_exit == 0);
+	KTEST_ASSERT_NOT_NULL(tc, sched_bootstrap());
+	sched_mark_exit();
+	KTEST_EXPECT_EQ(tc, task_group_live_count(leader_slot->group), 1u);
+	KTEST_EXPECT_TRUE(tc, leader_slot->group->group_exit == 0);
 }
 
 static void test_exit_group_marks_all_group_tasks(ktest_case_t *tc)
 {
-    sched_init();
-    static process_t leader, worker;
-    init_dummy_proc(&leader);
-    int leader_tid = sched_add(&leader);
-    KTEST_ASSERT_TRUE(tc, leader_tid >= 1);
-    process_t *leader_slot = sched_find_pid((uint32_t)leader_tid);
-    KTEST_ASSERT_NOT_NULL(tc, leader_slot);
+	sched_init();
+	static process_t leader, worker;
+	init_dummy_proc(&leader);
+	int leader_tid = sched_add(&leader);
+	KTEST_ASSERT_TRUE(tc, leader_tid >= 1);
+	process_t *leader_slot = sched_find_pid((uint32_t)leader_tid);
+	KTEST_ASSERT_NOT_NULL(tc, leader_slot);
 
-    init_dummy_proc(&worker);
-    worker.group = leader_slot->group;
-    worker.tgid = leader_slot->tgid;
-    int worker_tid = sched_add(&worker);
-    KTEST_ASSERT_TRUE(tc, worker_tid >= 1);
+	init_dummy_proc(&worker);
+	worker.group = leader_slot->group;
+	worker.tgid = leader_slot->tgid;
+	int worker_tid = sched_add(&worker);
+	KTEST_ASSERT_TRUE(tc, worker_tid >= 1);
 
-    KTEST_ASSERT_NOT_NULL(tc, sched_bootstrap());
-    sched_mark_group_exit(7);
+	KTEST_ASSERT_NOT_NULL(tc, sched_bootstrap());
+	sched_mark_group_exit(7);
 
-    process_t *worker_slot = sched_find_pid((uint32_t)worker_tid);
-    KTEST_ASSERT_NOT_NULL(tc, worker_slot);
-    KTEST_EXPECT_TRUE(tc, leader_slot->group->group_exit != 0);
-    KTEST_EXPECT_EQ(tc, worker_slot->state, PROC_READY);
+	process_t *worker_slot = sched_find_pid((uint32_t)worker_tid);
+	KTEST_ASSERT_NOT_NULL(tc, worker_slot);
+	KTEST_EXPECT_TRUE(tc, leader_slot->group->group_exit != 0);
+	KTEST_EXPECT_EQ(tc, worker_slot->state, PROC_READY);
 }
 
 /* ── Suite ──────────────────────────────────────────────────────────────── */
@@ -441,4 +453,7 @@ static ktest_case_t cases[] = {
 
 static ktest_suite_t suite = KTEST_SUITE("sched", cases);
 
-ktest_suite_t *ktest_suite_sched(void) { return &suite; }
+ktest_suite_t *ktest_suite_sched(void)
+{
+	return &suite;
+}

@@ -6,12 +6,15 @@
 #include "irq.h"
 #include "sched.h"
 #include "clock.h"
+#include "pit.h"
 
-static void pit_irq_handler(void) {
-    clock_tick();
-    sched_tick();
+static void pit_irq_handler(void)
+{
+	clock_tick();
+	sched_tick();
 }
 
-void pit_init(void) {
-    irq_register(0, pit_irq_handler);
+void pit_init(void)
+{
+	irq_register(0, pit_irq_handler);
 }
