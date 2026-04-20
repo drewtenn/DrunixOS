@@ -1,4 +1,11 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * syscall.h - public syscall ABI numbers and user-visible constants.
+ *
+ * This header defines the Linux i386 INT 0x80 syscall numbers that Drunix
+ * implements, plus the Drunix-private syscall range and public flag values
+ * shared with user programs.
+ */
 
 #ifndef SYSCALL_H
 #define SYSCALL_H
