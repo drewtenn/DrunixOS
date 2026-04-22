@@ -1,17 +1,26 @@
 # x86 Arch Directory Design
 
+> **Status note (current repo):** The repository moved beyond the original
+> x86-only `kernel/arch/` rename described below. The current tree keeps x86
+> CPU/MMU/context/boot code under `kernel/arch/x86/`, PC-specific hardware
+> support under `kernel/platform/pc/`, and shared kernel subsystems in their
+> common directories. Treat the remainder of this document as historical design
+> context for the first step of that broader layout split.
+
 ## Goal
 
 Move the current x86-specific sources that live directly under `kernel/arch/`
 into a dedicated `kernel/arch/x86/` directory so the x86 tree matches the
 existing architecture-oriented layout used by `kernel/arch/arm64/`.
 
-This change is intentionally limited to `kernel/arch/`. It does not move
-top-level boot sources, linker scripts, or kernel entry assembly in this pass.
+The original change targeted only the x86 sources that then lived directly
+under `kernel/arch/`. The current repository has since applied a broader
+follow-up that also moved x86 boot/MMU/context files under `kernel/arch/x86/`
+and PC-specific hardware support under `kernel/platform/pc/`.
 
 ## Scope
 
-In scope:
+Original scope:
 
 - Move the current x86 architecture implementation files from
   `kernel/arch/` to `kernel/arch/x86/`
@@ -19,7 +28,7 @@ In scope:
 - Update source includes and include search paths as needed for the new layout
 - Preserve current x86 build behavior
 
-Out of scope:
+Originally out of scope for that first move:
 
 - Moving `boot/`
 - Moving `kernel/kernel-entry.asm`
@@ -29,20 +38,21 @@ Out of scope:
 
 ## Current State
 
-The repository already has `kernel/arch/arm64/` with its own `arch.mk`,
-linker script, and architecture-local sources. By contrast, the x86 sources
-still live directly in `kernel/arch/`, and the x86 build references those
-paths explicitly from shared make fragments such as `kernel/objects.mk` and
-`Makefile`.
+When this design was written, the repository already had
+`kernel/arch/arm64/` with its own `arch.mk`, linker script, and
+architecture-local sources. By contrast, the x86 sources still lived directly
+in `kernel/arch/`, and the x86 build referenced those paths explicitly from
+shared make fragments such as `kernel/objects.mk` and `Makefile`.
 
 That makes the architecture layout inconsistent and leaves x86-specific code in
 what now reads like a shared directory.
 
 ## Proposed Change
 
-Create `kernel/arch/x86/` and move the current x86 architecture files there.
-After the move, `kernel/arch/` becomes the parent architecture namespace with
-subdirectories for each architecture, starting with `x86/` and `arm64/`.
+The proposed first step was to create `kernel/arch/x86/` and move the then-
+current x86 architecture files there. After that move, `kernel/arch/` would
+become the parent architecture namespace with subdirectories for each
+architecture, starting with `x86/` and `arm64/`.
 
 The x86 object list in `kernel/objects.mk` will be updated to point at
 `kernel/arch/x86/...` object paths. Any explicit rules in `Makefile` that

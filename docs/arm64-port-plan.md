@@ -44,15 +44,15 @@ shows the x86-ness is concentrated in a predictable set of places:
 
 | Subsystem | Files | x86 assumption |
 |---|---|---|
-| Boot | `boot/*.asm`, `kernel/kernel-entry.asm`, `kernel/kernel.ld` | Real-mode BIOS, Multiboot1, 1 MB load, GRUB2 |
-| CPU ctrl | `kernel/arch/{gdt,idt,irq,pit,sse,clock}.*`, `*.asm` | GDT, IDT, TSS, 8259 PIC, 8253/4 PIT, INT 0x80 |
-| Paging | `kernel/mm/paging.c`, `kernel/mm/paging_asm.asm` | CR3, 2-level IA-32 page tables, `invlpg` |
-| Port I/O | inlined across `kernel/`, `kernel/drivers/` | `in`/`out` instructions |
-| Context switch | `kernel/proc/switch.asm`, `kernel/proc/process_asm.asm` | `ESP`/`CR3`/`iret` |
+| Boot | `boot/*.asm`, `kernel/arch/x86/boot/kernel-entry.asm`, `kernel/arch/x86/linker.ld` | Real-mode BIOS, Multiboot1, 1 MB load, GRUB2 |
+| CPU ctrl | `kernel/arch/x86/{gdt,idt,irq,pit,sse,clock}.*`, `kernel/arch/x86/*.asm` | GDT, IDT, TSS, 8259 PIC, 8253/4 PIT, INT 0x80 |
+| Paging | `kernel/arch/x86/mm/paging.c`, `kernel/arch/x86/mm/paging_asm.asm` | CR3, 2-level IA-32 page tables, `invlpg` |
+| Port I/O | `kernel/platform/pc/*`, x86 helpers in `kernel/arch/x86/`, and VGA/debugcon paths in `kernel/kernel.c` / `kernel/lib/klog.c` | `in`/`out` instructions, PC device access |
+| Context switch | `kernel/arch/x86/proc/switch.asm`, `kernel/arch/x86/proc/process_asm.asm` | `ESP`/`CR3`/`iret` |
 | Syscall entry | `kernel/arch/x86/isr.asm` (vector 128), `user/lib/syscall.c` | `int $0x80` |
 | User CRT0 | `user/lib/crt0.asm` | 32-bit x86 calling convention |
 | ELF loader | `kernel/proc/elf.c` (`e_machine == EM_386`) | Rejects non-i386 |
-| Drivers | `drivers/ata.c`, `drivers/keyboard.c`, `drivers/mouse.c`, VGA text path in `kernel.c` | ATA PIO, PS/2, VGA 0xB8000 |
+| Drivers | `kernel/platform/pc/ata.c`, `kernel/platform/pc/keyboard.c`, `kernel/platform/pc/mouse.c`, VGA text path in `kernel/kernel.c` | ATA PIO, PS/2, VGA 0xB8000 |
 
 Roughly 40% of kernel code is x86-tied.  Much of the remaining 60% —
 VFS, ext3, procfs/sysfs, scheduler policy, slab, VMA, GUI
@@ -94,19 +94,17 @@ requires for the mini-UART clock (already handled in Milestone 1).
 
 ### Milestone 2 — Build split and architecture boundary
 
-1. Rename `kernel/arch/` → `kernel/arch/x86/`.  Adjust `#include`
-   paths, object lists, linker scripts, toolchains, and run targets.
-   No x86 behavior change.
-2. Introduce `kernel/arch/arch.h` as the shared arch API around
-   behavior-level seams: CPU interrupt state, timer/clock hooks,
-   console output, IRQ registration/dispatch, TLB invalidation,
-   address-space switching, trap entry, and user-mode entry.
-3. Keep x86-only port I/O, GDT/IDT details, and inline asm behind
-   x86-private implementation files instead of baking those details
-   into the shared interface.
-4. Make `kernel/lib/klog.c` portable by separating timestamp source,
-   console sink, and optional debug sink from the current x86-specific
-   `clock.h`, `print_string()`, and debugcon path assumptions.
+1. Keep x86 CPU/MMU/context/boot code under `kernel/arch/x86/`, including the
+   current `boot/`, `mm/`, and `proc/` x86 subtrees.
+2. Keep PC-specific hardware support under `kernel/platform/pc/` instead of
+   treating ATA, PS/2, and related port-I/O code as generic x86 code.
+3. Introduce `kernel/arch/arch.h` as the shared arch API around behavior-level
+   seams: CPU interrupt state, timer/clock hooks, console output, IRQ
+   registration/dispatch, TLB invalidation, address-space switching, trap
+   entry, and user-mode entry.
+4. Make `kernel/lib/klog.c` portable by separating timestamp source, console
+   sink, and optional debug sink from the current x86/PC-specific `clock.h`,
+   `print_string()`, and debugcon path assumptions.
 
 Exit criterion: `make`, `make run`, and `make check` still exercise the
 existing x86 kernel unchanged, but the tree and build now support more
