@@ -37,4 +37,5 @@ DOCS_SRC := docs/partI-firmware-to-kernel.md \
             docs/ch28-desktop.md \
             docs/partX-development-tools.md \
             docs/ch29-debugging.md \
-            docs/ch30-cpp-userland.md
+            docs/ch30-cpp-userland.md \
+            docs/ch31-aarch64-bringup.md

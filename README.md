@@ -2,13 +2,20 @@
 
 ## Project Summary
 
-Drunix is a 32-bit x86 hobby operating system that boots through GRUB2 with the Multiboot1 protocol and runs a freestanding C kernel. The kernel provides protected-mode interrupt handling, paging, a physical and heap allocator, ATA disk I/O, a DUFS filesystem, a mount-tree VFS with synthetic `/dev`, `/proc`, and `/sys` namespaces, preemptive scheduling built around generic wait queues, Linux-style `clone` user threads, ref-counted process resources for address spaces, file descriptors, filesystem state, and signal actions, a TTY subsystem with job control, an ELF user-program loader, and per-process virtual-memory bookkeeping for demand-paged heaps, grow-down stacks, copy-on-write fork, and anonymous `mmap` regions. User programs can be written in C or in a small freestanding C++ subset backed by the repo-owned user runtime.
+Drunix is a hobby operating system with a feature-rich 32-bit x86 mainline and a newer AArch64 bring-up path. The mainline x86 kernel boots through GRUB2 with the Multiboot1 protocol and provides protected-mode interrupt handling, paging, a physical and heap allocator, ATA disk I/O, a DUFS filesystem, a mount-tree VFS with synthetic `/dev`, `/proc`, and `/sys` namespaces, preemptive scheduling built around generic wait queues, Linux-style `clone` user threads, ref-counted process resources for address spaces, file descriptors, filesystem state, and signal actions, a TTY subsystem with job control, an ELF user-program loader, and per-process virtual-memory bookkeeping for demand-paged heaps, grow-down stacks, copy-on-write fork, and anonymous `mmap` regions. User programs can be written in C or in a small freestanding C++ subset backed by the repo-owned user runtime.
 
-The normal boot path asks GRUB for a 1024x768x32 linear framebuffer and starts a simple GUI desktop. The boot shell is opened as the main desktop app inside that GUI shell, with keyboard input, PS/2 mouse pointer support, taskbar/menu launching, framebuffer text rendering, double-buffered flicker-free compositing with an overlay mouse cursor, and a VGA text-mode fallback when a suitable framebuffer is unavailable. The disk image includes a small mixed-language userland: the shell and `chello` exercise the C runtime path, while the utility programs exercise the C++ runtime path.
+The normal x86 boot path asks GRUB for a 1024x768x32 linear framebuffer and starts a simple GUI desktop. The boot shell is opened as the main desktop app inside that GUI shell, with keyboard input, PS/2 mouse pointer support, taskbar/menu launching, framebuffer text rendering, double-buffered flicker-free compositing with an overlay mouse cursor, and a VGA text-mode fallback when a suitable framebuffer is unavailable. The disk image includes a small mixed-language userland: the shell and `chello` exercise the C runtime path, while the utility programs exercise the C++ runtime path.
+
+The new AArch64 path is deliberately much smaller: `make ARCH=arm64 run` boots a Milestone 1 Raspberry Pi 3 / `qemu-system-aarch64` target that drops to EL1, initializes the mini-UART console, installs exception vectors, enables the ARM Generic Timer, and prints a five-tick heartbeat over serial. That bring-up is documented in Chapter 31, `docs/ch31-aarch64-bringup.md`.
 
 <a href="docs/drunix-desktop.png">
   <img src="docs/drunix-desktop.png" alt="Drunix desktop running in QEMU with Files, Processes, Help, and Shell windows open">
 </a>
+
+## Status
+
+- x86 remains the mainline Drunix target: desktop boot, ext3 and DUFS disk images, process and signal support, Linux ABI smoke coverage, copy-on-write fork, demand paging, and the freestanding C/C++ userland are all part of the regular workflow.
+- AArch64 is now in-tree as Milestone 1: a separate `ARCH=arm64` build boots on the QEMU `raspi3b` machine, prints over the BCM2835 mini-UART, handles timer IRQs, and proves a second architecture boot path without yet attempting MMU, VFS, userland, or desktop support.
 
 ## Dependencies
 
@@ -31,6 +38,9 @@ Optional:
 - `clang-format`, `clang-tidy`, `cppcheck`, and `sparse` for `make scan`,
   `make check`, `make format-check`, `make clang-tidy-include-check`,
   `make cppcheck`, and `make sparse-check`
+- `aarch64-elf-gcc`, `aarch64-elf-ld`, and `aarch64-elf-objcopy` for
+  `make ARCH=arm64 run` and `make ARCH=arm64 check`
+- `qemu-system-aarch64` for the AArch64 / Raspberry Pi 3 bring-up path
 - `pandoc` for `make epub`, `make pdf`, and `make docs`
 - `typst` for `make pdf` and `make docs`
 - `rsvg-convert` from `librsvg` for `make epub` and `make docs` — converts SVG diagrams to PNG
@@ -55,6 +65,7 @@ x86_64-elf-gcc --version
 x86_64-elf-g++ --version
 x86_64-elf-ld --version
 i486-linux-musl-gcc --version
+aarch64-elf-gcc --version
 ```
 
 Homebrew's `clang-tidy` is provided by LLVM. If `clang-tidy` is not on `PATH`
@@ -159,7 +170,7 @@ If your distro installs `grub-mkrescue` but not `i686-elf-grub-mkrescue`, add a 
 
 ## Build And Run
 
-For a clean first boot, build the kernel, ISO, disk image, and launch QEMU:
+For a clean first x86 boot, build the kernel, ISO, disk image, and launch QEMU:
 
 ```sh
 make fresh
@@ -167,7 +178,13 @@ make fresh
 
 `make run-fresh` is kept as the longer compatibility name.
 
-On a normal QEMU boot, Drunix opens the shell inside the framebuffer desktop. If the bootloader does not provide a usable 32-bit RGB framebuffer, the kernel falls back to the legacy VGA text presentation path.
+For the AArch64 bring-up path, run the serial milestone directly:
+
+```sh
+make ARCH=arm64 run
+```
+
+On a normal x86 QEMU boot, Drunix opens the shell inside the framebuffer desktop. If the bootloader does not provide a usable 32-bit RGB framebuffer, the kernel falls back to the legacy VGA text presentation path.
 
 The GRUB menu also offers two console-only entries. `Drunix (text console)`
 passes `nodesktop` and uses the full framebuffer text grid when a framebuffer
@@ -182,11 +199,13 @@ Useful targets:
 Common workflows:
 
 - `make fresh` / `make run-fresh` rebuild `disk.img` as needed, then launch QEMU
-- `make run` rebuilds the kernel and ISO as needed, then launches QEMU without rebuilding `disk.img`
-- `make build` builds the bootable ISO and both disk images without launching QEMU
-- `make check` runs the headless in-kernel test suite
-- `make all` defaults to the fresh boot workflow
-- `make rebuild` wipes build outputs, rebuilds the kernel and disk image, and boots from scratch
+- `make run` rebuilds the x86 kernel and ISO as needed, then launches QEMU without rebuilding `disk.img`
+- `make build` builds the x86 bootable ISO and both disk images without launching QEMU
+- `make check` runs the x86 headless in-kernel test suite
+- `make ARCH=arm64 run` boots the Milestone 1 AArch64 bring-up target in `qemu-system-aarch64`
+- `make ARCH=arm64 check` boots the AArch64 bring-up target headlessly and waits for `tick 5`
+- `make all` defaults to the fresh x86 boot workflow; under `ARCH=arm64` it aliases `run`
+- `make rebuild` wipes build outputs, rebuilds the selected architecture's outputs, and boots from scratch
 - `make clean` removes build outputs
 
 Build-only targets:
@@ -194,6 +213,7 @@ Build-only targets:
 - `make kernel` rebuilds `kernel.elf`, `kernel-vga.elf`, and `os.iso`
 - `make iso` rebuilds `os.iso`
 - `make disk` / `make images` rebuild `img/disk.img` and `img/dufs.img`
+- `make ARCH=arm64 build` rebuilds `kernel-arm64.elf` and `kernel8.img`
 
 Static analysis and style targets:
 
@@ -218,6 +238,8 @@ Run and debug targets:
 - `make debug` starts QEMU paused with the GDB remote stub and kernel symbols loaded
 - `make debug-fresh` rebuilds `img/disk.img` first, then starts `make debug`
 - `make debug-user APP=shell` starts `debug` and loads symbols for `user/shell`
+
+For `ARCH=arm64`, `run-stdio` and `run-grub-menu` are simple aliases of `run`, and `debug` / `debug-user` are not implemented yet.
 
 In-kernel tests (KTEST):
 
@@ -362,7 +384,7 @@ The book-level walkthrough is Chapter 30, `docs/ch30-cpp-userland.md`.
 
 ## Debugging
 
-Start QEMU paused with a GDB stub and attach GDB:
+For the mainline x86 target, start QEMU paused with a GDB stub and attach GDB:
 
 ```sh
 make debug
@@ -374,9 +396,12 @@ Other useful debug flows:
 - `make KLOG_TO_DEBUGCON=1 run` mirrors ordinary `klog()` output to QEMU debugcon
 - `make test-halt` boots a special image that verifies the dedicated double-fault path
 
+For the AArch64 milestone, use `make ARCH=arm64 run` for live serial output or `make ARCH=arm64 check` for the headless five-tick heartbeat check. `make ARCH=arm64 debug` and `make ARCH=arm64 debug-user` are not implemented yet.
+
 Runtime logs:
 
 - `logs/serial.log` captures COM1 output
 - `logs/debugcon.log` captures QEMU debug console output on port `0xE9`
+- `logs/serial-arm.log` captures the headless AArch64 bring-up serial log used by `make ARCH=arm64 check`
 
 Fatal kernel faults write diagnostics to serial and debugcon so they remain visible even when the framebuffer or VGA display path is no longer reliable.

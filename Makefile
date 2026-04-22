@@ -1,3 +1,5 @@
+ARCH ?= x86
+
 CC      := x86_64-elf-gcc
 LD      := x86_64-elf-ld
 NASM    := nasm
@@ -16,6 +18,7 @@ E2FSPROGS_SBIN ?= /opt/homebrew/opt/e2fsprogs/sbin
 E2FSCK  ?= $(if $(wildcard $(E2FSPROGS_SBIN)/e2fsck),$(E2FSPROGS_SBIN)/e2fsck,e2fsck)
 DUMPE2FS ?= $(if $(wildcard $(E2FSPROGS_SBIN)/dumpe2fs),$(E2FSPROGS_SBIN)/dumpe2fs,dumpe2fs)
 DEBUGFS ?= $(if $(wildcard $(E2FSPROGS_SBIN)/debugfs),$(E2FSPROGS_SBIN)/debugfs,debugfs)
+-include kernel/arch/$(ARCH)/arch.mk
 CFLAGS  := -m32 -g -ffreestanding -mno-sse -mno-sse2 -mno-mmx -msoft-float -Wstack-usage=1024
 INC     := -I kernel -I kernel/arch -I kernel/mm -I kernel/drivers -I kernel/blk -I kernel/proc -I kernel/fs -I kernel/lib -I kernel/gui
 DEPFLAGS := -MMD -MP
@@ -269,6 +272,7 @@ include docs/build.mk
 # ─────────────────────────────────────────────────────────────────────────────
 # BUILD TARGETS  (compile/link only — do not launch QEMU)
 # ─────────────────────────────────────────────────────────────────────────────
+ifeq ($(ARCH),x86)
 
 # `kernel`  — compile and link the kernel, then build the bootable GRUB ISO.
 #             Does NOT touch img/disk.img.
@@ -464,7 +468,7 @@ rebuild:
 clean:
 	find kernel -name '*.o' -delete
 	find kernel -name '*.d' -delete
-	$(RM) *.elf core.* disk.fs dufs.fs disk-ext3w.fs disk-ext3-host.fs $(ROOT_DISK_IMG) $(DUFS_IMG) $(TEST_IMAGES) os.iso $(ISO_KERNEL) $(ISO_KERNEL_VGA) iso/boot/grub/grub.cfg "$(PDF)" "$(EPUB)" $(SENTINELS)
+	$(RM) *.elf kernel8.img core.* disk.fs dufs.fs disk-ext3w.fs disk-ext3-host.fs $(ROOT_DISK_IMG) $(DUFS_IMG) $(TEST_IMAGES) os.iso $(ISO_KERNEL) $(ISO_KERNEL_VGA) iso/boot/grub/grub.cfg "$(PDF)" "$(EPUB)" $(SENTINELS) $(ARM_SERIAL_LOG)
 	$(RM) $(RUN_LOGS) $(TEST_LOGS) build/ext3-host.txt
 	rm -rf build/busybox
 	rm -rf build/nano
@@ -480,5 +484,77 @@ clean:
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean
+else
 
--include $(KOBJS:.o=.d) $(KTOBJS:.o=.d)
+$(ARM_KOBJS): CC = $(ARM_CC)
+$(ARM_KOBJS): CFLAGS = $(ARM_CFLAGS)
+$(ARM_KOBJS): INC = -I kernel -I kernel/lib -I kernel/arch/arm64
+
+kernel/arch/arm64/%.o: kernel/arch/arm64/%.S
+	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+kernel-arm64.elf: $(ARM_KOBJS)
+	$(ARM_LD) $(ARM_LDFLAGS) -o $@ $(ARM_KOBJS)
+
+kernel8.img: kernel-arm64.elf
+	$(ARM_OBJCOPY) -O binary $< $@
+
+kernel: kernel-arm64.elf
+
+build: kernel-arm64.elf kernel8.img
+
+iso: kernel8.img
+
+images: kernel8.img
+
+disk:
+	@:
+
+fresh: run
+
+check: kernel-arm64.elf | $(LOG_DIR)
+	rm -f $(ARM_SERIAL_LOG)
+	sh -c '$(QEMU_ARM) -display none -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf -serial null -serial file:$(ARM_SERIAL_LOG) -monitor none -no-reboot >/dev/null 2>&1 & pid=$$!; for i in $$(seq 1 10); do grep -q "tick 5" $(ARM_SERIAL_LOG) 2>/dev/null && break; sleep 1; done; kill $$pid >/dev/null 2>&1 || true; wait $$pid >/dev/null 2>&1 || true'
+	grep -q "tick 5" $(ARM_SERIAL_LOG)
+
+run: kernel-arm64.elf | $(LOG_DIR)
+	$(QEMU_ARM) -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf -serial null -serial stdio -monitor none -nographic -no-reboot
+
+run-stdio: run
+
+run-grub-menu: run
+
+debug:
+	@echo "debug is not implemented for ARCH=arm64 yet"; exit 1
+
+debug-user:
+	@echo "debug-user is not implemented for ARCH=arm64 yet"; exit 1
+
+run-fresh: run
+
+debug-fresh: debug
+
+all: run
+
+rebuild:
+	$(MAKE) clean ARCH=$(ARCH)
+	$(MAKE) run ARCH=$(ARCH)
+
+clean:
+	find kernel -name '*.o' -delete
+	find kernel -name '*.d' -delete
+	$(RM) *.elf kernel8.img core.* disk.fs dufs.fs disk-ext3w.fs disk-ext3-host.fs $(ROOT_DISK_IMG) $(DUFS_IMG) $(TEST_IMAGES) os.iso $(ISO_KERNEL) $(ISO_KERNEL_VGA) iso/boot/grub/grub.cfg "$(PDF)" "$(EPUB)" $(SENTINELS) $(ARM_SERIAL_LOG)
+	$(RM) $(RUN_LOGS) $(TEST_LOGS) build/ext3-host.txt
+	rm -rf build/busybox
+	rm -rf build/nano
+	$(RM) docs/diagrams/*.png
+	$(MAKE) -C user clean
+
+.PHONY: all build kernel iso images disk fresh check \
+        run run-stdio run-grub-menu run-fresh \
+        debug debug-user debug-fresh \
+        pdf epub docs \
+        rebuild clean
+endif
+
+-include $(KOBJS:.o=.d) $(KTOBJS:.o=.d) $(ARM_KOBJS:.o=.d)
