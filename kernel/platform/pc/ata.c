@@ -5,14 +5,12 @@
 
 #include "ata.h"
 #include "blkdev.h"
+#include "io.h"
 #include "klog.h"
 
 #ifndef DRUNIX_DISK_SECTORS
 #define DRUNIX_DISK_SECTORS 102400u
 #endif
-
-extern void port_byte_out(unsigned short port, unsigned char data);
-extern unsigned char port_byte_in(unsigned short port);
 
 /* Read/write 16-bit words to/from the ATA data port using rep insw/outsw */
 static inline void ata_insw(uint16_t port, uint16_t *buf, uint32_t count)

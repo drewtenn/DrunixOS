@@ -5,6 +5,7 @@
 
 #include <stdint.h>
 #include "idt.h"
+#include "io.h"
 #include "irq.h"
 #include "sched.h"
 #include "gdt.h"
@@ -29,10 +30,6 @@ typedef struct {
 
 static idt_entry_t idt[IDT_ENTRIES];
 static idt_register_t idtr;
-
-/* Port I/O (defined in kernel.c) */
-extern void port_byte_out(unsigned short port, unsigned char data);
-extern unsigned char port_byte_in(unsigned short port);
 
 /* ISR stubs (defined in isr.asm) */
 extern void isr0(void);

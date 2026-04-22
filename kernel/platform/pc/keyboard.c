@@ -9,12 +9,10 @@
 #include "sched.h"
 #include "desktop.h"
 #include "tty.h"
+#include "io.h"
 #include "keyboard.h"
 
 #define KEYBOARD_DATA_PORT 0x60
-
-extern void port_byte_out(unsigned short port, unsigned char data);
-extern unsigned char port_byte_in(unsigned short port);
 
 /* US QWERTY scancode set 1 → ASCII (unshifted). Index = make code (0x01–0x39). */
 static const char scancode_ascii[] = {

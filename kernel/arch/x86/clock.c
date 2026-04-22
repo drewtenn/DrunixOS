@@ -4,6 +4,7 @@
  */
 
 #include "clock.h"
+#include "io.h"
 #include "sched.h"
 
 #define CMOS_ADDR 0x70
@@ -17,9 +18,6 @@
 #define CMOS_REG_YEAR 0x09
 #define CMOS_REG_STATUS_A 0x0A
 #define CMOS_REG_STATUS_B 0x0B
-
-extern void port_byte_out(unsigned short port, unsigned char data);
-extern unsigned char port_byte_in(unsigned short port);
 
 static uint32_t g_unix_time;
 static uint32_t g_subsecond_ticks;

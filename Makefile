@@ -20,7 +20,7 @@ DUMPE2FS ?= $(if $(wildcard $(E2FSPROGS_SBIN)/dumpe2fs),$(E2FSPROGS_SBIN)/dumpe2
 DEBUGFS ?= $(if $(wildcard $(E2FSPROGS_SBIN)/debugfs),$(E2FSPROGS_SBIN)/debugfs,debugfs)
 -include kernel/arch/$(ARCH)/arch.mk
 CFLAGS  := -m32 -g -ffreestanding -mno-sse -mno-sse2 -mno-mmx -msoft-float -Wstack-usage=1024
-INC     := -I kernel -I kernel/arch -I kernel/arch/$(ARCH) -I kernel/mm -I kernel/drivers -I kernel/blk -I kernel/proc -I kernel/fs -I kernel/lib -I kernel/gui
+INC     := -I kernel -I kernel/arch -I kernel/arch/$(ARCH) -I kernel/arch/$(ARCH)/mm -I kernel/platform/pc -I kernel/mm -I kernel/drivers -I kernel/blk -I kernel/proc -I kernel/fs -I kernel/lib -I kernel/gui
 DEPFLAGS := -MMD -MP
 MOUSE_SPEED ?= 4
 INIT_PROGRAM ?= bin/shell
@@ -103,10 +103,10 @@ kernel/kernel.o: .double-fault-test-flag
 kernel/kernel.o: .init-program-flag
 kernel/kernel.o: .no-desktop-flag
 kernel/kernel.o: .vga-text-flag
-kernel/kernel-entry.o: .vga-text-flag FORCE
+kernel/arch/x86/boot/kernel-entry.o: .vga-text-flag FORCE
 kernel/lib/klog.o: .klog-debugcon-flag
-kernel/drivers/mouse.o: .mouse-speed-flag
-kernel/drivers/ata.o: .disk-sectors-flag
+kernel/platform/pc/mouse.o: .mouse-speed-flag
+kernel/platform/pc/ata.o: .disk-sectors-flag
 kernel/test/test_desktop.o: .mouse-speed-flag
 
 #GRUB2 mkrescue(provided by : brew install i686 - elf - grub xorriso)
@@ -221,13 +221,13 @@ $(KOBJS): .ktest-flag
 kernel/test/%.o: CFLAGS += -Wno-stack-usage
 
 kernel.elf: $(KOBJS) $(KTOBJS)
-	$(LD) -m elf_i386 -o $@ -T kernel/kernel.ld $(KOBJS) $(KTOBJS)
+	$(LD) -m elf_i386 -o $@ -T kernel/arch/x86/linker.ld $(KOBJS) $(KTOBJS)
 
-kernel/kernel-entry-vga.o: kernel/kernel-entry.asm
+kernel/arch/x86/boot/kernel-entry-vga.o: kernel/arch/x86/boot/kernel-entry.asm
 	$(NASM) -DDRUNIX_VGA_TEXT $< -f elf -o $@
 
 kernel-vga.elf: $(KOBJS_VGA) $(KTOBJS)
-	$(LD) -m elf_i386 -o $@ -T kernel/kernel.ld $(KOBJS_VGA) $(KTOBJS)
+	$(LD) -m elf_i386 -o $@ -T kernel/arch/x86/linker.ld $(KOBJS_VGA) $(KTOBJS)
 
 # ─── User programs ───────────────────────────────────────────────────────────
 # Declared phony so make always delegates to the user subdirectory's own

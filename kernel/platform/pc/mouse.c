@@ -1,5 +1,6 @@
 #include "mouse.h"
 #include "irq.h"
+#include "io.h"
 
 #define PS2_DATA_PORT 0x60
 #define PS2_STATUS_PORT 0x64
@@ -33,9 +34,6 @@
 #define MOUSE_PACKET_Y_SIGN 0x20u
 #define MOUSE_PACKET_X_OVERFLOW 0x40u
 #define MOUSE_PACKET_Y_OVERFLOW 0x80u
-
-extern void port_byte_out(unsigned short port, unsigned char data);
-extern unsigned char port_byte_in(unsigned short port);
 
 static mouse_packet_stream_t g_stream;
 static int g_pointer_pixel_x = 40 * (int)GUI_FONT_W;

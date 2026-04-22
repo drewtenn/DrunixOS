@@ -4,6 +4,7 @@
  */
 
 #include "irq.h"
+#include "io.h"
 #include "klog.h"
 
 #define PIC_MASTER_CMD 0x20
@@ -11,8 +12,6 @@
 #define PIC_MASTER_DATA 0x21
 #define PIC_SLAVE_DATA 0xA1
 #define PIC_EOI 0x20
-
-extern void port_byte_out(unsigned short port, unsigned char data);
 
 static irq_handler_fn irq_table[IRQ_COUNT];
 static uint8_t g_master_pic_mask = 0xFC;

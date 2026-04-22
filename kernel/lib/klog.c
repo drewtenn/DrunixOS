@@ -8,10 +8,10 @@
 #include "sched.h"
 #include "kprintf.h"
 #include "kstring.h"
+#include "io.h"
 
 /* print_string lives in kernel.c; every other subsystem externs it the same way */
 extern void print_string(char *s);
-extern void port_byte_out(unsigned short port, unsigned char data);
 extern int desktop_console_mirror_enabled(void);
 
 #define QEMU_DEBUG_PORT 0xE9
