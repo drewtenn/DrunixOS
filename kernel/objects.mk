@@ -2,6 +2,7 @@ KOBJS = kernel/arch/x86/boot/kernel-entry.o kernel/kernel.o \
         kernel/module.o kernel/module_exports.o \
         kernel/lib/klog.o \
         kernel/lib/kstring.o kernel/lib/kprintf.o kernel/lib/ksort.o \
+        kernel/arch/x86/arch.o \
         kernel/arch/x86/gdt.o kernel/arch/x86/gdt_flush.o \
         kernel/arch/x86/idt.o kernel/arch/x86/isr.o kernel/arch/x86/sse.o kernel/arch/x86/df_test.o \
         kernel/arch/x86/irq.o kernel/arch/x86/pit.o kernel/arch/x86/clock.o \

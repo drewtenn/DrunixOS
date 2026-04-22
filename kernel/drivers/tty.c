@@ -4,13 +4,11 @@
  */
 
 #include "tty.h"
+#include "arch.h"
 #include "desktop.h"
 #include "../proc/sched.h"
 #include "kstring.h"
 #include <stdint.h>
-
-extern void print_string(char *string);
-extern void print_char(char c);
 
 void sched_send_signal_to_pgid(uint32_t pgid, int signum);
 
@@ -42,7 +40,7 @@ static void tty_feedback(const char *buf, uint32_t len)
 	if (desktop && desktop_write_console_output(desktop, buf, len) == (int)len)
 		return;
 
-	print_string((char *)buf);
+	arch_console_write(buf, len);
 }
 
 /* ── public API ─────────────────────────────────────────────────────────── */
@@ -131,16 +129,14 @@ void tty_input_char(int tty_idx, char c)
 			if (tty->canon_len > 0) {
 				tty->canon_len--;
 				if (tty->termios.c_lflag & ECHOE) {
-					print_string("\b \b");
+					arch_console_write("\b \b", 3u);
 				}
 			}
 		} else {
 			if (tty->canon_len < TTY_CANON_BUF_SIZE - 1) {
 				tty->canon_buf[tty->canon_len++] = c;
 				if (tty->termios.c_lflag & ECHO) {
-					/* Echo the character */
-					char s[2] = {c, '\0'};
-					print_string(s);
+					arch_console_write(&c, 1u);
 				}
 			}
 			if (c == '\n') {

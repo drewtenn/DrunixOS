@@ -10,7 +10,6 @@
 #include "../syscall_internal.h"
 #include "../syscall_linux.h"
 #include "blkdev.h"
-#include "clock.h"
 #include "fs.h"
 #include "kheap.h"
 #include "klog.h"

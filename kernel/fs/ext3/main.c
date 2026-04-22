@@ -8,7 +8,6 @@
 #include "vfs.h"
 #include "blkdev.h"
 #include "bcache.h"
-#include "clock.h"
 #include "kheap.h"
 #include "klog.h"
 #include "kstring.h"

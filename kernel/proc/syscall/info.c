@@ -7,7 +7,7 @@
  */
 
 #include "syscall_internal.h"
-#include "clock.h"
+#include "arch.h"
 #include "kstring.h"
 #include "pmm.h"
 #include "process.h"
@@ -64,7 +64,7 @@ static uint32_t syscall_sysinfo(uint32_t user_info)
 		return (uint32_t)-1;
 	n = sched_snapshot_pids(pids, MAX_PROCS, 1);
 	k_memset(info, 0, sizeof(info));
-	info_put_u32(info, 0u, clock_unix_time());
+	info_put_u32(info, 0u, arch_time_unix_seconds());
 	info_put_u32(info, 16u, 16u * 1024u * 1024u);
 	info_put_u32(info, 20u, 8u * 1024u * 1024u);
 	info_put_u16(info, 40u, (uint32_t)(n < 0 ? 0 : n));

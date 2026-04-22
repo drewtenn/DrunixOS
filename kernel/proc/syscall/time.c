@@ -8,7 +8,7 @@
  */
 
 #include "syscall_internal.h"
-#include "clock.h"
+#include "arch.h"
 #include "process.h"
 #include "sched.h"
 #include "uaccess.h"
@@ -97,10 +97,10 @@ uint32_t SYSCALL_NOINLINE syscall_case_clock_gettime(uint32_t ebx, uint32_t ecx)
 	if (!cur || ecx == 0)
 		return (uint32_t)-1;
 	if (ebx == 0) {
-		ts[0] = clock_unix_time();
+		ts[0] = arch_time_unix_seconds();
 		ts[1] = 0;
 	} else if (ebx == 1) {
-		ticks = clock_uptime_ticks();
+		ticks = arch_time_uptime_ticks();
 		ts[0] = ticks / SCHED_HZ;
 		ts[1] = (ticks % SCHED_HZ) * (1000000000u / SCHED_HZ);
 	} else {
@@ -125,12 +125,12 @@ uint32_t SYSCALL_NOINLINE syscall_case_clock_gettime64(uint32_t ebx,
 	if (!cur || ecx == 0)
 		return (uint32_t)-1;
 	if (ebx == 0) {
-		ts64[0] = clock_unix_time();
+		ts64[0] = arch_time_unix_seconds();
 		ts64[1] = 0;
 		ts64[2] = 0;
 		ts64[3] = 0;
 	} else if (ebx == 1) {
-		ticks = clock_uptime_ticks();
+		ticks = arch_time_uptime_ticks();
 		ts64[0] = ticks / SCHED_HZ;
 		ts64[1] = 0;
 		ts64[2] = (ticks % SCHED_HZ) * (1000000000u / SCHED_HZ);
@@ -156,7 +156,7 @@ uint32_t SYSCALL_NOINLINE syscall_case_gettimeofday(uint32_t ebx, uint32_t ecx)
 	if (!cur)
 		return (uint32_t)-1;
 	if (ebx != 0) {
-		tv[0] = clock_unix_time();
+		tv[0] = arch_time_unix_seconds();
 		tv[1] = 0;
 		if (uaccess_copy_to_user(cur, ebx, tv, sizeof(tv)) != 0)
 			return (uint32_t)-1;

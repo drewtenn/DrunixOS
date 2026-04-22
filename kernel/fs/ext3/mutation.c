@@ -7,7 +7,7 @@
 
 #include "ext3_internal.h"
 #include "vfs.h"
-#include "clock.h"
+#include "arch.h"
 #include "kheap.h"
 #include "kstring.h"
 #include <stdint.h>
@@ -167,7 +167,7 @@ static int ext3_dir_add(uint32_t dir_ino,
 		}
 		if (ext3_write_block(slot_phys, blk) != 0)
 			goto fail;
-		dir.mtime = dir.ctime = clock_unix_time();
+		dir.mtime = dir.ctime = arch_time_unix_seconds();
 		if (ext3_write_inode(dir_ino, &dir) != 0)
 			goto fail;
 		kfree(blk);
@@ -185,7 +185,7 @@ static int ext3_dir_add(uint32_t dir_ino,
 		if (ext3_write_block(phys, blk) != 0)
 			goto fail;
 		dir.size = size + g_block_size;
-		dir.mtime = dir.ctime = clock_unix_time();
+		dir.mtime = dir.ctime = arch_time_unix_seconds();
 		if (ext3_write_inode(dir_ino, &dir) != 0)
 			goto fail;
 	}
@@ -236,7 +236,7 @@ static int ext3_dir_remove(uint32_t dir_ino, const char *name)
 					kfree(blk);
 					return -1;
 				}
-				dir.mtime = dir.ctime = clock_unix_time();
+				dir.mtime = dir.ctime = arch_time_unix_seconds();
 				if (ext3_write_inode(dir_ino, &dir) != 0) {
 					kfree(blk);
 					return -1;
@@ -301,7 +301,7 @@ static int ext3_write_body(void *ctx,
 		return -1;
 	if (offset + done > ext3_inode_size(&in))
 		in.size = offset + done;
-	in.mtime = in.ctime = clock_unix_time();
+	in.mtime = in.ctime = arch_time_unix_seconds();
 	if (ext3_write_inode(inode_num, &in) != 0)
 		return -1;
 	return (int)done;
@@ -369,7 +369,7 @@ static int ext3_truncate_body(void *ctx, uint32_t inode_num, uint32_t size)
 	if (ext3_truncate_blocks(&in, keep_blocks) != 0)
 		return -1;
 	in.size = size;
-	in.mtime = in.ctime = clock_unix_time();
+	in.mtime = in.ctime = arch_time_unix_seconds();
 	return ext3_write_inode(inode_num, &in);
 }
 
@@ -402,7 +402,7 @@ static int ext3_create_body(void *ctx, const char *path)
 		if (ext3_free_inode_payload(&in) != 0)
 			return -1;
 		in.size = 0;
-		in.mtime = in.ctime = clock_unix_time();
+		in.mtime = in.ctime = arch_time_unix_seconds();
 		if (ext3_write_inode(existing, &in) != 0)
 			return -1;
 		return (int)existing;
@@ -412,7 +412,7 @@ static int ext3_create_body(void *ctx, const char *path)
 	if (ino == 0)
 		return -1;
 	k_memset(&in, 0, sizeof(in));
-	now = clock_unix_time();
+	now = arch_time_unix_seconds();
 	in.mode = EXT3_S_IFREG | 0644u;
 	in.atime = in.ctime = in.mtime = now;
 	in.links_count = 1;
@@ -458,7 +458,7 @@ static int ext3_unlink_body(void *ctx, const char *path)
 	if (in.links_count == 0) {
 		if (ext3_free_inode_payload(&in) != 0)
 			return -1;
-		in.dtime = clock_unix_time();
+		in.dtime = arch_time_unix_seconds();
 		if (ext3_write_inode(ino, &in) != 0)
 			return -1;
 		if (ext3_free_inode(ino, 0) != 0)
@@ -529,7 +529,7 @@ static int ext3_mkdir_body(void *ctx, const char *path)
 	kfree(blk);
 
 	k_memset(&dir, 0, sizeof(dir));
-	now = clock_unix_time();
+	now = arch_time_unix_seconds();
 	dir.mode = EXT3_S_IFDIR | 0755u;
 	dir.size = g_block_size;
 	dir.atime = dir.ctime = dir.mtime = now;
@@ -625,7 +625,7 @@ static int ext3_rmdir_body(void *ctx, const char *path)
 	if (ext3_free_inode_blocks(&dir) != 0)
 		return -1;
 	dir.links_count = 0;
-	dir.dtime = clock_unix_time();
+	dir.dtime = arch_time_unix_seconds();
 	if (ext3_write_inode(ino, &dir) != 0)
 		return -1;
 	if (ext3_free_inode(ino, 1) != 0)
@@ -634,7 +634,7 @@ static int ext3_rmdir_body(void *ctx, const char *path)
 		return -1;
 	if (ext3_read_inode(parent_ino, &parent) == 0 && parent.links_count > 0) {
 		parent.links_count--;
-		parent.ctime = parent.mtime = clock_unix_time();
+		parent.ctime = parent.mtime = arch_time_unix_seconds();
 		ext3_write_inode(parent_ino, &parent);
 	}
 	return 0;
@@ -677,7 +677,7 @@ static int ext3_unlink_existing_nondir(uint32_t dir_ino, const char *leaf)
 	if (in.links_count == 0) {
 		if (ext3_free_inode_payload(&in) != 0)
 			return -1;
-		in.dtime = clock_unix_time();
+		in.dtime = arch_time_unix_seconds();
 		if (ext3_write_inode(ino, &in) != 0)
 			return -1;
 		if (ext3_free_inode(ino, 0) != 0)
@@ -745,7 +745,7 @@ static int ext3_link_body(void *ctx,
 	        new_dir, new_leaf, old_ino, ext3_file_type_from_mode(in.mode)) != 0)
 		return -1;
 	in.links_count++;
-	in.ctime = clock_unix_time();
+	in.ctime = arch_time_unix_seconds();
 	return ext3_write_inode(old_ino, &in);
 }
 
@@ -786,7 +786,7 @@ ext3_symlink_body(void *ctx, const char *target, const char *linkpath)
 	if (ino == 0)
 		return -1;
 	k_memset(&in, 0, sizeof(in));
-	now = clock_unix_time();
+	now = arch_time_unix_seconds();
 	in.mode = EXT3_S_IFLNK | 0777u;
 	in.atime = in.ctime = in.mtime = now;
 	in.links_count = 1;

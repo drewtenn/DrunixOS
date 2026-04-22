@@ -8,6 +8,7 @@ ARM_CFLAGS ?= -ffreestanding -fno-stack-protector -fno-pic -fno-pie \
 ARM_LDFLAGS ?= -nostdlib -T kernel/arch/arm64/linker.ld
 
 ARM_KOBJS := kernel/arch/arm64/boot.o \
+             kernel/arch/arm64/arch.o \
              kernel/arch/arm64/exceptions.o \
              kernel/arch/arm64/exceptions_s.o \
              kernel/arch/arm64/irq.o \

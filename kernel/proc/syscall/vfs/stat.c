@@ -7,8 +7,8 @@
 
 #include "../syscall_internal.h"
 #include "../syscall_linux.h"
+#include "arch.h"
 #include "blkdev.h"
-#include "clock.h"
 #include "kheap.h"
 #include "kstring.h"
 #include "process.h"
@@ -114,7 +114,7 @@ linux_fd_stat_metadata(process_t *cur, uint32_t fd, linux_fd_stat_t *meta)
 	k_memset(meta, 0, sizeof(*meta));
 	meta->nlink = 1;
 	meta->size = 0;
-	meta->mtime = clock_unix_time();
+	meta->mtime = arch_time_unix_seconds();
 	meta->ino = fd + 1u;
 
 	switch (fh->type) {

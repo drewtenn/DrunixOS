@@ -4,17 +4,13 @@
  */
 
 #include "klog.h"
-#include "clock.h"
+#include "arch.h"
 #include "sched.h"
 #include "kprintf.h"
 #include "kstring.h"
-#include "io.h"
 
-/* print_string lives in kernel.c; every other subsystem externs it the same way */
-extern void print_string(char *s);
 extern int desktop_console_mirror_enabled(void);
 
-#define QEMU_DEBUG_PORT 0xE9
 #define KLOG_RING_CAP 96u
 #define KLOG_TAG_CAP 16u
 #define KLOG_MSG_CAP 96u
@@ -30,32 +26,19 @@ static klog_record_t g_klog_ring[KLOG_RING_CAP];
 static uint32_t g_klog_head;
 static uint32_t g_klog_count;
 
-static void klog_debugcon_putc(char c)
-{
-#ifdef KLOG_TO_DEBUGCON
-	port_byte_out(QEMU_DEBUG_PORT, (unsigned char)c);
-#else
-	(void)c;
-#endif
-}
-
 static void klog_debugcon_puts(const char *s)
 {
-#ifdef KLOG_TO_DEBUGCON
-	while (*s) {
-		if (*s == '\n')
-			klog_debugcon_putc('\r');
-		klog_debugcon_putc(*s++);
-	}
-#else
-	(void)s;
-#endif
+	if (!s)
+		return;
+	arch_debug_write(s, k_strlen(s));
 }
 
 static void klog_puts(const char *s)
 {
+	if (!s)
+		return;
 	if (desktop_console_mirror_enabled())
-		print_string((char *)s);
+		arch_console_write(s, k_strlen(s));
 	klog_debugcon_puts(s);
 }
 
@@ -188,7 +171,7 @@ void klog_log(klog_level_t level, const char *tag, const char *msg)
 	klog_record_t rec;
 
 	k_memset(&rec, 0, sizeof(rec));
-	rec.ticks = clock_uptime_ticks();
+	rec.ticks = arch_time_uptime_ticks();
 	rec.level = (uint8_t)level;
 	k_strncpy(rec.tag, tag ? tag : "KLOG", KLOG_TAG_CAP - 1u);
 	rec.tag[KLOG_TAG_CAP - 1u] = '\0';
@@ -233,7 +216,7 @@ void klog_log_silent(klog_level_t level, const char *tag, const char *msg)
 	klog_record_t rec;
 
 	k_memset(&rec, 0, sizeof(rec));
-	rec.ticks = clock_uptime_ticks();
+	rec.ticks = arch_time_uptime_ticks();
 	rec.level = (uint8_t)level;
 	k_strncpy(rec.tag, tag ? tag : "KLOG", KLOG_TAG_CAP - 1u);
 	rec.tag[KLOG_TAG_CAP - 1u] = '\0';

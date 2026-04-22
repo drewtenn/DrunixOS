@@ -10,7 +10,7 @@
 #include "kheap.h"
 #include "klog.h"
 #include "kstring.h"
-#include "clock.h"
+#include "arch.h"
 #include <stdint.h>
 
 /* ── Mount state ────────────────────────────────────────────────────────── */
@@ -488,7 +488,7 @@ static int dir_add(uint32_t dir_ino, const char *name, uint32_t child_ino)
 			while (i < DUFS_MAX_NAME)
 				entries[e].name[i++] = '\0';
 			entries[e].inode = child_ino;
-			dir.mtime = clock_unix_time();
+			dir.mtime = arch_time_unix_seconds();
 			if (inode_write(dir_ino, &dir) != 0) {
 				kfree(buf);
 				return -1;
@@ -519,7 +519,7 @@ static int dir_add(uint32_t dir_ino, const char *name, uint32_t child_ino)
 		entries[0].name[i++] = '\0';
 	entries[0].inode = child_ino;
 
-	dir.mtime = clock_unix_time();
+	dir.mtime = arch_time_unix_seconds();
 	if (write_block(new_lba, buf) != 0) {
 		kfree(buf);
 		return -1;
@@ -562,7 +562,7 @@ static uint32_t dir_remove(uint32_t dir_ino, const char *name)
 			found = entries[e].inode;
 			entries[e].inode = 0;
 			entries[e].name[0] = '\0';
-			dir.mtime = clock_unix_time();
+			dir.mtime = arch_time_unix_seconds();
 			if (inode_write(dir_ino, &dir) != 0) {
 				kfree(buf);
 				return 0;
@@ -1077,7 +1077,7 @@ int fs_write(uint32_t inode_num,
 	kfree(blk);
 
 	if (written > 0)
-		inode.mtime = clock_unix_time();
+		inode.mtime = arch_time_unix_seconds();
 
 	if (inode_write(inode_num, &inode) != 0)
 		return -1;
@@ -1129,7 +1129,7 @@ int fs_truncate(uint32_t inode_num, uint32_t size)
 		return -1;
 
 	inode.size = size;
-	inode.mtime = clock_unix_time();
+	inode.mtime = arch_time_unix_seconds();
 	return inode_write(inode_num, &inode);
 }
 
@@ -1149,7 +1149,7 @@ int fs_create(const char *path)
 		if (inode.type != DUFS_TYPE_FILE)
 			return -1;
 		free_inode_blocks(&inode);
-		inode.mtime = clock_unix_time();
+		inode.mtime = arch_time_unix_seconds();
 		if (inode_write(existing, &inode) != 0)
 			return -1;
 		flush_block_bitmap();
@@ -1165,7 +1165,7 @@ int fs_create(const char *path)
 	zero_inode(&inode);
 	inode.type = DUFS_TYPE_FILE;
 	inode.link_count = 1;
-	inode.mtime = clock_unix_time();
+	inode.mtime = arch_time_unix_seconds();
 	inode.atime = inode.mtime;
 
 	if (inode_write(new_ino, &inode) != 0) {
@@ -1251,7 +1251,7 @@ int fs_mkdir(const char *path)
 	zero_inode(&inode);
 	inode.type = DUFS_TYPE_DIR;
 	inode.link_count = 1;
-	inode.mtime = clock_unix_time();
+	inode.mtime = arch_time_unix_seconds();
 	inode.atime = inode.mtime;
 
 	if (inode_write(new_ino, &inode) != 0) {
@@ -1434,7 +1434,7 @@ int fs_link(const char *oldpath, const char *newpath, uint32_t follow)
 	if (dir_add(new_dir_ino, new_leaf, src_ino) != 0)
 		return -1;
 	inode.link_count++;
-	inode.mtime = clock_unix_time();
+	inode.mtime = arch_time_unix_seconds();
 	if (inode_write(src_ino, &inode) != 0)
 		return -1;
 	return 0;
@@ -1464,7 +1464,7 @@ int fs_symlink(const char *target, const char *linkpath)
 	zero_inode(&inode);
 	inode.type = DUFS_TYPE_SYMLINK;
 	inode.link_count = 1;
-	inode.mtime = clock_unix_time();
+	inode.mtime = arch_time_unix_seconds();
 	inode.atime = inode.mtime;
 
 	if (inode_write(new_ino, &inode) != 0) {
