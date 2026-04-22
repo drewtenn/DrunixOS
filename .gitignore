@@ -59,6 +59,7 @@ user/dufstest
 user/redirtest
 user/ext3wtest
 user/threadtest
+user/nanocompat
 
 /core.*
 
