@@ -25,6 +25,8 @@ Current coupling points include:
   `kernel/fs/*`, and `kernel/proc/syscall/*`
 - `print_string()` exported from `kernel/kernel.c` and consumed by shared code
   such as `kernel/lib/klog.c` and `kernel/drivers/tty.c`
+- `io.h` included directly from `kernel/lib/klog.c` so shared logging code
+  still knows about x86 debug-port I/O
 - x86-specific trap, MMU, and process assumptions still embedded in common
   control flow even where the files already live outside `kernel/arch/x86/`
 
@@ -98,6 +100,18 @@ Introduce the smallest `arch.h` surface needed to replace:
 
 - direct `clock.h` inclusion from shared code
 - direct `print_string()` usage from shared code
+- direct `io.h` usage from shared logging code
+
+The Phase 1 shared API is intentionally limited to four operations:
+
+- `arch_time_unix_seconds()`
+- `arch_time_uptime_ticks()`
+- `arch_console_write(const char *buf, uint32_t len)`
+- `arch_debug_write(const char *buf, uint32_t len)`
+
+This phase does **not** move x86 boot-time setup such as `clock_init()` out of
+`kernel/kernel.c`. Boot sequencing remains architecture-owned for now; only
+shared consumers move to the new boundary.
 
 Move current callers over in the same phase, including:
 
@@ -108,11 +122,36 @@ Move current callers over in the same phase, including:
 - any other common code that currently includes `clock.h` or calls
   `print_string()`
 
+Concrete Phase 1 file ownership:
+
+- create `kernel/arch/arch.h` for the shared behavior-level declarations
+- create `kernel/arch/x86/arch.c` as the x86 adapter over `clock.c`,
+  `kernel/kernel.c` console entry points, and the existing debug port
+- create `kernel/arch/arm64/arch.c` as the arm64 adapter over `uart.c` and
+  `timer.c`
+- modify `kernel/objects.mk` and `kernel/arch/arm64/arch.mk` so both
+  architectures compile their new adapter
+- migrate shared callers in `kernel/lib/`, `kernel/drivers/`, `kernel/fs/`,
+  and `kernel/proc/syscall/`
+- add a focused regression test under `tools/` that fails if shared code
+  reintroduces direct `clock.h`, `print_string()`, or `io.h` usage
+
 Expected outcome:
 
 - shared code consumes time and console behavior through `arch.h`
-- x86 implements the behavior using its current mechanisms
-- arm64 provides implementations that preserve Milestone 1 build integrity
+- x86 implements the behavior using its current mechanisms without exposing
+  those mechanisms to shared code
+- arm64 provides matching implementations that preserve Milestone 1 build
+  integrity even though Phase 1 does not yet move the full shared kernel onto
+  arm64
+
+Phase 1 integration sequence:
+
+1. Add the focused regression test and watch it fail against the current tree.
+2. Add `kernel/arch/arch.h` plus x86/arm64 adapter implementations.
+3. Move every current shared caller to `arch.h` in the same change.
+4. Run the focused regression test again, then run the baseline build checks.
+5. Land the result as one coherent Phase 1 commit.
 
 ### Phase 2: IRQ And Timer Boundary
 
@@ -217,7 +256,8 @@ Every phase must run the same baseline verification before commit:
 Each phase may add focused verification relevant to its boundary:
 
 - Phase 1 should confirm shared code no longer includes `clock.h` directly or
-  calls `print_string()` from common modules.
+  calls `print_string()` from common modules, and that `kernel/lib/klog.c`
+  no longer reaches into `io.h` directly.
 - Phase 2 should confirm timer and interrupt initialization still link and
   build correctly on both architectures.
 - Phase 3 should confirm shared MM callers no longer reach into x86 paging
