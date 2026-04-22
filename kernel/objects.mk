@@ -2,9 +2,9 @@ KOBJS = kernel/kernel-entry.o kernel/kernel.o \
         kernel/module.o kernel/module_exports.o \
         kernel/lib/klog.o \
         kernel/lib/kstring.o kernel/lib/kprintf.o kernel/lib/ksort.o \
-        kernel/arch/gdt.o kernel/arch/gdt_flush.o \
-        kernel/arch/idt.o kernel/arch/isr.o kernel/arch/sse.o kernel/arch/df_test.o \
-        kernel/arch/irq.o kernel/arch/pit.o kernel/arch/clock.o \
+        kernel/arch/x86/gdt.o kernel/arch/x86/gdt_flush.o \
+        kernel/arch/x86/idt.o kernel/arch/x86/isr.o kernel/arch/x86/sse.o kernel/arch/x86/df_test.o \
+        kernel/arch/x86/irq.o kernel/arch/x86/pit.o kernel/arch/x86/clock.o \
         kernel/drivers/keyboard.o kernel/drivers/mouse.o kernel/drivers/ata.o \
         kernel/drivers/blkdev.o kernel/drivers/blkdev_part.o kernel/blk/bcache.o kernel/drivers/chardev.o kernel/drivers/tty.o \
         kernel/gui/display.o kernel/gui/framebuffer.o kernel/gui/font8x16.o kernel/gui/desktop.o kernel/gui/desktop_apps.o kernel/gui/terminal.o \

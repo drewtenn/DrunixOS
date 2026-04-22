@@ -49,7 +49,7 @@ shows the x86-ness is concentrated in a predictable set of places:
 | Paging | `kernel/mm/paging.c`, `kernel/mm/paging_asm.asm` | CR3, 2-level IA-32 page tables, `invlpg` |
 | Port I/O | inlined across `kernel/`, `kernel/drivers/` | `in`/`out` instructions |
 | Context switch | `kernel/proc/switch.asm`, `kernel/proc/process_asm.asm` | `ESP`/`CR3`/`iret` |
-| Syscall entry | `kernel/arch/isr.asm` (vector 128), `user/lib/syscall.c` | `int $0x80` |
+| Syscall entry | `kernel/arch/x86/isr.asm` (vector 128), `user/lib/syscall.c` | `int $0x80` |
 | User CRT0 | `user/lib/crt0.asm` | 32-bit x86 calling convention |
 | ELF loader | `kernel/proc/elf.c` (`e_machine == EM_386`) | Rejects non-i386 |
 | Drivers | `drivers/ata.c`, `drivers/keyboard.c`, `drivers/mouse.c`, VGA text path in `kernel.c` | ATA PIO, PS/2, VGA 0xB8000 |

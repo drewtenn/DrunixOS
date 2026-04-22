@@ -18,7 +18,7 @@ class GenerateCompileCommandsTest(unittest.TestCase):
 
             commands = gccdb.build_commands(
                 root=root,
-                kernel_objs=["kernel/proc/syscall.o", "kernel/arch/idt_asm.o"],
+                kernel_objs=["kernel/proc/syscall.o", "kernel/arch/x86/idt.o"],
                 kernel_cc="x86_64-elf-gcc",
                 kernel_cflags="-m32 -ffreestanding",
                 kernel_inc="-I kernel -I kernel/proc",

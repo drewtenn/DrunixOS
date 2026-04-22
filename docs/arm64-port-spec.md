@@ -430,10 +430,9 @@ Added to `README.md` dependency list as "Optional (AArch64 target)":
 - **klog.**  See Milestones 2 risk note.  Direct `uart_puts` is used.
 - **Real Pi 3 hardware.**  Milestone 1b handles SD image layout and
   firmware blobs.
-- **Renaming `kernel/arch/` → `kernel/arch/x86/`.**  Deferred to
-  Milestone 2 where it actually reduces code.  For Milestone 1 the
-  x86 objects keep their existing paths and the ARM tree lives
-  alongside as `kernel/arch/arm64/`.
+- **x86 architecture directory split.**  Completed in a later follow-up:
+  x86 architecture sources now live under `kernel/arch/x86/`, while the
+  AArch64 tree remains under `kernel/arch/arm64/`.
 
 ## Verification
 
