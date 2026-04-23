@@ -1,15 +1,16 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
- * idt.c — IDT setup, delayed interrupt enablement, and fatal exception handling.
+ * idt.c — IDT setup, delayed interrupt enablement, and fatal exception
+ * handling.
  */
 
-#include <stdint.h>
 #include "idt.h"
+#include "fault.h"
+#include "gdt.h"
 #include "io.h"
 #include "irq.h"
 #include "sched.h"
-#include "gdt.h"
-#include "fault.h"
+#include <stdint.h>
 
 #define IDT_ENTRIES 256
 #define KERNEL_CS 0x08 /* CODE_SEG: gdt_code - gdt_start */
@@ -124,21 +125,6 @@ static void pic_remap(void)
 	irq_apply_pic_masks();
 }
 
-/*
- * pit_init: program the 8253/8254 Programmable Interval Timer (PIT) to fire
- * IRQ0 at approximately 100 Hz.
- *
- * The PIT oscillator runs at 1,193,182 Hz.  Dividing by 11932 gives ~100 Hz.
- * Channel 0, mode 2 (rate generator), lobyte/hibyte access.
- */
-static void pit_program_timer(void)
-{
-	/* Command byte: channel 0, lobyte/hibyte, mode 2 (rate generator) */
-	port_byte_out(0x43, 0x36);
-	port_byte_out(0x40, 0x9C); /* divisor low byte  (11932 = 0x2E9C) */
-	port_byte_out(0x40, 0x2E); /* divisor high byte */
-}
-
 void idt_init_early(void)
 {
 	/* CPU exceptions */
@@ -221,7 +207,6 @@ void idt_init_early(void)
 void interrupts_enable(void)
 {
 	pic_remap();
-	pit_program_timer();
 	__asm__ volatile("sti");
 }
 

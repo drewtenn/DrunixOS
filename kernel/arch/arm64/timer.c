@@ -3,10 +3,9 @@
  * timer.c — ARM Generic Timer support for Milestone 1 bring-up.
  */
 
+#include "irq.h"
 #include "timer.h"
 #include <stdint.h>
-
-void arm64_irq_enable_timer(void);
 
 static uint64_t g_ticks_per_interval;
 static volatile uint64_t g_tick_count;
@@ -29,7 +28,7 @@ static void cntp_ctl_write(uint64_t value)
 	__asm__ volatile("msr cntp_ctl_el0, %0" : : "r"(value));
 }
 
-void arm64_timer_init(uint32_t hz)
+void arm64_timer_start(uint32_t hz)
 {
 	if (hz == 0)
 		return;
@@ -38,7 +37,12 @@ void arm64_timer_init(uint32_t hz)
 	g_tick_count = 0;
 	cntp_tval_write(g_ticks_per_interval);
 	cntp_ctl_write(1u);
-	arm64_irq_enable_timer();
+}
+
+void arm64_timer_init(uint32_t hz)
+{
+	arm64_irq_init();
+	arm64_timer_start(hz);
 }
 
 void arm64_timer_irq(void)

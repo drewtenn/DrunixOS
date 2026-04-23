@@ -3,7 +3,7 @@
  * exceptions.c — minimal AArch64 exception handlers for Milestone 1 bring-up.
  */
 
-#include "timer.h"
+#include "irq.h"
 #include "uart.h"
 #include "kprintf.h"
 #include <stdint.h>
@@ -56,7 +56,7 @@ void arm64_irq_handler(uint64_t *frame)
 
 	source = CORE0_IRQ_SOURCE;
 	if (source & CNTPNSIRQ_BIT) {
-		arm64_timer_irq();
+		arm64_irq_dispatch(ARM64_IRQ_LOCAL_TIMER);
 		return;
 	}
 
