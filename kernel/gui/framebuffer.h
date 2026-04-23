@@ -1,6 +1,8 @@
 #ifndef GUI_FRAMEBUFFER_H
 #define GUI_FRAMEBUFFER_H
 
+typedef struct multiboot_info multiboot_info_t;
+
 #include "pixel.h"
 #include "pmm.h"
 #include <stdint.h>

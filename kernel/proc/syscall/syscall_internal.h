@@ -11,10 +11,11 @@
 #define SYSCALL_INTERNAL_H
 
 #include "process.h"
-#include "desktop.h"
 #include "tty.h"
 #include "vfs.h"
 #include <stdint.h>
+
+typedef struct desktop_state desktop_state_t;
 
 #define SYSCALL_NOINLINE __attribute__((noinline))
 

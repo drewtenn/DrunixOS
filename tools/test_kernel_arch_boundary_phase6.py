@@ -11,6 +11,9 @@ FORBIDDEN = {
         r"\barm64_sync_handler\b[\s\S]*?mrs\s+%0,\s+esr_el1",
         r"\barm64_sync_handler\b[\s\S]*?mrs\s+%0,\s+far_el1",
     ],
+    ROOT / "kernel/proc/syscall/syscall_internal.h": [
+        r'#include\s+"desktop\.h"',
+    ],
 }
 
 REQUIRED = {
@@ -44,6 +47,15 @@ REQUIRED = {
         r"\barch_syscall_set_result\b[\s\S]*?frame->x\s*\[\s*0\s*\]",
         r"\barch_trap_frame_is_syscall\b[\s\S]*?\besr_el1\b",
         r"\barch_trap_frame_fault_addr\b[\s\S]*?\bfar_el1\b",
+    ],
+    ROOT / "kernel/arch/arm64/arch.mk": [
+        r"\bARM_INC\s*:=",
+        r"\bkernel/proc/process\.arm64\.o\b",
+        r"\bkernel/proc/sched\.arm64\.o\b",
+        r"\bkernel/proc/syscall\.arm64\.o\b",
+        r"\bkernel/proc/syscall/task\.arm64\.o\b",
+        r"\bkernel/proc/%.arm64\.o:\s+kernel/proc/%.c\b",
+        r"\bkernel/proc/syscall/%.arm64\.o:\s+kernel/proc/syscall/%.c\b",
     ],
 }
 
