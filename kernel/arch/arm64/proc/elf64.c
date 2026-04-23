@@ -39,6 +39,7 @@ int arch_elf_load_user_image(vfs_file_ref_t file_ref,
 	Elf64_Ehdr ehdr;
 	uint64_t min_vaddr = UINT64_MAX;
 	uint64_t max_vend = 0u;
+	int loaded_segment = 0;
 
 	if (vfs_read(file_ref, 0, (uint8_t *)&ehdr, sizeof(ehdr)) !=
 	    (int)sizeof(ehdr))
@@ -71,6 +72,8 @@ int arch_elf_load_user_image(vfs_file_ref_t file_ref,
 			return -6;
 		if (phdr.p_type != PT_LOAD || phdr.p_memsz == 0)
 			continue;
+		if (phdr.p_filesz > phdr.p_memsz)
+			return -6;
 		if (phdr.p_vaddr >= USER_STACK_TOP || phdr.p_memsz > UINT32_MAX)
 			return -4;
 		if (phdr.p_vaddr + phdr.p_memsz < phdr.p_vaddr ||
@@ -87,6 +90,7 @@ int arch_elf_load_user_image(vfs_file_ref_t file_ref,
 				min_vaddr = vaddr;
 			if (vend > max_vend)
 				max_vend = vend;
+			loaded_segment = 1;
 
 			seg_flags = arm64_elf_segment_flags(phdr.p_flags);
 			for (uint64_t p = 0; p < npages; p++) {
@@ -147,6 +151,8 @@ int arch_elf_load_user_image(vfs_file_ref_t file_ref,
 		}
 	}
 
+	if (!loaded_segment)
+		return -5;
 	*image_start_out = (min_vaddr == UINT64_MAX) ? 0u : (uintptr_t)min_vaddr;
 	*heap_start_out = (uintptr_t)max_vend;
 	return 0;
