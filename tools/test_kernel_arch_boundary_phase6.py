@@ -7,20 +7,21 @@ ROOT = Path(__file__).resolve().parents[1]
 
 FORBIDDEN = {
     ROOT / "kernel/proc/elf.h": [r"\bEM_386\b"],
+    ROOT / "kernel/proc/elf.c": [r"\behdr\.e_machine\s*!=\s*EM_386\b"],
     ROOT / "kernel/proc/syscall.c": [
-        r"\buint32_t\s+syscall_handler\s*\(\s*uint32_t\s+eax\s*,\s*uint32_t\s+ebx\s*,\s*uint32_t\s+ecx",
+        r"\bsyscall_handler\b[\s\S]*?\beax\b[\s\S]*?\bebx\b[\s\S]*?\becx\b",
     ],
     ROOT / "kernel/arch/arm64/exceptions.c": [r'uart_puts\("sync exception'],
 }
 
 REQUIRED = {
     ROOT / "kernel/proc/elf.c": [
-        r"\barch_elf_[A-Za-z0-9_]*\s*\(",
-        r"\barch_process_build_initial_frame\s*\(",
+        r"\belf_load_file\b[\s\S]*?\barch_elf_[A-Za-z0-9_]*\s*\(",
+        r"\belf_load_file\b[\s\S]*?\barch_process_build_initial_frame\s*\(",
     ],
     ROOT / "kernel/proc/syscall.c": [
-        r"\barch_syscall_[A-Za-z0-9_]*\s*\(",
-        r"\barch_syscall_dispatch\s*\(",
+        r"\bsyscall_handler\b[\s\S]*?\barch_syscall_[A-Za-z0-9_]*\s*\(",
+        r"\bsyscall_handler\b[\s\S]*?\barch_syscall_dispatch\s*\(",
     ],
     ROOT / "kernel/arch/arm64/exceptions.c": [r"\barch_current_irq_frame\b", r"\bsched_record_user_fault\b"],
 }
