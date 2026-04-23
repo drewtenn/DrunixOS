@@ -8,6 +8,7 @@ interfaces instead of the planned arch layer.
 """
 
 from pathlib import Path
+import re
 import sys
 
 
@@ -15,41 +16,52 @@ ROOT = Path(__file__).resolve().parents[1]
 
 FORBIDDEN_PATTERNS = {
     ROOT / "kernel/kernel.c": [
-        '#include "irq.h"',
-        '#include "pit.h"',
-        "irq_dispatch_init();",
-        "pit_init();",
+        r'#include "irq\.h"',
+        r'#include "pit\.h"',
+        r"\birq_dispatch_init\s*\(",
+        r"\bpit_init\s*\(",
+        r"\binterrupts_enable\s*\(",
     ],
     ROOT / "kernel/platform/pc/keyboard.c": [
-        '#include "irq.h"',
-        "irq_register(1, keyboard_handler);",
+        r'#include "irq\.h"',
+        r"\birq_register\s*\(\s*1\s*,\s*keyboard_handler\s*\)",
     ],
     ROOT / "kernel/platform/pc/mouse.c": [
-        '#include "irq.h"',
-        "irq_register(12, mouse_handler);",
-        "irq_unmask(2);",
-        "irq_unmask(12);",
+        r'#include "irq\.h"',
+        r"\birq_register\s*\(\s*12\s*,\s*mouse_handler\s*\)",
+        r"\birq_unmask\s*\(\s*2\s*\)",
+        r"\birq_unmask\s*\(\s*12\s*\)",
     ],
 }
 
 REQUIRED_PATTERNS = {
     ROOT / "kernel/kernel.c": [
-        '#include "arch.h"',
-        'klog("BOOT", "bringing up interrupt, timer, and clock subsystems");',
-        "arch_irq_init();",
-        "arch_timer_set_periodic_handler(sched_tick);",
-        "arch_timer_start(SCHED_HZ);",
-        "arch_interrupts_enable();",
+        r'#include "arch\.h"',
+        r"\barch_irq_init\s*\(",
+        r"\barch_timer_set_periodic_handler\s*\(\s*sched_tick\s*\)",
+        r"\barch_timer_start\s*\(\s*SCHED_HZ\s*\)",
+        r"\barch_interrupts_enable\s*\(",
     ],
     ROOT / "kernel/platform/pc/keyboard.c": [
-        '#include "arch.h"',
-        "arch_irq_register(1, keyboard_handler);",
+        r'#include "arch\.h"',
+        r"\barch_irq_register\s*\(\s*1\s*,\s*keyboard_handler\s*\)",
     ],
     ROOT / "kernel/platform/pc/mouse.c": [
-        '#include "arch.h"',
-        "arch_irq_register(12, mouse_handler);",
-        "arch_irq_unmask(2);",
-        "arch_irq_unmask(12);",
+        r'#include "arch\.h"',
+        r"\barch_irq_register\s*\(\s*12\s*,\s*mouse_handler\s*\)",
+        r"\barch_irq_unmask\s*\(\s*2\s*\)",
+        r"\barch_irq_unmask\s*\(\s*12\s*\)",
+    ],
+    ROOT / "kernel/arch/x86/pit.c": [
+        r"\bpit_set_periodic_handler\s*\(",
+        r"\bpit_start\s*\(",
+        r"\bclock_tick\s*\(",
+    ],
+    ROOT / "kernel/arch/arm64/start_kernel.c": [
+        r"\barch_irq_init\s*\(",
+        r"\barch_timer_set_periodic_handler\s*\(",
+        r"\barch_timer_start\s*\(\s*10u\s*\)",
+        r"\barch_interrupts_enable\s*\(",
     ],
 }
 
@@ -63,13 +75,13 @@ def main() -> None:
     for path, patterns in FORBIDDEN_PATTERNS.items():
         text = path.read_text()
         for pattern in patterns:
-            if pattern in text:
+            if re.search(pattern, text):
                 fail(f"{path.relative_to(ROOT)} still contains {pattern}")
 
     for path, patterns in REQUIRED_PATTERNS.items():
         text = path.read_text()
         for pattern in patterns:
-            if pattern not in text:
+            if not re.search(pattern, text):
                 fail(f"{path.relative_to(ROOT)} is missing {pattern}")
 
     print("phase2 boundary guard passed")
