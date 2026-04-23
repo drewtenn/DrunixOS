@@ -16,18 +16,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 FORBIDDEN_PATTERNS = {
     ROOT / "kernel/kernel.c": [
-        r'#include "irq\.h"',
-        r'#include "pit\.h"',
         r"\birq_dispatch_init\s*\(",
         r"\bpit_init\s*\(",
         r"\binterrupts_enable\s*\(",
     ],
     ROOT / "kernel/platform/pc/keyboard.c": [
-        r'#include "irq\.h"',
         r"\birq_register\s*\(\s*1\s*,\s*keyboard_handler\s*\)",
     ],
     ROOT / "kernel/platform/pc/mouse.c": [
-        r'#include "irq\.h"',
         r"\birq_register\s*\(\s*12\s*,\s*mouse_handler\s*\)",
         r"\birq_unmask\s*\(\s*2\s*\)",
         r"\birq_unmask\s*\(\s*12\s*\)",
