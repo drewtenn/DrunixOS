@@ -105,7 +105,7 @@ static void idt_set_task_gate(uint8_t vector, uint16_t tss_selector)
 	idt[vector].offset_high = 0;
 }
 
-void isr_handler(trap_frame_t *f);
+void isr_handler(arch_trap_frame_t *f);
 
 static void pic_remap(void)
 {
@@ -339,7 +339,7 @@ static int exception_signal(uint32_t vec)
 }
 
 /* Default exception handler — ring-3 faults become signals, ring-0 faults halt. */
-void isr_handler(trap_frame_t *f)
+void isr_handler(arch_trap_frame_t *f)
 {
 	if ((f->cs & 3) == 3) {
 		uint32_t cr2 = 0;

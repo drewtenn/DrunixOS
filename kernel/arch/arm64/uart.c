@@ -75,3 +75,12 @@ char uart_getc(void)
 		;
 	return (char)(AUX_MU_IO & 0xFFu);
 }
+
+int uart_try_getc(char *out)
+{
+	if (!out || (AUX_MU_LSR & 0x01u) == 0u)
+		return 0;
+
+	*out = (char)(AUX_MU_IO & 0xFFu);
+	return 1;
+}

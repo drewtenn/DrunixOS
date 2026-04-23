@@ -127,6 +127,7 @@ void ktest_run_all(void)
 	klog_silent("KTEST", "=== kernel unit tests begin ===");
 
 	run_and_tally(ktest_suite_pmm(), &total_pass, &total_fail);
+	run_and_tally(ktest_suite_console_terminal(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_pmm_core(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_kheap(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_vfs(), &total_pass, &total_fail);

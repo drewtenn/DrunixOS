@@ -488,7 +488,7 @@ else
 
 $(ARM_KOBJS): CC = $(ARM_CC)
 $(ARM_KOBJS): CFLAGS = $(ARM_CFLAGS)
-$(ARM_KOBJS): INC = -I kernel -I kernel/lib -I kernel/arch/arm64
+$(ARM_KOBJS): INC = -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 -I kernel/mm -I kernel/proc -I kernel/fs -I kernel/drivers -I kernel/blk
 
 kernel/arch/arm64/%.o: kernel/arch/arm64/%.S
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) -c $< -o $@
@@ -517,8 +517,9 @@ fresh: run
 
 check: kernel-arm64.elf | $(LOG_DIR)
 	rm -f $(ARM_SERIAL_LOG)
-	sh -c '$(QEMU_ARM) -display none -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf -serial null -serial file:$(ARM_SERIAL_LOG) -monitor none -no-reboot >/dev/null 2>&1 & pid=$$!; for i in $$(seq 1 10); do grep -q "tick 5" $(ARM_SERIAL_LOG) 2>/dev/null && break; sleep 1; done; kill $$pid >/dev/null 2>&1 || true; wait $$pid >/dev/null 2>&1 || true'
-	grep -q "tick 5" $(ARM_SERIAL_LOG)
+	sh -c '$(QEMU_ARM) -display none -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf -serial null -serial file:$(ARM_SERIAL_LOG) -monitor none -no-reboot >/dev/null 2>&1 & pid=$$!; for i in $$(seq 1 10); do grep -q "drunix> " $(ARM_SERIAL_LOG) 2>/dev/null && break; sleep 1; done; kill $$pid >/dev/null 2>&1 || true; wait $$pid >/dev/null 2>&1 || true'
+	grep -q "Drunix ARM64 console" $(ARM_SERIAL_LOG)
+	grep -q "drunix> " $(ARM_SERIAL_LOG)
 
 run: kernel-arm64.elf | $(LOG_DIR)
 	$(QEMU_ARM) -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf -serial null -serial stdio -monitor none -nographic -no-reboot

@@ -3,6 +3,7 @@
 #ifndef PROCESS_H
 #define PROCESS_H
 
+#include "arch.h"
 #include "task_group.h"
 #include "wait.h"
 #include "vma.h"
@@ -191,20 +192,6 @@ typedef enum {
 } proc_state_t;
 
 /*
- * trap_frame_t — saved CPU state for an exception / interrupt entry.
- *
- * Field order matches the stack layout built by isr.asm and used by the
- * scheduler's signal-delivery path.
- */
-typedef struct __attribute__((packed)) {
-	uint32_t gs, fs, es, ds;
-	uint32_t edi, esi, ebp, esp_saved, ebx, edx, ecx, eax;
-	uint32_t vector, error_code;
-	uint32_t eip, cs, eflags;
-	uint32_t user_esp, user_ss; /* valid only when (cs & 3) == 3 */
-} trap_frame_t;
-
-/*
  * crash_info_t — synchronous fault context captured for a user process.
  *
  * The scheduler uses this to emit a core file if the resulting signal takes
@@ -214,7 +201,7 @@ typedef struct {
 	uint32_t valid;     /* 1 if a fault context is present */
 	uint32_t signum;    /* signal generated for the fault */
 	uint32_t cr2;       /* faulting linear address for #PF, else 0 */
-	trap_frame_t frame; /* saved register frame at fault time */
+	arch_trap_frame_t frame; /* arch-owned saved register frame */
 } crash_info_t;
 
 typedef struct process {
@@ -227,7 +214,7 @@ typedef struct process {
 	uint32_t user_stack;    /* user stack top (initial ESP, grows down) */
 	uint32_t kstack_top;    /* top of the per-process kernel stack (TSS.ESP0) */
 	uint32_t kstack_bottom; /* base of the heap-allocated kernel stack block */
-	uint32_t saved_esp; /* kernel ESP saved at last preemption; 0 = never run */
+	arch_process_state_t arch_state; /* arch-owned saved context and TLS/FPU state */
 	uint32_t tid;       /* scheduler task ID */
 	uint32_t tgid;      /* thread-group ID returned by getpid */
 	task_group_t *group; /* owning thread group */
@@ -251,12 +238,6 @@ typedef struct process {
 	uint32_t parent_pid;     /* PID of the process that created this one  */
 	uint32_t exit_status;    /* exit code from SYS_EXIT, read by waiter   */
 	uint32_t umask;          /* Linux umask(2), inherited across fork/exec */
-	uint32_t user_tls_base;  /* Linux i386 set_thread_area descriptor base */
-	uint32_t user_tls_limit; /* Linux i386 set_thread_area descriptor limit */
-	uint32_t
-	    user_tls_limit_in_pages; /* nonzero when descriptor uses 4 KiB pages */
-	uint32_t
-	    user_tls_present; /* nonzero when the per-process TLS slot is valid */
 	uint32_t clear_child_tid;   /* user address cleared on thread exit */
 	wait_queue_t state_waiters; /* waitpid waiters for exit/stop transitions */
 	vm_area_t vmas[PROCESS_MAX_VMAS]; /* sorted by ascending start address */
@@ -270,21 +251,13 @@ typedef struct process {
 	/*
      * First 79 bytes of the process command line, assembled from argv[].
      * Written into NT_PRPSINFO.pr_psargs so debuggers can display the
-     * command that generated a core file.
-     */
+	 * command that generated a core file.
+	 */
 	char psargs[80];
-	/*
-     * FXSAVE image: 512 bytes holding x87, MMX, and XMM0-XMM7 state.
-     * Saved/restored on every context switch via fxsave/fxrstor.  Keep the
-     * member itself explicitly 16-byte aligned so adding process metadata
-     * fields above it does not silently break the required alignment.
-     */
-	uint8_t fpu_state[512] __attribute__((aligned(16)));
 	/*
      * Unified open-file table.  All fds 0–MAX_FDS-1 live here, including
      * stdin (0), stdout (1), and stderr (2).  Slots are dispatched by
-     * open_files[fd].type.  Comes after fpu_state to keep the 16-byte
-     * alignment of fpu_state intact.
+     * open_files[fd].type.
      */
 	file_handle_t open_files[MAX_FDS];
 	/*

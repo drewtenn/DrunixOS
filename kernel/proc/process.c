@@ -10,23 +10,11 @@
 #include "pipe.h"
 #include "elf.h"
 #include "pmm.h"
-#include "gdt.h"
-#include "sse.h"
 #include "kheap.h"
 #include "klog.h"
 #include "kstring.h"
 #include "fs.h"
 #include <stdint.h>
-
-/* Defined in process_asm.asm */
-extern void process_enter_usermode(uint32_t entry,
-                                   uint32_t user_esp,
-                                   uint32_t user_cs,
-                                   uint32_t user_ds);
-extern void process_initial_launch(void);
-extern void process_exec_launch(void);
-void paging_guard_page(uint32_t virt);
-void paging_unguard_page(uint32_t virt);
 
 #define LINUX_AT_NULL 0u
 #define LINUX_AT_PAGESZ 6u
@@ -220,38 +208,6 @@ int process_build_user_stack_frame_for_test(uint32_t pd_phys,
 }
 #endif
 
-static uint32_t *build_launch_isr_frame(uint32_t *ksp, const process_t *proc)
-{
-	/* CPU iret frame — ring-3 target */
-	*--ksp = GDT_USER_DS;      /* SS_user  */
-	*--ksp = proc->user_stack; /* ESP_user */
-	*--ksp = 0x202;            /* EFLAGS: IF=1, reserved bit 1=1 */
-	*--ksp = GDT_USER_CS;      /* CS_user  */
-	*--ksp = proc->entry;      /* EIP      */
-
-	/* IRQ stub words */
-	*--ksp = 0; /* error_code */
-	*--ksp = 0; /* vector     */
-
-	/* pusha frame (high → low: EAX first, EDI last) */
-	*--ksp = 0; /* EAX */
-	*--ksp = 0; /* ECX */
-	*--ksp = 0; /* EDX */
-	*--ksp = 0; /* EBX */
-	*--ksp = 0; /* ESP_saved (ignored by popa) */
-	*--ksp = 0; /* EBP */
-	*--ksp = 0; /* ESI */
-	*--ksp = 0; /* EDI */
-
-	/* Segment registers (high → low: DS first, GS last) */
-	*--ksp = GDT_USER_DS; /* DS */
-	*--ksp = GDT_USER_DS; /* ES */
-	*--ksp = GDT_USER_DS; /* FS */
-	*--ksp = GDT_USER_DS; /* GS */
-
-	return ksp;
-}
-
 static void process_fork_rollback_child(process_t *child_out)
 {
 	if (!child_out)
@@ -356,83 +312,28 @@ static int process_clone_kernel_stack(process_t *child_out,
 	}
 
 	uint8_t *kguard = (uint8_t *)(((uint32_t)kstack_raw + 0xFFFu) & ~0xFFFu);
-	paging_guard_page((uint32_t)kguard);
+	arch_kstack_guard((uintptr_t)kguard);
 	child_out->kstack_bottom = (uint32_t)kstack_raw;
 	child_out->kstack_top = (uint32_t)(kguard + 0x1000u + KSTACK_SIZE);
-
-	if (!parent->kstack_top) {
-		if (child_stack)
-			child_out->user_stack = child_stack;
-		process_build_initial_frame(child_out);
-		return 0;
-	}
-
-	uint32_t parent_frame = parent->kstack_top - 76u;
-	uint32_t child_frame = child_out->kstack_top - 76u;
-
-	k_memcpy((void *)child_frame, (void *)parent_frame, 76);
-	((uint32_t *)child_frame)[11] = 0;
-	if (child_stack)
-		((uint32_t *)child_frame)[17] = child_stack;
-
-	uint32_t *ksp = (uint32_t *)child_frame;
-	*--ksp = (uint32_t)process_initial_launch;
-	*--ksp = 0;
-	*--ksp = 0;
-	*--ksp = 0;
-	*--ksp = 0;
-
-	child_out->saved_esp = (uint32_t)ksp;
-	return 0;
+	return arch_process_clone_frame(child_out, parent, child_stack);
 }
 
 void process_build_initial_frame(process_t *proc)
 {
-	if (!proc)
-		return;
-
-	uint32_t *ksp = build_launch_isr_frame((uint32_t *)proc->kstack_top, proc);
-
-	/* switch_context pops EDI, ESI, EBX, EBP then ret. */
-	*--ksp = (uint32_t)process_initial_launch; /* return address */
-	*--ksp = 0;                                /* EBP */
-	*--ksp = 0;                                /* EBX */
-	*--ksp = 0;                                /* ESI */
-	*--ksp = 0;                                /* EDI */
-
-	proc->saved_esp = (uint32_t)ksp;
+	arch_process_build_initial_frame(proc);
 }
 
 void process_build_exec_frame(process_t *proc,
                               uint32_t old_pd_phys,
                               uint32_t old_kstack_bottom)
 {
-	if (!proc)
-		return;
-
-	uint32_t *ksp = build_launch_isr_frame((uint32_t *)proc->kstack_top, proc);
-
-	/* process_exec_launch consumes these two words before the ISR restore. */
-	*--ksp = old_kstack_bottom;
-	*--ksp = old_pd_phys;
-	*--ksp = (uint32_t)process_exec_launch; /* return address */
-	*--ksp = 0;                             /* EBP */
-	*--ksp = 0;                             /* EBX */
-	*--ksp = 0;                             /* ESI */
-	*--ksp = 0;                             /* EDI */
-
-	proc->saved_esp = (uint32_t)ksp;
+	arch_process_build_exec_frame(
+	    proc, (arch_aspace_t)old_pd_phys, old_kstack_bottom);
 }
 
 void process_restore_user_tls(const process_t *proc)
 {
-	if (proc && proc->user_tls_present) {
-		gdt_set_user_tls(proc->user_tls_base,
-		                 proc->user_tls_limit,
-		                 (int)proc->user_tls_limit_in_pages);
-	} else {
-		gdt_clear_user_tls();
-	}
+	arch_process_restore_tls(proc);
 }
 
 int process_create_file(process_t *proc,
@@ -510,7 +411,7 @@ int process_create_file(process_t *proc,
 		return -5;
 	}
 	uint8_t *kguard = (uint8_t *)(((uint32_t)kstack_raw + 0xFFFu) & ~0xFFFu);
-	paging_guard_page((uint32_t)kguard);
+	arch_kstack_guard((uintptr_t)kguard);
 
 	proc->pd_phys = pd_phys;
 	proc->entry = entry;
@@ -524,7 +425,7 @@ int process_create_file(process_t *proc,
 	    USER_STACK_TOP - (uint32_t)USER_STACK_PAGES * 0x1000u;
 	proc->kstack_bottom = (uint32_t)kstack_raw;
 	proc->kstack_top = (uint32_t)(kguard + 0x1000u + KSTACK_SIZE);
-	proc->saved_esp = 0;       /* scheduler builds the initial switch frame */
+	proc->arch_state.context = 0; /* scheduler builds the initial switch frame */
 	proc->pid = 0;             /* assigned by sched_add() */
 	proc->state = PROC_UNUSED; /* sched_add() sets to PROC_READY */
 	proc->wait_queue = 0;
@@ -537,10 +438,10 @@ int process_create_file(process_t *proc,
 	proc->parent_pid = parent ? parent->pid : 0;
 	proc->exit_status = 0;
 	proc->umask = parent ? parent->umask : 022u;
-	proc->user_tls_base = 0;
-	proc->user_tls_limit = 0;
-	proc->user_tls_limit_in_pages = 0;
-	proc->user_tls_present = 0;
+	proc->arch_state.user_tls_base = 0;
+	proc->arch_state.user_tls_limit = 0;
+	proc->arch_state.user_tls_limit_in_pages = 0;
+	proc->arch_state.user_tls_present = 0;
 	sched_wait_queue_init(&proc->state_waiters);
 	vma_init(proc);
 	if (proc->image_start < proc->image_end &&
@@ -566,8 +467,7 @@ int process_create_file(process_t *proc,
 	            VMA_KIND_STACK) != 0)
 		return -9;
 
-	/* Give the process a clean FPU/SSE state (MXCSR=0x1F80, all regs 0) */
-	k_memcpy(proc->fpu_state, sse_initial_fpu_state, 512);
+	arch_fpu_init_state(proc);
 
 	/* Executable basename: find the last '/' and copy the tail, truncated to
      * 15 chars.  Used by the core dump NT_PRPSINFO note. */
@@ -664,35 +564,20 @@ int process_create_file(process_t *proc,
 
 void process_launch(process_t *proc)
 {
-	/* Tell the CPU where to find the kernel stack when INT fires from ring 3 */
-	gdt_set_tss_esp0(proc->kstack_top);
-	process_restore_user_tls(proc);
-
-	/* Activate the process's own page directory */
-	arch_aspace_switch((arch_aspace_t)proc->pd_phys);
-
-	/* Restore the process's FPU/SSE state before entering ring 3 */
-	__asm__ volatile("fxrstor %0" ::"m"(*proc->fpu_state));
-
-	/*
-     * Transfer control to ring 3.
-     * GDT_USER_CS (0x1B) and GDT_USER_DS (0x23) are DPL=3 selectors.
-     * process_enter_usermode never returns.
-     */
-	process_enter_usermode(
-	    proc->entry, proc->user_stack, GDT_USER_CS, GDT_USER_DS);
+	arch_process_launch(proc);
 }
 
 int process_fork(process_t *child_out, process_t *parent)
 {
 	/*
-     * Flush the live FPU/SSE registers into parent->fpu_state now.
+     * Flush the live FPU/SSE registers into parent->arch_state.fpu_state now.
      * schedule() saves FPU state on a context switch, so if the parent has
-     * not been preempted since it last ran, fpu_state[] still holds the
+     * not been preempted since it last ran, arch_state.fpu_state[] still holds
+     * the
      * snapshot from the previous switch and does not reflect the current
      * register contents.  The child must inherit the true, up-to-date state.
      */
-	__asm__ volatile("fxsave %0" : "=m"(*parent->fpu_state));
+	arch_fpu_save(parent);
 
 	/* Clone the parent's user address space with copy-on-write mappings. */
 	uint32_t new_pd =
@@ -752,38 +637,11 @@ int process_fork(process_t *child_out, process_t *parent)
 		return -1;
 	}
 	uint8_t *kguard = (uint8_t *)(((uint32_t)kstack_raw + 0xFFFu) & ~0xFFFu);
-	paging_guard_page((uint32_t)kguard);
+	arch_kstack_guard((uintptr_t)kguard);
 	child_out->kstack_bottom = (uint32_t)kstack_raw;
 	child_out->kstack_top = (uint32_t)(kguard + 0x1000u + KSTACK_SIZE);
 
-	/*
-     * Replicate the 76-byte ISR frame from the parent's kernel stack onto
-     * the child's kernel stack.  The ISR frame is always at kstack_top - 76
-     * because INT 0x80 pushes from TSS.ESP0 and the trampoline always pushes
-     * the same set of registers. Below that frame we build the usual fake
-     * switch_context frame so the first context switch irets into user mode.
-     */
-	uint32_t parent_frame = parent->kstack_top - 76;
-	uint32_t child_frame = child_out->kstack_top - 76;
-
-	k_memcpy((void *)child_frame, (void *)parent_frame, 76);
-
-	/* Zero the EAX slot (byte offset 44 from frame base = index 11) so the
-     * child's fork() returns 0. */
-	((uint32_t *)child_frame)[11] = 0;
-
-	/* Build a fake switch_context frame below the ISR frame.
-     * switch_context pops: EDI, ESI, EBX, EBP then ret. */
-	uint32_t *ksp = (uint32_t *)child_frame;
-	*--ksp = (uint32_t)process_initial_launch; /* return address */
-	*--ksp = 0;                                /* EBP */
-	*--ksp = 0;                                /* EBX */
-	*--ksp = 0;                                /* ESI */
-	*--ksp = 0;                                /* EDI */
-
-	child_out->saved_esp = (uint32_t)ksp;
-
-	return 0;
+	return arch_process_clone_frame(child_out, parent, 0);
 }
 
 int process_clone(process_t *child_out,
@@ -799,7 +657,7 @@ int process_clone(process_t *child_out,
 	if (!child_out || !parent)
 		return -1;
 
-	__asm__ volatile("fxsave %0" : "=m"(*parent->fpu_state));
+	arch_fpu_save(parent);
 
 	*child_out = *parent;
 	child_out->tid = 0;
@@ -823,17 +681,17 @@ int process_clone(process_t *child_out,
 	child_out->crash.cr2 = 0;
 	child_out->kstack_bottom = 0;
 	child_out->kstack_top = 0;
-	child_out->saved_esp = 0;
+	child_out->arch_state.context = 0;
 	sched_wait_queue_init(&child_out->state_waiters);
 
 	if (process_clone_resources(child_out, parent, flags) != 0)
 		return -1;
 
 	if (flags & CLONE_SETTLS) {
-		child_out->user_tls_base = tls;
-		child_out->user_tls_limit = 0xFFFFFu;
-		child_out->user_tls_limit_in_pages = 1;
-		child_out->user_tls_present = 1;
+		child_out->arch_state.user_tls_base = tls;
+		child_out->arch_state.user_tls_limit = 0xFFFFFu;
+		child_out->arch_state.user_tls_limit_in_pages = 1;
+		child_out->arch_state.user_tls_present = 1;
 	}
 
 	if (process_clone_kernel_stack(child_out, parent, child_stack) != 0) {
@@ -869,12 +727,12 @@ void process_release_kstack(process_t *proc)
 	uint32_t raw = proc->kstack_bottom;
 	uint32_t guard = (raw + 0xFFFu) & ~0xFFFu;
 
-	paging_unguard_page(guard);
+	arch_kstack_unguard(guard);
 	kfree((void *)raw);
 
 	proc->kstack_bottom = 0;
 	proc->kstack_top = 0;
-	proc->saved_esp = 0;
+	proc->arch_state.context = 0;
 }
 
 void process_exec_cleanup(uint32_t old_pd_phys, uint32_t old_kstack_bottom)
@@ -885,7 +743,7 @@ void process_exec_cleanup(uint32_t old_pd_phys, uint32_t old_kstack_bottom)
 
 	if (old_kstack_bottom != 0) {
 		uint32_t guard = (old_kstack_bottom + 0xFFFu) & ~0xFFFu;
-		paging_unguard_page(guard);
+		arch_kstack_unguard(guard);
 		kfree((void *)old_kstack_bottom);
 	}
 }

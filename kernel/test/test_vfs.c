@@ -294,7 +294,7 @@ static int add_procfs_test_process(void)
 
 	sched_init();
 	k_memset(&proc, 0, sizeof(proc));
-	proc.saved_esp = 1; /* skip initial-frame synthesis in sched_add() */
+	proc.arch_state.context = 1; /* skip initial-frame synthesis in sched_add() */
 	proc.state = PROC_UNUSED;
 	proc.pid = 0;
 	proc.parent_pid = 42;
@@ -319,7 +319,7 @@ static int add_procfs_test_process(void)
 static void init_procfs_layout_process(process_t *proc, int include_image_vma)
 {
 	k_memset(proc, 0, sizeof(*proc));
-	proc->saved_esp = 1; /* skip initial-frame synthesis in sched_add() */
+	proc->arch_state.context = 1; /* skip initial-frame synthesis in sched_add() */
 	proc->state = PROC_UNUSED;
 	proc->pid = 0;
 	proc->parent_pid = 42;
@@ -757,14 +757,14 @@ static void test_proc_namespace_lists_thread_group_once(ktest_case_t *tc)
 
 	sched_init();
 	init_procfs_layout_process(&leader, 1);
-	leader.saved_esp = 1;
+	leader.arch_state.context = 1;
 	int leader_tid = sched_add(&leader);
 	KTEST_ASSERT_TRUE(tc, leader_tid >= 1);
 	process_t *leader_slot = sched_find_pid((uint32_t)leader_tid);
 	KTEST_ASSERT_NOT_NULL(tc, leader_slot);
 
 	init_procfs_layout_process(&worker, 1);
-	worker.saved_esp = 1;
+	worker.arch_state.context = 1;
 	worker.group = leader_slot->group;
 	worker.tgid = leader_slot->tgid;
 	int worker_tid = sched_add(&worker);

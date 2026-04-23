@@ -24,15 +24,15 @@
  * treated as an empty slot by sched_add().
  *
  * sched_add() now synthesises an initial kernel-stack frame for any process
- * whose saved_esp is 0. These tests do not allocate real kernel stacks, so
- * the dummy descriptors carry a non-zero saved_esp sentinel to skip that
+ * whose arch_state.context is 0. These tests do not allocate real kernel
+ * stacks, so the dummy descriptors carry a non-zero sentinel to skip that
  * path.
  */
 
 static void init_dummy_proc(process_t *proc)
 {
 	k_memset(proc, 0, sizeof(*proc));
-	proc->saved_esp = 1;
+	proc->arch_state.context = 1;
 }
 
 static void queue_blocked_proc(wait_queue_t *queue, process_t *proc)
@@ -176,7 +176,7 @@ static void test_sched_add_unique_pids_three(ktest_case_t *tc)
  * verify sched_waitpid returns the correct status and the slot transitions to
  * PROC_UNUSED (a second waitpid returns -1).
  *
- * The dummy processes must carry a non-zero saved_esp sentinel so sched_add()
+ * The dummy processes must carry a non-zero context sentinel so sched_add()
  * does not try to synthesise an initial launch frame on a non-existent kernel
  * stack. pd_phys and kstack_bottom remain 0 so sched_reap's teardown helpers
  * are safe no-ops.

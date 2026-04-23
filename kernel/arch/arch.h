@@ -5,8 +5,15 @@
 
 #include <stdint.h>
 
+struct process;
+typedef struct process process_t;
+
 typedef void (*arch_irq_handler_fn)(void);
 typedef uintptr_t arch_aspace_t;
+typedef uintptr_t arch_context_t;
+
+#include "proc/frame.h"
+#include "proc/state.h"
 
 typedef struct {
 	uint64_t phys_addr;
@@ -54,5 +61,34 @@ void *arch_page_temp_map(uint64_t phys_addr);
 void arch_page_temp_unmap(void *ptr);
 uint32_t arch_mm_present_begin(void);
 void arch_mm_present_end(uint32_t state);
+void arch_process_build_initial_frame(process_t *proc);
+void arch_process_build_exec_frame(process_t *proc,
+                                   arch_aspace_t old_aspace,
+                                   uintptr_t old_kstack_bottom);
+int arch_process_clone_frame(process_t *child_out,
+                             const process_t *parent,
+                             uint32_t child_stack);
+void arch_process_restore_tls(const process_t *proc);
+void arch_process_launch(process_t *proc);
+void arch_context_prepare(process_t *proc);
+void arch_fpu_init_state(process_t *proc);
+void arch_fpu_save(process_t *proc);
+void arch_context_switch(arch_context_t *old_ctx,
+                         arch_context_t new_ctx,
+                         arch_aspace_t new_aspace);
+void arch_idle_wait(void);
+uintptr_t arch_current_irq_frame(void);
+int arch_irq_frame_is_user(uintptr_t frame_ctx);
+void arch_kstack_guard(uintptr_t addr);
+void arch_kstack_unguard(uintptr_t addr);
+uint32_t arch_trap_frame_ip(const arch_trap_frame_t *frame);
+void arch_core_fill_prstatus_regs(uint32_t *gregs,
+                                  const arch_trap_frame_t *frame);
+void arch_trap_frame_sanitize(process_t *proc, arch_trap_frame_t *frame);
+int arch_signal_setup_frame(process_t *proc,
+                            arch_trap_frame_t *frame,
+                            int signum,
+                            uint32_t handler_va);
+uint32_t arch_user_tls_entry(void);
 
 #endif

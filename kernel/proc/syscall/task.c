@@ -8,7 +8,7 @@
 
 #include "syscall_internal.h"
 #include "syscall_linux.h"
-#include "gdt.h"
+#include "arch.h"
 #include "kheap.h"
 #include "klog.h"
 #include "kstring.h"
@@ -474,7 +474,7 @@ uint32_t SYSCALL_NOINLINE syscall_case_set_thread_area(uint32_t ebx)
 			return (uint32_t)-1;
 
 		if (desc.entry_number != 0xFFFFFFFFu &&
-		    desc.entry_number != GDT_USER_TLS_ENTRY)
+		    desc.entry_number != arch_user_tls_entry())
 			return (uint32_t)-LINUX_EINVAL;
 
 		contents = (desc.flags >> 1) & 0x3u;
@@ -483,18 +483,19 @@ uint32_t SYSCALL_NOINLINE syscall_case_set_thread_area(uint32_t ebx)
 		if ((desc.flags & (1u << 3)) != 0)
 			return (uint32_t)-LINUX_EINVAL;
 
-		desc.entry_number = GDT_USER_TLS_ENTRY;
+		desc.entry_number = arch_user_tls_entry();
 		limit_in_pages = (desc.flags & (1u << 4)) != 0;
 		if ((desc.flags & (1u << 5)) != 0) {
-			cur->user_tls_base = 0;
-			cur->user_tls_limit = 0;
-			cur->user_tls_limit_in_pages = 0;
-			cur->user_tls_present = 0;
+			cur->arch_state.user_tls_base = 0;
+			cur->arch_state.user_tls_limit = 0;
+			cur->arch_state.user_tls_limit_in_pages = 0;
+			cur->arch_state.user_tls_present = 0;
 		} else {
-			cur->user_tls_base = desc.base_addr;
-			cur->user_tls_limit = desc.limit;
-			cur->user_tls_limit_in_pages = (uint32_t)limit_in_pages;
-			cur->user_tls_present = 1;
+			cur->arch_state.user_tls_base = desc.base_addr;
+			cur->arch_state.user_tls_limit = desc.limit;
+			cur->arch_state.user_tls_limit_in_pages =
+			    (uint32_t)limit_in_pages;
+			cur->arch_state.user_tls_present = 1;
 		}
 		process_restore_user_tls(cur);
 
