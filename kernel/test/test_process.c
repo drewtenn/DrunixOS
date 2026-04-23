@@ -888,6 +888,37 @@ static void test_mem_forensics_classifies_unknown_fault_vector(ktest_case_t *tc)
 	    tc, report.fault.classification, MEM_FORENSICS_FAULT_UNKNOWN);
 }
 
+static void test_mem_forensics_preserves_high_fault_addr_as_unknown(
+    ktest_case_t *tc)
+{
+	static process_t proc;
+	mem_forensics_report_t report;
+	char buf[256];
+	uint32_t size = 0u;
+
+	init_vma_proc(&proc);
+	proc.crash.valid = 1;
+	proc.crash.signum = SIGSEGV;
+	proc.crash.fault_addr = 0x1234567887654321ull;
+	proc.crash.frame.vector = 14u;
+	proc.crash.frame.error_code = 0x6u;
+
+	KTEST_ASSERT_EQ(tc, mem_forensics_collect(&proc, &report), 0u);
+	KTEST_EXPECT_TRUE(tc, report.fault.cr2 == proc.crash.fault_addr);
+	KTEST_EXPECT_EQ(
+	    tc, report.fault.classification, MEM_FORENSICS_FAULT_UNKNOWN);
+	KTEST_EXPECT_EQ(tc, report.fault.in_region, 0u);
+
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)mem_forensics_render_fault(
+	                    &proc, buf, sizeof(buf), &size),
+	                0u);
+	if (size >= sizeof(buf))
+		size = sizeof(buf) - 1u;
+	buf[size] = '\0';
+	KTEST_EXPECT_TRUE(tc, k_strstr(buf, "CR2:\t0x1234567887654321") != 0);
+}
+
 static void test_mem_forensics_classifies_stack_limit_fault(ktest_case_t *tc)
 {
 	static process_t proc;
@@ -1913,6 +1944,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_mem_forensics_classifies_cow_write_fault),
     KTEST_CASE(test_mem_forensics_classifies_protection_fault),
     KTEST_CASE(test_mem_forensics_classifies_unknown_fault_vector),
+    KTEST_CASE(test_mem_forensics_preserves_high_fault_addr_as_unknown),
     KTEST_CASE(test_mem_forensics_classifies_stack_limit_fault),
     KTEST_CASE(test_mem_forensics_counts_present_heap_pages),
     KTEST_CASE(test_process_resources_start_with_single_refs),

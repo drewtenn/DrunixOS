@@ -44,7 +44,7 @@ typedef struct {
 typedef struct {
 	uint32_t valid;
 	uint32_t signum;
-	uint32_t cr2;
+	uint64_t cr2;
 	uint32_t eip;
 	uint32_t vector;
 	uint32_t error_code;

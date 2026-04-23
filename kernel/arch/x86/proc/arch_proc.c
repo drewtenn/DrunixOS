@@ -261,8 +261,13 @@ int arch_trap_frame_is_syscall(const arch_trap_frame_t *frame)
 
 uint64_t arch_trap_frame_fault_addr(const arch_trap_frame_t *frame)
 {
-	(void)frame;
-	return 0u;
+	uint32_t cr2 = 0u;
+
+	if (!frame || frame->vector != 14u)
+		return 0u;
+
+	__asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+	return cr2;
 }
 
 void arch_core_fill_prstatus_regs(uint32_t *gregs, const arch_trap_frame_t *frame)
