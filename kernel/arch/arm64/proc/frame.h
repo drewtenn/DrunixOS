@@ -6,7 +6,12 @@
 #include <stdint.h>
 
 typedef struct arch_trap_frame {
-	uint64_t regs[34];
+	uint64_t x[31];
+	uint64_t sp_el0;
+	uint64_t elr_el1;
+	uint64_t spsr_el1;
+	uint64_t esr_el1;
+	uint64_t far_el1;
 } arch_trap_frame_t;
 
 #endif

@@ -1,5 +1,7 @@
+.extern g_arm64_exception_frame
+
 .macro SAVE_GPRS
-    sub sp, sp, #256
+    sub sp, sp, #288
     stp x0, x1, [sp, #0]
     stp x2, x3, [sp, #16]
     stp x4, x5, [sp, #32]
@@ -16,9 +18,25 @@
     stp x26, x27, [sp, #208]
     stp x28, x29, [sp, #224]
     str x30, [sp, #240]
+    mrs x9, sp_el0
+    str x9, [sp, #248]
+    mrs x9, elr_el1
+    str x9, [sp, #256]
+    mrs x9, spsr_el1
+    str x9, [sp, #264]
+    mrs x9, esr_el1
+    str x9, [sp, #272]
+    mrs x9, far_el1
+    str x9, [sp, #280]
 .endm
 
 .macro RESTORE_GPRS
+    ldr x9, [sp, #248]
+    msr sp_el0, x9
+    ldr x9, [sp, #256]
+    msr elr_el1, x9
+    ldr x9, [sp, #264]
+    msr spsr_el1, x9
     ldp x0, x1, [sp, #0]
     ldp x2, x3, [sp, #16]
     ldp x4, x5, [sp, #32]
@@ -35,7 +53,20 @@
     ldp x26, x27, [sp, #208]
     ldp x28, x29, [sp, #224]
     ldr x30, [sp, #240]
-    add sp, sp, #256
+    add sp, sp, #288
+.endm
+
+.macro SET_CURRENT_FRAME
+    adrp x9, g_arm64_exception_frame
+    add x9, x9, :lo12:g_arm64_exception_frame
+    mov x10, sp
+    str x10, [x9]
+.endm
+
+.macro CLEAR_CURRENT_FRAME
+    adrp x9, g_arm64_exception_frame
+    add x9, x9, :lo12:g_arm64_exception_frame
+    str xzr, [x9]
 .endm
 
 .macro VENTRY label
@@ -46,8 +77,10 @@
 .macro HANDLE label, cfunc
 \label:
     SAVE_GPRS
+    SET_CURRENT_FRAME
     mov x0, sp
     bl \cfunc
+    CLEAR_CURRENT_FRAME
     RESTORE_GPRS
     eret
 .endm

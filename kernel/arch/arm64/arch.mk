@@ -12,6 +12,7 @@ ARM_KOBJS := kernel/arch/arm64/boot.o \
              kernel/arch/arm64/exceptions.o \
              kernel/arch/arm64/exceptions_s.o \
              kernel/arch/arm64/irq.o \
+             kernel/arch/arm64/proc/entry.o \
              kernel/arch/arm64/proc/arch_proc.o \
              kernel/console/terminal.arm64.o \
              kernel/arch/arm64/mm/mmu.o \
@@ -33,6 +34,9 @@ kernel/console/%.arm64.o: kernel/console/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 -I kernel/mm -I kernel/proc -I kernel/fs -I kernel/drivers -I kernel/blk -c $< -o $@
 
 kernel/arch/arm64/proc/%.arm64.o: kernel/arch/arm64/proc/%.c
+	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 -I kernel/mm -I kernel/proc -I kernel/fs -I kernel/drivers -I kernel/blk -c $< -o $@
+
+kernel/arch/arm64/proc/%.o: kernel/arch/arm64/proc/%.S
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 -I kernel/mm -I kernel/proc -I kernel/fs -I kernel/drivers -I kernel/blk -c $< -o $@
 
 QEMU_ARM ?= qemu-system-aarch64

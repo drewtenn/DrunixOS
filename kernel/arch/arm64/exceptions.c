@@ -5,6 +5,9 @@
 
 #include "irq.h"
 #include "uart.h"
+#include "../arch.h"
+#include "../../proc/sched.h"
+#include "../../proc/syscall.h"
 #include "kprintf.h"
 #include <stdint.h>
 
@@ -12,6 +15,14 @@
 #define CNTPNSIRQ_BIT (1u << 1)
 
 static volatile uint32_t g_spurious_irq_count;
+
+extern void sched_record_user_fault(const arch_trap_frame_t *frame,
+                                    uint64_t fault_addr,
+                                    int signum) __attribute__((weak));
+extern void schedule(void) __attribute__((weak));
+extern uint32_t sched_signal_check(uint32_t frame_esp) __attribute__((weak));
+extern uint64_t
+    syscall_dispatch_from_frame(arch_trap_frame_t *frame) __attribute__((weak));
 
 static void arm64_halt_forever(void)
 {
@@ -29,17 +40,31 @@ static void uart_put_hex64(const char *label, uint64_t value)
 	uart_puts(line);
 }
 
-void arm64_sync_handler(uint64_t *frame)
+void arm64_sync_handler(arch_trap_frame_t *frame)
 {
-	uint64_t esr;
-	uint64_t elr;
-	uint64_t far;
+	uint64_t esr = frame ? frame->esr_el1 : 0u;
+	uint64_t elr = frame ? frame->elr_el1 : 0u;
+	uint64_t far = frame ? frame->far_el1 : 0u;
 
-	(void)frame;
+	if (frame && arch_irq_frame_is_user((uintptr_t)frame)) {
+		if (arch_trap_frame_is_syscall(frame)) {
+			if (syscall_dispatch_from_frame)
+				syscall_dispatch_from_frame(frame);
+			if (sched_signal_check)
+				(void)sched_signal_check((uint32_t)(uintptr_t)frame);
+			return;
+		}
 
-	__asm__ volatile("mrs %0, esr_el1" : "=r"(esr));
-	__asm__ volatile("mrs %0, elr_el1" : "=r"(elr));
-	__asm__ volatile("mrs %0, far_el1" : "=r"(far));
+		if (sched_record_user_fault) {
+			sched_record_user_fault(
+			    frame, arch_trap_frame_fault_addr(frame), SIGSEGV);
+		}
+		if (schedule)
+			schedule();
+		if (sched_signal_check)
+			(void)sched_signal_check((uint32_t)(uintptr_t)frame);
+		return;
+	}
 
 	uart_puts("sync exception\n");
 	uart_put_hex64("ESR_EL1", esr);
@@ -48,7 +73,7 @@ void arm64_sync_handler(uint64_t *frame)
 	arm64_halt_forever();
 }
 
-void arm64_irq_handler(uint64_t *frame)
+void arm64_irq_handler(arch_trap_frame_t *frame)
 {
 	uint32_t source;
 
@@ -63,14 +88,14 @@ void arm64_irq_handler(uint64_t *frame)
 	g_spurious_irq_count++;
 }
 
-void arm64_fiq_handler(uint64_t *frame)
+void arm64_fiq_handler(arch_trap_frame_t *frame)
 {
 	(void)frame;
 	uart_puts("fiq exception\n");
 	arm64_halt_forever();
 }
 
-void arm64_serror_handler(uint64_t *frame)
+void arm64_serror_handler(arch_trap_frame_t *frame)
 {
 	(void)frame;
 	uart_puts("serror exception\n");

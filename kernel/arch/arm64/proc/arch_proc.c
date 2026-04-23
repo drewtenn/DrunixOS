@@ -8,6 +8,10 @@
 #include "kstring.h"
 #include <stdint.h>
 
+extern void arm64_enter_el0(uintptr_t entry, uintptr_t user_sp);
+
+uintptr_t g_arm64_exception_frame;
+
 void arch_process_build_initial_frame(process_t *proc)
 {
 	(void)proc;
@@ -39,7 +43,12 @@ void arch_process_restore_tls(const process_t *proc)
 
 void arch_process_launch(process_t *proc)
 {
-	(void)proc;
+	if (!proc)
+		return;
+
+	arch_process_restore_tls(proc);
+	arch_aspace_switch((arch_aspace_t)proc->pd_phys);
+	arm64_enter_el0((uintptr_t)proc->entry, (uintptr_t)proc->user_stack);
 	for (;;)
 		__asm__ volatile("wfi");
 }
@@ -77,13 +86,16 @@ void arch_idle_wait(void)
 
 uintptr_t arch_current_irq_frame(void)
 {
-	return 0;
+	return g_arm64_exception_frame;
 }
 
 int arch_irq_frame_is_user(uintptr_t frame_ctx)
 {
-	(void)frame_ctx;
-	return 0;
+	const arch_trap_frame_t *frame = (const arch_trap_frame_t *)frame_ctx;
+
+	if (!frame)
+		return 0;
+	return (frame->spsr_el1 & 0xFu) == 0u;
 }
 
 void arch_kstack_guard(uintptr_t addr)
@@ -98,68 +110,64 @@ void arch_kstack_unguard(uintptr_t addr)
 
 uint32_t arch_trap_frame_ip(const arch_trap_frame_t *frame)
 {
-	(void)frame;
-	return 0;
+	return frame ? (uint32_t)frame->elr_el1 : 0u;
 }
 
 uint64_t arch_syscall_number(const arch_trap_frame_t *frame)
 {
-	(void)frame;
-	return 0;
+	return frame ? frame->x[8] : 0u;
 }
 
 uint64_t arch_syscall_arg0(const arch_trap_frame_t *frame)
 {
-	(void)frame;
-	return 0;
+	return frame ? frame->x[0] : 0u;
 }
 
 uint64_t arch_syscall_arg1(const arch_trap_frame_t *frame)
 {
-	(void)frame;
-	return 0;
+	return frame ? frame->x[1] : 0u;
 }
 
 uint64_t arch_syscall_arg2(const arch_trap_frame_t *frame)
 {
-	(void)frame;
-	return 0;
+	return frame ? frame->x[2] : 0u;
 }
 
 uint64_t arch_syscall_arg3(const arch_trap_frame_t *frame)
 {
-	(void)frame;
-	return 0;
+	return frame ? frame->x[3] : 0u;
 }
 
 uint64_t arch_syscall_arg4(const arch_trap_frame_t *frame)
 {
-	(void)frame;
-	return 0;
+	return frame ? frame->x[4] : 0u;
 }
 
 uint64_t arch_syscall_arg5(const arch_trap_frame_t *frame)
 {
-	(void)frame;
-	return 0;
+	return frame ? frame->x[5] : 0u;
 }
 
 void arch_syscall_set_result(arch_trap_frame_t *frame, uint64_t value)
 {
-	(void)frame;
-	(void)value;
+	if (frame)
+		frame->x[0] = value;
 }
 
 int arch_trap_frame_is_syscall(const arch_trap_frame_t *frame)
 {
-	(void)frame;
-	return 0;
+	uint64_t esr_el1;
+
+	if (!frame)
+		return 0;
+
+	esr_el1 = frame->esr_el1;
+	return ((esr_el1 >> 26) & 0x3Fu) == 0x15u;
 }
 
 uint64_t arch_trap_frame_fault_addr(const arch_trap_frame_t *frame)
 {
-	(void)frame;
-	return 0;
+	return frame ? frame->far_el1 : 0u;
 }
 
 void arch_core_fill_prstatus_regs(uint32_t *gregs, const arch_trap_frame_t *frame)
