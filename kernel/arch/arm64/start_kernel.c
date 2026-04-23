@@ -44,6 +44,7 @@ void arm64_start_kernel(void)
 	__asm__ volatile("isb");
 
 	uart_puts("Drunix AArch64 v0 - hello from EL1\n");
+	arch_mm_init();
 
 	k_snprintf(line,
 	           sizeof(line),

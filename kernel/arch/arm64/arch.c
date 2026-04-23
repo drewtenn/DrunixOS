@@ -5,8 +5,15 @@
 
 #include "../arch.h"
 #include "irq.h"
+#include "mm/mmu.h"
+#include "mm/pmm.h"
 #include "timer.h"
 #include "uart.h"
+
+extern char _kernel_start[];
+extern char _kernel_end[];
+
+static int g_arm64_mm_ready;
 
 uint32_t arch_time_unix_seconds(void)
 {
@@ -68,4 +75,104 @@ void arch_timer_start(uint32_t hz)
 void arch_interrupts_enable(void)
 {
 	arm64_irq_enable();
+}
+
+void arch_mm_init(void)
+{
+	uintptr_t kernel_start;
+	uintptr_t kernel_end;
+
+	if (g_arm64_mm_ready)
+		return;
+
+	pmm_init();
+	kernel_start = (uintptr_t)_kernel_start & ~(uintptr_t)(PAGE_SIZE - 1u);
+	kernel_end =
+	    ((uintptr_t)_kernel_end + PAGE_SIZE - 1u) & ~(uintptr_t)(PAGE_SIZE - 1u);
+	if (kernel_end > kernel_start) {
+		pmm_mark_used((uint32_t)kernel_start,
+		              (uint32_t)(kernel_end - kernel_start));
+	}
+
+	arm64_mmu_init();
+	g_arm64_mm_ready = 1;
+}
+
+arch_aspace_t arch_aspace_kernel(void)
+{
+	return arm64_mmu_kernel_aspace();
+}
+
+arch_aspace_t arch_aspace_create(void)
+{
+	return arm64_mmu_aspace_create();
+}
+
+arch_aspace_t arch_aspace_clone(arch_aspace_t src)
+{
+	return arm64_mmu_aspace_clone(src);
+}
+
+void arch_aspace_switch(arch_aspace_t aspace)
+{
+	arm64_mmu_aspace_switch(aspace);
+}
+
+void arch_aspace_destroy(arch_aspace_t aspace)
+{
+	arm64_mmu_aspace_destroy(aspace);
+}
+
+int arch_mm_map(arch_aspace_t aspace, uintptr_t virt, uint64_t phys, uint32_t flags)
+{
+	return arm64_mmu_map(aspace, virt, phys, flags);
+}
+
+int arch_mm_unmap(arch_aspace_t aspace, uintptr_t virt)
+{
+	return arm64_mmu_unmap(aspace, virt);
+}
+
+int arch_mm_query(arch_aspace_t aspace, uintptr_t virt, arch_mm_mapping_t *out)
+{
+	return arm64_mmu_query(aspace, virt, out);
+}
+
+int arch_mm_update(arch_aspace_t aspace,
+                   uintptr_t virt,
+                   uint32_t clear_flags,
+                   uint32_t set_flags)
+{
+	return arm64_mmu_update(aspace, virt, clear_flags, set_flags);
+}
+
+void arch_mm_invalidate_page(arch_aspace_t aspace, uintptr_t virt)
+{
+	arm64_mmu_invalidate_page(aspace, virt);
+}
+
+void *arch_page_temp_map(uint64_t phys_addr)
+{
+	return arm64_temp_map(phys_addr);
+}
+
+void arch_page_temp_unmap(void *ptr)
+{
+	arm64_temp_unmap(ptr);
+}
+
+uint32_t arch_mm_present_begin(void)
+{
+	uint64_t daif;
+
+	__asm__ volatile("mrs %0, daif" : "=r"(daif));
+	__asm__ volatile("msr daifset, #2" ::: "memory");
+	return (uint32_t)daif;
+}
+
+void arch_mm_present_end(uint32_t state)
+{
+	uint64_t daif = state;
+
+	__asm__ volatile("msr daif, %0" : : "r"(daif) : "memory");
 }

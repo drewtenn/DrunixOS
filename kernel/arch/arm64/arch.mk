@@ -12,7 +12,9 @@ ARM_KOBJS := kernel/arch/arm64/boot.o \
              kernel/arch/arm64/exceptions.o \
              kernel/arch/arm64/exceptions_s.o \
              kernel/arch/arm64/irq.o \
+             kernel/arch/arm64/mm/mmu.o \
              kernel/arch/arm64/mm/pmm.o \
+             kernel/arch/arm64/mm/temp_map.o \
              kernel/mm/pmm_core.arm64.o \
              kernel/arch/arm64/timer.o \
              kernel/arch/arm64/uart.o \
