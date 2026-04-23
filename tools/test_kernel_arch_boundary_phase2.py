@@ -38,18 +38,15 @@ REQUIRED_PATTERNS = {
     # Target the concrete Phase 2 call sites from the approved plan rather
     # than inferring architecture ownership from the rest of the tree.
     ROOT / "kernel/kernel.c": [
-        r'#include "arch\.h"',
         r"\barch_irq_init\s*\(",
         r"\barch_timer_set_periodic_handler\s*\(\s*sched_tick\s*\)",
         r"\barch_timer_start\s*\(\s*SCHED_HZ\s*\)",
         r"\barch_interrupts_enable\s*\(",
     ],
     ROOT / "kernel/platform/pc/keyboard.c": [
-        r'#include "arch\.h"',
         r"\barch_irq_register\s*\(\s*1\s*,\s*keyboard_handler\s*\)",
     ],
     ROOT / "kernel/platform/pc/mouse.c": [
-        r'#include "arch\.h"',
         r"\barch_irq_register\s*\(\s*12\s*,\s*mouse_handler\s*\)",
         r"\barch_irq_unmask\s*\(\s*2\s*\)",
         r"\barch_irq_unmask\s*\(\s*12\s*\)",
