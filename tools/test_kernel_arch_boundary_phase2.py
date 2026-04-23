@@ -196,6 +196,32 @@ def include_only_source(text: str) -> str:
     return "\n".join(lines)
 
 
+def strip_if0_regions(text: str) -> str:
+    out = []
+    stack = []
+
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("#if 0"):
+            stack.append(False)
+            continue
+        if stack and stripped.startswith("#if"):
+            stack.append(stack[-1])
+            if stack[-1]:
+                out.append(line)
+            continue
+        if stack and stripped.startswith("#else"):
+            stack[-1] = not stack[-1]
+            continue
+        if stack and stripped.startswith("#endif"):
+            stack.pop()
+            continue
+        if not stack or stack[-1]:
+            out.append(line)
+
+    return "\n".join(out)
+
+
 def main() -> None:
     include_forbidden = {
         ROOT / "kernel/kernel.c": [
@@ -223,25 +249,25 @@ def main() -> None:
     }
 
     for path, patterns in include_forbidden.items():
-        text = include_only_source(path.read_text())
+        text = include_only_source(strip_if0_regions(path.read_text()))
         for pattern in patterns:
             if re.search(pattern, text):
                 fail(f"{path.relative_to(ROOT)} still contains {pattern}")
 
     for path, patterns in include_required.items():
-        text = include_only_source(path.read_text())
+        text = include_only_source(strip_if0_regions(path.read_text()))
         for pattern in patterns:
             if not re.search(pattern, text):
                 fail(f"{path.relative_to(ROOT)} is missing {pattern}")
 
     for path, patterns in FORBIDDEN_PATTERNS.items():
-        text = normalize_c_source(path.read_text())
+        text = normalize_c_source(strip_if0_regions(path.read_text()))
         for pattern in patterns:
             if re.search(pattern, text):
                 fail(f"{path.relative_to(ROOT)} still contains {pattern}")
 
     for path, patterns in REQUIRED_PATTERNS.items():
-        text = normalize_c_source(path.read_text())
+        text = normalize_c_source(strip_if0_regions(path.read_text()))
         for pattern in patterns:
             if not re.search(pattern, text):
                 fail(f"{path.relative_to(ROOT)} is missing {pattern}")
