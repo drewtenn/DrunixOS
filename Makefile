@@ -527,6 +527,12 @@ check: kernel-arm64.elf | $(LOG_DIR)
 	grep -q "Drunix ARM64 console" $(ARM_SERIAL_LOG)
 	grep -q "drunix> " $(ARM_SERIAL_LOG)
 
+check-phase6:
+	python3 tools/test_kernel_arch_boundary_phase6.py
+
+check-arm64-userspace:
+	python3 tools/test_arm64_userspace_smoke.py
+
 run: kernel-arm64.elf | $(LOG_DIR)
 	$(QEMU_ARM) -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf -serial null -serial stdio -monitor none -nographic -no-reboot
 
@@ -563,6 +569,7 @@ clean:
 .PHONY: all build kernel iso images disk fresh check \
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
+        check-phase6 check-arm64-userspace \
         pdf epub docs \
         rebuild clean
 endif

@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FORBIDDEN = {
     ROOT / "kernel/proc/elf.h": [r"\bEM_386\b"],
     ROOT / "kernel/proc/syscall.c": [r"INT 0x80", r"\beax,\s*ebx,\s*ecx"],
-    ROOT / "kernel/arch/arm64/exceptions.c": [r"uart_puts\\(\"sync exception"],
+    ROOT / "kernel/arch/arm64/exceptions.c": [r'uart_puts\("sync exception'],
 }
 
 REQUIRED = {
