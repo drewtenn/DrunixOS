@@ -12,6 +12,30 @@ extern uint32_t _kernel_end;
 
 static pmm_core_state_t g_pmm;
 
+static int x86_pmm_managed_usable_range(uint64_t base,
+                                        uint64_t length,
+                                        uint32_t *base_out,
+                                        uint32_t *length_out)
+{
+	const uint64_t managed_end = (uint64_t)PMM_MAX_PAGES * PAGE_SIZE;
+	uint64_t end;
+
+	if (!base_out || !length_out || length == 0 || base >= managed_end)
+		return -1;
+
+	end = base + length;
+	if (end < base)
+		end = UINT64_MAX;
+	if (end > managed_end)
+		end = managed_end;
+	if (end <= base)
+		return -1;
+
+	*base_out = (uint32_t)base;
+	*length_out = (uint32_t)(end - base);
+	return 0;
+}
+
 static int pmm_multiboot_framebuffer_range(const multiboot_info_t *mbi,
                                            uint32_t *base_out,
                                            uint32_t *length_out)
@@ -53,16 +77,33 @@ static void x86_pmm_apply_usable_ranges(pmm_core_state_t *state,
 	uint32_t have_mmap = mbi && (mbi->flags & MULTIBOOT_FLAG_MMAP);
 
 	if (have_mmap) {
-		multiboot_mmap_entry_t *entry =
-		    (multiboot_mmap_entry_t *)mbi->mmap_addr;
-		uint32_t map_end = mbi->mmap_addr + mbi->mmap_length;
+		uintptr_t entry_addr = (uintptr_t)mbi->mmap_addr;
+		uintptr_t map_end = entry_addr + (uintptr_t)mbi->mmap_length;
 
-		while ((uint32_t)entry < map_end) {
-			if (entry->type == 1u)
-				pmm_core_mark_free(
-				    state, (uint32_t)entry->addr, (uint32_t)entry->len);
-			entry =
-			    (multiboot_mmap_entry_t *)((uint32_t)entry + entry->size + 4u);
+		if (map_end < entry_addr)
+			return;
+
+		while (entry_addr + sizeof(uint32_t) <= map_end) {
+			const multiboot_mmap_entry_t *entry =
+			    (const multiboot_mmap_entry_t *)entry_addr;
+			uintptr_t next = entry_addr + entry->size + sizeof(entry->size);
+
+			if (next <= entry_addr || next > map_end)
+				break;
+
+			if (entry->type == 1u) {
+				uint32_t range_base;
+				uint32_t range_length;
+
+				if (x86_pmm_managed_usable_range(entry->addr,
+				                                 entry->len,
+				                                 &range_base,
+				                                 &range_length) == 0) {
+					pmm_core_mark_free(state, range_base, range_length);
+				}
+			}
+
+			entry_addr = next;
 		}
 	} else {
 		pmm_core_mark_free(state, 0x00100000u, 0x07F00000u);
@@ -111,6 +152,12 @@ int pmm_multiboot_framebuffer_range_for_test(const multiboot_info_t *mbi,
                                              uint32_t *length_out)
 {
 	return pmm_multiboot_framebuffer_range(mbi, base_out, length_out);
+}
+
+void pmm_multiboot_apply_usable_ranges_for_test(pmm_core_state_t *state,
+                                                const multiboot_info_t *mbi)
+{
+	x86_pmm_apply_usable_ranges(state, mbi);
 }
 #endif
 

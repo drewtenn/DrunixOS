@@ -182,6 +182,34 @@ test_multiboot_framebuffer_reservation_rejects_wrap(ktest_case_t *tc)
 	    tc, pmm_multiboot_framebuffer_range_for_test(&mbi, &base, &length), -1);
 }
 
+static void
+test_multiboot_usable_ranges_ignore_high_addr_wrap(ktest_case_t *tc)
+{
+	static pmm_core_state_t state;
+	static multiboot_mmap_entry_t map[1];
+	multiboot_info_t mbi;
+
+	k_memset(&state, 0, sizeof(state));
+	k_memset(&mbi, 0, sizeof(mbi));
+	k_memset(map, 0, sizeof(map));
+
+	pmm_core_init(&state, 0, 0, 0, 0);
+	map[0].size = sizeof(multiboot_mmap_entry_t) - sizeof(uint32_t);
+	map[0].addr = 0x100002000ull;
+	map[0].len = PAGE_SIZE;
+	map[0].type = 1u;
+
+	mbi.flags = MULTIBOOT_FLAG_MMAP;
+	mbi.mmap_addr = (uint32_t)(uintptr_t)map;
+	mbi.mmap_length = sizeof(map);
+
+	pmm_multiboot_apply_usable_ranges_for_test(&state, &mbi);
+
+	KTEST_EXPECT_EQ(tc, pmm_core_free_page_count(&state), 0u);
+	KTEST_EXPECT_EQ(tc, pmm_core_refcount(&state, 0x00002000u), 255u);
+	KTEST_EXPECT_EQ(tc, pmm_core_alloc_page(&state), 0u);
+}
+
 /* ── Suite ──────────────────────────────────────────────────────────────── */
 
 static ktest_case_t cases[] = {
@@ -197,6 +225,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_alloc_never_returns_low_conventional_memory),
     KTEST_CASE(test_multiboot_framebuffer_reservation_covers_visible_rows),
     KTEST_CASE(test_multiboot_framebuffer_reservation_rejects_wrap),
+    KTEST_CASE(test_multiboot_usable_ranges_ignore_high_addr_wrap),
 };
 
 static ktest_suite_t suite = KTEST_SUITE("pmm", cases);

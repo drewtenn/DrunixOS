@@ -75,6 +75,8 @@ uint32_t pmm_free_page_count(void);
 int pmm_multiboot_framebuffer_range_for_test(const multiboot_info_t *mbi,
                                              uint32_t *base_out,
                                              uint32_t *length_out);
+void pmm_multiboot_apply_usable_ranges_for_test(pmm_core_state_t *state,
+                                                const multiboot_info_t *mbi);
 #endif
 
 #endif
