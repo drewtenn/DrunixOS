@@ -146,6 +146,56 @@ def normalize_c_source(text: str) -> str:
     return "".join(out)
 
 
+def strip_c_comments(text: str) -> str:
+    out = []
+    i = 0
+    n = len(text)
+    in_block_comment = False
+    in_line_comment = False
+
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+
+        if in_block_comment:
+            if ch == "*" and nxt == "/":
+                in_block_comment = False
+                i += 2
+            else:
+                i += 1
+            continue
+
+        if in_line_comment:
+            if ch == "\n":
+                in_line_comment = False
+                out.append(ch)
+            i += 1
+            continue
+
+        if ch == "/" and nxt == "*":
+            in_block_comment = True
+            i += 2
+            continue
+        if ch == "/" and nxt == "/":
+            in_line_comment = True
+            i += 2
+            continue
+
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
+
+
+def include_only_source(text: str) -> str:
+    stripped = strip_c_comments(text)
+    lines = []
+    for line in stripped.splitlines():
+        if line.lstrip().startswith("#include"):
+            lines.append(line)
+    return "\n".join(lines)
+
+
 def main() -> None:
     include_forbidden = {
         ROOT / "kernel/kernel.c": [
@@ -173,13 +223,13 @@ def main() -> None:
     }
 
     for path, patterns in include_forbidden.items():
-        text = path.read_text()
+        text = include_only_source(path.read_text())
         for pattern in patterns:
             if re.search(pattern, text):
                 fail(f"{path.relative_to(ROOT)} still contains {pattern}")
 
     for path, patterns in include_required.items():
-        text = path.read_text()
+        text = include_only_source(path.read_text())
         for pattern in patterns:
             if not re.search(pattern, text):
                 fail(f"{path.relative_to(ROOT)} is missing {pattern}")
