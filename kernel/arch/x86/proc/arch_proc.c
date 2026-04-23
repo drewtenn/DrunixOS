@@ -60,16 +60,14 @@ static uint32_t *arch_x86_build_launch_isr_frame(uint32_t *ksp,
 
 static uint32_t arch_x86_elf_segment_flags(uint32_t p_flags)
 {
-	uint32_t flags = ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER;
+	uint32_t flags = ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER |
+	                 ARCH_MM_MAP_WRITE;
 
 	if (p_flags & PF_R)
 		flags |= ARCH_MM_MAP_READ;
-	if (p_flags & PF_W)
-		flags |= ARCH_MM_MAP_WRITE;
 	if (p_flags & PF_X)
 		flags |= ARCH_MM_MAP_EXEC;
-	if ((flags & (ARCH_MM_MAP_READ | ARCH_MM_MAP_WRITE | ARCH_MM_MAP_EXEC)) ==
-	    0)
+	if ((flags & (ARCH_MM_MAP_READ | ARCH_MM_MAP_EXEC)) == 0)
 		flags |= ARCH_MM_MAP_READ;
 
 	return flags;

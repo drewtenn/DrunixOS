@@ -24,10 +24,15 @@ ARM_KOBJS := kernel/arch/arm64/boot.o \
              kernel/lib/kprintf.arm64.o \
              kernel/lib/kstring.arm64.o
 
+ARM_COMPILE_ONLY_OBJS := kernel/arch/arm64/proc/elf64.arm64.o
+
 kernel/mm/%.arm64.o: kernel/mm/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 -I kernel/mm -I kernel/proc -I kernel/fs -I kernel/drivers -I kernel/blk -c $< -o $@
 
 kernel/console/%.arm64.o: kernel/console/%.c
+	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 -I kernel/mm -I kernel/proc -I kernel/fs -I kernel/drivers -I kernel/blk -c $< -o $@
+
+kernel/arch/arm64/proc/%.arm64.o: kernel/arch/arm64/proc/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 -I kernel/mm -I kernel/proc -I kernel/fs -I kernel/drivers -I kernel/blk -c $< -o $@
 
 QEMU_ARM ?= qemu-system-aarch64

@@ -492,9 +492,9 @@ clean:
         rebuild clean
 else
 
-$(ARM_KOBJS): CC = $(ARM_CC)
-$(ARM_KOBJS): CFLAGS = $(ARM_CFLAGS)
-$(ARM_KOBJS): INC = -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 -I kernel/mm -I kernel/proc -I kernel/fs -I kernel/drivers -I kernel/blk
+$(ARM_KOBJS) $(ARM_COMPILE_ONLY_OBJS): CC = $(ARM_CC)
+$(ARM_KOBJS) $(ARM_COMPILE_ONLY_OBJS): CFLAGS = $(ARM_CFLAGS)
+$(ARM_KOBJS) $(ARM_COMPILE_ONLY_OBJS): INC = -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 -I kernel/mm -I kernel/proc -I kernel/fs -I kernel/drivers -I kernel/blk
 
 kernel/arch/arm64/%.o: kernel/arch/arm64/%.S
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) -c $< -o $@
@@ -502,7 +502,7 @@ kernel/arch/arm64/%.o: kernel/arch/arm64/%.S
 kernel/lib/%.arm64.o: kernel/lib/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(INC) -c $< -o $@
 
-kernel-arm64.elf: $(ARM_KOBJS)
+kernel-arm64.elf: $(ARM_KOBJS) $(ARM_COMPILE_ONLY_OBJS)
 	$(ARM_LD) $(ARM_LDFLAGS) -o $@ $(ARM_KOBJS)
 
 kernel8.img: kernel-arm64.elf
@@ -574,4 +574,4 @@ clean:
         rebuild clean
 endif
 
--include $(KOBJS:.o=.d) $(KTOBJS:.o=.d) $(ARM_KOBJS:.o=.d)
+-include $(KOBJS:.o=.d) $(KTOBJS:.o=.d) $(ARM_KOBJS:.o=.d) $(ARM_COMPILE_ONLY_OBJS:.o=.d)
