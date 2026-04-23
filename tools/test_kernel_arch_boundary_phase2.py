@@ -202,21 +202,56 @@ def strip_if0_regions(text: str) -> str:
 
     for line in text.splitlines():
         stripped = line.lstrip()
+        current_active = all(frame["active"] for frame in stack)
+
         if stripped.startswith("#if 0"):
-            stack.append(False)
+            stack.append({
+                "kind": "if0",
+                "parent_active": current_active,
+                "active": False,
+                "taken": False,
+            })
             continue
-        if stack and stripped.startswith("#if"):
-            stack.append(stack[-1])
-            if stack[-1]:
+
+        if stripped.startswith("#if"):
+            stack.append({
+                "kind": "passthrough",
+                "parent_active": current_active,
+                "active": current_active,
+                "taken": True,
+            })
+            if current_active:
                 out.append(line)
             continue
-        if stack and stripped.startswith("#else"):
-            stack[-1] = not stack[-1]
+
+        if stack and stripped.startswith("#elif"):
+            frame = stack[-1]
+            if frame["kind"] == "if0":
+                frame["active"] = frame["parent_active"] and not frame["taken"]
+                frame["taken"] = True
+            else:
+                frame["active"] = frame["parent_active"]
+            if frame["active"]:
+                out.append(line)
             continue
+
+        if stack and stripped.startswith("#else"):
+            frame = stack[-1]
+            if frame["kind"] == "if0":
+                frame["active"] = frame["parent_active"] and not frame["taken"]
+                frame["taken"] = True
+            else:
+                frame["active"] = frame["parent_active"]
+            frame["taken"] = True
+            if frame["active"]:
+                out.append(line)
+            continue
+
         if stack and stripped.startswith("#endif"):
             stack.pop()
             continue
-        if not stack or stack[-1]:
+
+        if all(frame["active"] for frame in stack):
             out.append(line)
 
     return "\n".join(out)
