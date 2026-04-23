@@ -52,6 +52,8 @@ int arch_elf_load_user_image(vfs_file_ref_t file_ref,
 		return -4;
 	if (ehdr.e_phnum == 0)
 		return -5;
+	if (ehdr.e_entry > UINT32_MAX)
+		return -4;
 
 	*entry_out = (uintptr_t)ehdr.e_entry;
 
@@ -68,6 +70,11 @@ int arch_elf_load_user_image(vfs_file_ref_t file_ref,
 			return -6;
 		if (phdr.p_type != PT_LOAD || phdr.p_memsz == 0)
 			continue;
+		if (phdr.p_vaddr > UINT32_MAX || phdr.p_memsz > UINT32_MAX)
+			return -4;
+		if (phdr.p_vaddr + phdr.p_memsz < phdr.p_vaddr ||
+		    phdr.p_vaddr + phdr.p_memsz > UINT32_MAX)
+			return -4;
 
 		{
 			uint64_t vaddr = phdr.p_vaddr & ~0xFFFULL;
