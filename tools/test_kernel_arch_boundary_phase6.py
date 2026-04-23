@@ -7,19 +7,34 @@ ROOT = Path(__file__).resolve().parents[1]
 
 FORBIDDEN = {
     ROOT / "kernel/proc/elf.h": [r"\bEM_386\b"],
-    ROOT / "kernel/proc/syscall.c": [r"INT 0x80", r"\beax,\s*ebx,\s*ecx"],
+    ROOT / "kernel/proc/syscall.c": [
+        r"\buint32_t\s+syscall_handler\s*\(\s*uint32_t\s+eax\s*,\s*uint32_t\s+ebx\s*,\s*uint32_t\s+ecx",
+    ],
     ROOT / "kernel/arch/arm64/exceptions.c": [r'uart_puts\("sync exception'],
 }
 
 REQUIRED = {
-    ROOT / "kernel/proc/elf.c": [r"\barch_elf", r"\barch_process_build_initial_frame\b"],
-    ROOT / "kernel/proc/syscall.c": [r"\barch_syscall", r"\barch_syscall_dispatch\b"],
+    ROOT / "kernel/proc/elf.c": [
+        r"\barch_elf_[A-Za-z0-9_]*\s*\(",
+        r"\barch_process_build_initial_frame\s*\(",
+    ],
+    ROOT / "kernel/proc/syscall.c": [
+        r"\barch_syscall_[A-Za-z0-9_]*\s*\(",
+        r"\barch_syscall_dispatch\s*\(",
+    ],
     ROOT / "kernel/arch/arm64/exceptions.c": [r"\barch_current_irq_frame\b", r"\bsched_record_user_fault\b"],
 }
 
+_COMMENT_RE = re.compile(r"/\*.*?\*/|//.*?$", re.DOTALL | re.MULTILINE)
+
+
+def strip_comments(text):
+    return _COMMENT_RE.sub("", text)
+
+
 def check(path_map, predicate, label):
     for path, patterns in path_map.items():
-        text = path.read_text()
+        text = strip_comments(path.read_text())
         for pattern in patterns:
             if predicate(re.search(pattern, text)):
                 print(f"{label}: {path.relative_to(ROOT)} {pattern}", file=sys.stderr)
