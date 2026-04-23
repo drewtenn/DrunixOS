@@ -227,8 +227,10 @@ def strip_if0_regions(text: str) -> str:
         if stack and stripped.startswith("#elif"):
             frame = stack[-1]
             if frame["kind"] == "if0":
-                frame["active"] = frame["parent_active"] and not frame["taken"]
-                frame["taken"] = True
+                is_live_arm = bool(re.match(r"#elif\s+1\b", stripped))
+                frame["active"] = frame["parent_active"] and not frame["taken"] and is_live_arm
+                if frame["active"]:
+                    frame["taken"] = True
             else:
                 frame["active"] = frame["parent_active"]
             if frame["active"]:
