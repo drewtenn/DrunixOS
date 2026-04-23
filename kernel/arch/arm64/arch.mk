@@ -15,8 +15,8 @@ ARM_KOBJS := kernel/arch/arm64/boot.o \
              kernel/arch/arm64/timer.o \
              kernel/arch/arm64/uart.o \
              kernel/arch/arm64/start_kernel.o \
-             kernel/lib/kprintf.o \
-             kernel/lib/kstring.o
+             kernel/lib/kprintf.arm64.o \
+             kernel/lib/kstring.arm64.o
 
 QEMU_ARM ?= qemu-system-aarch64
 QEMU_ARM_MACHINE ?= raspi3b

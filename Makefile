@@ -493,6 +493,9 @@ $(ARM_KOBJS): INC = -I kernel -I kernel/lib -I kernel/arch/arm64
 kernel/arch/arm64/%.o: kernel/arch/arm64/%.S
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
+kernel/lib/%.arm64.o: kernel/lib/%.c
+	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(INC) -c $< -o $@
+
 kernel-arm64.elf: $(ARM_KOBJS)
 	$(ARM_LD) $(ARM_LDFLAGS) -o $@ $(ARM_KOBJS)
 

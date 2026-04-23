@@ -8,6 +8,7 @@ class KernelLayoutTest(unittest.TestCase):
         cls.root = Path(__file__).resolve().parents[1]
         cls.objects_mk = (cls.root / "kernel/objects.mk").read_text()
         cls.makefile = (cls.root / "Makefile").read_text()
+        cls.arm_arch_mk = (cls.root / "kernel/arch/arm64/arch.mk").read_text()
 
     def test_x86_specific_objects_live_under_arch_x86(self):
         self.assertIn("kernel/arch/x86/boot/kernel-entry.o", self.objects_mk)
@@ -42,6 +43,13 @@ class KernelLayoutTest(unittest.TestCase):
         self.assertNotIn("-T kernel/kernel.ld", self.makefile)
         self.assertNotIn("kernel/kernel-entry-vga.o: kernel/kernel-entry.asm",
                          self.makefile)
+
+    def test_arm64_shared_lib_objects_use_arch_specific_output_paths(self):
+        self.assertIn("kernel/lib/kprintf.arm64.o", self.arm_arch_mk)
+        self.assertIn("kernel/lib/kstring.arm64.o", self.arm_arch_mk)
+        self.assertNotIn("kernel/lib/kprintf.o \\", self.arm_arch_mk)
+        self.assertNotIn("kernel/lib/kstring.o", self.arm_arch_mk)
+        self.assertIn("kernel/lib/%.arm64.o: kernel/lib/%.c", self.makefile)
 
     def test_expected_paths_exist(self):
         expected = [
