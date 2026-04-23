@@ -10,6 +10,11 @@ QEMU_LOG = ROOT / "logs" / "qemu-arm-userspace.stderr"
 QEMU = os.environ.get("QEMU_ARM", "qemu-system-aarch64")
 QEMU_MACHINE = os.environ.get("QEMU_ARM_MACHINE", "raspi3b")
 BOOT_TIMEOUT = 20
+REQUIRED_MARKERS = (
+    "ARM64 user smoke: entered",
+    "ARM64 user smoke: syscall ok",
+    "ARM64 user smoke: pass",
+)
 
 build = subprocess.run(
     ["make", "ARCH=arm64", "build"],
@@ -72,6 +77,14 @@ stderr_text = QEMU_LOG.read_text(errors="ignore").strip()
 log_exists = LOG.exists()
 
 if saw_pass:
+    text = LOG.read_text(errors="ignore") if log_exists else ""
+    missing = [marker for marker in REQUIRED_MARKERS if marker not in text]
+    if missing:
+        raise SystemExit(
+            "saw pass marker without the full smoke sequence: "
+            + ", ".join(missing)
+            + (f"\nstderr:\n{stderr_text}" if stderr_text else "\nstderr: <empty>")
+        )
     print("arm64 userspace smoke check passed")
 elif exit_code is not None:
     if not log_exists:
@@ -80,15 +93,7 @@ elif exit_code is not None:
             + (f"stderr:\n{stderr_text}" if stderr_text else "stderr: <empty>")
         )
     text = LOG.read_text(errors="ignore")
-    missing = [
-        marker
-        for marker in (
-            "ARM64 user smoke: entered",
-            "ARM64 user smoke: syscall ok",
-            "ARM64 user smoke: pass",
-        )
-        if marker not in text
-    ]
+    missing = [marker for marker in REQUIRED_MARKERS if marker not in text]
     if missing:
         raise SystemExit(
             f"QEMU exited before the smoke markers appeared: {', '.join(missing)}\n"
@@ -101,15 +106,7 @@ elif timed_out and not log_exists:
     )
 else:
     text = LOG.read_text(errors="ignore") if log_exists else ""
-    missing = [
-        marker
-        for marker in (
-            "ARM64 user smoke: entered",
-            "ARM64 user smoke: syscall ok",
-            "ARM64 user smoke: pass",
-        )
-        if marker not in text
-    ]
+    missing = [marker for marker in REQUIRED_MARKERS if marker not in text]
     if missing:
         raise SystemExit(
             "timed out waiting for ARM64 userspace smoke markers: "
