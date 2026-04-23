@@ -312,6 +312,16 @@ static void test_process_build_exec_frame_layout(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc, frame[25], GDT_USER_DS);
 }
 
+static void test_elf_machine_validation_is_arch_owned(ktest_case_t *tc)
+{
+	KTEST_EXPECT_EQ(
+	    tc, (uint32_t)arch_elf_machine_supported(ELF_CLASS_32, EM_386), 1u);
+	KTEST_EXPECT_EQ(tc,
+	                (uint32_t)arch_elf_machine_supported(ELF_CLASS_64,
+	                                                    EM_AARCH64),
+	                0u);
+}
+
 static void
 test_sched_add_builds_initial_frame_for_never_run_process(ktest_case_t *tc)
 {
@@ -1926,6 +1936,7 @@ static void test_linux_syscalls_install_tls_and_map_mmap2(ktest_case_t *tc)
 static ktest_case_t cases[] = {
     KTEST_CASE(test_process_build_initial_frame_layout),
     KTEST_CASE(test_process_build_exec_frame_layout),
+    KTEST_CASE(test_elf_machine_validation_is_arch_owned),
     KTEST_CASE(test_sched_add_builds_initial_frame_for_never_run_process),
     KTEST_CASE(test_process_builds_linux_i386_initial_stack_shape),
     KTEST_CASE(test_vma_add_keeps_regions_sorted_and_findable),

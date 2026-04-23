@@ -5,11 +5,13 @@
 
 #include "../../arch.h"
 #include "../../../proc/process.h"
+#include "../../../proc/elf.h"
 #include "../../../proc/uaccess.h"
 #include "../gdt.h"
 #include "../mm/paging.h"
 #include "../sse.h"
 #include "kstring.h"
+#include "pmm.h"
 #include <stdint.h>
 
 #define SYS_SIGRETURN 119u
@@ -54,6 +56,138 @@ static uint32_t *arch_x86_build_launch_isr_frame(uint32_t *ksp,
 	*--ksp = GDT_USER_DS;
 	*--ksp = GDT_USER_DS;
 	return ksp;
+}
+
+static uint32_t arch_x86_elf_segment_flags(uint32_t p_flags)
+{
+	uint32_t flags = ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER;
+
+	if (p_flags & PF_R)
+		flags |= ARCH_MM_MAP_READ;
+	if (p_flags & PF_W)
+		flags |= ARCH_MM_MAP_WRITE;
+	if (p_flags & PF_X)
+		flags |= ARCH_MM_MAP_EXEC;
+	if ((flags & (ARCH_MM_MAP_READ | ARCH_MM_MAP_WRITE | ARCH_MM_MAP_EXEC)) ==
+	    0)
+		flags |= ARCH_MM_MAP_READ;
+
+	return flags;
+}
+
+int arch_elf_machine_supported(elf_class_t elf_class, uint16_t machine)
+{
+	return elf_class == ELF_CLASS_32 && machine == EM_386;
+}
+
+int arch_elf_load_user_image(vfs_file_ref_t file_ref,
+                             arch_aspace_t aspace,
+                             uintptr_t *entry_out,
+                             uintptr_t *image_start_out,
+                             uintptr_t *heap_start_out)
+{
+	Elf32_Ehdr ehdr;
+	uint32_t min_vaddr = 0xFFFFFFFFu;
+	uint32_t max_vend = 0u;
+
+	if (vfs_read(file_ref, 0, (uint8_t *)&ehdr, sizeof(ehdr)) !=
+	    (int)sizeof(ehdr))
+		return -1;
+
+	if (*(uint32_t *)ehdr.e_ident != ELF_MAGIC)
+		return -2;
+	if (ehdr.e_type != ET_EXEC)
+		return -3;
+	if (!arch_elf_machine_supported((elf_class_t)ehdr.e_ident[EI_CLASS],
+	                                ehdr.e_machine))
+		return -4;
+	if (ehdr.e_phnum == 0)
+		return -5;
+
+	*entry_out = ehdr.e_entry;
+
+	for (uint16_t i = 0; i < ehdr.e_phnum; i++) {
+		Elf32_Phdr phdr;
+		uint32_t phdr_off = ehdr.e_phoff + (uint32_t)i * ehdr.e_phentsize;
+		uint32_t seg_flags;
+
+		if (vfs_read(file_ref, phdr_off, (uint8_t *)&phdr, sizeof(phdr)) !=
+		    (int)sizeof(phdr))
+			return -6;
+		if (phdr.p_type != PT_LOAD || phdr.p_memsz == 0)
+			continue;
+
+		{
+			uint32_t vaddr = phdr.p_vaddr & ~0xFFFu;
+			uint32_t vend =
+			    (phdr.p_vaddr + phdr.p_memsz + 0xFFFu) & ~0xFFFu;
+			uint32_t npages = (vend - vaddr) / 0x1000u;
+
+			if (vaddr < min_vaddr)
+				min_vaddr = vaddr;
+			if (vend > max_vend)
+				max_vend = vend;
+
+			seg_flags = arch_x86_elf_segment_flags(phdr.p_flags);
+			for (uint32_t p = 0; p < npages; p++) {
+				uint32_t phys = pmm_alloc_page();
+				uint32_t vpage = vaddr + p * 0x1000u;
+				void *page;
+
+				if (!phys)
+					return -7;
+				if (arch_mm_map(aspace, vpage, phys, seg_flags) != 0) {
+					pmm_free_page(phys);
+					return -8;
+				}
+
+				page = arch_page_temp_map(phys);
+				if (!page) {
+					(void)arch_mm_unmap(aspace, vpage);
+					pmm_free_page(phys);
+					return -8;
+				}
+				k_memset(page, 0, 0x1000u);
+				arch_page_temp_unmap(page);
+			}
+
+			{
+				uint32_t file_remain = phdr.p_filesz;
+				uint32_t file_done = 0u;
+				uint32_t first_off = phdr.p_vaddr & 0xFFFu;
+
+				for (uint32_t p = 0; p < npages && file_remain > 0; p++) {
+					arch_mm_mapping_t mapping;
+					uint32_t vpage = vaddr + p * 0x1000u;
+					uint32_t write_off = (p == 0) ? first_off : 0u;
+					uint32_t space = 0x1000u - write_off;
+					uint32_t to_copy =
+					    (file_remain < space) ? file_remain : space;
+					void *page;
+
+					if (arch_mm_query(aspace, vpage, &mapping) != 0)
+						return -9;
+					page = arch_page_temp_map(mapping.phys_addr);
+					if (!page)
+						return -9;
+					if (vfs_read(file_ref,
+					             phdr.p_offset + file_done,
+					             (uint8_t *)page + write_off,
+					             to_copy) != (int)to_copy) {
+						arch_page_temp_unmap(page);
+						return -9;
+					}
+					arch_page_temp_unmap(page);
+					file_done += to_copy;
+					file_remain -= to_copy;
+				}
+			}
+		}
+	}
+
+	*image_start_out = (min_vaddr == 0xFFFFFFFFu) ? 0u : min_vaddr;
+	*heap_start_out = max_vend;
+	return 0;
 }
 
 void arch_process_build_initial_frame(process_t *proc)

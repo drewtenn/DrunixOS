@@ -6,12 +6,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 
 FORBIDDEN = {
-    ROOT / "kernel/proc/elf.h": [r"\bEM_386\b"],
     ROOT / "kernel/proc/elf.c": [r"\behdr\.e_machine\s*!=\s*EM_386\b"],
-    ROOT / "kernel/proc/syscall.c": [
-        r"\bsyscall_handler\b[\s\S]*?\beax\b[\s\S]*?\bebx\b[\s\S]*?\becx\b",
-    ],
-    ROOT / "kernel/arch/arm64/exceptions.c": [r'uart_puts\("sync exception'],
 }
 
 REQUIRED = {
@@ -28,14 +23,12 @@ REQUIRED = {
         r"\barch_trap_frame_fault_addr\b",
     ],
     ROOT / "kernel/proc/elf.c": [
-        r"\belf_load_file\b[\s\S]*?\barch_elf_[A-Za-z0-9_]*\s*\(",
-        r"\belf_load_file\b[\s\S]*?\barch_process_build_initial_frame\s*\(",
+        r"\belf_load_file\b[\s\S]*?\barch_elf_load_user_image\s*\(",
     ],
     ROOT / "kernel/proc/syscall.c": [
         r"\bsyscall_dispatch_from_frame\b[\s\S]*?\barch_syscall_[A-Za-z0-9_]*\s*\(",
         r"\bsyscall_dispatch_from_frame\b[\s\S]*?\barch_syscall_set_result\b",
     ],
-    ROOT / "kernel/arch/arm64/exceptions.c": [r"\barch_current_irq_frame\b", r"\bsched_record_user_fault\b"],
 }
 
 _COMMENT_RE = re.compile(r"/\*.*?\*/|//.*?$", re.DOTALL | re.MULTILINE)

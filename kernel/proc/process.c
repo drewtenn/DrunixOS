@@ -355,11 +355,10 @@ int process_create_file(process_t *proc,
 		return -1;
 
 	/* Step 2: parse and load ELF segments into the new address space */
-	uint32_t entry = 0;
-	uint32_t image_start = 0;
-	uint32_t heap_start = 0;
-	if (elf_load_file(file_ref, pd_phys, &entry, &image_start, &heap_start) !=
-	    0)
+	uintptr_t entry = 0;
+	uintptr_t image_start = 0;
+	uintptr_t heap_start = 0;
+	if (elf_load_file(file_ref, aspace, &entry, &image_start, &heap_start) != 0)
 		return -2;
 
 	/* Step 3: allocate and map the user stack */
@@ -414,10 +413,10 @@ int process_create_file(process_t *proc,
 	arch_kstack_guard((uintptr_t)kguard);
 
 	proc->pd_phys = pd_phys;
-	proc->entry = entry;
-	proc->image_start = image_start;
-	proc->image_end = heap_start;
-	proc->heap_start = heap_start;
+	proc->entry = (uint32_t)entry;
+	proc->image_start = (uint32_t)image_start;
+	proc->image_end = (uint32_t)heap_start;
+	proc->heap_start = (uint32_t)heap_start;
 	proc->brk =
 	    heap_start; /* empty heap: brk == heap_start, no pages committed */
 	proc->user_stack = initial_esp;
