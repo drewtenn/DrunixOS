@@ -35,11 +35,13 @@ FORBIDDEN_PATTERNS = {
 }
 
 REQUIRED_PATTERNS = {
+    # Target the concrete Phase 2 call sites from the approved plan rather
+    # than inferring architecture ownership from the rest of the tree.
     ROOT / "kernel/kernel.c": [
         r'#include "arch\.h"',
         r"\barch_irq_init\s*\(",
-        r"\barch_timer_set_periodic_handler\s*\(\s*&?\s*sched_tick\s*\)",
-        r"\barch_timer_start\s*\(\s*SCHED_HZ\s*(?:u)?\s*\)",
+        r"\barch_timer_set_periodic_handler\s*\(\s*sched_tick\s*\)",
+        r"\barch_timer_start\s*\(\s*SCHED_HZ\s*\)",
         r"\barch_interrupts_enable\s*\(",
     ],
     ROOT / "kernel/platform/pc/keyboard.c": [
@@ -60,7 +62,7 @@ REQUIRED_PATTERNS = {
     ROOT / "kernel/arch/arm64/start_kernel.c": [
         r"\barch_irq_init\s*\(",
         r"\barch_timer_set_periodic_handler\s*\(",
-        r"\barch_timer_start\s*\(\s*10(?:u)?\s*\)",
+        r"\barch_timer_start\s*\(\s*10u\s*\)",
         r"\barch_interrupts_enable\s*\(",
     ],
 }
