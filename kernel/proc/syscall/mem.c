@@ -8,10 +8,10 @@
 
 #include "syscall_internal.h"
 #include "syscall_linux.h"
+#include "arch.h"
 #include "kheap.h"
 #include "klog.h"
 #include "kstring.h"
-#include "paging.h"
 #include "pmm.h"
 #include "process.h"
 #include "sched.h"
@@ -19,11 +19,6 @@
 #include "vfs.h"
 #include "vma.h"
 #include <stdint.h>
-
-void syscall_invlpg(uint32_t virt)
-{
-	__asm__ volatile("invlpg (%0)" ::"r"(virt) : "memory");
-}
 
 static int prot_is_valid(uint32_t prot)
 {
@@ -52,27 +47,21 @@ static uint32_t prot_to_vma_flags(uint32_t prot)
 static void
 syscall_unmap_user_range(process_t *proc, uint32_t start, uint32_t end)
 {
-	uint32_t *pd;
+	arch_aspace_t aspace;
 
 	if (!proc || start >= end)
 		return;
 
-	pd = (uint32_t *)proc->pd_phys;
+	aspace = (arch_aspace_t)proc->pd_phys;
 	for (uint32_t page = start; page < end; page += PAGE_SIZE) {
-		uint32_t pdi = page >> 22;
-		uint32_t pti = (page >> 12) & 0x3FFu;
-		uint32_t *pt;
+		arch_mm_mapping_t mapping;
 
-		if ((pd[pdi] & (PG_PRESENT | PG_USER)) != (PG_PRESENT | PG_USER))
+		if (arch_mm_query(aspace, page, &mapping) != 0)
+			continue;
+		if ((mapping.flags & ARCH_MM_MAP_USER) == 0)
 			continue;
 
-		pt = (uint32_t *)paging_entry_addr(pd[pdi]);
-		if ((pt[pti] & PG_PRESENT) == 0)
-			continue;
-
-		pmm_decref(paging_entry_addr(pt[pti]));
-		pt[pti] = 0;
-		syscall_invlpg(page);
+		(void)arch_mm_unmap(aspace, page);
 	}
 }
 
@@ -81,40 +70,54 @@ static void syscall_apply_mprotect(process_t *proc,
                                    uint32_t end,
                                    uint32_t prot)
 {
+	arch_aspace_t aspace;
+
 	if (!proc || start >= end)
 		return;
 
+	aspace = (arch_aspace_t)proc->pd_phys;
 	for (uint32_t page = start; page < end; page += PAGE_SIZE) {
-		uint32_t *pte;
-		uint32_t flags;
-		uint32_t new_pte;
+		arch_mm_mapping_t mapping;
+		uint32_t desired_flags;
+		uint32_t user_changed;
+		uint32_t write_changed;
 
-		if (paging_walk(proc->pd_phys, page, &pte) != 0)
+		if (arch_mm_query(aspace, page, &mapping) != 0)
 			continue;
 
-		/*
-         * A PTE stores both the frame address and the low permission bits.
-         * Rebuild the entry from its original address plus updated flags so
-         * future permission changes cannot accidentally blend address bits.
-         */
-		flags = paging_entry_flags(*pte);
+		desired_flags = mapping.flags;
 		if (prot_has_user_access(prot))
-			flags |= PG_USER;
+			desired_flags |= ARCH_MM_MAP_USER;
 		else
-			flags &= ~(uint32_t)PG_USER;
+			desired_flags &= ~(uint32_t)ARCH_MM_MAP_USER;
 
-		if ((prot & LINUX_PROT_WRITE) != 0 && (flags & PG_COW) == 0)
-			flags |= PG_WRITABLE;
+		if ((prot & LINUX_PROT_WRITE) != 0 &&
+		    (mapping.flags & ARCH_MM_MAP_COW) == 0)
+			desired_flags |= ARCH_MM_MAP_WRITE;
 		else
-			flags &= ~(uint32_t)PG_WRITABLE;
+			desired_flags &= ~(uint32_t)ARCH_MM_MAP_WRITE;
 
-		new_pte = paging_entry_build(paging_entry_addr(*pte), flags);
-
-		if (new_pte == *pte)
+		if (desired_flags == mapping.flags)
 			continue;
 
-		*pte = new_pte;
-		syscall_invlpg(page);
+		user_changed =
+		    (desired_flags ^ mapping.flags) & ARCH_MM_MAP_USER;
+		write_changed =
+		    (desired_flags ^ mapping.flags) & ARCH_MM_MAP_WRITE;
+
+		if (user_changed == 0 && write_changed != 0) {
+			if (arch_mm_update(aspace,
+			                   page,
+			                   (mapping.flags & ARCH_MM_MAP_WRITE)
+			                       ? ARCH_MM_MAP_WRITE
+			                       : 0u,
+			                   (desired_flags & ARCH_MM_MAP_WRITE)
+			                       ? ARCH_MM_MAP_WRITE
+			                       : 0u) == 0)
+				continue;
+		}
+
+		(void)arch_mm_map(aspace, page, mapping.phys_addr, desired_flags);
 	}
 }
 
@@ -130,7 +133,8 @@ static int syscall_mmap_private_file(process_t *cur,
 	uint32_t map_len;
 	uint32_t map_addr = 0;
 	uint32_t vma_flags;
-	uint32_t pte_flags;
+	uint32_t map_flags;
+	arch_aspace_t aspace;
 
 	if (!cur || !addr_out || fd >= MAX_FDS || length == 0)
 		return -1;
@@ -150,14 +154,16 @@ static int syscall_mmap_private_file(process_t *cur,
 	if (vma_map_anonymous(cur, hint, map_len, vma_flags, &map_addr) != 0)
 		return -1;
 
-	pte_flags = PG_PRESENT;
+	aspace = (arch_aspace_t)cur->pd_phys;
+	map_flags = ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ;
 	if (prot_has_user_access(prot))
-		pte_flags |= PG_USER;
+		map_flags |= ARCH_MM_MAP_USER;
 	if (prot & LINUX_PROT_WRITE)
-		pte_flags |= PG_WRITABLE;
+		map_flags |= ARCH_MM_MAP_WRITE;
 
 	for (uint32_t off = 0; off < map_len; off += PAGE_SIZE) {
 		uint32_t phys = pmm_alloc_page();
+		void *page;
 		int n;
 
 		if (!phys)
@@ -167,15 +173,20 @@ static int syscall_mmap_private_file(process_t *cur,
 			goto fail;
 		}
 
-		k_memset((void *)phys, 0, PAGE_SIZE);
+		page = arch_page_temp_map(phys);
+		if (!page) {
+			pmm_free_page(phys);
+			goto fail;
+		}
+		k_memset(page, 0, PAGE_SIZE);
 		n = vfs_read(
-		    fh->u.file.ref, file_offset + off, (uint8_t *)phys, PAGE_SIZE);
+		    fh->u.file.ref, file_offset + off, (uint8_t *)page, PAGE_SIZE);
+		arch_page_temp_unmap(page);
 		if (n < 0) {
 			pmm_free_page(phys);
 			goto fail;
 		}
-		if (paging_map_page(cur->pd_phys, map_addr + off, phys, pte_flags) !=
-		    0) {
+		if (arch_mm_map(aspace, map_addr + off, phys, map_flags) != 0) {
 			pmm_free_page(phys);
 			goto fail;
 		}
@@ -211,13 +222,11 @@ uint32_t SYSCALL_NOINLINE syscall_case_brk(uint32_t ebx)
 		process_t *cur = sched_current();
 		proc_address_space_t *as;
 		uint32_t *brk_ptr;
-		uint32_t pd_phys;
 		vm_area_t *heap_vma;
 		if (!cur)
 			return (uint32_t)-1;
 		as = cur->as;
 		brk_ptr = as ? &as->brk : &cur->brk;
-		pd_phys = as ? as->pd_phys : cur->pd_phys;
 		heap_vma = vma_find_kind(cur, VMA_KIND_HEAP);
 		if (!heap_vma)
 			return (uint32_t)-1;
@@ -238,24 +247,8 @@ uint32_t SYSCALL_NOINLINE syscall_case_brk(uint32_t ebx)
 		if (new_brk < *brk_ptr) {
 			uint32_t unmap_start = (new_brk + 0xFFFu) & ~0xFFFu;
 			uint32_t old_end = (*brk_ptr + 0xFFFu) & ~0xFFFu;
-			uint32_t *pd = (uint32_t *)pd_phys;
 
-			for (uint32_t vpage = unmap_start; vpage < old_end;
-			     vpage += 0x1000u) {
-				uint32_t pdi = vpage >> 22;
-				uint32_t pti = (vpage >> 12) & 0x3FFu;
-
-				if (!(pd[pdi] & PG_PRESENT))
-					continue;
-
-				uint32_t *pt = (uint32_t *)paging_entry_addr(pd[pdi]);
-				if (!(pt[pti] & PG_PRESENT))
-					continue;
-
-				pmm_decref(paging_entry_addr(pt[pti]));
-				pt[pti] = 0;
-				syscall_invlpg(vpage);
-			}
+			syscall_unmap_user_range(cur, unmap_start, old_end);
 		}
 
 		*brk_ptr = new_brk;

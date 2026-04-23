@@ -4,8 +4,8 @@
  */
 
 #include "elf.h"
+#include "arch.h"
 #include "kstring.h"
-#include "paging.h"
 #include "pmm.h"
 #include <stdint.h>
 
@@ -15,6 +15,7 @@ int elf_load_file(vfs_file_ref_t file_ref,
                   uint32_t *image_start_out,
                   uint32_t *heap_start_out)
 {
+	arch_aspace_t aspace = (arch_aspace_t)pd_phys;
 	Elf32_Ehdr ehdr;
 
 	if (vfs_read(file_ref, 0, (uint8_t *)&ehdr, sizeof(Elf32_Ehdr)) !=
@@ -69,17 +70,24 @@ int elf_load_file(vfs_file_ref_t file_ref,
          */
 		for (uint32_t p = 0; p < npages; p++) {
 			uint32_t phys = pmm_alloc_page();
+			void *page;
 			if (!phys)
 				return -7;
 
 			uint32_t vpage = vaddr + p * 0x1000;
-			if (paging_map_page(
-			        pd_phys, vpage, phys, PG_PRESENT | PG_WRITABLE | PG_USER) !=
-			    0)
+			if (arch_mm_map(aspace,
+			                vpage,
+			                phys,
+			                ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ |
+			                    ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER) != 0)
 				return -8;
 
 			/* Zero the page; file data (if any) will be copied below. */
-			k_memset((uint8_t *)phys, 0, 0x1000);
+			page = arch_page_temp_map(phys);
+			if (!page)
+				return -8;
+			k_memset(page, 0, 0x1000);
+			arch_page_temp_unmap(page);
 		}
 
 		/*
@@ -94,25 +102,28 @@ int elf_load_file(vfs_file_ref_t file_ref,
 		uint32_t file_done = 0;
 		uint32_t first_off = phdr.p_vaddr & 0xFFFu;
 
-		uint32_t *pd = (uint32_t *)pd_phys;
-
 		for (uint32_t p = 0; p < npages && file_remain > 0; p++) {
+			arch_mm_mapping_t mapping;
 			uint32_t vpage = vaddr + p * 0x1000;
-			uint32_t pdi = vpage >> 22;
-			uint32_t pti = (vpage >> 12) & 0x3FFu;
-			uint32_t pt_phys = pd[pdi] & ~0xFFFu;
-			uint32_t *pt = (uint32_t *)pt_phys;
-			uint32_t pg_phys = pt[pti] & ~0xFFFu;
+			void *page;
 
 			uint32_t write_off = (p == 0) ? first_off : 0u;
 			uint32_t space = 0x1000 - write_off;
 			uint32_t to_copy = (file_remain < space) ? file_remain : space;
 
+			if (arch_mm_query(aspace, vpage, &mapping) != 0)
+				return -9;
+			page = arch_page_temp_map(mapping.phys_addr);
+			if (!page)
+				return -9;
 			if (vfs_read(file_ref,
 			             phdr.p_offset + file_done,
-			             (uint8_t *)pg_phys + write_off,
-			             to_copy) != (int)to_copy)
+			             (uint8_t *)page + write_off,
+			             to_copy) != (int)to_copy) {
+				arch_page_temp_unmap(page);
 				return -9;
+			}
+			arch_page_temp_unmap(page);
 
 			file_done += to_copy;
 			file_remain -= to_copy;

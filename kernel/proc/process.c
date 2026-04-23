@@ -4,11 +4,11 @@
  */
 
 #include "process.h"
+#include "arch.h"
 #include "resources.h"
 #include "sched.h"
 #include "pipe.h"
 #include "elf.h"
-#include "paging.h"
 #include "pmm.h"
 #include "gdt.h"
 #include "sse.h"
@@ -25,6 +25,8 @@ extern void process_enter_usermode(uint32_t entry,
                                    uint32_t user_ds);
 extern void process_initial_launch(void);
 extern void process_exec_launch(void);
+void paging_guard_page(uint32_t virt);
+void paging_unguard_page(uint32_t virt);
 
 #define LINUX_AT_NULL 0u
 #define LINUX_AT_PAGESZ 6u
@@ -33,13 +35,10 @@ extern void process_exec_launch(void);
  * Build the Linux/System V i386 initial stack at the top of a freshly mapped
  * user stack and return the initial ESP the process should start with.
  *
- * The top user-stack page was just mapped by paging_map_page() in the
- * caller, so its PDE/PTE are present in the new page directory.  Because
- * all page-table structures live in the kernel's identity-mapped range
- * (0–128 MB), we can walk them as plain kernel pointers and resolve the
- * physical frame backing USER_STACK_TOP-0x1000.  We then write the frame
- * directly through that physical address (kernel RW, identity-mapped), so
- * no CR3 switch is required.
+ * The top user-stack page was just mapped in the target address space by the
+ * caller. Resolve that page through arch_mm_query(), then write the initial
+ * frame through the architecture temp-map helper so no address-space switch is
+ * required here.
  *
  * Frame layout (high → low addresses, fits entirely within the top 4 KB
  * user stack page):
@@ -137,18 +136,16 @@ static int build_user_stack_frame(uint32_t pd_phys,
      * pointers to their physical addresses.
      */
 	uint32_t top_vpage = USER_STACK_TOP - 0x1000u;
-	uint32_t pdi = top_vpage >> 22;
-	uint32_t pti = (top_vpage >> 12) & 0x3FFu;
-	uint32_t *pd = (uint32_t *)pd_phys;
-	uint32_t pt_phys = paging_entry_addr(pd[pdi]);
-	if (!pt_phys)
+	arch_mm_mapping_t mapping;
+	uint8_t *page;
+
+	if (arch_mm_query((arch_aspace_t)pd_phys, top_vpage, &mapping) != 0)
 		return -1;
-	uint32_t *pt = (uint32_t *)pt_phys;
-	uint32_t pg_phys = paging_entry_addr(pt[pti]);
-	if (!pg_phys)
+	page = (uint8_t *)arch_page_temp_map(mapping.phys_addr);
+	if (!page)
 		return -1;
 
-	uint8_t *page_end = (uint8_t *)pg_phys + 0x1000u; /* one past last byte */
+	uint8_t *page_end = page + 0x1000u; /* one past last byte */
 
 	/*
      * Step 1: copy each string into the top of the stack page and record
@@ -207,6 +204,7 @@ static int build_user_stack_frame(uint32_t pd_phys,
 	tail_k[idx++] = 0;
 
 	*out_esp = USER_STACK_TOP - frame_off;
+	arch_page_temp_unmap(page);
 	return 0;
 }
 
@@ -278,7 +276,8 @@ void process_clone_rollback(process_t *child)
 static int process_clone_duplicate_as(process_t *child_out,
                                       const process_t *parent)
 {
-	uint32_t new_pd = paging_clone_user_space(parent->pd_phys);
+	uint32_t new_pd =
+	    (uint32_t)arch_aspace_clone((arch_aspace_t)parent->pd_phys);
 	if (!new_pd) {
 		klog_uint("CLONE", "pmm free pages", pmm_free_page_count());
 		return -1;
@@ -449,7 +448,8 @@ int process_create_file(process_t *proc,
 	k_memset(proc, 0, sizeof(*proc));
 
 	/* Step 1: fresh page directory with kernel mappings copied (no PG_USER) */
-	uint32_t pd_phys = paging_create_user_space();
+	arch_aspace_t aspace = arch_aspace_create();
+	uint32_t pd_phys = (uint32_t)aspace;
 	if (!pd_phys)
 		return -1;
 
@@ -469,8 +469,11 @@ int process_create_file(process_t *proc,
 
 		/* Map pages downward from USER_STACK_TOP */
 		uint32_t vaddr = USER_STACK_TOP - (uint32_t)(i + 1) * 0x1000;
-		if (paging_map_page(
-		        pd_phys, vaddr, phys, PG_PRESENT | PG_WRITABLE | PG_USER) != 0)
+		if (arch_mm_map(aspace,
+		                vaddr,
+		                phys,
+		                ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ |
+		                    ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER) != 0)
 			return -4;
 	}
 
@@ -666,7 +669,7 @@ void process_launch(process_t *proc)
 	process_restore_user_tls(proc);
 
 	/* Activate the process's own page directory */
-	paging_switch_directory(proc->pd_phys);
+	arch_aspace_switch((arch_aspace_t)proc->pd_phys);
 
 	/* Restore the process's FPU/SSE state before entering ring 3 */
 	__asm__ volatile("fxrstor %0" ::"m"(*proc->fpu_state));
@@ -692,7 +695,8 @@ int process_fork(process_t *child_out, process_t *parent)
 	__asm__ volatile("fxsave %0" : "=m"(*parent->fpu_state));
 
 	/* Clone the parent's user address space with copy-on-write mappings. */
-	uint32_t new_pd = paging_clone_user_space(parent->pd_phys);
+	uint32_t new_pd =
+	    (uint32_t)arch_aspace_clone((arch_aspace_t)parent->pd_phys);
 	if (!new_pd) {
 		klog_uint("FORK", "pmm free pages", pmm_free_page_count());
 		return -1;
@@ -851,31 +855,7 @@ void process_release_user_space(process_t *proc)
 	if (!proc || proc->pd_phys == 0)
 		return;
 
-	uint32_t *pd = (uint32_t *)proc->pd_phys;
-
-	for (uint32_t pdi = 0; pdi < 1024; pdi++) {
-		if ((pd[pdi] & (PG_PRESENT | PG_USER)) != (PG_PRESENT | PG_USER))
-			continue;
-
-		uint32_t *pt = (uint32_t *)paging_entry_addr(pd[pdi]);
-		for (uint32_t pti = 0; pti < 1024; pti++) {
-			if ((pt[pti] & (PG_PRESENT | PG_USER)) != (PG_PRESENT | PG_USER))
-				continue;
-			/*
-             * Fork clones user mappings with copy-on-write, so a user frame may
-             * still be shared with a live sibling or parent. Dropping this
-             * address space must therefore release only this mapping's
-             * reference, not unconditionally free the frame.
-             */
-			pmm_decref(paging_entry_addr(pt[pti]));
-			pt[pti] = 0;
-		}
-
-		pmm_free_page((uint32_t)pt);
-		pd[pdi] = 0;
-	}
-
-	pmm_free_page(proc->pd_phys);
+	arch_aspace_destroy((arch_aspace_t)proc->pd_phys);
 	if (proc->as && proc->as->pd_phys == proc->pd_phys)
 		proc->as->pd_phys = 0;
 	proc->pd_phys = 0;
@@ -900,24 +880,7 @@ void process_release_kstack(process_t *proc)
 void process_exec_cleanup(uint32_t old_pd_phys, uint32_t old_kstack_bottom)
 {
 	if (old_pd_phys != 0) {
-		uint32_t *pd = (uint32_t *)old_pd_phys;
-
-		for (uint32_t pdi = 0; pdi < 1024; pdi++) {
-			if ((pd[pdi] & (PG_PRESENT | PG_USER)) != (PG_PRESENT | PG_USER))
-				continue;
-
-			uint32_t *pt = (uint32_t *)paging_entry_addr(pd[pdi]);
-			for (uint32_t pti = 0; pti < 1024; pti++) {
-				if ((pt[pti] & (PG_PRESENT | PG_USER)) !=
-				    (PG_PRESENT | PG_USER))
-					continue;
-				pmm_decref(paging_entry_addr(pt[pti]));
-			}
-
-			pmm_free_page((uint32_t)pt);
-		}
-
-		pmm_free_page(old_pd_phys);
+		arch_aspace_destroy((arch_aspace_t)old_pd_phys);
 	}
 
 	if (old_kstack_bottom != 0) {

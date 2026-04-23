@@ -4,7 +4,7 @@
  */
 
 #include "fault.h"
-#include "paging.h"
+#include "arch.h"
 #include "pmm.h"
 #include "kstring.h"
 
@@ -27,19 +27,64 @@ static int vma_allows_access(const vm_area_t *vma, uint32_t err)
 	return 1;
 }
 
-static void fault_invlpg(uint32_t virt)
+static int fault_break_cow(arch_aspace_t aspace, uint32_t fault_page)
 {
-	__asm__ volatile("invlpg (%0)" ::"r"(virt) : "memory");
+	arch_mm_mapping_t mapping;
+	uint32_t old_phys;
+
+	if (arch_mm_query(aspace, fault_page, &mapping) != 0)
+		return -1;
+	if ((mapping.flags & ARCH_MM_MAP_COW) == 0)
+		return -1;
+
+	old_phys = (uint32_t)mapping.phys_addr;
+	if (pmm_refcount(old_phys) <= 1) {
+		return arch_mm_update(
+		    aspace, fault_page, ARCH_MM_MAP_COW, ARCH_MM_MAP_WRITE);
+	}
+
+	uint32_t new_phys = pmm_alloc_page();
+	if (!new_phys)
+		return -1;
+
+	{
+		void *dst = arch_page_temp_map(new_phys);
+		void *src = arch_page_temp_map(mapping.phys_addr);
+		uint32_t map_flags = (mapping.flags | ARCH_MM_MAP_WRITE) &
+		                     ~(uint32_t)ARCH_MM_MAP_COW;
+
+		if (!dst || !src) {
+			if (src)
+				arch_page_temp_unmap(src);
+			if (dst)
+				arch_page_temp_unmap(dst);
+			pmm_free_page(new_phys);
+			return -1;
+		}
+
+		k_memcpy(dst, src, PAGE_SIZE);
+		arch_page_temp_unmap(src);
+		arch_page_temp_unmap(dst);
+
+		if (arch_mm_map(aspace, fault_page, new_phys, map_flags) != 0) {
+			pmm_free_page(new_phys);
+			return -1;
+		}
+	}
+
+	pmm_decref(old_phys);
+	return 0;
 }
 
-static int paging_handle_lazy_anon_fault(uint32_t pd_phys,
-                                         uint32_t cr2,
-                                         uint32_t user_esp,
-                                         process_t *cur,
-                                         const vm_area_t *vma)
+static int fault_handle_lazy_anon_fault(arch_aspace_t aspace,
+                                        uint32_t cr2,
+                                        uint32_t user_esp,
+                                        process_t *cur,
+                                        const vm_area_t *vma)
 {
 	uint32_t fault_page = cr2 & ~0xFFFu;
-	uint32_t map_flags = PG_PRESENT | PG_USER;
+	uint32_t map_flags =
+	    ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ | ARCH_MM_MAP_USER;
 
 	if (!cur || !vma)
 		return -1;
@@ -48,15 +93,22 @@ static int paging_handle_lazy_anon_fault(uint32_t pd_phys,
 	    (VMA_FLAG_ANON | VMA_FLAG_PRIVATE))
 		return -1;
 	if (vma->flags & VMA_FLAG_WRITE)
-		map_flags |= PG_WRITABLE;
+		map_flags |= ARCH_MM_MAP_WRITE;
 
 	if (vma->kind == VMA_KIND_HEAP || vma->kind == VMA_KIND_GENERIC) {
 		uint32_t phys = pmm_alloc_page();
+		void *page;
 		if (!phys)
 			return -1;
 
-		k_memset((void *)phys, 0, PAGE_SIZE);
-		if (paging_map_page(pd_phys, fault_page, phys, map_flags) != 0) {
+		page = arch_page_temp_map(phys);
+		if (!page) {
+			pmm_free_page(phys);
+			return -1;
+		}
+		k_memset(page, 0, PAGE_SIZE);
+		arch_page_temp_unmap(page);
+		if (arch_mm_map(aspace, fault_page, phys, map_flags) != 0) {
 			pmm_free_page(phys);
 			return -1;
 		}
@@ -71,11 +123,18 @@ static int paging_handle_lazy_anon_fault(uint32_t pd_phys,
 		     page >= fault_page && page >= vma->start;
 		     page -= PAGE_SIZE) {
 			uint32_t phys = pmm_alloc_page();
+			void *page_ptr;
 			if (!phys)
 				return -1;
 
-			k_memset((void *)phys, 0, PAGE_SIZE);
-			if (paging_map_page(pd_phys, page, phys, map_flags) != 0) {
+			page_ptr = arch_page_temp_map(phys);
+			if (!page_ptr) {
+				pmm_free_page(phys);
+				return -1;
+			}
+			k_memset(page_ptr, 0, PAGE_SIZE);
+			arch_page_temp_unmap(page_ptr);
+			if (arch_mm_map(aspace, page, phys, map_flags) != 0) {
 				pmm_free_page(phys);
 				return -1;
 			}
@@ -96,8 +155,8 @@ int paging_handle_fault(uint32_t pd_phys,
                         uint32_t user_esp,
                         process_t *cur)
 {
+	arch_aspace_t aspace = (arch_aspace_t)pd_phys;
 	uint32_t fault_page = cr2 & ~0xFFFu;
-	uint32_t *pte = 0;
 
 	if ((err & PF_ERR_USER) == 0 || !cur)
 		return -1;
@@ -109,11 +168,12 @@ int paging_handle_fault(uint32_t pd_phys,
 			return -1;
 		if (!vma_allows_access(vma, err))
 			return -1;
-		return paging_handle_lazy_anon_fault(pd_phys, cr2, user_esp, cur, vma);
+		return fault_handle_lazy_anon_fault(aspace, cr2, user_esp, cur, vma);
 	}
 
 	{
 		const vm_area_t *vma = vma_find_const(cur, cr2);
+		arch_mm_mapping_t mapping;
 		if (!vma || !vma_allows_access(vma, err))
 			return -1;
 
@@ -123,39 +183,18 @@ int paging_handle_fault(uint32_t pd_phys,
          * supervisor-only kernel mapping. Treat that shadow mapping like a
          * lazy anonymous miss and replace it with a proper user page.
          */
-		if (paging_walk(pd_phys, fault_page, &pte) == 0 &&
-		    ((*pte & (PG_PRESENT | PG_USER)) == PG_PRESENT) &&
-		    ((*pte & PG_COW) == 0) &&
+		if (arch_mm_query(aspace, fault_page, &mapping) == 0 &&
+		    (mapping.flags & (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER)) ==
+		        ARCH_MM_MAP_PRESENT &&
+		    (mapping.flags & ARCH_MM_MAP_COW) == 0 &&
 		    (vma->flags & (VMA_FLAG_ANON | VMA_FLAG_PRIVATE)) ==
 		        (VMA_FLAG_ANON | VMA_FLAG_PRIVATE))
-			return paging_handle_lazy_anon_fault(
-			    pd_phys, cr2, user_esp, cur, vma);
+			return fault_handle_lazy_anon_fault(
+			    aspace, cr2, user_esp, cur, vma);
 	}
 
 	if ((err & PF_ERR_WRITE) == 0)
 		return -1;
 
-	if (paging_walk(pd_phys, fault_page, &pte) != 0 || ((*pte & PG_COW) == 0))
-		return -1;
-
-	uint32_t old_phys = paging_entry_addr(*pte);
-	if (pmm_refcount(old_phys) <= 1) {
-		uint32_t flags = (paging_entry_flags(*pte) | PG_WRITABLE) & ~PG_COW;
-		*pte = paging_entry_build(old_phys, flags);
-		fault_invlpg(fault_page);
-		return 0;
-	}
-
-	uint32_t new_phys = pmm_alloc_page();
-	if (!new_phys)
-		return -1;
-
-	k_memcpy((void *)new_phys, (const void *)old_phys, PAGE_SIZE);
-	{
-		uint32_t flags = (paging_entry_flags(*pte) | PG_WRITABLE) & ~PG_COW;
-		*pte = paging_entry_build(new_phys, flags);
-	}
-	fault_invlpg(fault_page);
-	pmm_decref(old_phys);
-	return 0;
+	return fault_break_cow(aspace, fault_page);
 }

@@ -4,14 +4,9 @@
  */
 
 #include "uaccess.h"
-#include "paging.h"
+#include "arch.h"
 #include "pmm.h"
 #include "kstring.h"
-
-static void uaccess_invlpg(uint32_t virt)
-{
-	__asm__ volatile("invlpg (%0)" ::"r"(virt) : "memory");
-}
 
 static int
 uaccess_vma_allows(const process_t *proc, uint32_t user_addr, int write_access)
@@ -41,30 +36,55 @@ static int uaccess_range_ok(uint32_t user_addr, uint32_t len)
 	return 0;
 }
 
-static int uaccess_break_cow(uint32_t *pte, uint32_t fault_page)
+static int uaccess_break_cow(process_t *proc, uint32_t fault_page)
 {
-	uint32_t old_phys = paging_entry_addr(*pte);
+	arch_aspace_t aspace;
+	arch_mm_mapping_t mapping;
+	uint32_t old_phys;
 
-	if ((*pte & PG_COW) == 0)
+	if (!proc)
 		return -1;
 
+	aspace = (arch_aspace_t)proc->pd_phys;
+	if (arch_mm_query(aspace, fault_page, &mapping) != 0)
+		return -1;
+	if ((mapping.flags & ARCH_MM_MAP_COW) == 0)
+		return -1;
+
+	old_phys = (uint32_t)mapping.phys_addr;
 	if (pmm_refcount(old_phys) <= 1) {
-		uint32_t flags = (paging_entry_flags(*pte) | PG_WRITABLE) & ~PG_COW;
-		*pte = paging_entry_build(old_phys, flags);
-		uaccess_invlpg(fault_page);
-		return 0;
+		return arch_mm_update(
+		    aspace, fault_page, ARCH_MM_MAP_COW, ARCH_MM_MAP_WRITE);
 	}
 
 	uint32_t new_phys = pmm_alloc_page();
 	if (!new_phys)
 		return -1;
 
-	k_memcpy((void *)new_phys, (const void *)old_phys, PAGE_SIZE);
 	{
-		uint32_t flags = (paging_entry_flags(*pte) | PG_WRITABLE) & ~PG_COW;
-		*pte = paging_entry_build(new_phys, flags);
+		void *dst = arch_page_temp_map(new_phys);
+		void *src = arch_page_temp_map(mapping.phys_addr);
+		uint32_t map_flags = (mapping.flags | ARCH_MM_MAP_WRITE) &
+		                     ~(uint32_t)ARCH_MM_MAP_COW;
+
+		if (!dst || !src) {
+			if (src)
+				arch_page_temp_unmap(src);
+			if (dst)
+				arch_page_temp_unmap(dst);
+			pmm_free_page(new_phys);
+			return -1;
+		}
+
+		k_memcpy(dst, src, PAGE_SIZE);
+		arch_page_temp_unmap(src);
+		arch_page_temp_unmap(dst);
+
+		if (arch_mm_map(aspace, fault_page, new_phys, map_flags) != 0) {
+			pmm_free_page(new_phys);
+			return -1;
+		}
 	}
-	uaccess_invlpg(fault_page);
 	pmm_decref(old_phys);
 	return 0;
 }
@@ -72,11 +92,12 @@ static int uaccess_break_cow(uint32_t *pte, uint32_t fault_page)
 static int uaccess_translate(process_t *proc,
                              uint32_t user_addr,
                              int write_access,
-                             uint8_t **kptr_out)
+                             uint8_t **kptr_out,
+                             void **page_out)
 {
-	uint32_t *pd;
-	uint32_t *pte;
-	uint32_t pdi;
+	arch_aspace_t aspace;
+	arch_mm_mapping_t mapping;
+	void *page_ptr;
 	uint32_t page_base;
 
 	if (!proc || user_addr >= USER_STACK_TOP)
@@ -84,23 +105,29 @@ static int uaccess_translate(process_t *proc,
 	if (!uaccess_vma_allows(proc, user_addr, write_access))
 		return -1;
 
-	pd = (uint32_t *)proc->pd_phys;
-	pdi = user_addr >> 22;
-	if ((pd[pdi] & (PG_PRESENT | PG_USER)) != (PG_PRESENT | PG_USER))
-		return -1;
-
-	if (paging_walk(proc->pd_phys, user_addr, &pte) != 0)
-		return -1;
-	if ((*pte & PG_USER) == 0)
-		return -1;
-
+	aspace = (arch_aspace_t)proc->pd_phys;
 	page_base = user_addr & ~0xFFFu;
-	if (write_access && (*pte & PG_WRITABLE) == 0) {
-		if (uaccess_break_cow(pte, page_base) != 0)
+	if (arch_mm_query(aspace, page_base, &mapping) != 0)
+		return -1;
+	if ((mapping.flags & ARCH_MM_MAP_USER) == 0)
+		return -1;
+
+	if (write_access && (mapping.flags & ARCH_MM_MAP_WRITE) == 0) {
+		if ((mapping.flags & ARCH_MM_MAP_COW) == 0)
+			return -1;
+		if (uaccess_break_cow(proc, page_base) != 0)
+			return -1;
+		if (arch_mm_query(aspace, page_base, &mapping) != 0)
 			return -1;
 	}
 
-	*kptr_out = (uint8_t *)(paging_entry_addr(*pte) + (user_addr & 0xFFFu));
+	page_ptr = arch_page_temp_map(mapping.phys_addr);
+	if (!page_ptr)
+		return -1;
+
+	*kptr_out = (uint8_t *)page_ptr + (user_addr & 0xFFFu);
+	if (page_out)
+		*page_out = page_ptr;
 	return 0;
 }
 
@@ -119,12 +146,14 @@ int uaccess_prepare(process_t *proc,
 		uint32_t page_off = addr & 0xFFFu;
 		uint32_t chunk = PAGE_SIZE - page_off;
 		uint8_t *unused;
+		void *page_ptr;
 
 		if (chunk > len - offset)
 			chunk = len - offset;
 
-		if (uaccess_translate(proc, addr, write_access, &unused) != 0)
+		if (uaccess_translate(proc, addr, write_access, &unused, &page_ptr) != 0)
 			return -1;
+		arch_page_temp_unmap(page_ptr);
 
 		offset += chunk;
 	}
@@ -147,14 +176,16 @@ int uaccess_copy_from_user(process_t *proc,
 		uint32_t page_off = addr & 0xFFFu;
 		uint32_t chunk = PAGE_SIZE - page_off;
 		uint8_t *kptr;
+		void *page_ptr;
 
 		if (chunk > len - offset)
 			chunk = len - offset;
 
-		if (uaccess_translate(proc, addr, 0, &kptr) != 0)
+		if (uaccess_translate(proc, addr, 0, &kptr, &page_ptr) != 0)
 			return -1;
 
 		k_memcpy((uint8_t *)dst + offset, kptr, chunk);
+		arch_page_temp_unmap(page_ptr);
 		offset += chunk;
 	}
 
@@ -176,14 +207,16 @@ int uaccess_copy_to_user(process_t *proc,
 		uint32_t page_off = addr & 0xFFFu;
 		uint32_t chunk = PAGE_SIZE - page_off;
 		uint8_t *kptr;
+		void *page_ptr;
 
 		if (chunk > len - offset)
 			chunk = len - offset;
 
-		if (uaccess_translate(proc, addr, 1, &kptr) != 0)
+		if (uaccess_translate(proc, addr, 1, &kptr, &page_ptr) != 0)
 			return -1;
 
 		k_memcpy(kptr, (const uint8_t *)src + offset, chunk);
+		arch_page_temp_unmap(page_ptr);
 		offset += chunk;
 	}
 
@@ -202,11 +235,13 @@ int uaccess_copy_string_from_user(process_t *proc,
 
 	for (i = 0; i < dstsz; i++) {
 		uint8_t *kptr;
+		void *page_ptr;
 
-		if (uaccess_translate(proc, user_src + i, 0, &kptr) != 0)
+		if (uaccess_translate(proc, user_src + i, 0, &kptr, &page_ptr) != 0)
 			return -1;
 
 		dst[i] = (char)*kptr;
+		arch_page_temp_unmap(page_ptr);
 		if (dst[i] == '\0')
 			return 0;
 	}

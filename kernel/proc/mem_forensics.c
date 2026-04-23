@@ -2,7 +2,7 @@
 
 #include "mem_forensics.h"
 
-#include "paging.h"
+#include "arch.h"
 #include "process.h"
 #include "kprintf.h"
 #include "kstring.h"
@@ -35,19 +35,21 @@ static int mem_forensics_vma_allows_access(const vm_area_t *vma, uint32_t err)
 	return 1;
 }
 
-static uint32_t
-count_present_user_pages(uint32_t pd_phys, uint32_t start, uint32_t end)
+static uint32_t count_present_user_pages(arch_aspace_t aspace,
+                                         uint32_t start,
+                                         uint32_t end)
 {
 	uint32_t count = 0;
 
-	if (!pd_phys || start >= end)
+	if (!aspace || start >= end)
 		return 0;
 
 	for (uint32_t addr = start; addr < end; addr += 0x1000u) {
-		uint32_t *pte = 0;
+		arch_mm_mapping_t mapping;
 
-		if (paging_walk(pd_phys, addr, &pte) == 0 &&
-		    (*pte & (PG_PRESENT | PG_USER)) == (PG_PRESENT | PG_USER))
+		if (arch_mm_query(aspace, addr, &mapping) == 0 &&
+		    (mapping.flags & (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER)) ==
+		        (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER))
 			count++;
 	}
 
@@ -104,7 +106,7 @@ static void mem_forensics_emit_map_region(render_buf_t *rb,
                                           uint32_t flags)
 {
 	const char *label = mem_forensics_label_for_range(proc, start, end);
-	const char *perm = (flags & PG_WRITABLE) ? "rw-p" : "r--p";
+	const char *perm = (flags & ARCH_MM_MAP_WRITE) ? "rw-p" : "r--p";
 
 	if (label[0] != '\0')
 		mem_forensics_emitf(rb, "%08x-%08x %s %s\n", start, end, perm, label);
@@ -192,11 +194,13 @@ static void mem_forensics_classify_fault(const struct process *proc,
 	}
 
 	{
-		uint32_t *pte = 0;
+		arch_mm_mapping_t mapping;
 
-		if (paging_walk(proc->pd_phys, fault_page, &pte) == 0 &&
-		    (*pte & (PG_PRESENT | PG_USER)) == PG_PRESENT &&
-		    (*pte & PG_COW) == 0 &&
+		if (arch_mm_query((arch_aspace_t)proc->pd_phys, fault_page, &mapping) ==
+		        0 &&
+		    (mapping.flags & (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER)) ==
+		        ARCH_MM_MAP_PRESENT &&
+		    (mapping.flags & ARCH_MM_MAP_COW) == 0 &&
 		    (vma->flags & (VMA_FLAG_ANON | VMA_FLAG_PRIVATE)) ==
 		        (VMA_FLAG_ANON | VMA_FLAG_PRIVATE)) {
 			if (vma->kind == VMA_KIND_STACK) {
@@ -219,8 +223,9 @@ static void mem_forensics_classify_fault(const struct process *proc,
 		}
 
 		if ((err & PF_ERR_WRITE) != 0u &&
-		    paging_walk(proc->pd_phys, fault_page, &pte) == 0 &&
-		    (*pte & PG_COW) != 0) {
+		    arch_mm_query((arch_aspace_t)proc->pd_phys, fault_page, &mapping) ==
+		        0 &&
+		    (mapping.flags & ARCH_MM_MAP_COW) != 0) {
 			out->fault.classification = MEM_FORENSICS_FAULT_COW_WRITE;
 			return;
 		}
@@ -230,7 +235,7 @@ static void mem_forensics_classify_fault(const struct process *proc,
 }
 
 static int mem_forensics_append_region(mem_forensics_report_t *out,
-                                       uint32_t pd_phys,
+                                       arch_aspace_t aspace,
                                        uint32_t start,
                                        uint32_t end,
                                        uint32_t kind,
@@ -248,7 +253,7 @@ static int mem_forensics_append_region(mem_forensics_report_t *out,
 	r->kind = kind;
 	r->prot_flags = prot_flags;
 	r->reserved_bytes = end - start;
-	r->mapped_bytes = count_present_user_pages(pd_phys, start, end) * 0x1000u;
+	r->mapped_bytes = count_present_user_pages(aspace, start, end) * 0x1000u;
 	k_strncpy(r->label, label, sizeof(r->label) - 1);
 	r->label[sizeof(r->label) - 1] = '\0';
 
@@ -278,10 +283,13 @@ static int mem_forensics_append_region(mem_forensics_report_t *out,
 int mem_forensics_collect(const struct process *proc,
                           mem_forensics_report_t *out)
 {
+	arch_aspace_t aspace;
+
 	if (!proc || !out)
 		return -1;
 
 	k_memset(out, 0, sizeof(*out));
+	aspace = (arch_aspace_t)proc->pd_phys;
 
 	if (proc->image_start < proc->image_end) {
 		int image_seen = 0;
@@ -295,7 +303,7 @@ int mem_forensics_collect(const struct process *proc,
 
 		if (!image_seen) {
 			if (mem_forensics_append_region(out,
-			                                proc->pd_phys,
+			                                aspace,
 			                                proc->image_start,
 			                                proc->image_end,
 			                                MEM_FORENSICS_REGION_IMAGE,
@@ -328,7 +336,7 @@ int mem_forensics_collect(const struct process *proc,
 		}
 
 		if (mem_forensics_append_region(out,
-		                                proc->pd_phys,
+		                                aspace,
 		                                vma->start,
 		                                vma->end,
 		                                kind,
@@ -412,10 +420,10 @@ int mem_forensics_render_maps(const struct process *proc,
                               uint32_t *size_out)
 {
 	render_buf_t rb = {buf, cap, 0};
-	uint32_t *pd;
 	uint32_t region_start = 0;
 	uint32_t region_end = 0;
 	uint32_t region_flags = 0;
+	arch_aspace_t aspace;
 	int have_region = 0;
 
 	if (!proc || !size_out)
@@ -426,10 +434,14 @@ int mem_forensics_render_maps(const struct process *proc,
 		return 0;
 	}
 
-	pd = (uint32_t *)proc->pd_phys;
+	aspace = (arch_aspace_t)proc->pd_phys;
 
-	for (uint32_t pdi = 0; pdi < 1024; pdi++) {
-		if ((pd[pdi] & (PG_PRESENT | PG_USER)) != (PG_PRESENT | PG_USER)) {
+	for (uint32_t vaddr = 0; vaddr < USER_STACK_TOP; vaddr += 0x1000u) {
+		arch_mm_mapping_t mapping;
+		uint32_t flags;
+
+		if (arch_mm_query(aspace, vaddr, &mapping) != 0 ||
+		    (mapping.flags & ARCH_MM_MAP_USER) == 0) {
 			if (have_region) {
 				mem_forensics_emit_map_region(
 				    &rb, proc, region_start, region_end, region_flags);
@@ -438,49 +450,26 @@ int mem_forensics_render_maps(const struct process *proc,
 			continue;
 		}
 
-		uint32_t *pt = (uint32_t *)(pd[pdi] & ~0xFFFu);
-		for (uint32_t pti = 0; pti < 1024; pti++) {
-			uint32_t vaddr = (pdi << 22) | (pti << 12);
-			uint32_t pte = pt[pti];
-			uint32_t flags = pte & (PG_WRITABLE | PG_COW);
+		flags = mapping.flags & (ARCH_MM_MAP_WRITE | ARCH_MM_MAP_COW);
 
-			if (vaddr >= USER_STACK_TOP) {
-				if (have_region) {
-					mem_forensics_emit_map_region(
-					    &rb, proc, region_start, region_end, region_flags);
-				}
-				*size_out = mem_forensics_rendered_size(rb.len, cap);
-				return 0;
-			}
-
-			if ((pte & (PG_PRESENT | PG_USER)) != (PG_PRESENT | PG_USER)) {
-				if (have_region) {
-					mem_forensics_emit_map_region(
-					    &rb, proc, region_start, region_end, region_flags);
-					have_region = 0;
-				}
-				continue;
-			}
-
-			if (!have_region) {
-				region_start = vaddr;
-				region_end = vaddr + 0x1000u;
-				region_flags = flags;
-				have_region = 1;
-				continue;
-			}
-
-			if (vaddr == region_end && flags == region_flags) {
-				region_end += 0x1000u;
-				continue;
-			}
-
-			mem_forensics_emit_map_region(
-			    &rb, proc, region_start, region_end, region_flags);
+		if (!have_region) {
 			region_start = vaddr;
 			region_end = vaddr + 0x1000u;
 			region_flags = flags;
+			have_region = 1;
+			continue;
 		}
+
+		if (vaddr == region_end && flags == region_flags) {
+			region_end += 0x1000u;
+			continue;
+		}
+
+		mem_forensics_emit_map_region(
+		    &rb, proc, region_start, region_end, region_flags);
+		region_start = vaddr;
+		region_end = vaddr + 0x1000u;
+		region_flags = flags;
 	}
 
 	if (have_region) {
