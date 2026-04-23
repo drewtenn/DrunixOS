@@ -7,13 +7,12 @@
 #include "paging.h"
 #include "kheap.h"
 #include "ata.h"
+#include "arch.h"
 #include "blkdev.h"
 #include "bcache.h"
 #include "gdt.h"
 #include "idt.h"
-#include "pit.h"
 #include "sse.h"
-#include "irq.h"
 #include "clock.h"
 #include "process.h"
 #include "sched.h"
@@ -539,10 +538,11 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
 	klog("BOOT", "descriptor tables initialized");
 
 	klog("BOOT", "bringing up interrupt, timer, and clock subsystems");
-	irq_dispatch_init();
-	pit_init();
+	arch_irq_init();
 	clock_init();
-	klog("IRQ", "PIT handler registered");
+	arch_timer_set_periodic_handler(sched_tick);
+	arch_timer_start(SCHED_HZ);
+	klog("IRQ", "arch timer handler registered");
 
 	ata_init();
 	boot_register_block_devices();
@@ -580,7 +580,7 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
      * device handlers are registered. The IDT itself was already loaded above
      * so early breakpoints and traps have a valid destination.
      */
-	interrupts_enable();
+	arch_interrupts_enable();
 	klog("IDT", "interrupts enabled");
 	klog("BOOT", "interrupt descriptor table live");
 

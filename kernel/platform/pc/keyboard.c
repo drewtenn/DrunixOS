@@ -4,7 +4,7 @@
  */
 
 #include <stdint.h>
-#include "irq.h"
+#include "arch.h"
 #include "chardev.h"
 #include "sched.h"
 #include "desktop.h"
@@ -272,7 +272,7 @@ static const chardev_ops_t kb_chardev_ops = {
 /* Register the keyboard IRQ handler and chardev ops with the kernel. */
 void keyboard_init(void)
 {
-	irq_register(1, keyboard_handler);
+	arch_irq_register(1, keyboard_handler);
 	chardev_register("stdin", &kb_chardev_ops);
 	chardev_register("tty0", &kb_chardev_ops);
 }

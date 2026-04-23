@@ -3,12 +3,15 @@
  * start_kernel.c — Milestone 1 AArch64 kernel entry point.
  */
 
+#include "../arch.h"
 #include "timer.h"
 #include "uart.h"
 #include "kprintf.h"
 #include <stdint.h>
 
 extern char vectors_el1[];
+
+static volatile uint64_t g_heartbeat_ticks;
 
 static uint64_t arm64_read_currentel(void)
 {
@@ -24,6 +27,11 @@ static uint64_t arm64_read_cntfrq(void)
 
 	__asm__ volatile("mrs %0, cntfrq_el0" : "=r"(value));
 	return value;
+}
+
+static void arm64_heartbeat_tick(void)
+{
+	g_heartbeat_ticks++;
 }
 
 void arm64_start_kernel(void)
@@ -50,14 +58,16 @@ void arm64_start_kernel(void)
 	           (unsigned int)arm64_read_cntfrq());
 	uart_puts(line);
 
-	arm64_timer_init(10u);
-	__asm__ volatile("msr daifclr, #2");
+	arch_irq_init();
+	arch_timer_set_periodic_handler(arm64_heartbeat_tick);
+	arch_timer_start(10u);
+	arch_interrupts_enable();
 
 	for (;;) {
 		uint64_t now;
 
 		__asm__ volatile("wfi");
-		now = arm64_timer_ticks();
+		now = g_heartbeat_ticks;
 		while (last < now) {
 			last++;
 			k_snprintf(line, sizeof(line), "tick %u\n", (unsigned int)last);
