@@ -38,8 +38,8 @@ REQUIRED_PATTERNS = {
     ROOT / "kernel/kernel.c": [
         r'#include "arch\.h"',
         r"\barch_irq_init\s*\(",
-        r"\barch_timer_set_periodic_handler\s*\(\s*sched_tick\s*\)",
-        r"\barch_timer_start\s*\(\s*SCHED_HZ\s*\)",
+        r"\barch_timer_set_periodic_handler\s*\(\s*&?\s*sched_tick\s*\)",
+        r"\barch_timer_start\s*\(\s*SCHED_HZ\s*(?:u)?\s*\)",
         r"\barch_interrupts_enable\s*\(",
     ],
     ROOT / "kernel/platform/pc/keyboard.c": [
@@ -60,7 +60,7 @@ REQUIRED_PATTERNS = {
     ROOT / "kernel/arch/arm64/start_kernel.c": [
         r"\barch_irq_init\s*\(",
         r"\barch_timer_set_periodic_handler\s*\(",
-        r"\barch_timer_start\s*\(\s*10u\s*\)",
+        r"\barch_timer_start\s*\(\s*10(?:u)?\s*\)",
         r"\barch_interrupts_enable\s*\(",
     ],
 }
@@ -71,15 +71,95 @@ def fail(message: str) -> None:
     raise SystemExit(1)
 
 
+def normalize_c_source(text: str) -> str:
+    out = []
+    i = 0
+    n = len(text)
+    in_block_comment = False
+    in_line_comment = False
+    in_string = False
+    in_char = False
+
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+
+        if in_block_comment:
+            if ch == "*" and nxt == "/":
+                in_block_comment = False
+                i += 2
+            else:
+                out.append("\n" if ch == "\n" else " ")
+                i += 1
+            continue
+
+        if in_line_comment:
+            if ch == "\n":
+                in_line_comment = False
+                out.append(ch)
+            else:
+                out.append(" ")
+            i += 1
+            continue
+
+        if in_string:
+            if ch == "\\" and nxt:
+                out.extend("  ")
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+            out.append(" " if ch != "\n" else "\n")
+            i += 1
+            continue
+
+        if in_char:
+            if ch == "\\" and nxt:
+                out.extend("  ")
+                i += 2
+                continue
+            if ch == "'":
+                in_char = False
+            out.append(" " if ch != "\n" else "\n")
+            i += 1
+            continue
+
+        if ch == "/" and nxt == "*":
+            in_block_comment = True
+            out.extend("  ")
+            i += 2
+            continue
+        if ch == "/" and nxt == "/":
+            in_line_comment = True
+            out.extend("  ")
+            i += 2
+            continue
+        if ch == '"':
+            in_string = True
+            out.append(" ")
+            i += 1
+            continue
+        if ch == "'":
+            in_char = True
+            out.append(" ")
+            i += 1
+            continue
+
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
+
+
 def main() -> None:
     for path, patterns in FORBIDDEN_PATTERNS.items():
-        text = path.read_text()
+        text = normalize_c_source(path.read_text())
         for pattern in patterns:
             if re.search(pattern, text):
                 fail(f"{path.relative_to(ROOT)} still contains {pattern}")
 
     for path, patterns in REQUIRED_PATTERNS.items():
-        text = path.read_text()
+        text = normalize_c_source(path.read_text())
         for pattern in patterns:
             if not re.search(pattern, text):
                 fail(f"{path.relative_to(ROOT)} is missing {pattern}")
