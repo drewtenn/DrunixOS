@@ -63,10 +63,9 @@ int elf_load_file(vfs_file_ref_t file_ref,
 			max_vend = vend;
 
 		/*
-         * Allocate and map one physical page per virtual page.
-         * Because the kernel is identity-mapped (physical == virtual for
-         * 0–128 MB), we can write directly to the allocated physical address
-         * while still running under the kernel page directory.
+         * Allocate and map one physical page per virtual page, then zero it
+         * through the architecture temp-map helper while still running under
+         * the kernel address space.
          */
 		for (uint32_t p = 0; p < npages; p++) {
 			uint32_t phys = pmm_alloc_page();
@@ -80,23 +79,27 @@ int elf_load_file(vfs_file_ref_t file_ref,
 			                phys,
 			                ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ |
 			                    ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER) != 0)
-				return -8;
+				goto map_fail;
 
 			/* Zero the page; file data (if any) will be copied below. */
 			page = arch_page_temp_map(phys);
-			if (!page)
+			if (!page) {
+				(void)arch_mm_unmap(aspace, vpage);
 				return -8;
+			}
 			k_memset(page, 0, 0x1000);
 			arch_page_temp_unmap(page);
+
+			continue;
+
+map_fail:
+			pmm_free_page(phys);
+			return -8;
 		}
 
 		/*
-         * Copy file data into the physical pages.
-         *
-         * We resolve the physical address backing each virtual page by walking
-         * the page directory / page table (both in the identity-mapped range).
-         * We copy one page-sized chunk at a time, trimming by filesz so we
-         * only read actual file data (the rest stays zeroed from above).
+         * Copy file data into the mapped pages one page-sized chunk at a time,
+         * trimming by filesz so the untouched tail stays zero-filled.
          */
 		uint32_t file_remain = phdr.p_filesz;
 		uint32_t file_done = 0;

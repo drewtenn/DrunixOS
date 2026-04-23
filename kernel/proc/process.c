@@ -131,9 +131,9 @@ static int build_user_stack_frame(uint32_t pd_phys,
 
 	/*
      * Resolve the physical page backing the top user stack page (the one
-     * holding USER_STACK_TOP-1).  The page directory and page tables live
-     * in the identity-mapped kernel region, so we can walk them as plain
-     * pointers to their physical addresses.
+     * holding USER_STACK_TOP-1) and alias it into the kernel through the
+     * architecture temp-map helper so the stack image can be written without
+     * switching address spaces here.
      */
 	uint32_t top_vpage = USER_STACK_TOP - 0x1000u;
 	arch_mm_mapping_t mapping;
