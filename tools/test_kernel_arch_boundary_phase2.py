@@ -154,6 +154,43 @@ def normalize_c_source(text: str) -> str:
 
 
 def main() -> None:
+    include_forbidden = {
+        ROOT / "kernel/kernel.c": [
+            r'#include "irq\.h"',
+            r'#include "pit\.h"',
+        ],
+        ROOT / "kernel/platform/pc/keyboard.c": [
+            r'#include "irq\.h"',
+        ],
+        ROOT / "kernel/platform/pc/mouse.c": [
+            r'#include "irq\.h"',
+        ],
+    }
+
+    include_required = {
+        ROOT / "kernel/kernel.c": [
+            r'#include "arch\.h"',
+        ],
+        ROOT / "kernel/platform/pc/keyboard.c": [
+            r'#include "arch\.h"',
+        ],
+        ROOT / "kernel/platform/pc/mouse.c": [
+            r'#include "arch\.h"',
+        ],
+    }
+
+    for path, patterns in include_forbidden.items():
+        text = path.read_text()
+        for pattern in patterns:
+            if re.search(pattern, text):
+                fail(f"{path.relative_to(ROOT)} still contains {pattern}")
+
+    for path, patterns in include_required.items():
+        text = path.read_text()
+        for pattern in patterns:
+            if not re.search(pattern, text):
+                fail(f"{path.relative_to(ROOT)} is missing {pattern}")
+
     for path, patterns in FORBIDDEN_PATTERNS.items():
         text = normalize_c_source(path.read_text())
         for pattern in patterns:
