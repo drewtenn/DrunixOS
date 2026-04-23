@@ -149,19 +149,19 @@ static void mem_forensics_classify_fault(const struct process *proc,
 
 	out->fault.valid = 1;
 	out->fault.signum = proc->crash.signum;
-	out->fault.cr2 = proc->crash.cr2;
+	out->fault.cr2 = (uint32_t)proc->crash.fault_addr;
 	out->fault.eip = proc->crash.frame.eip;
 	out->fault.vector = proc->crash.frame.vector;
 	out->fault.error_code = proc->crash.frame.error_code;
 	err = proc->crash.frame.error_code;
-	fault_page = proc->crash.cr2 & ~0xFFFu;
+	fault_page = (uint32_t)proc->crash.fault_addr & ~0xFFFu;
 
 	if (proc->crash.frame.vector != 14u) {
 		out->fault.classification = MEM_FORENSICS_FAULT_UNKNOWN;
 		return;
 	}
 
-	vma = vma_find_const(proc, proc->crash.cr2);
+	vma = vma_find_const(proc, (uint32_t)proc->crash.fault_addr);
 	out->fault.in_region = vma ? 1u : 0u;
 
 	if (!vma) {
@@ -183,7 +183,8 @@ static void mem_forensics_classify_fault(const struct process *proc,
 			if ((vma->flags & VMA_FLAG_GROWSDOWN) == 0 ||
 			    fault_page < vma->start ||
 			    fault_page >= proc->stack_low_limit ||
-			    proc->crash.cr2 < stack_slack || proc->crash.cr2 >= vma->end) {
+			    proc->crash.fault_addr < stack_slack ||
+			    proc->crash.fault_addr >= vma->end) {
 				out->fault.classification = MEM_FORENSICS_FAULT_STACK_LIMIT;
 				return;
 			}
@@ -211,8 +212,8 @@ static void mem_forensics_classify_fault(const struct process *proc,
 				if ((vma->flags & VMA_FLAG_GROWSDOWN) == 0 ||
 				    fault_page < vma->start ||
 				    fault_page >= proc->stack_low_limit ||
-				    proc->crash.cr2 < stack_slack ||
-				    proc->crash.cr2 >= vma->end) {
+				    proc->crash.fault_addr < stack_slack ||
+				    proc->crash.fault_addr >= vma->end) {
 					out->fault.classification = MEM_FORENSICS_FAULT_STACK_LIMIT;
 					return;
 				}

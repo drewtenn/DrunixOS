@@ -15,13 +15,25 @@ FORBIDDEN = {
 }
 
 REQUIRED = {
+    ROOT / "kernel/arch/arch.h": [
+        r"\barch_syscall_number\b",
+        r"\barch_syscall_arg0\b",
+        r"\barch_syscall_arg1\b",
+        r"\barch_syscall_arg2\b",
+        r"\barch_syscall_arg3\b",
+        r"\barch_syscall_arg4\b",
+        r"\barch_syscall_arg5\b",
+        r"\barch_syscall_set_result\b",
+        r"\barch_trap_frame_is_syscall\b",
+        r"\barch_trap_frame_fault_addr\b",
+    ],
     ROOT / "kernel/proc/elf.c": [
         r"\belf_load_file\b[\s\S]*?\barch_elf_[A-Za-z0-9_]*\s*\(",
         r"\belf_load_file\b[\s\S]*?\barch_process_build_initial_frame\s*\(",
     ],
     ROOT / "kernel/proc/syscall.c": [
-        r"\bsyscall_handler\b[\s\S]*?\barch_syscall_[A-Za-z0-9_]*\s*\(",
-        r"\bsyscall_handler\b[\s\S]*?\barch_syscall_dispatch\s*\(",
+        r"\bsyscall_dispatch_from_frame\b[\s\S]*?\barch_syscall_[A-Za-z0-9_]*\s*\(",
+        r"\bsyscall_dispatch_from_frame\b[\s\S]*?\barch_syscall_set_result\b",
     ],
     ROOT / "kernel/arch/arm64/exceptions.c": [r"\barch_current_irq_frame\b", r"\bsched_record_user_fault\b"],
 }
@@ -41,6 +53,6 @@ def check(path_map, predicate, label):
                 print(f"{label}: {path.relative_to(ROOT)} {pattern}", file=sys.stderr)
                 raise SystemExit(1)
 
-check(FORBIDDEN, bool, "forbidden")
 check(REQUIRED, lambda m: not m, "missing")
+check(FORBIDDEN, bool, "forbidden")
 print("phase6 boundary guard passed")

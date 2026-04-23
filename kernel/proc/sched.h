@@ -270,7 +270,7 @@ void sched_send_sigint_foreground(void);
  * forever re-entering the same exception.
  */
 void sched_record_user_fault(const arch_trap_frame_t *frame,
-                             uint32_t cr2,
+                             uint64_t fault_addr,
                              int signum);
 
 /*

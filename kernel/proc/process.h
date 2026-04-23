@@ -200,7 +200,7 @@ typedef enum {
 typedef struct {
 	uint32_t valid;     /* 1 if a fault context is present */
 	uint32_t signum;    /* signal generated for the fault */
-	uint32_t cr2;       /* faulting linear address for #PF, else 0 */
+	uint64_t fault_addr; /* faulting address captured by the active arch */
 	arch_trap_frame_t frame; /* arch-owned saved register frame */
 } crash_info_t;
 

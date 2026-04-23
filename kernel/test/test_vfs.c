@@ -979,7 +979,7 @@ static void test_proc_fault_reports_crash_context(ktest_case_t *tc)
 	KTEST_ASSERT_NOT_NULL(tc, proc);
 	proc->crash.valid = 1;
 	proc->crash.signum = SIGSEGV;
-	proc->crash.cr2 = 0xDEADBEEFu;
+	proc->crash.fault_addr = 0xDEADBEEFu;
 	proc->crash.frame.eip = 0x00401234u;
 	proc->crash.frame.vector = 14u;
 	proc->crash.frame.error_code = 0x6u;

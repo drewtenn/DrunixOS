@@ -82,6 +82,16 @@ int arch_irq_frame_is_user(uintptr_t frame_ctx);
 void arch_kstack_guard(uintptr_t addr);
 void arch_kstack_unguard(uintptr_t addr);
 uint32_t arch_trap_frame_ip(const arch_trap_frame_t *frame);
+uint64_t arch_syscall_number(const arch_trap_frame_t *frame);
+uint64_t arch_syscall_arg0(const arch_trap_frame_t *frame);
+uint64_t arch_syscall_arg1(const arch_trap_frame_t *frame);
+uint64_t arch_syscall_arg2(const arch_trap_frame_t *frame);
+uint64_t arch_syscall_arg3(const arch_trap_frame_t *frame);
+uint64_t arch_syscall_arg4(const arch_trap_frame_t *frame);
+uint64_t arch_syscall_arg5(const arch_trap_frame_t *frame);
+void arch_syscall_set_result(arch_trap_frame_t *frame, uint64_t value);
+int arch_trap_frame_is_syscall(const arch_trap_frame_t *frame);
+uint64_t arch_trap_frame_fault_addr(const arch_trap_frame_t *frame);
 void arch_core_fill_prstatus_regs(uint32_t *gregs,
                                   const arch_trap_frame_t *frame);
 void arch_trap_frame_sanitize(process_t *proc, arch_trap_frame_t *frame);

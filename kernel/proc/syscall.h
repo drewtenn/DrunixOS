@@ -10,6 +10,7 @@
 #ifndef SYSCALL_H
 #define SYSCALL_H
 
+#include "arch.h"
 #include <stdint.h>
 
 /*
@@ -178,6 +179,7 @@ uint32_t syscall_handler(uint32_t eax,
                          uint32_t esi,
                          uint32_t edi,
                          uint32_t ebp);
+uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame);
 
 #ifdef KTEST_ENABLED
 int syscall_stdout_would_fallback(void *desktop,

@@ -857,7 +857,7 @@ void sched_send_sigint_foreground(void)
 }
 
 void sched_record_user_fault(const arch_trap_frame_t *frame,
-                             uint32_t cr2,
+                             uint64_t fault_addr,
                              int signum)
 {
 	if (!g_current)
@@ -868,11 +868,11 @@ void sched_record_user_fault(const arch_trap_frame_t *frame,
 	klog_uint("FAULT", "pid", g_current->pid);
 	klog_uint("FAULT", "signum", (uint32_t)signum);
 	klog_hex("FAULT", "eip", frame ? arch_trap_frame_ip(frame) : 0);
-	klog_hex("FAULT", "cr2", cr2);
+	klog_hex("FAULT", "fault_addr", (uint32_t)fault_addr);
 
 	g_current->crash.valid = 1;
 	g_current->crash.signum = (uint32_t)signum;
-	g_current->crash.cr2 = cr2;
+	g_current->crash.fault_addr = (uint32_t)fault_addr;
 	k_memcpy(&g_current->crash.frame, frame, sizeof(g_current->crash.frame));
 
 	g_current->sig_pending |= (1u << signum);

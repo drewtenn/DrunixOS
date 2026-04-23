@@ -292,7 +292,7 @@ syscall_execve(uint32_t user_path, uint32_t user_argv, uint32_t user_envp)
 	}
 	new_proc->crash.valid = 0;
 	new_proc->crash.signum = 0;
-	new_proc->crash.cr2 = 0;
+	new_proc->crash.fault_addr = 0;
 
 	klog_hex("EXEC", "new_proc brk", new_proc->brk);
 	klog_hex("EXEC", "new_proc heap_start", new_proc->heap_start);

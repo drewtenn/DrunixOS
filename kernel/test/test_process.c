@@ -253,7 +253,7 @@ static void init_core_dump_proc(process_t *proc)
 	k_strncpy(proc->psargs, "crash badptr", sizeof(proc->psargs) - 1u);
 	proc->crash.valid = 1u;
 	proc->crash.signum = SIGSEGV;
-	proc->crash.cr2 = 0xDEADBEEFu;
+	proc->crash.fault_addr = 0xDEADBEEFu;
 	proc->crash.frame.vector = 14u;
 	proc->crash.frame.error_code = 0x6u;
 	proc->crash.frame.eip = 0x00402A16u;
@@ -775,7 +775,7 @@ static void test_mem_forensics_classifies_unmapped_fault(ktest_case_t *tc)
 	init_vma_proc(&proc);
 	proc.crash.valid = 1;
 	proc.crash.signum = SIGSEGV;
-	proc.crash.cr2 = 0xDEADBEEFu;
+	proc.crash.fault_addr = 0xDEADBEEFu;
 	proc.crash.frame.vector = 14u;
 	proc.crash.frame.error_code = 0x6u;
 
@@ -800,7 +800,7 @@ static void test_mem_forensics_classifies_lazy_miss_for_shadow_heap_mapping(
 
 	proc.crash.valid = 1;
 	proc.crash.signum = SIGSEGV;
-	proc.crash.cr2 = proc.heap_start;
+	proc.crash.fault_addr = proc.heap_start;
 	proc.crash.frame.vector = 14u;
 	proc.crash.frame.error_code = 0x7u;
 
@@ -834,7 +834,7 @@ static void test_mem_forensics_classifies_cow_write_fault(ktest_case_t *tc)
 
 	proc.crash.valid = 1;
 	proc.crash.signum = SIGSEGV;
-	proc.crash.cr2 = proc.heap_start;
+	proc.crash.fault_addr = proc.heap_start;
 	proc.crash.frame.vector = 14u;
 	proc.crash.frame.error_code = 0x7u;
 
@@ -862,7 +862,7 @@ static void test_mem_forensics_classifies_protection_fault(ktest_case_t *tc)
 
 	proc.crash.valid = 1;
 	proc.crash.signum = SIGSEGV;
-	proc.crash.cr2 = 0x80000000u;
+	proc.crash.fault_addr = 0x80000000u;
 	proc.crash.frame.vector = 14u;
 	proc.crash.frame.error_code = 0x7u;
 
@@ -879,7 +879,7 @@ static void test_mem_forensics_classifies_unknown_fault_vector(ktest_case_t *tc)
 	init_vma_proc(&proc);
 	proc.crash.valid = 1;
 	proc.crash.signum = SIGSEGV;
-	proc.crash.cr2 = proc.heap_start;
+	proc.crash.fault_addr = proc.heap_start;
 	proc.crash.frame.vector = 13u;
 	proc.crash.frame.error_code = 0u;
 
@@ -896,7 +896,7 @@ static void test_mem_forensics_classifies_stack_limit_fault(ktest_case_t *tc)
 	init_vma_proc(&proc);
 	proc.crash.valid = 1;
 	proc.crash.signum = SIGSEGV;
-	proc.crash.cr2 = proc.stack_low_limit - PAGE_SIZE;
+	proc.crash.fault_addr = proc.stack_low_limit - PAGE_SIZE;
 	proc.crash.frame.vector = 14u;
 	proc.crash.frame.error_code = 0x6u;
 	proc.crash.frame.user_esp = proc.stack_low_limit;

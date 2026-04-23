@@ -504,7 +504,7 @@ int process_create_file(process_t *proc,
 		proc->sig_handlers[i] = SIG_DFL;
 	proc->crash.valid = 0;
 	proc->crash.signum = 0;
-	proc->crash.cr2 = 0;
+	proc->crash.fault_addr = 0;
 
 	if (inherit_fds) {
 		/* Inherit the calling process's fd table, bumping pipe refcounts so
@@ -613,7 +613,7 @@ int process_fork(process_t *child_out, process_t *parent)
 	child_out->sig_pending = 0;
 	child_out->crash.valid = 0;
 	child_out->crash.signum = 0;
-	child_out->crash.cr2 = 0;
+	child_out->crash.fault_addr = 0;
 	if (parent->as || parent->files || parent->fs_state ||
 	    parent->sig_actions) {
 		if (proc_resource_clone_for_fork(child_out, parent) != 0) {
@@ -678,7 +678,7 @@ int process_clone(process_t *child_out,
 	    (flags & CLONE_CHILD_CLEARTID) ? child_tidptr : 0;
 	child_out->crash.valid = 0;
 	child_out->crash.signum = 0;
-	child_out->crash.cr2 = 0;
+	child_out->crash.fault_addr = 0;
 	child_out->kstack_bottom = 0;
 	child_out->kstack_top = 0;
 	child_out->arch_state.context = 0;

@@ -18,8 +18,23 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unknown(uint32_t eax)
 	return (uint32_t)-1;
 }
 
+uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
+{
+	uint64_t nr = arch_syscall_number(frame);
+	uint64_t ret = syscall_handler((uint32_t)nr,
+	                               (uint32_t)arch_syscall_arg0(frame),
+	                               (uint32_t)arch_syscall_arg1(frame),
+	                               (uint32_t)arch_syscall_arg2(frame),
+	                               (uint32_t)arch_syscall_arg3(frame),
+	                               (uint32_t)arch_syscall_arg4(frame),
+	                               (uint32_t)arch_syscall_arg5(frame));
+	arch_syscall_set_result(frame, ret);
+	return ret;
+}
+
 /*
- * syscall_handler: dispatches INT 0x80 calls from user space.
+ * syscall_handler: shared syscall switch used by frame-based arch entry points
+ * and kernel tests that call directly with decoded arguments.
  *
  * When this function runs, the CPU is in ring 0 but still using the
  * process's page directory (CR3 was not changed by the interrupt).
