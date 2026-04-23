@@ -266,6 +266,7 @@ uint64_t arch_trap_frame_fault_addr(const arch_trap_frame_t *frame)
 	if (!frame || frame->vector != 14u)
 		return 0u;
 
+	/* x86 keeps the page-fault address in CR2 rather than in the trap frame. */
 	__asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
 	return cr2;
 }

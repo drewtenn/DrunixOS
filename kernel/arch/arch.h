@@ -91,6 +91,12 @@ uint64_t arch_syscall_arg4(const arch_trap_frame_t *frame);
 uint64_t arch_syscall_arg5(const arch_trap_frame_t *frame);
 void arch_syscall_set_result(arch_trap_frame_t *frame, uint64_t value);
 int arch_trap_frame_is_syscall(const arch_trap_frame_t *frame);
+/*
+ * Return the fault address associated with an active synchronous fault frame.
+ * This is not guaranteed to be a replayable property of arbitrary saved trap
+ * frames: some architectures, including x86, source it from fault-state
+ * registers that must be queried during fault handling.
+ */
 uint64_t arch_trap_frame_fault_addr(const arch_trap_frame_t *frame);
 void arch_core_fill_prstatus_regs(uint32_t *gregs,
                                   const arch_trap_frame_t *frame);
