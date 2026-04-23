@@ -8,22 +8,87 @@
 #include "kstring.h"
 #include <stdint.h>
 
-extern void arm64_enter_el0(uintptr_t entry, uintptr_t user_sp);
+typedef struct arm64_kernel_context {
+	uint64_t x19;
+	uint64_t x20;
+	uint64_t x21;
+	uint64_t x22;
+	uint64_t x23;
+	uint64_t x24;
+	uint64_t x25;
+	uint64_t x26;
+	uint64_t x27;
+	uint64_t x28;
+	uint64_t x29;
+	uint64_t x30;
+} arm64_kernel_context_t;
+
+extern void arm64_enter_user_frame(arch_trap_frame_t *frame);
+extern void
+arm64_switch_context(arch_context_t *old_ctx, arch_context_t new_ctx);
+extern void arm64_process_first_resume(void);
 
 uintptr_t g_arm64_exception_frame;
 
+static arch_trap_frame_t *arm64_process_user_frame(process_t *proc)
+{
+	uintptr_t top;
+
+	if (!proc || !proc->kstack_top)
+		return 0;
+
+	top = (uintptr_t)proc->kstack_top - sizeof(arch_trap_frame_t);
+	return (arch_trap_frame_t *)top;
+}
+
+static arm64_kernel_context_t *arm64_process_kernel_context(process_t *proc)
+{
+	uintptr_t top;
+
+	if (!proc || !proc->kstack_top)
+		return 0;
+
+	top = (uintptr_t)proc->kstack_top - sizeof(arch_trap_frame_t) -
+	      sizeof(arm64_kernel_context_t);
+	return (arm64_kernel_context_t *)top;
+}
+
+static void arm64_build_launch_context(process_t *proc)
+{
+	arch_trap_frame_t *frame;
+	arm64_kernel_context_t *ctx;
+
+	if (!proc)
+		return;
+
+	frame = arm64_process_user_frame(proc);
+	ctx = arm64_process_kernel_context(proc);
+	if (!frame || !ctx)
+		return;
+
+	k_memset(frame, 0, sizeof(*frame));
+	frame->sp_el0 = (uint64_t)proc->user_stack;
+	frame->elr_el1 = (uint64_t)proc->entry;
+	frame->spsr_el1 = 0u;
+
+	k_memset(ctx, 0, sizeof(*ctx));
+	ctx->x19 = (uint64_t)(uintptr_t)frame;
+	ctx->x30 = (uint64_t)(uintptr_t)arm64_process_first_resume;
+	proc->arch_state.context = (uintptr_t)ctx;
+}
+
 void arch_process_build_initial_frame(process_t *proc)
 {
-	(void)proc;
+	arm64_build_launch_context(proc);
 }
 
 void arch_process_build_exec_frame(process_t *proc,
                                    arch_aspace_t old_aspace,
                                    uintptr_t old_kstack_bottom)
 {
-	(void)proc;
 	(void)old_aspace;
 	(void)old_kstack_bottom;
+	arm64_build_launch_context(proc);
 }
 
 int arch_process_clone_frame(process_t *child_out,
@@ -46,9 +111,10 @@ void arch_process_launch(process_t *proc)
 	if (!proc)
 		return;
 
-	arch_process_restore_tls(proc);
-	arch_aspace_switch((arch_aspace_t)proc->pd_phys);
-	arm64_enter_el0((uintptr_t)proc->entry, (uintptr_t)proc->user_stack);
+	arch_context_prepare(proc);
+	arch_context_switch((arch_context_t *)0,
+	                    (arch_context_t)proc->arch_state.context,
+	                    (arch_aspace_t)proc->pd_phys);
 	for (;;)
 		__asm__ volatile("wfi");
 }
@@ -74,9 +140,8 @@ void arch_context_switch(arch_context_t *old_ctx,
                          arch_context_t new_ctx,
                          arch_aspace_t new_aspace)
 {
-	(void)old_ctx;
-	(void)new_ctx;
 	arch_aspace_switch(new_aspace);
+	arm64_switch_context(old_ctx, new_ctx);
 }
 
 void arch_idle_wait(void)

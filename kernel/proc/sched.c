@@ -643,13 +643,12 @@ void schedule(void)
 
 	/* Swap kernel stacks + page directory.
      * For zombies, pass NULL to skip saving (their stack is abandoned). */
-	uint32_t *save_ptr =
+	arch_context_t *save_ptr =
 	    (prev && prev->state != PROC_ZOMBIE)
-	        ? (uint32_t *)&prev->arch_state.context
-	        : (uint32_t *)0;
+	        ? &prev->arch_state.context
+	        : (arch_context_t *)0;
 	arch_context_switch(
-	    (arch_context_t *)save_ptr, (arch_context_t)next->arch_state.context,
-	    next->pd_phys);
+	    save_ptr, (arch_context_t)next->arch_state.context, next->pd_phys);
 	/* Execution resumes here when this process is rescheduled. */
 }
 

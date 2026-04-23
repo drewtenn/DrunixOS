@@ -19,8 +19,8 @@ static volatile uint32_t g_spurious_irq_count;
 extern void sched_record_user_fault(const arch_trap_frame_t *frame,
                                     uint64_t fault_addr,
                                     int signum) __attribute__((weak));
+extern void sched_mark_signaled(int sig, int dumped_core) __attribute__((weak));
 extern void schedule(void) __attribute__((weak));
-extern uint32_t sched_signal_check(uint32_t frame_esp) __attribute__((weak));
 extern uint64_t
     syscall_dispatch_from_frame(arch_trap_frame_t *frame) __attribute__((weak));
 
@@ -40,37 +40,35 @@ static void uart_put_hex64(const char *label, uint64_t value)
 	uart_puts(line);
 }
 
+static void arm64_report_kernel_sync_exception(const arch_trap_frame_t *frame)
+{
+	uart_puts("sync exception\n");
+	uart_put_hex64("ESR_EL1", frame ? frame->esr_el1 : 0u);
+	uart_put_hex64("ELR_EL1", frame ? frame->elr_el1 : 0u);
+	uart_put_hex64("FAR_EL1", frame ? frame->far_el1 : 0u);
+	arm64_halt_forever();
+}
+
 void arm64_sync_handler(arch_trap_frame_t *frame)
 {
-	uint64_t esr = frame ? frame->esr_el1 : 0u;
-	uint64_t elr = frame ? frame->elr_el1 : 0u;
-	uint64_t far = frame ? frame->far_el1 : 0u;
-
 	if (frame && arch_irq_frame_is_user((uintptr_t)frame)) {
 		if (arch_trap_frame_is_syscall(frame)) {
-			if (syscall_dispatch_from_frame)
-				syscall_dispatch_from_frame(frame);
-			if (sched_signal_check)
-				(void)sched_signal_check((uint32_t)(uintptr_t)frame);
+			if (!syscall_dispatch_from_frame)
+				arm64_report_kernel_sync_exception(frame);
+			(void)syscall_dispatch_from_frame(frame);
 			return;
 		}
 
-		if (sched_record_user_fault) {
-			sched_record_user_fault(
-			    frame, arch_trap_frame_fault_addr(frame), SIGSEGV);
-		}
-		if (schedule)
-			schedule();
-		if (sched_signal_check)
-			(void)sched_signal_check((uint32_t)(uintptr_t)frame);
-		return;
+		if (!sched_record_user_fault || !sched_mark_signaled || !schedule)
+			arm64_report_kernel_sync_exception(frame);
+		sched_record_user_fault(
+		    frame, arch_trap_frame_fault_addr(frame), SIGSEGV);
+		sched_mark_signaled(SIGSEGV, 0);
+		schedule();
+		arm64_halt_forever();
 	}
 
-	uart_puts("sync exception\n");
-	uart_put_hex64("ESR_EL1", esr);
-	uart_put_hex64("ELR_EL1", elr);
-	uart_put_hex64("FAR_EL1", far);
-	arm64_halt_forever();
+	arm64_report_kernel_sync_exception(frame);
 }
 
 void arm64_irq_handler(arch_trap_frame_t *frame)
