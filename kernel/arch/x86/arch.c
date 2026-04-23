@@ -8,11 +8,28 @@
 #include "idt.h"
 #include "io.h"
 #include "irq.h"
+#include "mm/paging.h"
 #include "pit.h"
 
 #define QEMU_DEBUG_PORT 0xE9
 
 extern void print_bytes(const char *buf, int n);
+
+static uint32_t arch_mm_to_paging_flags(uint32_t flags)
+{
+	uint32_t paging_flags = 0;
+
+	if (flags & ARCH_MM_MAP_PRESENT)
+		paging_flags |= PG_PRESENT;
+	if ((flags & ARCH_MM_MAP_WRITE) && (flags & ARCH_MM_MAP_COW) == 0)
+		paging_flags |= PG_WRITABLE;
+	if (flags & ARCH_MM_MAP_USER)
+		paging_flags |= PG_USER;
+	if (flags & ARCH_MM_MAP_COW)
+		paging_flags |= PG_COW;
+
+	return paging_flags;
+}
 
 uint32_t arch_time_unix_seconds(void)
 {
@@ -87,4 +104,93 @@ void arch_timer_start(uint32_t hz)
 void arch_interrupts_enable(void)
 {
 	interrupts_enable();
+}
+
+void arch_mm_init(void)
+{
+	paging_init();
+}
+
+arch_aspace_t arch_aspace_kernel(void)
+{
+	return (arch_aspace_t)PAGE_DIR_ADDR;
+}
+
+arch_aspace_t arch_aspace_create(void)
+{
+	return (arch_aspace_t)paging_create_user_space();
+}
+
+arch_aspace_t arch_aspace_clone(arch_aspace_t src)
+{
+	return (arch_aspace_t)paging_clone_user_space((uint32_t)src);
+}
+
+void arch_aspace_switch(arch_aspace_t aspace)
+{
+	paging_switch_directory((uint32_t)aspace);
+}
+
+void arch_aspace_destroy(arch_aspace_t aspace)
+{
+	paging_destroy_user_space((uint32_t)aspace);
+}
+
+int arch_mm_map(arch_aspace_t aspace, uintptr_t virt, uint64_t phys, uint32_t flags)
+{
+	if (phys > UINT32_MAX)
+		return -1;
+
+	return paging_map_page((uint32_t)aspace,
+	                       (uint32_t)virt,
+	                       (uint32_t)phys,
+	                       arch_mm_to_paging_flags(flags));
+}
+
+int arch_mm_unmap(arch_aspace_t aspace, uintptr_t virt)
+{
+	return paging_unmap_page((uint32_t)aspace, (uint32_t)virt);
+}
+
+int arch_mm_query(arch_aspace_t aspace, uintptr_t virt, arch_mm_mapping_t *out)
+{
+	return paging_query_page((uint32_t)aspace, (uint32_t)virt, out);
+}
+
+int arch_mm_update(arch_aspace_t aspace,
+                   uintptr_t virt,
+                   uint32_t clear_flags,
+                   uint32_t set_flags)
+{
+	return paging_update_page(
+	    (uint32_t)aspace, (uint32_t)virt, clear_flags, set_flags);
+}
+
+void arch_mm_invalidate_page(arch_aspace_t aspace, uintptr_t virt)
+{
+	(void)aspace;
+	paging_invalidate_page((uint32_t)virt);
+}
+
+void *arch_page_temp_map(uint64_t phys_addr)
+{
+	if (phys_addr > UINT32_MAX)
+		return 0;
+
+	return paging_temp_map((uint32_t)phys_addr);
+}
+
+void arch_page_temp_unmap(void *ptr)
+{
+	paging_temp_unmap(ptr);
+}
+
+uint32_t arch_mm_present_begin(void)
+{
+	return paging_present_begin();
+}
+
+void arch_mm_present_end(uint32_t state)
+{
+	paging_present_end(state);
 }

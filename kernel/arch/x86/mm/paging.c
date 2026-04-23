@@ -24,10 +24,35 @@
 #define PAGING_PAT_WC_SLOT 4
 
 static int g_pat_wc_slot_ready;
+static int g_paging_present_depth;
+static uint32_t g_paging_present_saved_cr3;
+
+static uint32_t paging_read_cr3(void)
+{
+	uint32_t cr3;
+
+	__asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+	return cr3;
+}
 
 static void paging_invlpg(uint32_t virt)
 {
 	__asm__ volatile("invlpg (%0)" ::"r"(virt) : "memory");
+}
+
+static int paging_lookup_slot(uint32_t pd_phys, uint32_t virt, uint32_t **pte_out)
+{
+	uint32_t *pd = (uint32_t *)pd_phys;
+	uint32_t pdi = virt >> 22;
+	uint32_t pti = (virt >> 12) & 0x3FFu;
+	uint32_t *pt;
+
+	if (!(pd[pdi] & PG_PRESENT))
+		return -1;
+
+	pt = (uint32_t *)paging_entry_addr(pd[pdi]);
+	*pte_out = &pt[pti];
+	return 0;
 }
 
 static int paging_cpu_supports_pat(void)
@@ -231,6 +256,36 @@ uint32_t paging_create_user_space(void)
 	return pd_phys;
 }
 
+void paging_destroy_user_space(uint32_t pd_phys)
+{
+	uint32_t *pd;
+
+	if (pd_phys == 0 || pd_phys == PAGE_DIR_ADDR)
+		return;
+
+	pd = (uint32_t *)pd_phys;
+	for (uint32_t pdi = 0; pdi < 1024; pdi++) {
+		uint32_t *pt;
+
+		if ((pd[pdi] & (PG_PRESENT | PG_USER)) != (PG_PRESENT | PG_USER))
+			continue;
+
+		pt = (uint32_t *)paging_entry_addr(pd[pdi]);
+		for (uint32_t pti = 0; pti < 1024; pti++) {
+			if ((pt[pti] & (PG_PRESENT | PG_USER)) != (PG_PRESENT | PG_USER))
+				continue;
+
+			pmm_decref(paging_entry_addr(pt[pti]));
+			pt[pti] = 0;
+		}
+
+		pmm_free_page((uint32_t)pt);
+		pd[pdi] = 0;
+	}
+
+	pmm_free_page(pd_phys);
+}
+
 int paging_map_page(uint32_t pd_phys,
                     uint32_t virt,
                     uint32_t phys,
@@ -288,21 +343,130 @@ int paging_map_page(uint32_t pd_phys,
 	return 0;
 }
 
-int paging_walk(uint32_t pd_phys, uint32_t virt, uint32_t **pte_out)
+int paging_unmap_page(uint32_t pd_phys, uint32_t virt)
 {
 	uint32_t *pd = (uint32_t *)pd_phys;
 	uint32_t pdi = virt >> 22;
-	uint32_t pti = (virt >> 12) & 0x3FF;
+	uint32_t *pte;
 
-	if (!(pd[pdi] & PG_PRESENT))
+	if (paging_lookup_slot(pd_phys, virt, &pte) != 0 || (*pte & PG_PRESENT) == 0)
 		return -1;
 
-	uint32_t *pt = (uint32_t *)(pd[pdi] & ~0xFFFu);
-	if (!(pt[pti] & PG_PRESENT))
-		return -1;
+	if ((pd[pdi] & PG_USER) && (*pte & PG_USER))
+		pmm_decref(paging_entry_addr(*pte));
 
-	*pte_out = &pt[pti];
+	*pte = 0;
+	paging_invlpg(virt);
 	return 0;
+}
+
+int paging_walk(uint32_t pd_phys, uint32_t virt, uint32_t **pte_out)
+{
+	if (paging_lookup_slot(pd_phys, virt, pte_out) != 0)
+		return -1;
+	if ((**pte_out & PG_PRESENT) == 0)
+		return -1;
+	return 0;
+}
+
+int paging_query_page(uint32_t pd_phys, uint32_t virt, arch_mm_mapping_t *out)
+{
+	uint32_t *pte;
+
+	if (!out || paging_walk(pd_phys, virt, &pte) != 0)
+		return -1;
+
+	out->phys_addr = paging_entry_addr(*pte);
+	out->flags = ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ;
+	if (*pte & PG_WRITABLE)
+		out->flags |= ARCH_MM_MAP_WRITE;
+	if (*pte & PG_USER)
+		out->flags |= ARCH_MM_MAP_USER;
+	if (*pte & PG_COW)
+		out->flags |= ARCH_MM_MAP_COW;
+
+	return 0;
+}
+
+int paging_update_page(uint32_t pd_phys,
+                       uint32_t virt,
+                       uint32_t clear_flags,
+                       uint32_t set_flags)
+{
+	uint32_t *pte;
+	uint32_t entry;
+	uint32_t flags;
+
+	if (paging_walk(pd_phys, virt, &pte) != 0)
+		return -1;
+
+	entry = *pte;
+	flags = paging_entry_flags(entry);
+
+	if (clear_flags & ARCH_MM_MAP_PRESENT)
+		flags &= ~(uint32_t)PG_PRESENT;
+	if (clear_flags & ARCH_MM_MAP_WRITE)
+		flags &= ~(uint32_t)PG_WRITABLE;
+	if (clear_flags & ARCH_MM_MAP_USER)
+		flags &= ~(uint32_t)PG_USER;
+	if (clear_flags & ARCH_MM_MAP_COW)
+		flags &= ~(uint32_t)PG_COW;
+
+	if (set_flags & ARCH_MM_MAP_PRESENT)
+		flags |= PG_PRESENT;
+	if (set_flags & ARCH_MM_MAP_USER)
+		flags |= PG_USER;
+	if (set_flags & ARCH_MM_MAP_COW) {
+		flags |= PG_COW;
+		flags &= ~(uint32_t)PG_WRITABLE;
+	} else if (set_flags & ARCH_MM_MAP_WRITE) {
+		flags |= PG_WRITABLE;
+	}
+
+	*pte = paging_entry_build(paging_entry_addr(entry), flags);
+	paging_invlpg(virt);
+	return 0;
+}
+
+void paging_invalidate_page(uint32_t virt)
+{
+	paging_invlpg(virt);
+}
+
+void *paging_temp_map(uint32_t phys_addr)
+{
+	return (void *)(uintptr_t)phys_addr;
+}
+
+void paging_temp_unmap(void *ptr)
+{
+	(void)ptr;
+}
+
+uint32_t paging_present_begin(void)
+{
+	uint32_t flags;
+
+	__asm__ volatile("pushf; pop %0; cli" : "=r"(flags) : : "memory");
+	if (g_paging_present_depth == 0) {
+		g_paging_present_saved_cr3 = paging_read_cr3();
+		if (g_paging_present_saved_cr3 != PAGE_DIR_ADDR)
+			paging_load_cr3(PAGE_DIR_ADDR);
+	}
+	g_paging_present_depth++;
+	return flags;
+}
+
+void paging_present_end(uint32_t flags)
+{
+	if (g_paging_present_depth > 0)
+		g_paging_present_depth--;
+	if (g_paging_present_depth == 0 &&
+	    g_paging_present_saved_cr3 != 0 &&
+	    g_paging_present_saved_cr3 != PAGE_DIR_ADDR)
+		paging_load_cr3(g_paging_present_saved_cr3);
+	if (flags & (1u << 9))
+		__asm__ volatile("sti" ::: "memory");
 }
 
 void paging_switch_directory(uint32_t pd_phys)

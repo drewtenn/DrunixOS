@@ -3,6 +3,7 @@
 #ifndef PAGING_H
 #define PAGING_H
 
+#include "arch.h"
 #include <stdint.h>
 
 /* Physical addresses for paging structures */
@@ -91,6 +92,7 @@ extern void paging_enable(void);
  * Returns the physical address of the new page directory, or 0 on failure.
  */
 uint32_t paging_create_user_space(void);
+void paging_destroy_user_space(uint32_t pd_phys);
 
 /*
  * paging_map_page: install a single page mapping in an arbitrary page directory.
@@ -107,6 +109,7 @@ int paging_map_page(uint32_t pd_phys,
                     uint32_t virt,
                     uint32_t phys,
                     uint32_t flags);
+int paging_unmap_page(uint32_t pd_phys, uint32_t virt);
 
 /*
  * paging_walk: locate the live PTE slot for a virtual address.
@@ -115,6 +118,16 @@ int paging_map_page(uint32_t pd_phys,
  * Returns -1 if the PDE or PTE is not present.
  */
 int paging_walk(uint32_t pd_phys, uint32_t virt, uint32_t **pte_out);
+int paging_query_page(uint32_t pd_phys, uint32_t virt, arch_mm_mapping_t *out);
+int paging_update_page(uint32_t pd_phys,
+                       uint32_t virt,
+                       uint32_t clear_flags,
+                       uint32_t set_flags);
+void paging_invalidate_page(uint32_t virt);
+void *paging_temp_map(uint32_t phys_addr);
+void paging_temp_unmap(void *ptr);
+uint32_t paging_present_begin(void);
+void paging_present_end(uint32_t flags);
 
 /*
  * paging_clone_user_space: copy-on-write clone of a process's user space.
