@@ -1,5 +1,5 @@
 #include "mouse.h"
-#include "irq.h"
+#include "arch.h"
 #include "io.h"
 
 #define PS2_DATA_PORT 0x60
@@ -321,9 +321,9 @@ int mouse_init(void)
 	uint8_t config;
 
 	mouse_stream_reset(&g_stream);
-	irq_register(12, mouse_handler);
-	irq_unmask(2);
-	irq_unmask(12);
+	arch_irq_register(12, mouse_handler);
+	arch_irq_unmask(2);
+	arch_irq_unmask(12);
 
 	if (ps2_write_command(0xA7) != 0)
 		return -1;

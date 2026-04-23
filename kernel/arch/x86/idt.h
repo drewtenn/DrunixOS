@@ -10,8 +10,8 @@
 void idt_init_early(void);
 
 /*
- * interrupts_enable: finish hardware interrupt bring-up by remapping the PIC,
- * programming the PIT, and executing STI.
+ * x86-private final interrupt-enable hook. arch.c calls this after the shared
+ * boundary has installed the timer callback and early device handlers.
  */
 void interrupts_enable(void);
 
