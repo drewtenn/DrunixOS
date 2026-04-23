@@ -868,11 +868,13 @@ void sched_record_user_fault(const arch_trap_frame_t *frame,
 	klog_uint("FAULT", "pid", g_current->pid);
 	klog_uint("FAULT", "signum", (uint32_t)signum);
 	klog_hex("FAULT", "eip", frame ? arch_trap_frame_ip(frame) : 0);
-	klog_hex("FAULT", "fault_addr", (uint32_t)fault_addr);
+	if ((fault_addr >> 32) != 0)
+		klog_uint("FAULT", "fault_addr_hi", (uint32_t)(fault_addr >> 32));
+	klog_hex("FAULT", "fault_addr_lo", (uint32_t)fault_addr);
 
 	g_current->crash.valid = 1;
 	g_current->crash.signum = (uint32_t)signum;
-	g_current->crash.fault_addr = (uint32_t)fault_addr;
+	g_current->crash.fault_addr = fault_addr;
 	k_memcpy(&g_current->crash.frame, frame, sizeof(g_current->crash.frame));
 
 	g_current->sig_pending |= (1u << signum);
