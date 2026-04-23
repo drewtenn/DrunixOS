@@ -119,6 +119,11 @@ int paging_unmap_page(uint32_t pd_phys, uint32_t virt);
  */
 int paging_walk(uint32_t pd_phys, uint32_t virt, uint32_t **pte_out);
 int paging_query_page(uint32_t pd_phys, uint32_t virt, arch_mm_mapping_t *out);
+/*
+ * Phase 3 scaffold limitation: this helper only supports WRITE/COW changes.
+ * PRESENT/USER transitions must keep using x86-specific map/unmap flows until
+ * shared callers migrate and the backend grows stronger semantics.
+ */
 int paging_update_page(uint32_t pd_phys,
                        uint32_t virt,
                        uint32_t clear_flags,

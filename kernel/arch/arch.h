@@ -40,6 +40,11 @@ void arch_aspace_destroy(arch_aspace_t aspace);
 int arch_mm_map(arch_aspace_t aspace, uintptr_t virt, uint64_t phys, uint32_t flags);
 int arch_mm_unmap(arch_aspace_t aspace, uintptr_t virt);
 int arch_mm_query(arch_aspace_t aspace, uintptr_t virt, arch_mm_mapping_t *out);
+/*
+ * Scaffold limitation for Phase 3: arch_mm_update() only guarantees WRITE/COW
+ * permission changes. PRESENT/USER transitions still require explicit
+ * map/unmap paths on x86 until shared callers migrate behind the boundary.
+ */
 int arch_mm_update(arch_aspace_t aspace,
                    uintptr_t virt,
                    uint32_t clear_flags,

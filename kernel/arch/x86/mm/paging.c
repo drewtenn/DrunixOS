@@ -396,26 +396,25 @@ int paging_update_page(uint32_t pd_phys,
 	uint32_t *pte;
 	uint32_t entry;
 	uint32_t flags;
+	uint32_t unsupported;
 
 	if (paging_walk(pd_phys, virt, &pte) != 0)
+		return -1;
+
+	unsupported = clear_flags | set_flags;
+	if (unsupported &
+	    (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ | ARCH_MM_MAP_EXEC |
+	     ARCH_MM_MAP_USER))
 		return -1;
 
 	entry = *pte;
 	flags = paging_entry_flags(entry);
 
-	if (clear_flags & ARCH_MM_MAP_PRESENT)
-		flags &= ~(uint32_t)PG_PRESENT;
 	if (clear_flags & ARCH_MM_MAP_WRITE)
 		flags &= ~(uint32_t)PG_WRITABLE;
-	if (clear_flags & ARCH_MM_MAP_USER)
-		flags &= ~(uint32_t)PG_USER;
 	if (clear_flags & ARCH_MM_MAP_COW)
 		flags &= ~(uint32_t)PG_COW;
 
-	if (set_flags & ARCH_MM_MAP_PRESENT)
-		flags |= PG_PRESENT;
-	if (set_flags & ARCH_MM_MAP_USER)
-		flags |= PG_USER;
 	if (set_flags & ARCH_MM_MAP_COW) {
 		flags |= PG_COW;
 		flags &= ~(uint32_t)PG_WRITABLE;
