@@ -14,8 +14,7 @@ typedef struct {
 } pmm_range_t;
 
 typedef struct {
-	uint8_t bitmap[PMM_MAX_PAGES / 8];
-	uint8_t refcount[PMM_MAX_PAGES];
+	uint8_t opaque[(PMM_MAX_PAGES / 8u) + PMM_MAX_PAGES];
 } pmm_core_state_t;
 
 void pmm_core_init(pmm_core_state_t *state,
@@ -23,6 +22,8 @@ void pmm_core_init(pmm_core_state_t *state,
                    uint32_t usable_count,
                    const pmm_range_t *reserved,
                    uint32_t reserved_count);
+void pmm_core_mark_used(pmm_core_state_t *state, uint32_t base, uint32_t length);
+void pmm_core_mark_free(pmm_core_state_t *state, uint32_t base, uint32_t length);
 uint32_t pmm_core_alloc_page(pmm_core_state_t *state);
 void pmm_core_free_page(pmm_core_state_t *state, uint32_t phys_addr);
 void pmm_core_incref(pmm_core_state_t *state, uint32_t phys_addr);

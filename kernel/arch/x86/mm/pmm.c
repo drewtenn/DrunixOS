@@ -6,8 +6,6 @@
 #include "pmm.h"
 #include <stdint.h>
 
-#define X86_PMM_MAX_RANGES 32u
-
 /* Linker-provided symbols: first and last byte of the kernel image */
 extern uint32_t _kernel_start;
 extern uint32_t _kernel_end;
@@ -49,27 +47,10 @@ static int pmm_multiboot_framebuffer_range(const multiboot_info_t *mbi,
 	return 0;
 }
 
-static void x86_pmm_add_range(pmm_range_t *ranges,
-                              uint32_t *count,
-                              uint32_t max_count,
-                              uint32_t base,
-                              uint32_t length)
-{
-	if (!ranges || !count || length == 0 || *count >= max_count)
-		return;
-
-	ranges[*count].base = base;
-	ranges[*count].length = length;
-	(*count)++;
-}
-
-static void x86_pmm_collect_usable_ranges(const multiboot_info_t *mbi,
-                                          pmm_range_t *usable,
-                                          uint32_t *usable_count)
+static void x86_pmm_apply_usable_ranges(pmm_core_state_t *state,
+                                        const multiboot_info_t *mbi)
 {
 	uint32_t have_mmap = mbi && (mbi->flags & MULTIBOOT_FLAG_MMAP);
-
-	*usable_count = 0;
 
 	if (have_mmap) {
 		multiboot_mmap_entry_t *entry =
@@ -77,25 +58,19 @@ static void x86_pmm_collect_usable_ranges(const multiboot_info_t *mbi,
 		uint32_t map_end = mbi->mmap_addr + mbi->mmap_length;
 
 		while ((uint32_t)entry < map_end) {
-			if (entry->type == 1u) {
-				x86_pmm_add_range(usable,
-				                  usable_count,
-				                  X86_PMM_MAX_RANGES,
-				                  (uint32_t)entry->addr,
-				                  (uint32_t)entry->len);
-			}
+			if (entry->type == 1u)
+				pmm_core_mark_free(
+				    state, (uint32_t)entry->addr, (uint32_t)entry->len);
 			entry =
 			    (multiboot_mmap_entry_t *)((uint32_t)entry + entry->size + 4u);
 		}
 	} else {
-		x86_pmm_add_range(
-		    usable, usable_count, X86_PMM_MAX_RANGES, 0x00100000u, 0x07F00000u);
+		pmm_core_mark_free(state, 0x00100000u, 0x07F00000u);
 	}
 }
 
-static void x86_pmm_collect_reserved_ranges(const multiboot_info_t *mbi,
-                                            pmm_range_t *reserved,
-                                            uint32_t *reserved_count)
+static void x86_pmm_apply_reserved_ranges(pmm_core_state_t *state,
+                                          const multiboot_info_t *mbi)
 {
 	uint32_t kstart = (uint32_t)&_kernel_start;
 	uint32_t kend = (uint32_t)&_kernel_end;
@@ -103,65 +78,31 @@ static void x86_pmm_collect_reserved_ranges(const multiboot_info_t *mbi,
 	uint32_t fb_base;
 	uint32_t fb_len;
 
-	*reserved_count = 0;
+	pmm_core_mark_used(state, 0x00000000u, 0x00100000u);
+	pmm_core_mark_used(state, kstart, kend_page * PAGE_SIZE - kstart);
+	pmm_core_mark_used(state, 0x00011000u, 0x00021000u);
+	pmm_core_mark_used(state, 0x00032000u, 0x000CE000u);
+	pmm_core_mark_used(state, 0x000A0000u, 0x00020000u);
 
-	x86_pmm_add_range(
-	    reserved, reserved_count, X86_PMM_MAX_RANGES, 0x00000000u, 0x00100000u);
-	x86_pmm_add_range(reserved,
-	                  reserved_count,
-	                  X86_PMM_MAX_RANGES,
-	                  kstart,
-	                  kend_page * PAGE_SIZE - kstart);
-	x86_pmm_add_range(
-	    reserved, reserved_count, X86_PMM_MAX_RANGES, 0x00011000u, 0x00021000u);
-	x86_pmm_add_range(
-	    reserved, reserved_count, X86_PMM_MAX_RANGES, 0x00032000u, 0x000CE000u);
-	x86_pmm_add_range(
-	    reserved, reserved_count, X86_PMM_MAX_RANGES, 0x000A0000u, 0x00020000u);
-
-	if (pmm_multiboot_framebuffer_range(mbi, &fb_base, &fb_len) == 0) {
-		x86_pmm_add_range(
-		    reserved, reserved_count, X86_PMM_MAX_RANGES, fb_base, fb_len);
-	}
+	if (pmm_multiboot_framebuffer_range(mbi, &fb_base, &fb_len) == 0)
+		pmm_core_mark_used(state, fb_base, fb_len);
 }
 
 void pmm_mark_used(uint32_t base, uint32_t length)
 {
-	uint32_t page = base / PAGE_SIZE;
-	uint32_t end = (uint32_t)(((uint64_t)base + (uint64_t)length + PAGE_SIZE - 1u) /
-	                          PAGE_SIZE);
-
-	for (; page < end && page < PMM_MAX_PAGES; page++)
-		g_pmm.refcount[page] = 0xFFu;
-
-	for (page = base / PAGE_SIZE;
-	     page < end && page < PMM_MAX_PAGES;
-	     page++)
-		g_pmm.bitmap[page / 8] |= (uint8_t)(1u << (page % 8));
+	pmm_core_mark_used(&g_pmm, base, length);
 }
 
 void pmm_mark_free(uint32_t base, uint32_t length)
 {
-	uint32_t page = base / PAGE_SIZE;
-	uint32_t end = (uint32_t)(((uint64_t)base + (uint64_t)length + PAGE_SIZE - 1u) /
-	                          PAGE_SIZE);
-
-	for (; page < end && page < PMM_MAX_PAGES; page++) {
-		g_pmm.bitmap[page / 8] &= (uint8_t)~(1u << (page % 8));
-		g_pmm.refcount[page] = 0u;
-	}
+	pmm_core_mark_free(&g_pmm, base, length);
 }
 
 void pmm_init(multiboot_info_t *mbi)
 {
-	pmm_range_t usable[X86_PMM_MAX_RANGES];
-	pmm_range_t reserved[X86_PMM_MAX_RANGES];
-	uint32_t usable_count;
-	uint32_t reserved_count;
-
-	x86_pmm_collect_usable_ranges(mbi, usable, &usable_count);
-	x86_pmm_collect_reserved_ranges(mbi, reserved, &reserved_count);
-	pmm_core_init(&g_pmm, usable, usable_count, reserved, reserved_count);
+	pmm_core_init(&g_pmm, 0, 0, 0, 0);
+	x86_pmm_apply_usable_ranges(&g_pmm, mbi);
+	x86_pmm_apply_reserved_ranges(&g_pmm, mbi);
 }
 
 #ifdef KTEST_ENABLED

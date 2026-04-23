@@ -9,26 +9,12 @@ static pmm_core_state_t g_pmm;
 
 void pmm_mark_used(uint32_t base, uint32_t length)
 {
-	uint32_t page = base / PAGE_SIZE;
-	uint32_t end = (uint32_t)(((uint64_t)base + (uint64_t)length + PAGE_SIZE - 1u) /
-	                          PAGE_SIZE);
-
-	for (; page < end && page < PMM_MAX_PAGES; page++) {
-		g_pmm.bitmap[page / 8] |= (uint8_t)(1u << (page % 8));
-		g_pmm.refcount[page] = 0xFFu;
-	}
+	pmm_core_mark_used(&g_pmm, base, length);
 }
 
 void pmm_mark_free(uint32_t base, uint32_t length)
 {
-	uint32_t page = base / PAGE_SIZE;
-	uint32_t end = (uint32_t)(((uint64_t)base + (uint64_t)length + PAGE_SIZE - 1u) /
-	                          PAGE_SIZE);
-
-	for (; page < end && page < PMM_MAX_PAGES; page++) {
-		g_pmm.bitmap[page / 8] &= (uint8_t)~(1u << (page % 8));
-		g_pmm.refcount[page] = 0u;
-	}
+	pmm_core_mark_free(&g_pmm, base, length);
 }
 
 void pmm_init(void)

@@ -18,10 +18,29 @@ static void test_pmm_core_respects_reserved_ranges(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc, pmm_core_refcount(&state, 0x00100000u), 255u);
 	KTEST_EXPECT_EQ(tc, pmm_core_refcount(&state, 0x00200000u), 255u);
 	KTEST_EXPECT_TRUE(tc, pmm_core_free_page_count(&state) > 0u);
+	KTEST_EXPECT_EQ(tc, pmm_core_alloc_page(&state), 0x00102000u);
+}
+
+static void test_pmm_core_mark_helpers_update_accounting(ktest_case_t *tc)
+{
+	static pmm_core_state_t state;
+
+	pmm_core_init(&state, 0, 0, 0, 0);
+	KTEST_EXPECT_EQ(tc, pmm_core_free_page_count(&state), 0u);
+
+	pmm_core_mark_free(&state, 0x00300000u, PAGE_SIZE * 2u);
+	KTEST_EXPECT_EQ(tc, pmm_core_free_page_count(&state), 2u);
+	KTEST_EXPECT_EQ(tc, pmm_core_alloc_page(&state), 0x00300000u);
+	KTEST_EXPECT_EQ(tc, pmm_core_refcount(&state, 0x00300000u), 1u);
+
+	pmm_core_mark_used(&state, 0x00301000u, PAGE_SIZE);
+	KTEST_EXPECT_EQ(tc, pmm_core_refcount(&state, 0x00301000u), 255u);
+	KTEST_EXPECT_EQ(tc, pmm_core_free_page_count(&state), 0u);
 }
 
 static ktest_case_t cases[] = {
 	KTEST_CASE(test_pmm_core_respects_reserved_ranges),
+	KTEST_CASE(test_pmm_core_mark_helpers_update_accounting),
 };
 
 static ktest_suite_t suite = KTEST_SUITE("pmm_core", cases);
