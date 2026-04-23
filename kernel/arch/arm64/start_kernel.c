@@ -12,6 +12,7 @@
 #include <stdint.h>
 
 extern char vectors_el1[];
+extern int arm64_user_smoke_boot(void);
 
 static volatile uint64_t g_heartbeat_ticks;
 static console_terminal_t g_console_terminal;
@@ -61,6 +62,17 @@ static uint32_t arm64_terminal_free_pages(void *ctx)
 	return pmm_free_page_count();
 }
 
+void arm64_console_loop(void)
+{
+	for (;;) {
+		char ch;
+
+		__asm__ volatile("wfi");
+		while (uart_try_getc(&ch))
+			console_terminal_handle_char(&g_console_terminal, ch);
+	}
+}
+
 void arm64_start_kernel(void)
 {
 	char line[64];
@@ -98,12 +110,7 @@ void arm64_start_kernel(void)
 	arch_interrupts_enable();
 	console_terminal_init(&g_console_terminal, &host);
 	console_terminal_start(&g_console_terminal);
-
-	for (;;) {
-		char ch;
-
-		__asm__ volatile("wfi");
-		while (uart_try_getc(&ch))
-			console_terminal_handle_char(&g_console_terminal, ch);
-	}
+	if (arm64_user_smoke_boot() != 0)
+		uart_puts("ARM64 user smoke: boot failed\n");
+	arm64_console_loop();
 }

@@ -23,6 +23,7 @@ extern void sched_mark_signaled(int sig, int dumped_core) __attribute__((weak));
 extern void schedule(void) __attribute__((weak));
 extern uint64_t
     syscall_dispatch_from_frame(arch_trap_frame_t *frame) __attribute__((weak));
+extern uint64_t arm64_userspace_syscall_dispatch(arch_trap_frame_t *frame);
 
 static void arm64_halt_forever(void)
 {
@@ -53,9 +54,10 @@ void arm64_sync_handler(arch_trap_frame_t *frame)
 {
 	if (frame && arch_irq_frame_is_user((uintptr_t)frame)) {
 		if (arch_trap_frame_is_syscall(frame)) {
-			if (!syscall_dispatch_from_frame)
-				arm64_report_kernel_sync_exception(frame);
-			(void)syscall_dispatch_from_frame(frame);
+			if (syscall_dispatch_from_frame)
+				(void)syscall_dispatch_from_frame(frame);
+			else
+				(void)arm64_userspace_syscall_dispatch(frame);
 			return;
 		}
 
