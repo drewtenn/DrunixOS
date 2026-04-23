@@ -3,7 +3,7 @@
  * kernel.c — top-level kernel bootstrap plus low-level console and port I/O helpers.
  */
 
-#include "pmm.h" /* also defines multiboot_info_t */
+#include "pmm.h" /* x86 PMM API plus multiboot_info_t */
 #include "paging.h"
 #include "kheap.h"
 #include "ata.h"

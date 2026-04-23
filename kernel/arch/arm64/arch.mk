@@ -12,11 +12,16 @@ ARM_KOBJS := kernel/arch/arm64/boot.o \
              kernel/arch/arm64/exceptions.o \
              kernel/arch/arm64/exceptions_s.o \
              kernel/arch/arm64/irq.o \
+             kernel/arch/arm64/mm/pmm.o \
+             kernel/mm/pmm_core.arm64.o \
              kernel/arch/arm64/timer.o \
              kernel/arch/arm64/uart.o \
              kernel/arch/arm64/start_kernel.o \
              kernel/lib/kprintf.arm64.o \
              kernel/lib/kstring.arm64.o
+
+kernel/mm/%.arm64.o: kernel/mm/%.c
+	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) -I kernel -I kernel/lib -I kernel/arch/arm64 -c $< -o $@
 
 QEMU_ARM ?= qemu-system-aarch64
 QEMU_ARM_MACHINE ?= raspi3b

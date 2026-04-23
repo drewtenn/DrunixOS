@@ -3,10 +3,8 @@
 #ifndef PMM_H
 #define PMM_H
 
+#include "pmm_core.h"
 #include <stdint.h>
-
-#define PAGE_SIZE 4096u
-#define PMM_MAX_PAGES 32768u /* 128 MB / 4 KB */
 
 /* ── Multiboot1 types ─────────────────────────────────────────────────────── */
 
