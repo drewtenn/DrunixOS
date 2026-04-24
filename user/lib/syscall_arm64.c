@@ -59,6 +59,29 @@ static long arm64_syscall4(long nr, long a0, long a1, long a2, long a3)
 	return x0;
 }
 
+static long
+arm64_syscall6(long nr, long a0, long a1, long a2, long a3, long a4, long a5)
+{
+	register long x0 __asm__("x0") = a0;
+	register long x1 __asm__("x1") = a1;
+	register long x2 __asm__("x2") = a2;
+	register long x3 __asm__("x3") = a3;
+	register long x4 __asm__("x4") = a4;
+	register long x5 __asm__("x5") = a5;
+	register long x8 __asm__("x8") = nr;
+
+	__asm__ volatile("svc #0"
+	                 : "+r"(x0)
+	                 : "r"(x1),
+	                   "r"(x2),
+	                   "r"(x3),
+	                   "r"(x4),
+	                   "r"(x5),
+	                   "r"(x8)
+	                 : "memory");
+	return x0;
+}
+
 long arm64_sys_write(int fd, const char *buf, unsigned long len)
 {
 	return arm64_syscall3(64, fd, (long)buf, (long)len);
@@ -127,4 +150,29 @@ long arm64_sys_clock_gettime(int clock_id, void *timespec)
 long arm64_sys_gettimeofday(void *timeval, void *timezone)
 {
 	return arm64_syscall2(169, (long)timeval, (long)timezone);
+}
+
+long arm64_sys_brk(void *addr)
+{
+	return arm64_syscall1(214, (long)addr);
+}
+
+long arm64_sys_mmap(void *addr,
+                    unsigned long len,
+                    int prot,
+                    int flags,
+                    int fd,
+                    unsigned long offset)
+{
+	return arm64_syscall6(222, (long)addr, (long)len, prot, flags, fd, offset);
+}
+
+long arm64_sys_munmap(void *addr, unsigned long len)
+{
+	return arm64_syscall2(215, (long)addr, (long)len);
+}
+
+long arm64_sys_mprotect(void *addr, unsigned long len, int prot)
+{
+	return arm64_syscall3(226, (long)addr, (long)len, prot);
 }

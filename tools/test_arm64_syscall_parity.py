@@ -18,6 +18,7 @@ REQUIRED = [
     "ARM64 syscall: metadata ok",
     "ARM64 syscall: dirents ok",
     "ARM64 syscall: time/info ok",
+    "ARM64 syscall: memory ok",
     "ARM64 syscall: errno ok",
     "ARM64 init: pass",
     "ARM64 init exited with status 0",

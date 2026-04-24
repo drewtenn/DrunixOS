@@ -36,6 +36,10 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unknown(uint32_t eax)
 #define ARM64_LINUX_SYS_GETPID 172u
 #define ARM64_LINUX_SYS_GETPPID 173u
 #define ARM64_LINUX_SYS_GETTID 178u
+#define ARM64_LINUX_SYS_BRK 214u
+#define ARM64_LINUX_SYS_MUNMAP 215u
+#define ARM64_LINUX_SYS_MMAP 222u
+#define ARM64_LINUX_SYS_MPROTECT 226u
 #define ARM64_LINUX_SYS_GETCWD 17u
 
 extern void arm64_console_loop(void) __attribute__((weak));
@@ -155,6 +159,37 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		break;
 	case ARM64_LINUX_SYS_GETTID:
 		ret = arm64_syscall_ret32(syscall_case_gettid());
+		break;
+	case ARM64_LINUX_SYS_BRK:
+		ret = arm64_syscall_ret32(
+		    syscall_case_brk((uint32_t)arch_syscall_arg0(frame)));
+		break;
+	case ARM64_LINUX_SYS_MUNMAP:
+		ret = arm64_syscall_ret32(syscall_case_munmap(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame)));
+		break;
+	case ARM64_LINUX_SYS_MMAP: {
+		uint64_t offset = arch_syscall_arg5(frame);
+
+		if ((offset & 0xFFFu) != 0) {
+			ret = (uint64_t)(int64_t)-22;
+			break;
+		}
+		ret = arm64_syscall_ret32(syscall_case_mmap2(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame),
+		    (uint32_t)arch_syscall_arg3(frame),
+		    (uint32_t)arch_syscall_arg4(frame),
+		    (uint32_t)(offset >> 12)));
+		break;
+	}
+	case ARM64_LINUX_SYS_MPROTECT:
+		ret = arm64_syscall_ret32(syscall_case_mprotect(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame)));
 		break;
 	default:
 		ret = (uint64_t)-38;

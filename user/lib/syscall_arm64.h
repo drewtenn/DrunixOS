@@ -17,5 +17,14 @@ long arm64_sys_getdents64(int fd, void *dirp, unsigned long count);
 long arm64_sys_uname(void *utsname);
 long arm64_sys_clock_gettime(int clock_id, void *timespec);
 long arm64_sys_gettimeofday(void *timeval, void *timezone);
+long arm64_sys_brk(void *addr);
+long arm64_sys_mmap(void *addr,
+                    unsigned long len,
+                    int prot,
+                    int flags,
+                    int fd,
+                    unsigned long offset);
+long arm64_sys_munmap(void *addr, unsigned long len);
+long arm64_sys_mprotect(void *addr, unsigned long len, int prot);
 
 #endif
