@@ -31,10 +31,16 @@ REQUIRED = {
     ],
 }
 
+_COMMENT_RE = re.compile(r"/\*.*?\*/|//.*?$", re.DOTALL | re.MULTILINE)
+
+
+def strip_comments(text):
+    return _COMMENT_RE.sub("", text)
+
 
 def check(table, predicate, label):
     for path, patterns in table.items():
-        text = path.read_text()
+        text = strip_comments(path.read_text())
         for pattern in patterns:
             if predicate(re.search(pattern, text)):
                 print(f"{label}: {path.relative_to(ROOT)} {pattern}", file=sys.stderr)
