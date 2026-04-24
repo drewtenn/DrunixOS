@@ -9,6 +9,7 @@
 
 #include "syscall.h"
 #include "syscall/syscall_internal.h"
+#include "sched.h"
 #include "klog.h"
 #include <stdint.h>
 
@@ -18,6 +19,102 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unknown(uint32_t eax)
 	return (uint32_t)-1;
 }
 
+#ifdef __aarch64__
+#define ARM64_LINUX_SYS_WRITE 64u
+#define ARM64_LINUX_SYS_EXIT 93u
+#define ARM64_LINUX_SYS_EXIT_GROUP 94u
+#define ARM64_LINUX_SYS_SCHED_YIELD 124u
+
+extern void arm64_console_loop(void) __attribute__((weak));
+
+static uint64_t arm64_syscall_write(arch_trap_frame_t *frame)
+{
+	uint64_t fd = arch_syscall_arg0(frame);
+	const char *buf = (const char *)(uintptr_t)arch_syscall_arg1(frame);
+	uint32_t len = (uint32_t)arch_syscall_arg2(frame);
+
+	if (fd != 1u && fd != 2u)
+		return (uint64_t)-1;
+	arch_console_write(buf, len);
+	return len;
+}
+
+static uint64_t arm64_syscall_exit(arch_trap_frame_t *frame, uint32_t exit_group)
+{
+	uint32_t status = (uint32_t)arch_syscall_arg0(frame);
+
+	if (sched_current())
+		return syscall_case_exit_exit_group(exit_group, status);
+
+	if (arm64_console_loop) {
+		frame->elr_el1 = (uintptr_t)arm64_console_loop;
+		frame->spsr_el1 = 0x5u;
+		return 0u;
+	}
+	return (uint64_t)-1;
+}
+
+uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
+{
+	uint64_t ret;
+	uint64_t nr;
+
+	if (!frame)
+		return (uint64_t)-1;
+
+	nr = arch_syscall_number(frame);
+	switch (nr) {
+	case ARM64_LINUX_SYS_WRITE:
+		ret = arm64_syscall_write(frame);
+		break;
+	case ARM64_LINUX_SYS_EXIT:
+		ret = arm64_syscall_exit(frame, 0u);
+		break;
+	case ARM64_LINUX_SYS_EXIT_GROUP:
+		ret = arm64_syscall_exit(frame, 1u);
+		break;
+	case ARM64_LINUX_SYS_SCHED_YIELD:
+		ret = syscall_case_yield();
+		break;
+	default:
+		ret = (uint64_t)-38;
+		break;
+	}
+	arch_syscall_set_result(frame, ret);
+	return ret;
+}
+
+uint32_t syscall_handler(uint32_t eax,
+                         uint32_t ebx,
+                         uint32_t ecx,
+                         uint32_t edx,
+                         uint32_t esi,
+                         uint32_t edi,
+                         uint32_t ebp)
+{
+	(void)esi;
+	(void)edi;
+	(void)ebp;
+
+	switch (eax) {
+	case ARM64_LINUX_SYS_WRITE:
+		if (ebx != 1u && ebx != 2u)
+			return (uint32_t)-1;
+		arch_console_write((const char *)(uintptr_t)ecx, edx);
+		return edx;
+	case ARM64_LINUX_SYS_SCHED_YIELD:
+		return syscall_case_yield();
+	case ARM64_LINUX_SYS_EXIT:
+	case ARM64_LINUX_SYS_EXIT_GROUP:
+		if (sched_current())
+			return syscall_case_exit_exit_group(
+			    eax == ARM64_LINUX_SYS_EXIT_GROUP, ebx);
+		return 0;
+	default:
+		return syscall_case_unknown(eax);
+	}
+}
+#else
 uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 {
 	uint64_t nr = arch_syscall_number(frame);
@@ -380,3 +477,4 @@ uint32_t syscall_handler(uint32_t eax,
 		return syscall_case_unknown(eax);
 	}
 }
+#endif

@@ -47,6 +47,11 @@ ARM_SHARED_KOBJS := kernel/lib/klog.arm64.o \
                     kernel/proc/task_group.arm64.o \
                     kernel/proc/sched.arm64.o \
                     kernel/proc/uaccess.arm64.o \
+                    kernel/proc/syscall.arm64.o \
+                    kernel/proc/syscall/helpers.arm64.o \
+                    kernel/proc/syscall/console.arm64.o \
+                    kernel/proc/syscall/task.arm64.o \
+                    kernel/proc/syscall/tty.arm64.o \
                     kernel/proc/core.arm64.o \
                     kernel/proc/mem_forensics.arm64.o \
                     kernel/proc/pipe.arm64.o \
@@ -58,12 +63,7 @@ ARM_SHARED_KOBJS := kernel/lib/klog.arm64.o \
                     kernel/fs/procfs.arm64.o \
                     kernel/fs/sysfs.arm64.o
 
-ARM_COMPILE_ONLY_OBJS := kernel/proc/syscall.arm64.o \
-                         kernel/proc/syscall/helpers.arm64.o \
-                         kernel/proc/syscall/console.arm64.o \
-                         kernel/proc/syscall/task.arm64.o \
-                         kernel/proc/syscall/tty.arm64.o \
-                         kernel/proc/syscall/fd.arm64.o \
+ARM_COMPILE_ONLY_OBJS := kernel/proc/syscall/fd.arm64.o \
                          kernel/proc/syscall/fd_control.arm64.o \
                          kernel/proc/syscall/vfs/open.arm64.o \
                          kernel/proc/syscall/vfs/path.arm64.o \
@@ -73,7 +73,8 @@ ARM_COMPILE_ONLY_OBJS := kernel/proc/syscall.arm64.o \
                          kernel/proc/syscall/process.arm64.o \
                          kernel/proc/syscall/info.arm64.o \
                          kernel/proc/syscall/signal.arm64.o \
-                         kernel/proc/syscall/mem.arm64.o
+                         kernel/proc/syscall/mem.arm64.o \
+                         kernel/proc/syscall/time.arm64.o
 
 kernel/mm/%.arm64.o: kernel/mm/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@

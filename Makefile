@@ -492,7 +492,7 @@ clean:
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-busybox-compat test-linux-abi test-threadtest test-tcc test-nano test-ext3-linux-compat test-ext3-host-write-interop test-all \
-        check-phase6 check-arm64-userspace \
+        check-phase6 check-phase7 check-arm64-userspace check-arm64-filesystem-init \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean
@@ -516,7 +516,7 @@ kernel8.img: kernel-arm64.elf
 
 kernel: kernel-arm64.elf
 
-build: kernel-arm64.elf kernel8.img
+build: kernel-arm64.elf kernel8.img $(ARM_COMPILE_ONLY_OBJS)
 
 iso: kernel8.img
 
@@ -581,7 +581,7 @@ clean:
 .PHONY: all build kernel iso images disk fresh check \
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
-        check-phase6 check-arm64-userspace \
+        check-phase6 check-phase7 check-arm64-userspace check-arm64-filesystem-init \
         pdf epub docs \
         rebuild clean
 endif

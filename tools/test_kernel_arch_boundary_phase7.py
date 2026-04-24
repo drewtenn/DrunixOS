@@ -61,6 +61,29 @@ LATE_REQUIRED = {
     ],
 }
 
+ARM64_SHARED_RUNTIME_OBJS = [
+    "kernel/proc/syscall.arm64.o",
+    "kernel/proc/syscall/helpers.arm64.o",
+    "kernel/proc/syscall/console.arm64.o",
+    "kernel/proc/syscall/task.arm64.o",
+    "kernel/proc/syscall/tty.arm64.o",
+]
+
+ARM64_COMPILE_ONLY_OBJS = [
+    "kernel/proc/syscall/fd.arm64.o",
+    "kernel/proc/syscall/fd_control.arm64.o",
+    "kernel/proc/syscall/vfs/open.arm64.o",
+    "kernel/proc/syscall/vfs/path.arm64.o",
+    "kernel/proc/syscall/vfs/stat.arm64.o",
+    "kernel/proc/syscall/vfs/dirents.arm64.o",
+    "kernel/proc/syscall/vfs/mutation.arm64.o",
+    "kernel/proc/syscall/process.arm64.o",
+    "kernel/proc/syscall/info.arm64.o",
+    "kernel/proc/syscall/signal.arm64.o",
+    "kernel/proc/syscall/mem.arm64.o",
+    "kernel/proc/syscall/time.arm64.o",
+]
+
 _COMMENT_RE = re.compile(r"/\*.*?\*/|//.*?$", re.DOTALL | re.MULTILINE)
 _STACK_LOCAL_PROCESS_RE = re.compile(
     r"""
@@ -198,10 +221,59 @@ def check_late_phase7_boundaries():
     check(LATE_FORBIDDEN, bool, "forbidden")
 
 
+def extract_make_variable(text, name):
+    lines = text.splitlines()
+    for idx, line in enumerate(lines):
+        if not re.match(rf"^{name}\s*:=", line):
+            continue
+        parts = [line.split(":=", 1)[1]]
+        while parts[-1].rstrip().endswith("\\") and idx + 1 < len(lines):
+            idx += 1
+            parts.append(lines[idx])
+        return "\n".join(parts)
+    else:
+        return ""
+
+
+def check_arm64_shared_runtime_linkage():
+    path = ROOT / "kernel/arch/arm64/arch.mk"
+    text = read_source(path)
+    shared = extract_make_variable(text, "ARM_SHARED_KOBJS")
+    compile_only = extract_make_variable(text, "ARM_COMPILE_ONLY_OBJS")
+
+    for obj in ARM64_SHARED_RUNTIME_OBJS:
+        if obj not in shared:
+            print(f"missing: {path.relative_to(ROOT)} ARM_SHARED_KOBJS {obj}", file=sys.stderr)
+            raise SystemExit(1)
+        if obj in compile_only:
+            print(
+                f"forbidden: {path.relative_to(ROOT)} ARM_COMPILE_ONLY_OBJS {obj}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+    for obj in ARM64_COMPILE_ONLY_OBJS:
+        if obj not in compile_only:
+            print(
+                f"missing: {path.relative_to(ROOT)} ARM_COMPILE_ONLY_OBJS {obj}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+
+    makefile = ROOT / "Makefile"
+    make_text = read_source(makefile)
+    if not re.search(r"(?m)^build:\s+kernel-arm64\.elf\s+kernel8\.img\s+\$\(ARM_COMPILE_ONLY_OBJS\)", make_text):
+        print(
+            f"missing: {makefile.relative_to(ROOT)} ARM64 build compile-only dependency",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+
 check(REQUIRED, lambda m: not m, "missing")
 check(FORBIDDEN, bool, "forbidden")
 check_init_launch_body()
 check_process_create_file_body()
 check_arm64_user_stack_body()
+check_arm64_shared_runtime_linkage()
 check_late_phase7_boundaries()
 print("phase7 boundary guard passed")

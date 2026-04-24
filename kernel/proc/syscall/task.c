@@ -20,6 +20,20 @@
 #include "vfs.h"
 #include <stdint.h>
 
+#ifdef __aarch64__
+uint32_t SYSCALL_NOINLINE syscall_case_exit_exit_group(uint32_t exit_group,
+                                                       uint32_t ebx)
+{
+	if (exit_group) {
+		sched_mark_group_exit(ebx);
+	} else {
+		sched_set_exit_status(ebx);
+		sched_mark_exit();
+	}
+	schedule();
+	__builtin_unreachable();
+}
+#else
 static int linux_wait_child_matches(const process_t *cur,
                                     const process_t *child,
                                     int32_t selector)
@@ -610,3 +624,4 @@ uint32_t SYSCALL_NOINLINE syscall_case_wait4(uint32_t ebx,
 		return syscall_wait_common(ebx, ecx, edx, esi);
 	}
 }
+#endif
