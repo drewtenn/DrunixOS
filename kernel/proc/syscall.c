@@ -43,6 +43,9 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unknown(uint32_t eax)
 #define ARM64_LINUX_SYS_EXIT_GROUP 94u
 #define ARM64_LINUX_SYS_CLOCK_GETTIME 113u
 #define ARM64_LINUX_SYS_SCHED_YIELD 124u
+#define ARM64_LINUX_SYS_KILL 129u
+#define ARM64_LINUX_SYS_RT_SIGACTION 134u
+#define ARM64_LINUX_SYS_RT_SIGPROCMASK 135u
 #define ARM64_LINUX_SYS_UNAME 160u
 #define ARM64_LINUX_SYS_GETTIMEOFDAY 169u
 #define ARM64_LINUX_SYS_GETPID 172u
@@ -237,6 +240,25 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		break;
 	case ARM64_LINUX_SYS_SCHED_YIELD:
 		ret = arm64_syscall_ret32(syscall_case_yield());
+		break;
+	case ARM64_LINUX_SYS_KILL:
+		ret = arm64_syscall_ret32(syscall_case_kill(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame)));
+		break;
+	case ARM64_LINUX_SYS_RT_SIGACTION:
+		ret = arm64_syscall_ret32(syscall_case_rt_sigaction(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame),
+		    (uint32_t)arch_syscall_arg3(frame)));
+		break;
+	case ARM64_LINUX_SYS_RT_SIGPROCMASK:
+		ret = arm64_syscall_ret32(syscall_case_rt_sigprocmask(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame),
+		    (uint32_t)arch_syscall_arg3(frame)));
 		break;
 	case ARM64_LINUX_SYS_CLOCK_GETTIME:
 		ret = arm64_syscall_ret32(syscall_case_clock_gettime(

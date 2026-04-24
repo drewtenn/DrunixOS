@@ -142,11 +142,10 @@ ARM64_SHARED_RUNTIME_OBJS = [
     "kernel/proc/syscall/info.arm64.o",
     "kernel/proc/syscall/mem.arm64.o",
     "kernel/proc/syscall/process.arm64.o",
-]
-
-ARM64_COMPILE_ONLY_OBJS = [
     "kernel/proc/syscall/signal.arm64.o",
 ]
+
+ARM64_COMPILE_ONLY_OBJS = []
 
 _COMMENT_RE = re.compile(r"/\*.*?\*/|//.*?$", re.DOTALL | re.MULTILINE)
 _STACK_LOCAL_PROCESS_RE = re.compile(

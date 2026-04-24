@@ -210,6 +210,27 @@ long arm64_sys_gettimeofday(void *timeval, void *timezone)
 	return arm64_syscall2(169, (long)timeval, (long)timezone);
 }
 
+long arm64_sys_kill(int pid, int sig)
+{
+	return arm64_syscall2(129, pid, sig);
+}
+
+long arm64_sys_rt_sigaction(int sig,
+                            const void *act,
+                            void *oldact,
+                            unsigned long size)
+{
+	return arm64_syscall4(134, sig, (long)act, (long)oldact, (long)size);
+}
+
+long arm64_sys_rt_sigprocmask(int how,
+                              const void *set,
+                              void *oldset,
+                              unsigned long size)
+{
+	return arm64_syscall4(135, how, (long)set, (long)oldset, (long)size);
+}
+
 long arm64_sys_brk(void *addr)
 {
 	return arm64_syscall1(214, (long)addr);

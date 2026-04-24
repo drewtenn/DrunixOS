@@ -75,9 +75,10 @@ ARM_SHARED_KOBJS += kernel/proc/syscall/fd.arm64.o \
                     kernel/proc/syscall/time.arm64.o \
                     kernel/proc/syscall/info.arm64.o \
                     kernel/proc/syscall/mem.arm64.o \
-                    kernel/proc/syscall/process.arm64.o
+                    kernel/proc/syscall/process.arm64.o \
+                    kernel/proc/syscall/signal.arm64.o
 
-ARM_COMPILE_ONLY_OBJS := kernel/proc/syscall/signal.arm64.o
+ARM_COMPILE_ONLY_OBJS :=
 
 kernel/mm/%.arm64.o: kernel/mm/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@

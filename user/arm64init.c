@@ -53,6 +53,10 @@ int main(void)
 	char dirbuf[512];
 	char utsbuf[390];
 	char timebuf[16];
+	unsigned char sigact[32];
+	unsigned char oldsigact[32];
+	unsigned char rtoldmask[8];
+	unsigned int sigmask;
 	int pipefds[2];
 	char pipec;
 	long brk0;
@@ -174,6 +178,27 @@ int main(void)
 	if (arm64_sys_close(pipefds[0]) != 0 || arm64_sys_close(pipefds[1]) != 0)
 		return fail();
 	put("ARM64 syscall: fd/path ok\n", 26);
+
+	if (arm64_sys_kill((int)pid, 0) != 0)
+		return fail_msg("ARM64 syscall: fail kill\n", 25);
+	sigmask = 1u << 15;
+	if (arm64_sys_rt_sigprocmask(2, &sigmask, rtoldmask, sizeof(rtoldmask)) !=
+	    0)
+		return fail_msg("ARM64 syscall: fail rt sigmask\n", 31);
+	sigmask = 0;
+	if (arm64_sys_rt_sigprocmask(2, &sigmask, rtoldmask, sizeof(rtoldmask)) !=
+	    0)
+		return fail_msg("ARM64 syscall: fail rt sigmask\n", 31);
+	for (n = 0; n < (long)sizeof(sigact); n++) {
+		sigact[n] = 0;
+		oldsigact[n] = 0;
+	}
+	sigact[0] = 1;
+	if (arm64_sys_rt_sigaction(15, sigact, oldsigact, 8) != 0 ||
+	    arm64_sys_rt_sigaction(15, 0, oldsigact, 8) != 0 ||
+	    oldsigact[0] != 1)
+		return fail_msg("ARM64 syscall: fail rt sigaction\n", 33);
+	put("ARM64 syscall: signal ok\n", 25);
 
 	if (arm64_sys_openat(-100, "/missing-arm64-syscall", 0, 0) >= 0)
 		return fail();
