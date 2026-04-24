@@ -48,6 +48,7 @@ int main(void)
 	long tid;
 	long dupfd;
 	long dup3fd;
+	long child;
 	char buf[32];
 	char statbuf[256];
 	char dirbuf[512];
@@ -209,6 +210,18 @@ int main(void)
 	if (arm64_sys_execve("/missing-arm64-exec", 0, 0) != -1)
 		return fail_msg("ARM64 syscall: fail exec missing\n", 33);
 	put("ARM64 syscall: process ok\n", 26);
+
+	child = arm64_sys_clone(17u, 0, 0, 0, 0);
+	if (child == 0) {
+		arm64_sys_exit(7);
+		return fail_msg("ARM64 syscall: fail clone child\n", 32);
+	}
+	if (child < 0)
+		return fail_msg("ARM64 syscall: fail clone parent\n", 33);
+	status = 0;
+	if (arm64_sys_wait4((int)child, &status, 0, 0) != child)
+		return fail_msg("ARM64 syscall: fail wait pid\n", 29);
+	put("ARM64 syscall: clone/wait ok\n", 29);
 
 	if (arm64_sys_getuid() != 0 || arm64_sys_geteuid() != 0 ||
 	    arm64_sys_getgid() != 0 || arm64_sys_getegid() != 0 ||

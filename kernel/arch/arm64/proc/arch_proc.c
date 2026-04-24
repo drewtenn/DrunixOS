@@ -234,10 +234,37 @@ int arch_process_clone_frame(process_t *child_out,
                              const process_t *parent,
                              uint32_t child_stack)
 {
-	(void)child_out;
-	(void)parent;
-	(void)child_stack;
-	return -1;
+	const arch_trap_frame_t *parent_frame;
+	arch_trap_frame_t *child_frame;
+	arm64_kernel_context_t *ctx;
+
+	if (!child_out || !parent)
+		return -1;
+
+	parent_frame = (const arch_trap_frame_t *)arch_current_irq_frame();
+	if (!parent_frame) {
+		if (child_stack)
+			child_out->user_stack = child_stack;
+		arch_process_build_initial_frame(child_out);
+		return 0;
+	}
+
+	child_frame = arm64_process_user_frame(child_out);
+	ctx = arm64_process_kernel_context(child_out);
+	if (!child_frame || !ctx)
+		return -1;
+
+	k_memcpy(child_frame, parent_frame, sizeof(*child_frame));
+	child_frame->x[0] = 0;
+	if (child_stack)
+		child_frame->sp_el0 = child_stack;
+	child_out->user_stack = (uint32_t)child_frame->sp_el0;
+
+	k_memset(ctx, 0, sizeof(*ctx));
+	ctx->x19 = (uint64_t)(uintptr_t)child_frame;
+	ctx->x30 = (uint64_t)(uintptr_t)arm64_process_first_resume;
+	child_out->arch_state.context = (uintptr_t)ctx;
+	return 0;
 }
 
 void arch_process_restore_tls(const process_t *proc)

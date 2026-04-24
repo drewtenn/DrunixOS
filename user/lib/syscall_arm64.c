@@ -87,6 +87,11 @@ long arm64_sys_write(int fd, const char *buf, unsigned long len)
 	return arm64_syscall3(64, fd, (long)buf, (long)len);
 }
 
+long arm64_sys_exit(int status)
+{
+	return arm64_syscall1(93, status);
+}
+
 long arm64_sys_openat(int dirfd, const char *path, int flags, int mode)
 {
 	return arm64_syscall4(56, dirfd, (long)path, flags, mode);

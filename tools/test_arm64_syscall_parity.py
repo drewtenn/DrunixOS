@@ -23,6 +23,7 @@ REQUIRED = [
     "ARM64 syscall: fd/path ok",
     "ARM64 syscall: signal ok",
     "ARM64 syscall: process ok",
+    "ARM64 syscall: clone/wait ok",
     "ARM64 syscall: utility ok",
     "ARM64 syscall: errno ok",
     "ARM64 init: pass",

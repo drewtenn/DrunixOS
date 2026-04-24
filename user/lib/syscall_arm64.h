@@ -4,6 +4,7 @@
 #define USER_LIB_SYSCALL_ARM64_H
 
 long arm64_sys_write(int fd, const char *buf, unsigned long len);
+long arm64_sys_exit(int status);
 long arm64_sys_openat(int dirfd, const char *path, int flags, int mode);
 long arm64_sys_dup(int oldfd);
 long arm64_sys_dup3(int oldfd, int newfd, int flags);
