@@ -10,6 +10,11 @@ FORBIDDEN = {
         r"\bvfs_open_file\s*\(\s*DRUNIX_INIT_PROGRAM",
         r"\bprocess_create_file\s*\(",
     ],
+    ROOT / "kernel/proc/init_launch.c": [
+        r"\bstatic\s+process_t\s+init_proc\b",
+        r"\bstatic\s+const\s+char\s+\*argv\s*\[",
+        r"\bstatic\s+const\s+char\s+\*envp\s*\[",
+    ],
     ROOT / "kernel/arch/arm64/start_kernel.c": [
         r"\barm64_user_smoke_boot\s*\(\s*\)",
     ],
@@ -21,9 +26,16 @@ FORBIDDEN = {
 REQUIRED = {
     ROOT / "kernel/kernel.c": [
         r"\bboot_launch_init_process\s*\(",
+        r"\bboot_launch_init_process\s*\(\s*DRUNIX_INIT_PROGRAM\s*,\s*DRUNIX_INIT_ARG0\s*,\s*DRUNIX_INIT_ENV0\s*,\s*1\s*\)",
+    ],
+    ROOT / "kernel/proc/init_launch.h": [
+        r"\bboot_launch_init_process\s*\(\s*const char \*path\s*,\s*const char \*arg0\s*,\s*const char \*env0\s*,\s*int attach_desktop_pid\s*\)",
     ],
     ROOT / "kernel/proc/init_launch.c": [
-        r"\bboot_launch_init_process\b",
+        r"\bboot_launch_init_process\s*\(\s*const char \*path\s*,\s*const char \*arg0\s*,\s*const char \*env0\s*,\s*int attach_desktop_pid\s*\)",
+        r"\bif\s*\(\s*attach_desktop_pid\s*\)",
+        r'\bklog\s*\(\s*"BOOT"\s*,\s*"locating initial program"',
+        r'\bklog_uint\s*\(\s*"FS"\s*,\s*"initial program size"',
     ],
     ROOT / "kernel/arch/arch.h": [
         r"\barch_process_build_user_stack\b",

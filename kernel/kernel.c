@@ -718,8 +718,10 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
 #define DRUNIX_INIT_ENV0 "PATH=/bin"
 #endif
 
-	int init_pid = boot_launch_init_process(
-	    DRUNIX_INIT_PROGRAM, DRUNIX_INIT_ARG0, DRUNIX_INIT_ENV0, 1);
+	int init_pid = boot_launch_init_process(DRUNIX_INIT_PROGRAM,
+	                                        DRUNIX_INIT_ARG0,
+	                                        DRUNIX_INIT_ENV0,
+	                                        1);
 	if (init_pid < 0) {
 		klog("PROC", "boot_launch_init_process failed");
 		for (;;)
