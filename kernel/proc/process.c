@@ -153,6 +153,8 @@ int process_create_file(process_t *proc,
                         const file_handle_t *inherit_fds)
 {
 	process_t *parent = sched_current();
+	uint8_t *kstack_raw = 0;
+	int rc = 0;
 
 	k_memset(proc, 0, sizeof(*proc));
 
@@ -161,19 +163,24 @@ int process_create_file(process_t *proc,
 	uint32_t pd_phys = (uint32_t)aspace;
 	if (!pd_phys)
 		return -1;
+	proc->pd_phys = pd_phys;
 
 	/* Step 2: parse and load ELF segments into the new address space */
 	uintptr_t entry = 0;
 	uintptr_t image_start = 0;
 	uintptr_t heap_start = 0;
-	if (elf_load_file(file_ref, aspace, &entry, &image_start, &heap_start) != 0)
-		return -2;
+	if (elf_load_file(file_ref, aspace, &entry, &image_start, &heap_start) != 0) {
+		rc = -2;
+		goto fail_user_space;
+	}
 
 	/* Step 3: allocate and map the user stack */
 	for (int i = 0; i < USER_STACK_PAGES; i++) {
 		uint32_t phys = pmm_alloc_page();
-		if (!phys)
-			return -3;
+		if (!phys) {
+			rc = -3;
+			goto fail_user_space;
+		}
 
 		/* Map pages downward from USER_STACK_TOP */
 		uint32_t vaddr = USER_STACK_TOP - (uint32_t)(i + 1) * 0x1000;
@@ -181,8 +188,11 @@ int process_create_file(process_t *proc,
 		                vaddr,
 		                phys,
 		                ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ |
-		                    ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER) != 0)
-			return -4;
+		                    ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER) != 0) {
+			pmm_free_page(phys);
+			rc = -4;
+			goto fail_user_space;
+		}
 	}
 
 	/* Step 4: ask the active architecture to populate the initial user stack.
@@ -191,9 +201,8 @@ int process_create_file(process_t *proc,
 	uintptr_t initial_stack = USER_STACK_TOP;
 	if (arch_process_build_user_stack(
 	        aspace, argv, argc, envp, envc, &initial_stack) != 0) {
-		proc->pd_phys = pd_phys;
-		process_release_user_space(proc);
-		return -6;
+		rc = -6;
+		goto fail_user_space;
 	}
 
 	/* Step 5: allocate a per-process kernel stack from the heap.
@@ -214,11 +223,12 @@ int process_create_file(process_t *proc,
      *
      * kstack_bottom records the raw kmalloc base (for kfree).
      * kstack_top is the first byte above the usable stack region. */
-	uint8_t *kstack_raw = (uint8_t *)kmalloc(0x1000u + KSTACK_SIZE + 0xFFFu);
+	kstack_raw = (uint8_t *)kmalloc(0x1000u + KSTACK_SIZE + 0xFFFu);
 	if (!kstack_raw) {
 		klog_uint(
 		    "PROC", "process_create kstack heap free", kheap_free_bytes());
-		return -5;
+		rc = -5;
+		goto fail_user_space;
 	}
 	uint8_t *kguard = (uint8_t *)(((uint32_t)kstack_raw + 0xFFFu) & ~0xFFFu);
 	arch_kstack_guard((uintptr_t)kguard);
@@ -260,22 +270,28 @@ int process_create_file(process_t *proc,
 	            proc->image_end,
 	            VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_EXEC |
 	                VMA_FLAG_PRIVATE,
-	            VMA_KIND_IMAGE) != 0)
-		return -7;
+	            VMA_KIND_IMAGE) != 0) {
+		rc = -7;
+		goto fail_kstack;
+	}
 	if (vma_add(proc,
 	            proc->heap_start,
 	            proc->brk,
 	            VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_ANON |
 	                VMA_FLAG_PRIVATE,
-	            VMA_KIND_HEAP) != 0)
-		return -8;
+	            VMA_KIND_HEAP) != 0) {
+		rc = -8;
+		goto fail_kstack;
+	}
 	if (vma_add(proc,
 	            USER_STACK_TOP - (uint32_t)USER_STACK_MAX_PAGES * PAGE_SIZE,
 	            USER_STACK_TOP,
 	            VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_ANON |
 	                VMA_FLAG_PRIVATE | VMA_FLAG_GROWSDOWN,
-	            VMA_KIND_STACK) != 0)
-		return -9;
+	            VMA_KIND_STACK) != 0) {
+		rc = -9;
+		goto fail_kstack;
+	}
 
 	arch_fpu_init_state(proc);
 
@@ -363,13 +379,18 @@ int process_create_file(process_t *proc,
 	}
 
 	if (proc_resource_init_fresh(proc) != 0) {
-		process_release_user_space(proc);
-		process_release_kstack(proc);
-		return -10;
+		rc = -10;
+		goto fail_kstack;
 	}
 	proc_resource_mirror_from_process(proc);
 
 	return 0;
+
+fail_kstack:
+	process_release_kstack(proc);
+fail_user_space:
+	process_release_user_space(proc);
+	return rc;
 }
 
 void process_launch(process_t *proc)
