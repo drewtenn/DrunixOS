@@ -100,6 +100,7 @@ int arch_process_build_user_stack(arch_aspace_t aspace,
 	uint32_t write_cursor = 0;
 	uint32_t *tail_k;
 	uint32_t idx = 0;
+	int rc = -1;
 
 	if (!stack_out)
 		return -1;
@@ -193,8 +194,12 @@ int arch_process_build_user_stack(arch_aspace_t aspace,
 	tail_k[idx++] = 0;
 
 	*stack_out = USER_STACK_TOP - frame_off;
+	rc = 0;
+	goto out_unmap;
+
+out_unmap:
 	arch_page_temp_unmap(page);
-	return 0;
+	return rc;
 }
 
 int arch_elf_machine_supported(elf_class_t elf_class, uint16_t machine)

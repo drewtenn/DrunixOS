@@ -190,8 +190,11 @@ int process_create_file(process_t *proc,
      * process descriptor records the entry stack pointer. */
 	uintptr_t initial_stack = USER_STACK_TOP;
 	if (arch_process_build_user_stack(
-	        aspace, argv, argc, envp, envc, &initial_stack) != 0)
+	        aspace, argv, argc, envp, envc, &initial_stack) != 0) {
+		proc->pd_phys = pd_phys;
+		process_release_user_space(proc);
 		return -6;
+	}
 
 	/* Step 5: allocate a per-process kernel stack from the heap.
      * One extra page is prepended as a non-present guard page: any kernel
