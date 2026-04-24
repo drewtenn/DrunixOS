@@ -6,7 +6,9 @@
 #include "../../arch.h"
 #include "../../../proc/process.h"
 #include "../../../mm/pmm_core.h"
+#include "../mm/pmm.h"
 #include "kstring.h"
+#include "init_layout.h"
 #include <stdint.h>
 
 #define LINUX_AT_NULL 0u
@@ -94,8 +96,6 @@ int arch_process_build_user_stack(arch_aspace_t aspace,
 	uint32_t stack_qwords;
 	uint32_t frame_off;
 	uint32_t pad;
-	uintptr_t top_vpage = USER_STACK_TOP - PAGE_SIZE;
-	arch_mm_mapping_t mapping;
 	uint8_t *page;
 	uint8_t *page_end;
 	uint8_t *strbase_k;
@@ -152,14 +152,14 @@ int arch_process_build_user_stack(arch_aspace_t aspace,
 	if (frame_off > PAGE_SIZE)
 		return -1;
 
-	if (arch_mm_query(aspace, top_vpage, &mapping) != 0)
-		return -1;
-	page = (uint8_t *)arch_page_temp_map(mapping.phys_addr);
-	if (!page)
-		return -1;
-	page_end = page + PAGE_SIZE;
+	(void)aspace;
+	pmm_mark_used(ARM64_INIT_STACK_BASE,
+	              ARM64_INIT_STACK_TOP - ARM64_INIT_STACK_BASE);
+	page = (uint8_t *)ARM64_INIT_STACK_BASE;
+	k_memset(page, 0, ARM64_INIT_STACK_TOP - ARM64_INIT_STACK_BASE);
+	page_end = (uint8_t *)ARM64_INIT_STACK_TOP;
 	strbase_k = page_end - strings_off;
-	strbase_u = USER_STACK_TOP - strings_off;
+	strbase_u = ARM64_INIT_STACK_TOP - strings_off;
 
 	for (int i = 0; i < argc; i++) {
 		const char *s = argv[i];
@@ -199,12 +199,11 @@ int arch_process_build_user_stack(arch_aspace_t aspace,
 	tail_k[idx++] = LINUX_AT_NULL;
 	tail_k[idx++] = 0;
 
-	*stack_out = USER_STACK_TOP - frame_off;
+	*stack_out = ARM64_INIT_STACK_TOP - frame_off;
 	rc = 0;
 	goto out_unmap;
 
 out_unmap:
-	arch_page_temp_unmap(page);
 	return rc;
 }
 

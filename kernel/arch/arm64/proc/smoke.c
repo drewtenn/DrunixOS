@@ -3,8 +3,10 @@
 #include "../../arch.h"
 #include "../../../proc/elf.h"
 #include "../../../proc/process.h"
+#include "../../../proc/sched.h"
 #include "../mm/pmm.h"
 #include "elf64.h"
+#include "kprintf.h"
 #include "kstring.h"
 #include <stdint.h>
 
@@ -20,6 +22,8 @@
 extern const uint8_t arm64_smoke_elf_start[];
 extern const uint8_t arm64_smoke_elf_end[];
 extern void arm64_console_loop(void);
+extern uint32_t __real_syscall_case_exit_exit_group(uint32_t exit_group,
+                                                    uint32_t status);
 
 static process_t g_arm64_smoke_proc;
 static uint8_t g_arm64_smoke_kstack[KSTACK_SIZE] __attribute__((aligned(16)));
@@ -96,6 +100,30 @@ static void arm64_smoke_write_bytes(const char *buf, uint32_t len)
 {
 	for (uint32_t i = 0; i < len; i++)
 		arch_console_write(buf + i, 1u);
+}
+
+void arm64_report_init_exit(uint32_t status)
+{
+	char line[64];
+
+	k_snprintf(line, sizeof(line), "ARM64 init exited with status %u\n", status);
+	arm64_smoke_write_bytes(line, (uint32_t)k_strlen(line));
+}
+
+uint32_t __wrap_syscall_case_exit_exit_group(uint32_t exit_group,
+                                             uint32_t status)
+{
+	if (sched_current_pid() == 1u) {
+		if (exit_group)
+			sched_mark_group_exit(status);
+		else {
+			sched_set_exit_status(status);
+			sched_mark_exit();
+		}
+		arm64_report_init_exit(status);
+		arm64_console_loop();
+	}
+	return __real_syscall_case_exit_exit_group(exit_group, status);
 }
 
 uint64_t arm64_userspace_syscall_dispatch(arch_trap_frame_t *frame)

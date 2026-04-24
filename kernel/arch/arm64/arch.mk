@@ -3,7 +3,7 @@ ARM_LD ?= aarch64-elf-ld
 ARM_OBJCOPY ?= aarch64-elf-objcopy
 
 ARM_CFLAGS ?= -ffreestanding -fno-stack-protector -fno-pic -fno-pie \
-              -mcpu=cortex-a53 -mgeneral-regs-only \
+              -mcpu=cortex-a53 -mgeneral-regs-only -mstrict-align \
               -nostdlib -Wall -Wextra -g -O2
 ARM_LDFLAGS ?= -nostdlib -T kernel/arch/arm64/linker.ld
 ARM_INC := -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 \
@@ -136,11 +136,19 @@ build/syscall_arm64.o: user/lib/syscall_arm64.c user/lib/syscall_arm64.h
 	@mkdir -p $(dir $@)
 	$(ARM_CC) $(ARM_CFLAGS) -I user/lib -c $< -o $@
 
-build/arm64init.elf: build/crt0_arm64.o build/syscall_arm64.o build/arm64init.o
-	$(ARM_LD) -nostdlib -e _start -Ttext 0x00400000 -o $@ $^
+build/arm64init.elf: build/crt0_arm64.o build/syscall_arm64.o build/arm64init.o kernel/arch/arm64/arch.mk
+	$(ARM_LD) -nostdlib -e _start -Ttext 0x02000000 -o $@ build/crt0_arm64.o build/syscall_arm64.o build/arm64init.o
 
-build/arm64-root.fs: build/arm64init.elf tools/mkfs.py
-	$(PYTHON) tools/mkfs.py $@ 32768 build/arm64init.elf bin/arm64init
+build/arm64-rootfs-empty:
+	@mkdir -p $(dir $@)
+	: > $@
+
+build/arm64-root.fs: build/arm64init.elf build/arm64-rootfs-empty tools/mkfs.py kernel/arch/arm64/arch.mk
+	$(PYTHON) tools/mkfs.py $@ 32768 \
+		build/arm64init.elf bin/arm64init \
+		build/arm64-rootfs-empty dev/.keep \
+		build/arm64-rootfs-empty proc/.keep \
+		build/arm64-rootfs-empty sys/.keep
 
 kernel/arch/arm64/rootfs_blob.o: kernel/arch/arm64/rootfs_blob.S build/arm64-root.fs
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@

@@ -216,6 +216,7 @@ int process_create_file(process_t *proc,
 		goto fail_user_space;
 	}
 
+#ifndef __aarch64__
 	/* Step 3: allocate and map the user stack */
 	for (int i = 0; i < USER_STACK_PAGES; i++) {
 		uint32_t phys = pmm_alloc_page();
@@ -236,10 +237,13 @@ int process_create_file(process_t *proc,
 			goto fail_user_space;
 		}
 	}
+#endif
 
 	/* Step 4: ask the active architecture to populate the initial user stack.
-     * Must run after the stack pages are mapped (step 3) and before the
-     * process descriptor records the entry stack pointer. */
+     * On architectures with hardware page tables this runs after step 3 maps
+     * stack pages; ARM64 owns its bootstrap stack placement in the arch hook.
+     * It must run before the process descriptor records the entry stack
+     * pointer. */
 	uintptr_t initial_stack = USER_STACK_TOP;
 	if (arch_process_build_user_stack(
 	        aspace, argv, argc, envp, envc, &initial_stack) != 0) {

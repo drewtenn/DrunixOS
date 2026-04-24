@@ -5,6 +5,7 @@
 #include "../../../proc/process.h"
 #include "../mm/pmm.h"
 #include "elf64.h"
+#include "init_layout.h"
 #include "kstring.h"
 #include <stdint.h>
 
@@ -54,7 +55,8 @@ int arch_elf_load_user_image(vfs_file_ref_t file_ref,
 		return -4;
 	if (ehdr.e_phnum == 0)
 		return -5;
-	if (ehdr.e_entry >= USER_STACK_TOP)
+	if (ehdr.e_entry < ARM64_INIT_IMAGE_BASE ||
+	    ehdr.e_entry >= ARM64_INIT_IMAGE_LIMIT)
 		return -4;
 
 	*entry_out = (uintptr_t)ehdr.e_entry;
@@ -74,10 +76,12 @@ int arch_elf_load_user_image(vfs_file_ref_t file_ref,
 			continue;
 		if (phdr.p_filesz > phdr.p_memsz)
 			return -6;
-		if (phdr.p_vaddr >= USER_STACK_TOP || phdr.p_memsz > UINT32_MAX)
+		if (phdr.p_vaddr < ARM64_INIT_IMAGE_BASE ||
+		    phdr.p_vaddr >= ARM64_INIT_IMAGE_LIMIT ||
+		    phdr.p_memsz > UINT32_MAX)
 			return -4;
 		if (phdr.p_vaddr + phdr.p_memsz < phdr.p_vaddr ||
-		    phdr.p_vaddr + phdr.p_memsz > USER_STACK_TOP)
+		    phdr.p_vaddr + phdr.p_memsz > ARM64_INIT_IMAGE_LIMIT)
 			return -4;
 
 		{
@@ -94,21 +98,18 @@ int arch_elf_load_user_image(vfs_file_ref_t file_ref,
 
 			seg_flags = arm64_elf_segment_flags(phdr.p_flags);
 			for (uint64_t p = 0; p < npages; p++) {
-				uint32_t phys = pmm_alloc_page();
 				uintptr_t vpage = (uintptr_t)(vaddr + p * 0x1000ULL);
+				uint32_t phys = (uint32_t)vpage;
 				void *page;
 
-				if (!phys)
-					return -7;
+				pmm_mark_used(phys, PAGE_SIZE);
 				if (arch_mm_map(aspace, vpage, phys, seg_flags) != 0) {
-					pmm_free_page(phys);
 					return -8;
 				}
 
 				page = arch_page_temp_map(phys);
 				if (!page) {
 					(void)arch_mm_unmap(aspace, vpage);
-					pmm_free_page(phys);
 					return -8;
 				}
 				k_memset(page, 0, 0x1000u);

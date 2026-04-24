@@ -23,15 +23,31 @@ CFLAGS  := -m32 -g -ffreestanding -mno-sse -mno-sse2 -mno-mmx -msoft-float -Wsta
 INC     := -I kernel -I kernel/arch -I kernel/arch/$(ARCH) -I kernel/arch/$(ARCH)/mm -I kernel/platform/pc -I kernel/mm -I kernel/drivers -I kernel/blk -I kernel/proc -I kernel/fs -I kernel/lib -I kernel/gui
 DEPFLAGS := -MMD -MP
 MOUSE_SPEED ?= 4
+ARM64_SMOKE_FALLBACK ?= 0
+ifeq ($(ARCH),arm64)
+INIT_PROGRAM ?= bin/arm64init
+INIT_ARG0 ?= arm64init
+INIT_ENV0 ?= PATH=/usr/bin:/i686-linux-musl/bin:/bin
+ROOT_FS ?= dufs
+else
 INIT_PROGRAM ?= bin/shell
 INIT_ARG0 ?= shell
 INIT_ENV0 ?= PATH=/usr/bin:/i686-linux-musl/bin:/bin
 ROOT_FS ?= ext3
+endif
 CFLAGS += -DMOUSE_FRAMEBUFFER_PIXEL_SCALE=$(MOUSE_SPEED)
 CFLAGS += -DDRUNIX_INIT_PROGRAM=\"$(INIT_PROGRAM)\"
 CFLAGS += -DDRUNIX_INIT_ARG0=\"$(INIT_ARG0)\"
 CFLAGS += -DDRUNIX_INIT_ENV0=\"$(INIT_ENV0)\"
 CFLAGS += -DDRUNIX_ROOT_FS=\"$(ROOT_FS)\"
+CFLAGS += -DDRUNIX_ARM64_SMOKE_FALLBACK=$(ARM64_SMOKE_FALLBACK)
+ifeq ($(ARCH),arm64)
+ARM_CFLAGS += -DDRUNIX_INIT_PROGRAM=\"$(INIT_PROGRAM)\"
+ARM_CFLAGS += -DDRUNIX_INIT_ARG0=\"$(INIT_ARG0)\"
+ARM_CFLAGS += -DDRUNIX_INIT_ENV0=\"$(INIT_ENV0)\"
+ARM_CFLAGS += -DDRUNIX_ROOT_FS=\"$(ROOT_FS)\"
+ARM_CFLAGS += -DDRUNIX_ARM64_SMOKE_FALLBACK=$(ARM64_SMOKE_FALLBACK)
+endif
 NASMFLAGS :=
 
 #Build with NO_DESKTOP = 1 to skip desktop init entirely and boot straight to
@@ -86,6 +102,8 @@ endif
 	echo "$(MOUSE_SPEED)" | cmp -s - $@ || echo "$(MOUSE_SPEED)" > $@
 .init-program-flag: FORCE
 	printf '%s\n%s\n%s\n%s\n' "$(INIT_PROGRAM)" "$(INIT_ARG0)" "$(INIT_ENV0)" "$(ROOT_FS)" | cmp -s - $@ || printf '%s\n%s\n%s\n%s\n' "$(INIT_PROGRAM)" "$(INIT_ARG0)" "$(INIT_ENV0)" "$(ROOT_FS)" > $@
+.arm64-smoke-fallback-flag: FORCE
+	echo "$(ARM64_SMOKE_FALLBACK)" | cmp -s - $@ || echo "$(ARM64_SMOKE_FALLBACK)" > $@
 .no-desktop-flag: FORCE
 	echo "$(NO_DESKTOP)" | cmp -s - $@ || echo "$(NO_DESKTOP)" > $@
 .vga-text-flag: FORCE
@@ -149,7 +167,7 @@ TEST_LOGS     := $(foreach suffix,$(TEST_SUFFIXES),$(LOG_DIR)/serial-$(suffix).l
                  $(LOG_DIR)/ext3-host-readback.txt
 SENTINELS     := .ktest-flag .double-fault-test-flag .klog-debugcon-flag \
                  .mouse-speed-flag .init-program-flag .no-desktop-flag \
-                 .vga-text-flag .disk-sectors-flag
+                 .vga-text-flag .disk-sectors-flag .arm64-smoke-fallback-flag
 
 QEMU_DISKS    = -drive format=raw,file=$(1),if=ide,index=0 \
                  -drive format=raw,file=$(2),if=ide,index=1
@@ -480,7 +498,7 @@ clean:
 	find kernel -name '*.o' -delete
 	find kernel -name '*.d' -delete
 	$(RM) *.elf kernel8.img core.* disk.fs dufs.fs disk-ext3w.fs disk-ext3-host.fs $(ROOT_DISK_IMG) $(DUFS_IMG) $(TEST_IMAGES) os.iso $(ISO_KERNEL) $(ISO_KERNEL_VGA) iso/boot/grub/grub.cfg "$(PDF)" "$(EPUB)" $(SENTINELS) $(ARM_SERIAL_LOG)
-	$(RM) build/arm64init.o build/crt0_arm64.o build/syscall_arm64.o build/arm64init.elf build/arm64-root.fs
+	$(RM) build/arm64init.o build/crt0_arm64.o build/syscall_arm64.o build/arm64init.elf build/arm64-root.fs build/arm64-rootfs-empty
 	$(RM) $(RUN_LOGS) $(TEST_LOGS) build/ext3-host.txt
 	rm -rf build/busybox
 	rm -rf build/nano
@@ -509,8 +527,8 @@ kernel/arch/arm64/%.o: kernel/arch/arm64/%.S
 kernel/lib/%.arm64.o: kernel/lib/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(INC) -c $< -o $@
 
-kernel-arm64.elf: $(ARM_KOBJS) $(ARM_SHARED_KOBJS)
-	$(ARM_LD) $(ARM_LDFLAGS) -o $@ $(ARM_KOBJS) $(ARM_SHARED_KOBJS)
+kernel-arm64.elf: $(ARM_KOBJS) $(ARM_SHARED_KOBJS) Makefile kernel/arch/arm64/arch.mk
+	$(ARM_LD) $(ARM_LDFLAGS) --wrap=syscall_case_exit_exit_group -o $@ $(ARM_KOBJS) $(ARM_SHARED_KOBJS)
 
 kernel8.img: kernel-arm64.elf
 	$(ARM_OBJCOPY) -O binary $< $@
@@ -518,6 +536,8 @@ kernel8.img: kernel-arm64.elf
 kernel: kernel-arm64.elf
 
 build: kernel-arm64.elf kernel8.img build/arm64-root.fs $(ARM_COMPILE_ONLY_OBJS)
+
+kernel/arch/arm64/start_kernel.o: .init-program-flag .arm64-smoke-fallback-flag
 
 iso: kernel8.img
 
@@ -573,7 +593,7 @@ clean:
 	find kernel -name '*.o' -delete
 	find kernel -name '*.d' -delete
 	$(RM) *.elf kernel8.img core.* disk.fs dufs.fs disk-ext3w.fs disk-ext3-host.fs $(ROOT_DISK_IMG) $(DUFS_IMG) $(TEST_IMAGES) os.iso $(ISO_KERNEL) $(ISO_KERNEL_VGA) iso/boot/grub/grub.cfg "$(PDF)" "$(EPUB)" $(SENTINELS) $(ARM_SERIAL_LOG)
-	$(RM) build/arm64init.o build/crt0_arm64.o build/syscall_arm64.o build/arm64init.elf build/arm64-root.fs
+	$(RM) build/arm64init.o build/crt0_arm64.o build/syscall_arm64.o build/arm64init.elf build/arm64-root.fs build/arm64-rootfs-empty
 	$(RM) $(RUN_LOGS) $(TEST_LOGS) build/ext3-host.txt
 	rm -rf build/busybox
 	rm -rf build/nano

@@ -99,6 +99,32 @@ TASK5_REQUIRED = {
     ],
 }
 
+TASK6_REQUIRED = {
+    ROOT / "kernel/arch/arm64/start_kernel.c": [
+        r"\barm64_rootfs_register\s*\(",
+        r"\bvfs_reset\s*\(",
+        r"\bdufs_register\s*\(",
+        r'\bvfs_mount_with_source\s*\(\s*"/"\s*,\s*"dufs"\s*,\s*"/dev/sda1"\s*\)',
+        r"\bboot_launch_init_process\s*\(",
+        r"\bBOOT_LAUNCH_INIT_STANDALONE\b",
+        r"\bDRUNIX_ARM64_SMOKE_FALLBACK\b",
+        r"\bsched_bootstrap\s*\(",
+        r"\barch_process_launch\s*\(",
+    ],
+    ROOT / "kernel/arch/arm64/proc/smoke.c": [
+        r"\barm64_report_init_exit\s*\(",
+        r"\b__wrap_syscall_case_exit_exit_group\s*\(",
+    ],
+    ROOT / "Makefile": [
+        r"(?m)^ARM64_SMOKE_FALLBACK \?= 0$",
+        r"-DDRUNIX_ARM64_SMOKE_FALLBACK=",
+        r"(?ms)^ifeq \(\$\(ARCH\),arm64\).*?^INIT_PROGRAM \?= bin/arm64init$",
+        r"(?ms)^ifeq \(\$\(ARCH\),arm64\).*?^INIT_ARG0 \?= arm64init$",
+        r"(?ms)^ifeq \(\$\(ARCH\),arm64\).*?^ROOT_FS \?= dufs$",
+        r"--wrap=syscall_case_exit_exit_group",
+    ],
+}
+
 ARM64_SHARED_RUNTIME_OBJS = [
     "kernel/proc/syscall.arm64.o",
     "kernel/proc/syscall/helpers.arm64.o",
@@ -333,5 +359,6 @@ check_process_create_file_body()
 check_arm64_user_stack_body()
 check_arm64_shared_runtime_linkage()
 check(TASK5_REQUIRED, lambda m: not m, "missing")
+check(TASK6_REQUIRED, lambda m: not m, "missing")
 check_late_phase7_boundaries()
 print("phase7 boundary guard passed")
