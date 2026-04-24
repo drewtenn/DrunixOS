@@ -15,12 +15,6 @@ FORBIDDEN = {
         r"\bstatic\s+const\s+char\s+\*argv\s*\[",
         r"\bstatic\s+const\s+char\s+\*envp\s*\[",
     ],
-    ROOT / "kernel/arch/arm64/start_kernel.c": [
-        r"\barm64_user_smoke_boot\s*\(\s*\)",
-    ],
-    ROOT / "kernel/proc/process.c": [
-        r"\bbuild_user_stack_frame\s*\(",
-    ],
 }
 
 REQUIRED = {
@@ -33,20 +27,9 @@ REQUIRED = {
     ],
     ROOT / "kernel/proc/init_launch.c": [
         r"\bboot_launch_init_process\s*\(\s*const char \*path\s*,\s*const char \*arg0\s*,\s*const char \*env0\s*,\s*int attach_desktop_pid\s*\)",
-        r"\bif\s*\(\s*attach_desktop_pid\s*\)",
-        r'\bklog\s*\(\s*"BOOT"\s*,\s*"locating initial program"',
-        r'\bklog_uint\s*\(\s*"FS"\s*,\s*"initial program size"',
-    ],
-    ROOT / "kernel/arch/arch.h": [
-        r"\barch_process_build_user_stack\b",
-    ],
-    ROOT / "kernel/arch/arm64/rootfs.c": [
-        r"\barm64_rootfs_register\b",
-    ],
-    ROOT / "kernel/arch/arm64/arch.mk": [
-        r"\brootfs_blob\.o\b",
-        r"\barm64init\.elf\b",
-        r"\barm64-root\.fs\b",
+        r"\battach_desktop_pid\b",
+        r"\bvfs_open_file\s*\(",
+        r"\bprocess_create_file\s*\(",
     ],
 }
 

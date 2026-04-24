@@ -3,10 +3,16 @@
 #include "init_launch.h"
 
 #include "kheap.h"
+#include "kprintf.h"
 #include "klog.h"
 #include "process.h"
 #include "sched.h"
 #include "vfs.h"
+
+static const char *boot_launch_kind_label(int attach_desktop_pid)
+{
+	return attach_desktop_pid ? "desktop-attached" : "standalone";
+}
 
 int boot_launch_init_process(const char *path,
                              const char *arg0,
@@ -18,28 +24,36 @@ int boot_launch_init_process(const char *path,
 	process_t init_proc;
 	const char *argv[1];
 	const char *envp[1];
+	const char *launch_kind = boot_launch_kind_label(attach_desktop_pid);
+	char log_line[96];
 	int rc;
 
 	argv[0] = arg0;
 	envp[0] = env0;
-	klog("BOOT", "locating initial program");
-	if (attach_desktop_pid)
-		klog("BOOT", "desktop attach requested for initial process");
+	k_snprintf(log_line, sizeof(log_line), "%s launch: locating initial program", launch_kind);
+	klog("BOOT", log_line);
 	if (vfs_open_file(path, &file_ref, &elf_size) != 0) {
-		klog("FS", "initial program not found");
+		k_snprintf(log_line, sizeof(log_line), "%s launch: initial program not found", launch_kind);
+		klog("FS", log_line);
 		return -1;
 	}
-	klog_uint("FS", "initial program inode", file_ref.inode_num);
-	klog_uint("FS", "initial program size", elf_size);
-	klog_uint("HEAP", "before process_create", kheap_free_bytes());
+	k_snprintf(log_line, sizeof(log_line), "%s launch: initial program inode", launch_kind);
+	klog_uint("FS", log_line, file_ref.inode_num);
+	k_snprintf(log_line, sizeof(log_line), "%s launch: initial program size", launch_kind);
+	klog_uint("FS", log_line, elf_size);
+	k_snprintf(log_line, sizeof(log_line), "%s launch: before process_create", launch_kind);
+	klog_uint("HEAP", log_line, kheap_free_bytes());
 	rc = process_create_file(&init_proc, file_ref, argv, 1, envp, 1, 0);
-	klog_uint("HEAP", "after process_create", kheap_free_bytes());
+	k_snprintf(log_line, sizeof(log_line), "%s launch: after process_create", launch_kind);
+	klog_uint("HEAP", log_line, kheap_free_bytes());
 	if (rc != 0) {
-		klog_uint("PROC", "process_create failed, code", (uint32_t)(-rc));
+		k_snprintf(log_line, sizeof(log_line), "%s launch: process_create failed, code", launch_kind);
+		klog_uint("PROC", log_line, (uint32_t)(-rc));
 		return rc;
 	}
 	if (sched_add(&init_proc) < 0) {
-		klog("PROC", "sched_add failed");
+		k_snprintf(log_line, sizeof(log_line), "%s launch: sched_add failed", launch_kind);
+		klog("PROC", log_line);
 		return -2;
 	}
 	return (int)init_proc.pid;
