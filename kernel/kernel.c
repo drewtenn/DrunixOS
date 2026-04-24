@@ -728,10 +728,6 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
 			__asm__ volatile("hlt");
 	}
 	klog_uint("PROC", "initial process pid", (uint32_t)init_pid);
-	if (desktop_is_active()) {
-		desktop_attach_shell_pid(&boot_desktop, (uint32_t)init_pid);
-		desktop_render(&boot_desktop);
-	}
 
 	/*
      * Bootstrap: promote the shell to RUNNING and launch it.

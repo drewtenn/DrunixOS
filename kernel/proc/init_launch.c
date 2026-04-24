@@ -5,14 +5,15 @@
 #include "kheap.h"
 #include "kprintf.h"
 #include "klog.h"
+#include "desktop.h"
 #include "process.h"
 #include "sched.h"
 #include "vfs.h"
 
 static const char *boot_launch_kind_label(int launch_mode_flag)
 {
-	/* The flag classifies the shared boot path for diagnostics; the caller
-	 * still owns any actual desktop attachment behavior. */
+	/* The flag controls whether the helper attaches the launched PID to the
+	 * active desktop after PID creation. */
 	return launch_mode_flag ? "desktop-attached" : "standalone";
 }
 
@@ -58,6 +59,14 @@ int boot_launch_init_process(const char *path,
 		k_snprintf(log_line, sizeof(log_line), "%s launch: sched_add failed", launch_kind);
 		klog("PROC", log_line);
 		return BOOT_LAUNCH_INIT_ERR_SCHED_ADD;
+	}
+	if (launch_mode_flag && desktop_is_active()) {
+		desktop_state_t *desktop = desktop_global();
+
+		if (desktop) {
+			desktop_attach_shell_pid(desktop, (uint32_t)init_proc.pid);
+			desktop_render(desktop);
+		}
 	}
 	return (int)init_proc.pid;
 }

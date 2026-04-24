@@ -3,8 +3,8 @@
 #ifndef INIT_LAUNCH_H
 #define INIT_LAUNCH_H
 
-/* The fourth argument classifies the shared boot launch path for diagnostics;
- * the caller still handles any desktop attachment after PID creation. */
+/* The fourth argument is a launch-mode flag: when set, the helper attaches
+ * the launched PID to the active desktop after PID creation. */
 #define BOOT_LAUNCH_INIT_ERR_NOT_FOUND (-1)
 #define BOOT_LAUNCH_INIT_ERR_PROCESS_CREATE (-2)
 #define BOOT_LAUNCH_INIT_ERR_SCHED_ADD (-3)

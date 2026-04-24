@@ -28,10 +28,10 @@ REQUIRED = {
         r"\bboot_launch_init_process\s*\(",
     ],
     ROOT / "kernel/proc/init_launch.h": [
-        r"\bboot_launch_init_process\s*\([^)]*,[^)]*,[^)]*,[^)]*\bint\b[^)]*\)",
+        r"\bboot_launch_init_process\s*\(\s*const char \*[^,]+,\s*const char \*[^,]+,\s*const char \*[^,]+,\s*int\s+\w+\s*\)",
     ],
     ROOT / "kernel/proc/init_launch.c": [
-        r"\bboot_launch_init_process\s*\([^)]*,[^)]*,[^)]*,[^)]*\bint\b[^)]*\)",
+        r"\bboot_launch_init_process\s*\(\s*const char \*[^,]+,\s*const char \*[^,]+,\s*const char \*[^,]+,\s*int\s+\w+\s*\)",
         r"\bvfs_open_file\s*\(",
         r"\bprocess_create_file\s*\(",
     ],
