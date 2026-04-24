@@ -9,11 +9,11 @@
 #include "sched.h"
 #include "vfs.h"
 
-static const char *boot_launch_kind_label(int attach_desktop_pid)
+static const char *boot_launch_kind_label(int launch_mode_flag)
 {
 	/* The flag classifies the shared boot path for diagnostics; the caller
 	 * still owns any actual desktop attachment behavior. */
-	return attach_desktop_pid ? "desktop-attached" : "standalone";
+	return launch_mode_flag ? "desktop-attached" : "standalone";
 }
 
 int boot_launch_init_process(const char *path,
@@ -26,7 +26,8 @@ int boot_launch_init_process(const char *path,
 	process_t init_proc;
 	const char *argv[1];
 	const char *envp[1];
-	const char *launch_kind = boot_launch_kind_label(attach_desktop_pid);
+	const int launch_mode_flag = attach_desktop_pid;
+	const char *launch_kind = boot_launch_kind_label(launch_mode_flag);
 	char log_line[96];
 	int rc;
 
@@ -37,7 +38,7 @@ int boot_launch_init_process(const char *path,
 	if (vfs_open_file(path, &file_ref, &elf_size) != 0) {
 		k_snprintf(log_line, sizeof(log_line), "%s launch: initial program not found", launch_kind);
 		klog("FS", log_line);
-		return -1;
+		return BOOT_LAUNCH_INIT_ERR_NOT_FOUND;
 	}
 	k_snprintf(log_line, sizeof(log_line), "%s launch: initial program inode", launch_kind);
 	klog_uint("FS", log_line, file_ref.inode_num);
@@ -51,12 +52,12 @@ int boot_launch_init_process(const char *path,
 	if (rc != 0) {
 		k_snprintf(log_line, sizeof(log_line), "%s launch: process_create failed, code", launch_kind);
 		klog_uint("PROC", log_line, (uint32_t)(-rc));
-		return rc;
+		return BOOT_LAUNCH_INIT_ERR_PROCESS_CREATE;
 	}
 	if (sched_add(&init_proc) < 0) {
 		k_snprintf(log_line, sizeof(log_line), "%s launch: sched_add failed", launch_kind);
 		klog("PROC", log_line);
-		return -2;
+		return BOOT_LAUNCH_INIT_ERR_SCHED_ADD;
 	}
 	return (int)init_proc.pid;
 }

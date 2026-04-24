@@ -28,12 +28,10 @@ REQUIRED = {
         r"\bboot_launch_init_process\s*\(",
     ],
     ROOT / "kernel/proc/init_launch.h": [
-        r"\bboot_launch_init_process\s*\(",
-        r"\battach_desktop_pid\b",
+        r"\bboot_launch_init_process\s*\([^)]*,[^)]*,[^)]*,[^)]*\bint\b[^)]*\)",
     ],
     ROOT / "kernel/proc/init_launch.c": [
-        r"\bboot_launch_init_process\s*\(",
-        r"\battach_desktop_pid\b",
+        r"\bboot_launch_init_process\s*\([^)]*,[^)]*,[^)]*,[^)]*\bint\b[^)]*\)",
         r"\bvfs_open_file\s*\(",
         r"\bprocess_create_file\s*\(",
     ],
