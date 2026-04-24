@@ -11,6 +11,8 @@
 
 static const char *boot_launch_kind_label(int attach_desktop_pid)
 {
+	/* The flag classifies the shared boot path for diagnostics; the caller
+	 * still owns any actual desktop attachment behavior. */
 	return attach_desktop_pid ? "desktop-attached" : "standalone";
 }
 

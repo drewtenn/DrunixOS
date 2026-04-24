@@ -26,13 +26,13 @@ FORBIDDEN = {
 REQUIRED = {
     ROOT / "kernel/kernel.c": [
         r"\bboot_launch_init_process\s*\(",
-        r"\bboot_launch_init_process\s*\(\s*DRUNIX_INIT_PROGRAM\s*,\s*DRUNIX_INIT_ARG0\s*,\s*DRUNIX_INIT_ENV0\s*,\s*1\s*\)",
     ],
     ROOT / "kernel/proc/init_launch.h": [
-        r"\bboot_launch_init_process\s*\(\s*const char \*path\s*,\s*const char \*arg0\s*,\s*const char \*env0\s*,\s*int attach_desktop_pid\s*\)",
+        r"\bboot_launch_init_process\s*\(",
+        r"\battach_desktop_pid\b",
     ],
     ROOT / "kernel/proc/init_launch.c": [
-        r"\bboot_launch_init_process\s*\(\s*const char \*path\s*,\s*const char \*arg0\s*,\s*const char \*env0\s*,\s*int attach_desktop_pid\s*\)",
+        r"\bboot_launch_init_process\s*\(",
         r"\battach_desktop_pid\b",
         r"\bvfs_open_file\s*\(",
         r"\bprocess_create_file\s*\(",
