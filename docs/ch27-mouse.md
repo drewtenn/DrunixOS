@@ -20,7 +20,7 @@ Between steps 1 and 7 the rest of the system is passive. The mouse driver, like 
 
 ### The PS/2 Auxiliary Channel
 
-A PS/2 keyboard controller — the 8042 chip, named for the part number used in the original IBM PC/AT — has two device channels. The **primary channel** carries keyboard traffic and raises IRQ1, which Chapter 10's driver already owns. The **auxiliary channel** is physically identical but routes its traffic through a second output buffer and raises its own interrupt, IRQ12.
+A PS/2 keyboard controller — the 8042 chip, named for the part number used in the original IBM PC/AT — has two device channels. The **primary channel** carries keyboard traffic and raises IRQ1, which Chapter 10's driver already owns. The **auxiliary channel** is the second input channel of the 8042 keyboard controller, physically separate but sharing the same I/O ports; it routes its traffic through a second output buffer and raises its own interrupt, IRQ12.
 
 Both channels share the same I/O ports:
 
@@ -79,7 +79,7 @@ This sentinel-bit check is what makes the stream self-synchronising. Even if the
 
 ### Coalescing Motion Packets
 
-One subtle cost matters on fast movement. When the user flings the mouse across the desk, the 8042 can queue several complete packets between IRQs. A naive "one packet per IRQ" handler runs the full render pipeline once per packet, which on a 1024×768 framebuffer is expensive enough to feel in a drag.
+One subtle cost matters on fast movement. When the user flings the mouse across the desk, the 8042 can queue several complete packets between IRQs. A naive "one packet per IRQ" handler runs the full render pipeline once per packet, which on a 1024×768 framebuffer is expensive enough to feel in a drag. Dropping intermediate motion packets trades occasional pixel-jitter for lower latency, which feels more responsive than drawing every packet.
 
 Our handler drains every queued byte inside a single interrupt. That is why the read loop consults both `PS2_STATUS_OUT_FULL` *and* `PS2_STATUS_AUX_BUFFER`: once three bytes have been consumed (a full packet for us), we keep reading only while the controller's next queued byte is also from the aux channel. A byte from the keyboard would stop the loop and leave the keystroke for the keyboard IRQ to pick up.
 

@@ -4,7 +4,7 @@
 
 ### The Moment a Missing Mapping Stops Being a Crash
 
-By the end of Chapter 24 the kernel can dump a crashed process's memory to disk, but it is still treating every ring-3 page fault as a terminal event. That was acceptable when all user pages were allocated eagerly: if the CPU faulted, the mapping was either invalid or forbidden, so the right answer really was SIGSEGV. The moment the heap becomes lazy and the user stack is allowed to grow, that assumption breaks. A fault is no longer always a bug. Sometimes it is the CPU's way of saying, "this virtual address is part of the process, but the page tables are not finished yet."
+Recall from Chapter 20 that the process heap is a range of virtual addresses the program can request from the kernel. By the end of Chapter 24 the kernel can dump a crashed process's memory to disk, but it is still treating every ring-3 page fault as a terminal event. That was acceptable when all user pages were allocated eagerly: if the CPU faulted, the mapping was either invalid or forbidden, so the right answer really was SIGSEGV. The moment the heap becomes lazy and the user stack is allowed to grow, that assumption breaks. A fault is no longer always a bug. Sometimes it is the CPU's way of saying, "this virtual address is part of the process, but the page tables are not finished yet."
 
 This chapter turns the page-fault path into a normal part of execution. The process asks for a larger heap with `brk()`, but the kernel does not allocate any physical memory yet. The process reaches into that heap later, the CPU faults because the page is not present, and the kernel allocates exactly one page, installs exactly one mapping, and retries exactly the same instruction. The same thing now happens when a deep call chain reaches the bottom of the four-page stack and needs one more page underneath it.
 
@@ -41,7 +41,7 @@ The sequence is:
 5. The CPU retries the exact instruction that faulted, this time against the updated page tables.
 6. If the fault is not recoverable, the old `SIGSEGV` path runs unchanged.
 
-The important point is that the retry is free. There is no second special control transfer for the resumed instruction. `iret` restores the saved `EIP`, `CS`, and `EFLAGS`, and the CPU simply fetches the same instruction again.
+The important point is that the retry is free. There is no second special control transfer for the resumed instruction. `iret` restores the saved `EIP`, `CS`, and `EFLAGS`, and the CPU simply fetches the same instruction again. This works because the CPU stopped at a well-defined point — `CR2` holds the faulting address and the instruction that caused the fault is known, so we can simply resume it once the page is present.
 
 ### The Decision Tree
 
@@ -82,7 +82,7 @@ This is why the new demand path and the refcounted physical allocator belong tog
 
 ### A Small VMA Table Now Defines What Counts As Valid Memory
 
-The page-fault handler no longer hard-codes "heap versus stack" by checking only raw address ranges. Each process now carries a small sorted VMA table describing the user regions the kernel intentionally created:
+The page-fault handler no longer hard-codes "heap versus stack" by checking only raw address ranges. Each process now carries a small sorted **VMA** (Virtual Memory Area, a record describing one contiguous range of valid user addresses) table describing the user regions the kernel intentionally created:
 
 - the `brk()` heap VMA,
 - the reserved grow-down stack VMA, and

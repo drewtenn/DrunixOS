@@ -12,7 +12,7 @@ Linux does exactly this for ordinary anonymous memory, and for the same reason: 
 
 ### Shared Pages Need a Real Ownership Count
 
-The moment two page tables point at the same physical frame, the old bitmap-only physical allocator stops being sufficient. A single bit can answer "is this frame free?", but it cannot answer "how many live mappings still refer to it?" That question matters in three places now:
+Think of it like a library book with multiple holds. The book stays out as long as at least one patron still has a claim on it. Only when the last hold is released does it go back on the shelf. The moment two page tables point at the same physical frame, the old bitmap-only physical allocator stops being sufficient. A single bit can answer "is this frame free?", but it cannot answer "how many live mappings still refer to it?" That question matters in three places now:
 
 - when `fork()` shares a frame into a child,
 - when a copy-on-write write fault stops using the old shared frame, and
@@ -148,3 +148,5 @@ For real workloads, that is the right asymmetry. A process can reserve a large h
 `fork()` no longer deep-copies every user frame up front. It allocates a new page directory and private user page tables for the child, rewrites writable shared pages as read-only copy-on-write mappings in both address spaces, and increments the physical frame's reference count. Read-only user pages are also shared, but they remain genuinely read-only rather than becoming copy-on-write.
 
 The physical memory manager now tracks frame ownership explicitly with a refcount array, so shared frames survive until the last mapping drops them. A write fault against a copy-on-write mapping either promotes the page in place when the refcount has already fallen to 1 or allocates a private replacement frame and copies 4 KB of data when the page is still shared. Process exit, heap shrink, and fork failure cleanup all use the same reference-counted release path, which means the memory subsystem now has a consistent answer to the question "who still owns this frame?"
+
+With fork now deferred and memory shared until write-time, the kernel is ready to wire up the remaining devices — starting with the mouse, which will bring the desktop to life.

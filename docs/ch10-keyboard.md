@@ -44,7 +44,7 @@ static int  kb_head = 0;
 static int  kb_tail = 0;
 ```
 
-The buffer is **empty** when the head equals the tail. It is **full** when advancing the head by one would make it equal to the tail — in which case the new character is dropped rather than overwriting an old one.
+When the head catches up to the tail, the buffer is full and the next keystroke is dropped. When they're equal, the buffer is empty.
 
 Visually, the buffer is a fixed array with the two indices chasing each other around its edge. After the user types `hi`, the state looks like this:
 
@@ -87,7 +87,7 @@ Second, it publishes the same character-device interface under both `"stdin"` an
 
 ### Extended Scancodes and Page Up / Page Down
 
-The PS/2 keyboard uses a two-byte sequence for many keys that do not appear in the original 83-key AT layout — arrow keys, Home, End, Insert, Delete, Page Up, and Page Down among them. These keys send a prefix byte of `0xE0` followed by a second make code, instead of the single-byte make codes used by letters and digits.
+Extended scancodes are two-byte sequences: a `0xE0` prefix followed by a key-identifying byte. The PS/2 keyboard uses them for many keys that do not appear in the original 83-key AT layout — arrow keys, Home, End, Insert, Delete, Page Up, and Page Down among them. These keys send a prefix byte of `0xE0` followed by a second make code, instead of the single-byte make codes used by letters and digits.
 
 We handle this with a one-bit flag, `e0_prefix`. When the interrupt fires and the byte read from port `0x60` is `0xE0`, the handler sets the flag and returns immediately — there is nothing to push into the ring buffer yet. When the very next interrupt arrives, the flag is set, so the handler treats the new scancode as the second half of an extended pair:
 
@@ -104,6 +104,6 @@ The `SYS_READ` implementation at this stage still **spins** on the keyboard char
 
 ### Where the Machine Is by the End of Chapter 10
 
-Every key the user presses now produces a character in the kernel's ring buffer. Any reading program can call `SYS_READ` to retrieve those characters one at a time. Pressing Ctrl+C while a foreground job is running sends an interrupt signal to every runnable process in that job (including all stages of a pipeline); pressing Ctrl+C at the prompt cancels the current input line. Pressing Ctrl+Z sends a terminal-stop signal to the foreground process group, suspending the running program and returning control to the waiting program.
+Every key the user presses now produces a character in the kernel's ring buffer, and a user program can call `SYS_READ` on file descriptor 0 to pull those characters out one at a time. Pressing Ctrl+C while a foreground job is running sends an interrupt signal to every runnable process in that job (including all stages of a pipeline); pressing Ctrl+C at the prompt cancels the current input line. Pressing Ctrl+Z sends a terminal-stop signal to the foreground process group, suspending the running program and returning control to the waiting program.
 
 The architecture introduced in this chapter — interrupt fires, handler pushes to a ring buffer (or sends a signal), consumer pulls from the ring buffer — is the same pattern real operating systems use. The hardware-specific pieces (scancode decoding, I/O port numbers, EOI sequences) vary by device and by PIC, but the separation between the interrupt producer and the sleeping consumer is universal.

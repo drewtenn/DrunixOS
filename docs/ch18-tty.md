@@ -12,7 +12,7 @@ The word "TTY" is an anachronism — it originally referred to a physical Telety
 
 A TTY has three jobs. The first is *line discipline*: in its default mode it buffers incoming characters until the user presses Enter, then hands the complete line to whichever program is waiting. This is called **canonical mode** (ICANON). Programs that want to react to every keystroke individually — a text editor, a game, a readline loop in a shell — switch the TTY into **raw mode** by clearing the ICANON flag, at which point characters are delivered immediately as they arrive.
 
-The second job is *signal generation*. Certain control characters carry meaning that goes beyond text: pressing Ctrl+C on a Unix terminal has always meant "interrupt the foreground process". The TTY, not the keyboard driver, is the right place to translate that keypress into a **signal** — a kernel-mediated asynchronous notification that causes a process to take some action, by default terminating it — because the TTY knows which process group is currently in the foreground. This chapter focuses on the TTY's role in generating and targeting those signals.
+The second job is *signal generation*. The TTY — not the keyboard driver — generates signals because the TTY knows which process group is in the foreground. The keyboard has no concept of process groups. Certain control characters carry meaning that goes beyond text: pressing Ctrl+C on a Unix terminal has always meant "interrupt the foreground process". The TTY translates that keypress into a **signal** — a kernel-mediated asynchronous notification that causes a process to take some action, by default terminating it — and delivers it to whichever process group currently owns the terminal. This chapter focuses on the TTY's role in generating and targeting those signals.
 
 The third job is *echo*. When the ECHO flag is set, the TTY prints each incoming character back to the screen so the user can see what they are typing. In raw mode a program usually handles its own echo.
 
@@ -30,7 +30,7 @@ typedef struct {
 } termios_t;
 ```
 
-The TTY starts in the same broad mode as a normal Linux terminal: canonical input, echo, signal-generating control keys, CR-to-NL input translation, and standard control characters such as Ctrl+C, Ctrl+Z, DEL erase, `VMIN=1`, and `VTIME=0`. Interactive programs such as editors can switch to raw mode with the ordinary termios path.
+The TTY starts in the same broad mode as a normal Linux terminal: canonical input, echo, signal-generating control keys, CR-to-NL input translation, and standard control characters such as Ctrl+C, Ctrl+Z, and DEL erase. It also carries the traditional raw-mode read-sizing defaults `VMIN=1` (return after at least one byte is available) and `VTIME=0` (no inter-byte timeout, so a reader simply waits until one byte arrives). Interactive programs such as editors can switch to raw mode with the ordinary termios path.
 
 The supported local flags are:
 
@@ -119,3 +119,5 @@ The shell itself keeps its own raw readline loop unchanged — the TTY defaults 
 ### Where the Machine Is by the End of Chapter 18
 
 At the end of this chapter the keyboard's characters no longer flow directly to a ring buffer — they pass through a stateful line discipline first. We have a single TTY (`tty0`) that every process's standard input is connected to. Processes that call `sys_read(0, ...)` and find no data available now sleep on the terminal instead of spinning; the CPU is genuinely free while they wait. Ctrl+C sends SIGINT and Ctrl+Z sends SIGTSTP to the foreground process group recorded in the TTY, and the TTY itself records which session owns that terminal. The `termios` API gives user-space programs the ability to switch between raw and canonical input modes. Process groups and sessions now line up with the shell's `jobs`/`fg`/`bg` builtins, so job control no longer depends on any kernel fallback path.
+
+With the terminal, its line discipline, and its signal-generating machinery all in place, Part V closes out. The next part turns to the full user environment built on top of these primitives — signal delivery semantics, the user-space runtime that wraps these syscalls, the C library, and the shell that ties them all together.

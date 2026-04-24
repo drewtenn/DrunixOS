@@ -76,6 +76,8 @@ A debugger is not the only source of truth. We deliberately keep several output 
 - COM1 serial logging survives many failures that leave the screen stale.
 - QEMU's debug console on port `0xE9` is even simpler and often remains usable when other output paths are compromised.
 
+Logs survive kernel crashes because serial and QEMU debug-port writes bypass the console path — they go straight to the hardware port without routing through the VGA driver, the framebuffer compositor, or any kernel layer that might itself be broken.
+
 For fatal kernel faults, the panic path writes directly to serial and debugcon rather than depending on the normal display code path. That is why a crash can still leave readable diagnostics behind even when the framebuffer or VGA screen looks frozen.
 
 ### Live Debugging and Post-Mortem Debugging
@@ -89,7 +91,7 @@ The two techniques complement each other:
 
 That distinction is why we have both a live GDB workflow and the ELF core-dump writer from Chapter 24. The debugger attached to QEMU is the tool for bringing the machine up. The core file is the tool for understanding why a process came down.
 
-The process-memory forensics path now gives an explicit end-to-end check:
+The process-memory forensics path now gives an explicit end-to-end check. Recall from Chapter 24 that `/proc/<pid>/vmstat`, `/proc/<pid>/fault`, and `/proc/<pid>/maps` are synthetic procfs views of a live process's memory state — `vmstat` holds compact totals, `fault` holds the current fault snapshot, and `maps` holds the detailed layout.
 
 1. Inspect `/proc/<pid>/vmstat` for compact totals and `/proc/<pid>/fault` for the current fault snapshot (`State: none` before a crash).
 2. Trigger a deliberate user crash (for example, `crash badptr`) to generate `core.<pid>`.

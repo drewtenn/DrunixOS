@@ -10,7 +10,7 @@ The disk interface on every x86 PC made before **SATA** (Serial ATA, a newer poi
 
 ### Two Ways to Move Data: PIO and DMA
 
-There are two distinct strategies for transferring data between an ATA drive and RAM.
+There are two distinct strategies for transferring data between an ATA drive and RAM. PIO is like the kernel carrying each word from disk to RAM by hand, one at a time — slow but simple. DMA is like setting up an automatic conveyor belt that moves data while the kernel does other work.
 
 **PIO** (Programmed I/O) is the simpler of the two. The CPU issues a command to the drive, waits for the drive to say "data ready", and then reads or writes the 512 bytes of a sector one word at a time through an I/O port. Every byte passes through the CPU. It is slow — the CPU does nothing else during the transfer — but it requires no configuration of any other hardware.
 
@@ -121,4 +121,4 @@ Once the driver is initialised, it wraps each drive's sector read/write routines
 
 ### Where the Machine Is by the End of Chapter 11
 
-We can now read and write arbitrary 512-byte sectors on the primary ATA drive. That capability is exactly what a filesystem needs — the filesystem imposes structure on top of the raw sectors, turning "sector 22" into "the file called `hello.txt`". Chapter 13 takes that step. For now, the driver is intentionally minimal: one sector at a time, polling only, master drive on the primary channel, no interrupt handling. It is not efficient, but it is correct and easy to reason about.
+By the end of this chapter, the kernel can read and write arbitrary 512-byte sectors without any filesystem knowledge. That raw capability is exactly what a filesystem needs — the filesystem imposes structure on top of the raw sectors, turning "sector 22" into "the file called `hello.txt`". Chapter 13 takes that step. For now, the driver is intentionally minimal: one sector at a time, polling only, master drive on the primary channel, no interrupt handling. It is not efficient, but it is correct and easy to reason about.

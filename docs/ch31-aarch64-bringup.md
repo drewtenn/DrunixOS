@@ -23,11 +23,11 @@ If any of those are wrong, every later subsystem is harder to inspect. If they a
 
 ### Booting Without GRUB
 
-The x86 path enters through GRUB with a Multiboot info structure in hand. The Raspberry Pi bring-up path does not get that luxury. QEMU's `raspi3b` machine loads the kernel image at physical address `0x80000` and starts all four cores in AArch64 state, usually at EL2. That means the bring-up code has to perform a few chores the x86 kernel inherited from firmware:
+The x86 path enters through GRUB with a Multiboot info structure in hand. The Raspberry Pi bring-up path does not get that luxury. QEMU's `raspi3b` machine loads the kernel image at physical address `0x80000` and starts all four cores in AArch64 state, usually at **EL2** (Exception Level 2, a privileged mode intended for hypervisors). That means the bring-up code has to perform a few chores the x86 kernel inherited from firmware:
 
 - identify the primary core and park the others
 - inspect the current exception level
-- drop from EL2 to EL1
+- drop from EL2 to **EL1** (Exception Level 1, the standard privileged mode for ordinary operating system kernels)
 - establish a stack pointer
 - zero `.bss`
 
@@ -74,6 +74,8 @@ The x86 kernel's periodic heartbeat came from the PIT routed through the PIC. On
 - the BCM2836 core-local interrupt block, which routes the timer interrupt to core 0
 
 The timer setup is refreshingly small. The kernel reads `CNTFRQ_EL0`, divides it by the desired frequency, writes the interval to `CNTP_TVAL_EL0`, enables the timer via `CNTP_CTL_EL0`, and asks the core-local interrupt controller to deliver the non-secure EL1 physical timer interrupt as an IRQ. Every IRQ rewrites the timer interval and increments a tick counter.
+
+We pick one interrupt per second: slow enough to see distinct ticks on the console, fast enough to prove the interrupt path works reliably.
 
 That tick counter drives the visible proof of life:
 

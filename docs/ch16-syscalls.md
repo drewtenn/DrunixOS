@@ -16,7 +16,7 @@ Most syscalls complete immediately, but several must suspend the calling process
 
 In each case we use the same mechanism: we change the calling process's state from `PROC_RUNNING` to `PROC_BLOCKED`, record either a wait queue or a wake deadline in the process descriptor, and call the scheduler to switch to another ready task. A TTY reader sleeps until keyboard input arrives; a `waitpid` caller sleeps until a child exits; a pipe endpoint sleeps until the buffer drains or fills; a sleep call simply sleeps until a deadline expires. When the relevant event fires, the sleeping process is transitioned back to ready and the scheduler picks it up on the next tick.
 
-This is still the same Linux idea: blocking calls are state transitions plus wakeups, not busy loops. A **signal** — an asynchronous notification delivered to a process from the kernel or from another process — can also make a blocked syscall return early. The user runtime builds `sleep(3)` on top of Linux-shaped `SYS_NANOSLEEP`.
+This is still the same Linux idea: blocking calls are state transitions plus wakeups, not busy loops. A blocked syscall can also be cut short by a **signal** — an asynchronous notification delivered to a process from the kernel or from another process that causes the process to take some action, often interrupting whatever it was doing. The user runtime builds `sleep(3)` on top of Linux-shaped `SYS_NANOSLEEP`.
 
 ### Path Resolution Per Process
 
@@ -103,3 +103,5 @@ The complete syscall table:
 ### Where the Machine Is by the End of Chapter 16
 
 We now expose a stable ring-3 ABI whose public surface follows Linux i386 numbering. Every service Drunix user programs depend on — console I/O, process creation and waiting, heap growth, anonymous memory mappings, filesystem operations, pipes, directory enumeration, metadata queries, and signal delivery — is available through a single `int 0x80` entry point. The generic wait-queue model ensures that waiting processes consume no CPU while they sleep, regardless of whether the event source is a TTY, a pipe, a child process, or a timeout. The per-process cwd makes relative paths work naturally, and the per-process VMA table gives the memory-management syscalls a coherent view of heap, stack, and `mmap()` regions. A tiny static Linux i386 smoke binary, `/bin/linuxhello`, uses Linux syscall numbers directly to exercise that ABI without the Drunix C runtime.
+
+Every syscall that touches a file still identifies it by inode number. The next chapter introduces the file descriptor table that sits between the syscall layer and those inodes, turning open files into the small integers every Unix program expects.

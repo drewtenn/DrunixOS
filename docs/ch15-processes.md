@@ -12,7 +12,7 @@ This chapter adds everything required to cross that boundary. By the end, we wil
 
 ### What the CPU Requires Before It Will Enter Ring 3
 
-Four hardware structures must be in place before the `iret` instruction can legally transfer from ring 0 to ring 3.
+The core problem is this: ring-3 code cannot touch kernel memory, but the CPU must still switch to a kernel stack on interrupt, find a valid handler entry for `int 0x80`, and keep each process isolated from every other one. The hardware solves each piece of that with a separate structure, and all of them must be in place before the `iret` instruction can legally transfer from ring 0 to ring 3. There are four of them.
 
 **First, the GDT must contain ring-3 segment descriptors.** The GDT set up in Chapter 2 had only kernel code and kernel data segments at DPL 0 (Descriptor Privilege Level 0 — accessible only by ring 0). The kernel now rebuilds the GDT in C code, expanding it from three entries to seven:
 
@@ -48,7 +48,7 @@ One subtle detail: all parameters must be saved into registers *before* the segm
 
 The paging module from Chapter 8 is extended with two new functions.
 
-`paging_create_user_space` allocates a fresh 4 KB page directory from the physical memory manager and copies the kernel's thirty-two page directory entries into it (those entries cover the kernel's 0–128 MB identity mapping). Because the kernel is identity-mapped, the physical address of the new page directory is also its virtual address, and we can write to it directly without switching `CR3`.
+`paging_create_user_space` allocates a fresh 4 KB page directory from the physical memory manager and copies the kernel's thirty-two page directory entries into it (those entries cover the kernel's 0–128 MB identity mapping). Those copied entries do not carry the `PG_USER` bit, so ring-3 code cannot reach kernel addresses through them even though ring-0 code in the same address space can. That is what keeps a user program from reading or writing kernel memory just because its page directory points at it. Because the kernel is identity-mapped, the physical address of the new page directory is also its virtual address, and we can write to it directly without switching `CR3`.
 
 `paging_map_page` installs a single page table entry in an arbitrary page directory. If there is no page table yet for the target virtual address, it allocates one and marks the page directory entry with `PG_USER` so the CPU will descend into it on ring-3 lookups. If the existing page table was inherited from the kernel (that is, shared between processes), the function makes a private copy first — a crucial point, because otherwise a second process would overwrite the first process's user mappings in the shared kernel table and crash the first process the next time it ran.
 
@@ -104,7 +104,7 @@ When the shell calls `SYS_WAIT` with the child's PID, the kernel blocks the shel
 
 With the ring-3 machinery in place the next step is running **multiple processes concurrently**. The **scheduler** uses a hardware timer to interrupt the running process every ten milliseconds and hand the CPU to the next one waiting.
 
-The `process_t` struct gains several new fields to support this:
+Several new fields on the `process_t` struct manage preemption and blocking:
 
 ```c
 typedef struct __attribute__((aligned(16))) {
@@ -125,7 +125,7 @@ typedef struct __attribute__((aligned(16))) {
 } process_t;
 ```
 
-We keep a static `proc_table` of eight entries and a pointer `g_current` to the currently running one. Every process moves through a state machine as syscalls and interrupts fire:
+We keep a static `proc_table` of eight entries and a pointer `g_current` to the currently running one. A process moves through states as events fire — a syscall that must wait parks the process, an arriving interrupt can wake it, and an exit call retires it:
 
 ![](diagrams/ch15-diag02.svg)
 
@@ -147,7 +147,7 @@ When every slot is blocked and nothing is `RUNNING`, the scheduler enters an idl
 
 **Every process has its own kernel stack.** When a hardware interrupt fires while ring-3 code is running, the CPU reads `TSS.ESP0` and switches to that address before pushing the interrupt frame. If two processes shared a single kernel stack, saving the first process's frame and then taking an interrupt for the second would overwrite the first process's state. `process_create` therefore allocates a dedicated 16 KB stack for each process, and every context switch updates `TSS.ESP0` to point at the new current process's stack top. The double-fault path is separate: it does not use the current process's `ESP0`, but instead switches into the dedicated emergency TSS described earlier.
 
-**The timer is driven by the PIT.** The **PIT** (Programmable Interval Timer, specifically the Intel 8253/8254) is a legacy chip found on every x86 PC. Its channel 0 is programmed with a divisor that produces a periodic interrupt on IRQ0 — in this case roughly 100 Hz, or every ten milliseconds. The PIT is configured in `pit_init` using port writes to `0x43` (mode register) and `0x40` (channel 0 data), and the PIC mask is updated so that both IRQ0 (timer) and IRQ1 (keyboard) are enabled.
+**The timer is driven by the PIT.** The **PIT** (Programmable Interval Timer) is an old timer chip — specifically the Intel 8253/8254 — found on every x86 PC. The kernel tells it to fire an interrupt every ten milliseconds, using its channel 0 configured with a divisor that yields roughly 100 Hz on IRQ0. The PIT is configured in `pit_init` using port writes to `0x43` (mode register) and `0x40` (channel 0 data), and the PIC mask is updated so that both IRQ0 (timer) and IRQ1 (keyboard) are enabled.
 
 **The wall clock starts from the RTC and advances on PIT ticks.** During boot, `clock_init` reads the **RTC** (Real-Time Clock), a battery-backed timekeeping chip housed in the **CMOS** (Complementary Metal-Oxide Semiconductor) chip on the motherboard, through I/O ports `0x70` and `0x71`, waits for a stable sample, converts the RTC date into Unix time, and stores it as UTC seconds since 1970-01-01. Each PIT interrupt calls `clock_tick` before `sched_tick`, so the wall-clock counter advances once every 100 timer ticks even though the RTC is only read at boot.
 

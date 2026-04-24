@@ -4,6 +4,8 @@
 
 ### A Shared Voice for Every Subsystem
 
+Without a shared log, each subsystem invents its own messaging, the output becomes noisy, and once the screen scrolls the boot history is gone.
+
 With the memory subsystem live and the heap available, the kernel can initialise subsystems that need dynamic allocation. As those subsystems come up they all need to report their status, and without a shared logging layer each one invents its own approach. One subsystem calls `print_string` directly with a literal string, another builds a message buffer inline, a third adds and removes diagnostic lines repeatedly during development. The screen becomes cluttered with inconsistent output that is hard to read and impossible to review after it scrolls away.
 
 This chapter introduces a small logging layer called **klog**. It is not a debugging aid to be removed before shipping — it is the permanent voice the kernel uses to describe itself as it boots. Every subsystem from this chapter onward uses klog instead of calling `print_string` directly.
@@ -20,7 +22,7 @@ Every call produces a single line on the boot console and on QEMU's debugcon whe
 
 ### How It Is Implemented
 
-klog still depends on `print_string`, the legacy text output function from Chapter 3, and still mirrors output to the optional debug console. But the log is no longer write-only. Each rendered message is also copied into a fixed-size in-memory ring buffer so the most recent history survives after the visible screen has scrolled away or the desktop has taken over the display.
+klog still depends on `print_string`, the legacy text output function from Chapter 3, and still mirrors output to the optional debug console. But the log is no longer write-only. Each rendered message is also copied into a fixed-size in-memory ring buffer so the most recent history survives after the visible screen has scrolled away or the desktop has taken over the display. The ring buffer is like a revolving door with a fixed number of slots — new messages push out old ones as the head pointer wraps, but the consumer reads at its own pace from the tail.
 
 The retained record is intentionally compact: it stores the uptime tick count, the chosen log level, a short tag, and a bounded message string. The timestamp comes from the same PIT-driven timebase that we advance every timer interrupt, so the log lines can be rendered later as `seconds.milliseconds since boot` without consulting the RTC again.
 
@@ -42,4 +44,4 @@ The rule is simple: any subsystem that completes initialisation, encounters a re
 
 ### Where the Machine Is by the End of Chapter 9
 
-By the end of this chapter, every kernel subsystem reports its status through one shared logging interface, and the boot console reads as a consistent structured log. Later chapters build on that by exposing the retained log through `procfs`, so the same messages can be read interactively from user space long after the screen has scrolled.
+By the end of this chapter, every kernel subsystem reports its status through one shared logging interface, and the boot console reads as a consistent structured log. Because every rendered line is also retained in the in-memory ring buffer, nothing is lost when the visible screen scrolls or the desktop takes over the display. Later chapters build on that by exposing the retained log through `procfs` as `/proc/kmsg`, which is exactly how the user-space `dmesg` utility reads the boot history back out — the same pattern real Unix systems use to let operators review what happened on the way up.

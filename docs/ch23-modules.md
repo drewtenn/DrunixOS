@@ -24,7 +24,7 @@ Undefined symbols — those the object references but does not define — are ma
 
 ### Applying Relocations
 
-A relocatable object produced by the compiler contains placeholder values wherever it references a symbol whose final address is not yet known. A **relocation record** tells us exactly where one of these placeholders sits, which symbol's address should go there, and what arithmetic to apply. We handle the two relocation types that a simple C module produces.
+A relocatable object produced by the compiler contains placeholder values wherever it references a symbol whose final address is not yet known. Think of relocation like sorting a package labelled "recipient unknown". The compiler left a placeholder. When we load the module, we look up the real address and fill it in — exactly as the mail carrier would look up and write the recipient's address. A **relocation record** tells us exactly where one of these placeholders sits, which symbol's address should go there, and what arithmetic to apply. We handle the two relocation types that a simple C module produces.
 
 An `R_386_32` record describes a 32-bit absolute address reference. We add the symbol's runtime address to whatever value the compiler placed at the patch site — typically zero — and write the result back. A `call` or `jmp` to an absolute address uses this form.
 

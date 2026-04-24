@@ -72,7 +72,7 @@ The third entry is the **data segment descriptor**. It too covers the full 4 GB 
 
 The byte offset of each descriptor within the table *is* its selector value: the null descriptor is at offset 0, the code descriptor at offset 8 (`0x08`), and the data descriptor at offset 16 (`0x10`). These two constants — `0x08` and `0x10` — appear throughout the kernel wherever segment registers are set.
 
-This three-entry table is a temporary scaffold. Chapter 15 describes how we expand it to six entries by adding ring-3 user code and data segments and a **TSS** (Task State Segment, a hardware structure needed for privilege-level transitions). The kernel and data selectors deliberately remain at `0x08` and `0x10` after that expansion, so the interrupt handlers installed in Chapter 4, which hard-code `0x10` when reloading `DS` after an interrupt, continue working without modification.
+This three-entry table is a temporary scaffold. Chapter 15 describes how we expand it to six entries by adding ring-3 user code and data segments and a **TSS** (Task State Segment, a CPU data structure that holds the kernel stack pointer the CPU must load when user code requests a privilege transition). The kernel and data selectors deliberately remain at `0x08` and `0x10` after that expansion, so the interrupt handlers installed in Chapter 4, which hard-code `0x10` when reloading `DS` after an interrupt, continue working without modification.
 
 ### Decoding the Permission Bits
 

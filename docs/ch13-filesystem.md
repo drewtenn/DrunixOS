@@ -18,7 +18,7 @@ The very first DUFS stored each file's name, size, and starting sector together 
 
 **Contiguous allocation is a dead end.** V1 stores only a `start_lba`, so every file must live in one contiguous run of sectors. A file cannot grow past an adjacent occupied sector without being relocated. With block pointers in the inode, a file can be assembled from non-contiguous blocks anywhere on the disk.
 
-**Directory entries bloat with metadata.** When a directory entry holds all the metadata, scanning it for a name lookup also reads timestamps, sizes, and permissions — data that the name lookup does not need.
+**Directory entries bloat with metadata.** When a directory entry holds all the metadata, a name lookup that reads that entry fetches timestamps, sizes, and permissions it does not need — wasting disk reads just to find out which inode a name points at.
 
 UNIX (Bell Labs, 1969) separated name from metadata by introducing the **inode** (index node): a small fixed-size record on disk that holds the file's type, size, link count, and an array of block pointers. Directory entries become `(name, inode_number)` pairs only. Two names can point at the same inode number — that is a hard link. Renaming a file within the same directory only rewrites the directory entry, not the inode. The inode is the ground truth; the directory is just the index.
 
@@ -109,7 +109,7 @@ All data I/O in DUFS v3 operates on 4096-byte blocks. Because the ATA driver tra
 
 ![](diagrams/ch13-diag03.svg)
 
-Inode table I/O is the exception: inodes are 128 bytes with four per sector, so inode reads and writes still use single-sector calls. This keeps inode I/O efficient — updating one inode costs one sector read and one sector write, not eight of each.
+Inode table I/O is the exception: inodes are 128 bytes, so four of them fit in a single 512-byte ATA sector. Inode reads and writes therefore still use single-sector calls, and one sector read yields four inodes. This keeps inode I/O efficient — updating one inode costs one sector read and one sector write, not eight of each.
 
 ### Path Resolution
 
@@ -133,7 +133,9 @@ The byte range is then walked block by block. For each block, the filesystem com
 
 ### Writing File Data
 
-Writing extends a file, allocating new data blocks on demand. For each block in the affected range, the filesystem first ensures that a real block exists. If the relevant direct or indirect pointer is still zero, it finds a free block in the block bitmap, marks it allocated, zeroes it on disk, and stores the new LBA in the inode. For writes that land in the indirect or double-indirect range, the intermediate table blocks are allocated first.
+Writing extends a file, allocating new data blocks on demand. For each block in the affected range, the filesystem first ensures that a real block exists. If the relevant direct or indirect pointer is still zero, it finds a free block in the block bitmap, marks it allocated, zeroes it on disk, and stores the new LBA in the inode.
+
+For writes that land in the indirect or double-indirect range, the intermediate table blocks are allocated first.
 
 The block bitmap is held in memory during the write. The allocation bits are updated immediately there, but the bitmap itself is flushed to disk only once at the end of the whole write, along with the updated inode. That keeps a large multi-block write from re-writing the bitmap on every single block allocation.
 
@@ -167,7 +169,7 @@ Reading inode `n` requires computing the sector: `inode_table_lba + n / 4`, and 
 
 The image-building tool constructs a valid DUFS v3 image from a list of source files and their destination paths. It runs at build time.
 
-Destination paths may contain `/` at any depth: `"usr/bin/hello"` causes the script to create both `usr/` and `usr/bin/` automatically. The directory tree is built by splitting each destination path on `/`, creating every intermediate component. Inode numbers are assigned in breadth-first order — parents always receive lower inode numbers than their children.
+Destination paths may contain `/` at any depth: `"usr/bin/hello"` causes the script to create both `usr/` and `usr/bin/` automatically. The directory tree is built by splitting each destination path on `/`, creating every intermediate component. Inode numbers are assigned in breadth-first order — parents always receive lower inode numbers than their children. That ordering helps cache locality: a path walk reads the parent's inode before any of its children, and nearby inode numbers land in the same sector of the inode table, so later lookups in the same directory tend to hit sectors already brought in by earlier walks.
 
 Initial image timestamps are populated at build time. File inodes receive the host file's modification time, while directory inodes receive the image build time. Runtime changes use the kernel wall clock instead.
 

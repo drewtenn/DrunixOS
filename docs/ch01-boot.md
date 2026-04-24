@@ -4,11 +4,13 @@
 
 ### The Moment the Machine Wakes Up
 
+When you power on a computer, it runs a tiny program baked into the motherboard called firmware. Its job is to find something bootable on the attached disks and hand control to it — a process we call booting.
+
 When you press the power button, the processor starts executing instructions from a fixed address in **firmware** — a permanently installed program stored on a chip on the motherboard. On older machines this firmware is called the **BIOS** (Basic Input/Output System); on newer ones it is called **UEFI** (Unified Extensible Firmware Interface). Both do the same thing at this stage: they scan the attached disks looking for something bootable and hand control to the first program they find.
 
 At this instant the CPU is running in **16-bit real mode**. Real mode is a backwards-compatibility mode in which the processor behaves like an Intel 8086 from 1978: 16-bit registers, 1 MB of addressable memory, and no memory protection of any kind. A bootloader has to live with these restrictions until it can switch the CPU into a modern mode.
 
-Writing a bootloader that handles all of this reliably — across USB sticks, real hard disks, and emulators — is a small project on its own. It involves calling BIOS services to read sectors, parsing disk formats, setting up descriptor tables, and flipping the CPU into 32-bit mode. Rather than reinvent that work, we delegate it to **GRUB2**, the GNU GRand Unified Bootloader. GRUB is the same program that loads every major Linux distribution, so it is battle-tested on every PC you are likely to encounter.
+Writing a bootloader that handles all of this reliably — across USB sticks, real hard disks, and emulators — is a small project on its own. It has to call BIOS services to read disk sectors and then parse whatever on-disk format holds the kernel. After that, it has to set up descriptor tables — small in-memory tables that tell the CPU how memory is partitioned — and flip the CPU from real mode into 32-bit protected mode. Rather than reinvent that work, we delegate it to **GRUB2**, the GNU GRand Unified Bootloader. GRUB is the same program that loads every major Linux distribution, so it is battle-tested on every PC you are likely to encounter.
 
 By the time GRUB hands control to our kernel, it has already done four things on our behalf:
 
@@ -56,7 +58,7 @@ If `start_kernel` ever returns — it should never exit — `_start` executes an
 
 ### Where the Kernel Lives in Memory
 
-We load our kernel at **1 megabyte** (`0x100000`), fixed at link time. This is the conventional load address for a Multiboot kernel. The reason is that everything below one megabyte on an x86 PC is a patchwork of legacy regions — the BIOS interrupt vector table, the VGA video buffer, BIOS ROM shadows — and none of it is safe to use as general RAM. Starting at one megabyte puts the kernel in the "extended memory" region, which is guaranteed to be real, usable RAM.
+We load our kernel at **1 megabyte** (`0x100000`), fixed at link time. This is the conventional load address for a Multiboot kernel. The reason is that everything below one megabyte on an x86 PC is a patchwork of legacy regions — the BIOS interrupt vector table, the VGA video buffer, BIOS ROM shadows — and none of it is safe to use as general RAM. Starting at one megabyte puts the kernel in the "extended memory" region, which is guaranteed to be real, usable RAM. Multiboot chose 1 MB because it is high enough to avoid firmware regions but low enough to fit on machines with only 4 MB of RAM, the minimum the spec targeted.
 
 The linker script lays the sections out in a fixed order:
 

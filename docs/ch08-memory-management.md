@@ -43,6 +43,8 @@ Everything below 1 MB is reserved or hardware-mapped. The kernel image itself st
 
 The **PMM** tracks which physical 4 KB pages are free. It uses a **bitmap**: a flat array where each bit represents one page. A `1` means "in use", a `0` means "free".
 
+Think of the bitmap like a seating chart at a concert — each seat is one page, a `1` means someone is sitting there, a `0` is empty. To find a seat, scan for the first empty row, then the first empty chair in that row.
+
 For 128 MB of RAM with 4 KB pages, the arithmetic is tidy:
 
 - 128 MB ÷ 4 KB = 32 768 pages.
@@ -127,6 +129,8 @@ The function fills in the page directory one entry at a time. For the first thir
 After every page table is filled in, the kernel loads the page directory's physical address into `CR3` and sets bit 31 of `CR0`. On the next instruction, the CPU is translating every memory access. Because everything is identity-mapped, nothing visibly changes.
 
 #### Private Page Tables for User Processes
+
+If processes shared a page table, writes from one would overwrite another — process A's mapping of `0x400000` would replace process B's the moment A ran. Every process therefore needs its own page table for the regions it uses.
 
 When a user program is loaded at virtual address `0x400000` (which falls in PDE index 1), it lands inside a region that every new process initially inherits from the kernel. The page tables covering the 0–128 MB identity mapping are **shared** among all processes: every process's page directory points to the same physical page tables for PDEs 0–31.
 
@@ -274,4 +278,4 @@ By the end of this chapter we have four memory capabilities:
 | Allocate and free arbitrary byte ranges | Heap | `kmalloc` / `kfree` |
 | Allocate and free fixed-size objects efficiently | Slab | `kmem_cache_create` / `kmem_cache_alloc` / `kmem_cache_free` |
 
-Together, these four layers are the foundation for every feature in the chapters that follow. Loading programs, creating processes, managing files, buffering keystrokes — every one of those requires dynamic memory. The heap handles one-off and variably-sized allocations; the slab handles the high-frequency, fixed-size objects that dominate kernel hot paths.
+Together, these four layers are the foundation for every feature in the chapters that follow. Loading programs, creating processes, managing files, buffering keystrokes — every one of those requires dynamic memory. The heap handles one-off and variably-sized allocations; the slab handles the high-frequency, fixed-size objects that dominate kernel hot paths. With memory under control, Chapter 9 can introduce the first subsystem built on top of it: the kernel log, a shared voice every later driver uses as it comes up.

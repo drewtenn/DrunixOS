@@ -12,9 +12,11 @@ The point of the file is post-mortem debugging. Load it into GDB alongside the o
 
 Signals deliver core dumps through the normal signal-delivery path described in Chapter 19. When that path finds a deliverable signal whose disposition is `SIG_DFL`, it determines whether the signal's default action is termination. If the process has a saved crash frame (set earlier by the exception handler when the fault first occurred), the kernel writes the core file before transitioning the process to the zombie state.
 
-The crash frame is a copy of the full interrupt frame saved at the moment the CPU faulted. The exception handlers detect a ring-3 fault, copy the frame into the process's crash record, and set a valid flag before sending the appropriate signal. The signal is then delivered on the next scheduler pass, which is when the kernel still has both the crash context and the intact user address space available to write out.
+The crash frame is a copy of the full interrupt frame saved at the moment the CPU faulted. The exception handlers detect a ring-3 fault, copy the frame into the process's crash record, and set a valid flag before sending the appropriate signal. The process's memory may be corrupted afterward; if we tried to reconstruct the register state later the stack might be overwritten. Copying the frame in the exception handler preserves it before any cleanup. The signal is then delivered on the next scheduler pass, which is when the kernel still has both the crash context and the intact user address space available to write out.
 
 ### The ELF Core File Format
+
+An ELF file contains a header describing the file, followed by program headers that describe how to load segments. A core file uses the same structure but with special segment types.
 
 A core file is an ELF — Executable and Linking Format — binary with type `ET_CORE` rather than the usual `ET_EXEC` or `ET_DYN`. ELF is a standard binary format used throughout Linux and most Unix systems; its header describes what the file contains and where each section lives.
 

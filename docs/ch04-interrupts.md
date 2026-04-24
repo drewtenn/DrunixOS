@@ -85,7 +85,7 @@ Left alone, the first timer tick would arrive on vector 8, which is the same vec
 | IRQ 6 | `14` | Collides with page fault |
 | IRQ 7 | `15` | Collides with a reserved exception slot |
 
-That overlap is disastrous because the kernel could no longer tell whether vector 8 meant "the timer fired" or "the CPU hit a catastrophic exception path". The fix is to **remap** the PIC so the hardware IRQs live somewhere else in the IDT.
+That overlap is disastrous because the kernel could no longer tell whether vector 8 meant "the timer fired" or "the CPU hit a catastrophic exception path". This collision is like a telephone exchange where extension 8 is wired to both the fire department and the mail room — when extension 8 rings, nobody knows which one is calling. The fix is to **remap** the PIC so the hardware IRQs live somewhere else in the IDT.
 
 The function `pic_remap` sends the PIC four setup bytes called **ICW1** through **ICW4** (Initialisation Command Words). Together they move IRQs 0 through 7 to vectors 32 through 39, and IRQs 8 through 15 to vectors 40 through 47:
 
@@ -132,7 +132,7 @@ On interrupt entry the CPU pushes an **interrupt return frame** onto the current
 
 None of that matches the C calling convention. A C function expects to start with a normal return address at the top of the stack and with any arguments laid out according to the compiler's ABI rules. So the IDT does not point straight at C functions. It points at tiny **ISR** (Interrupt Service Routine) assembly stubs.
 
-Those stubs do the minimum amount of machine-specific cleanup needed to turn "raw CPU interrupt entry" into "something shared C code can understand". For exceptions that do not receive a CPU-pushed error code, the stub first pushes a dummy zero so the final stack shape stays uniform. Then it pushes the vector number and jumps to a shared trampoline. Exceptions that already have a CPU-pushed error code skip the dummy push and only add the vector number.
+Those stubs do the minimum amount of machine-specific cleanup needed to turn "raw CPU interrupt entry" into "something shared C code can understand". The CPU's interrupt-entry frame layout is fixed by the hardware spec and cannot be changed to match C conventions; the stubs are the only place we can translate between the two. For exceptions that do not receive a CPU-pushed error code, the stub first pushes a dummy zero so the final stack shape stays uniform. Then it pushes the vector number and jumps to a shared trampoline. Exceptions that already have a CPU-pushed error code skip the dummy push and only add the vector number.
 
 Hardware IRQ stubs follow the same pattern. Each one pushes a dummy zero for the error-code slot, pushes its remapped vector number, and jumps to the common IRQ trampoline.
 

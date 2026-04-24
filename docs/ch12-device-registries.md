@@ -4,6 +4,8 @@
 
 ### The Coupling Problem
 
+Think of the device registry like a phone directory: drivers publish their contact info under a short name, consumers look up the name when they need to reach a device. No compile-time dependency — just a runtime lookup.
+
 Chapter 11 left us with an ATA driver that can read and write sectors. Before this chapter, the filesystem read sectors by calling ATA functions directly, and the syscall layer read keystrokes by calling the keyboard's internal function. These direct dependencies meant the filesystem and syscall layer had compile-time knowledge of both the keyboard driver and the ATA driver. Adding a second disk drive or a USB keyboard would have required modifying the filesystem and syscall code — the wrong place to touch for a hardware change.
 
 The device registries decouple these relationships. A driver publishes a small ops-table under a short name. Consumers look up the device by name and call through the function pointer. Neither side needs to know the other's implementation details at compile time.
@@ -67,7 +69,9 @@ The **MBR** (Master Boot Record) is the first 512-byte sector of an IBM-PC disk.
 
 Each record gives a partition type, a starting LBA, and a sector count. A zero type means "this slot is empty". Types `0x05` and `0x0F` mean "extended partition, look elsewhere" — we skip those because extended partitions require walking a chain of partition tables that we do not support yet.
 
-`blkdev_scan_mbr(disk_index)` runs once per whole disk at boot. It reads sector 0 through the disk's own ops-table, checks the magic bytes, and for every non-empty primary record it registers a partition entry. Partition names are formed by concatenating the disk name and the slot number: slot 1 under `sda` becomes `sda1`, slot 2 becomes `sda2`, and so on.
+`blkdev_scan_mbr(disk_index)` runs once per whole disk at boot. It reads sector 0 through the disk's own ops-table, checks the magic bytes, and for every non-empty primary record it registers a partition entry.
+
+Partition names are formed by concatenating the disk name and the slot number: slot 1 under `sda` becomes `sda1`, slot 2 becomes `sda2`, and so on.
 
 A partition entry has `kind = BLKDEV_KIND_PART`, its `parent_index` pointing at the disk's slot, and a `start_sector` equal to the partition's starting LBA within the disk.
 
@@ -116,4 +120,4 @@ The cost is a single pointer indirection on each read. At the scale of a 512-byt
 
 ### Where the Machine Is by the End of Chapter 12
 
-We now route all disk I/O through the block device registry and all character I/O through the character device registry. The ATA driver contributes two whole disks, `sda` and `sdb`; an MBR scan then walks each disk's partition table and contributes partition children such as `sda1` and `sdb1`, each with its own ops-table that translates LBAs back into the parent disk. The keyboard driver contributes one character source under the names `"stdin"` and `"tty0"`. No code outside those drivers reaches their internal functions directly. The coupling between subsystems has been replaced by a narrow, named interface that any future driver can implement, and that higher layers can enumerate when they need to describe the storage topology to user space.
+Every device in the kernel is now reached through a name and an ops-table — disks and partitions through the block registry, the keyboard through the character registry — so any future driver can plug in without touching the filesystem, the syscall layer, or each other.

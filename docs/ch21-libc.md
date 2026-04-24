@@ -20,7 +20,7 @@ The two bottom layers — `string.c` and `ctype.c` — are **pure**: no system c
 
 `string.c` is not optional. GCC in `-ffreestanding` mode — the flag we use for all user code — still emits implicit calls to `memcpy`, `memset`, `memmove`, and `memcmp` for struct assignments and local zero-initialisation. A user program that does `struct point p = origin;` will compile into code that calls `memcpy` under the hood. If those four symbols are not linked in, the program fails at link time with an undefined reference — even if the programmer never wrote `memcpy` anywhere in the source. Shipping `string.c` is therefore not just a convenience for string-handling code; it is a linker requirement for any non-trivial C program.
 
-One implementation subtlety deserves mention: `memmove` must produce the correct result even when the source and destination regions overlap. The straightforward forward copy that `memcpy` uses would overwrite source bytes before they are read when the destination falls above the source in memory. `memmove` detects this case with a pointer comparison and copies backward — from the highest address downward — so each source byte is consumed before the destination pointer reaches it.
+One implementation subtlety deserves mention: `memmove` must produce the correct result even when the source and destination regions overlap. If we copied forward, the destination pointer would overwrite source bytes before we read them. Copying backward ensures every source byte is consumed before the destination catches up. The straightforward forward copy that `memcpy` uses would overwrite source bytes before they are read when the destination falls above the source in memory. `memmove` detects this case with a pointer comparison and copies backward — from the highest address downward — so each source byte is consumed before the destination pointer reaches it.
 
 ### Character Classification Without Double-Evaluation Bugs
 
@@ -30,7 +30,7 @@ The classification ranges are defined entirely by the **ASCII** (American Standa
 
 ### One Format Engine, Multiple Destinations
 
-Every `printf` variant does the same thing: walk a format string, substitute arguments, and send the result somewhere. The "somewhere" varies — `printf` goes to `stdout`, `sprintf` goes into a caller-supplied buffer. A naive implementation would be one copy of the format walker per destination type. The libc here uses one shared format engine that writes to an abstract **sink**.
+Every `printf` variant does the same thing: walk a format string, substitute arguments, and send the result somewhere. The "somewhere" varies — `printf` goes to `stdout`, `sprintf` goes into a caller-supplied buffer. A naive implementation would be one copy of the format walker per destination type. The libc here uses one shared format engine that writes to an abstract **sink**. Imagine a mail sorter who doesn't care whether they're sorting into a bin (stream) or a postbox (buffer). The sink lets one format engine serve both — it calls a callback for each character and the callback decides where it goes.
 
 ```c
 typedef struct {
@@ -72,6 +72,8 @@ One wrapper requires special treatment: `write` must route through the fd-aware 
 `isatty` also deserves a note: there is no dedicated kernel syscall for it. Instead, it probes whether an fd refers to a terminal by calling `sys_tcgetattr` and checking whether the call succeeds. If the fd is a TTY the call succeeds; if it is a file or pipe it fails. This is the same technique Linux's glibc uses.
 
 ### Calendar Time in User Space
+
+The kernel hands us a counter; libc's job is to turn that into human-readable dates.
 
 The kernel provides exactly one time value: `clock_unix_time()`, accessible from user space through `SYS_CLOCK_GETTIME`. It returns seconds since the Unix epoch (midnight 1970-01-01 UTC). Everything else — converting that timestamp into year, month, day, hour, minute, second; determining the weekday; formatting it as a human-readable string — happens entirely in user space through `time.c`.
 

@@ -76,7 +76,7 @@ Instead, the cursor is never written to either buffer. It lives as an **overlay 
 
 ### Windows, Z-Order, and Focus
 
-The compositor manages up to four **mini-app windows** plus a **taskbar** strip at the top of the screen and a **launcher** overlay that opens when the user hits Escape. Every window has:
+The compositor manages up to four **mini-app windows** plus a **taskbar** strip at the top of the screen and a **launcher** overlay that opens when the user hits Escape. Z-order ensures the most recent window appears on top; focus routing ensures your keystrokes go to the window you're looking at, not a window hidden behind. Every window has:
 
 - a pixel rectangle that defines its position and size,
 - a character-cell content rectangle inside that pixel rectangle, after trimming for the one-cell title bar and one-cell border,
@@ -120,7 +120,7 @@ Binding ownership to both pid and pgid matters when the shell forks a pipeline. 
 
 Framebuffer presents happen in the kernel's top half, while mouse and keyboard IRQs fire in the bottom half. Without coordination, a mouse IRQ could arrive mid-present and mutate window state — change the focused window, start a drag — while the compositor is in the middle of walking the window list. A keyboard IRQ could enqueue a character into a terminal the compositor is currently rasterising.
 
-The simplest cure, and the one we use, is to bracket the present with `cli`/`sti`: disable interrupts across the copy from back buffer to front, re-enable them when the present completes. Because the present only touches pixel memory and never blocks, the critical section is short enough that even the PIT's 100 Hz timer does not notice. The compositor never holds locks outside this one window, and no kernel code path waits on the compositor, so nothing else has to coordinate with it.
+The simplest cure, and the one we use, is to bracket the present with `cli`/`sti`: disable interrupts across the copy from back buffer to front, re-enable them when the present completes. Only the compositor can modify window state and the framebuffer, so we protect just that operation rather than adding locks everywhere an IRQ might land. Because the present only touches pixel memory and never blocks, the critical section is short enough that even the PIT's 100 Hz timer does not notice. The compositor never holds locks outside this one window, and no kernel code path waits on the compositor, so nothing else has to coordinate with it.
 
 ### Startup
 

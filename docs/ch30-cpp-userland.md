@@ -33,7 +33,7 @@ Those exclusions are not just philosophical. Exceptions require unwind tables, p
 
 ### Startup Grows Around `main`
 
-The `_start` symbol is still the only entry point the kernel knows about. The ELF loader does not care whether the source file was C or C++; it reads the entry address from the ELF header and starts the process there. That is why C++ support belongs in the user runtime rather than in the kernel.
+Recall from Chapter 20 that `_start` is the user runtime's entry stub — the first code to run in ring 3 after the kernel hands control to a new process, responsible for setting up `argc`, `argv`, and `envp` before calling `main`. The `_start` symbol is still the only entry point the kernel knows about. The ELF loader does not care whether the source file was C or C++; it reads the entry address from the ELF header and starts the process there. That is why C++ support belongs in the user runtime rather than in the kernel.
 
 The startup stub now does a little more choreography. It pops `argc`, `argv`, and `envp` from the kernel-built stack, stores `envp` in the global `environ` pointer, and then runs the constructor lists before calling `main`. After `main` returns, it preserves the return value, runs the destructor lists, and passes the original return value to `sys_exit`.
 

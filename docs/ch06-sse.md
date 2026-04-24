@@ -6,7 +6,7 @@
 
 Chapter 5 left the interrupt dispatch registry in place and the wall clock ticking. Before we create any processes, there is a piece of hardware setup that must happen first: enabling the floating-point and vector extensions the CPU keeps locked off by default.
 
-When the CPU comes out of reset it supports an old, conservative subset of the x86 instruction set. Any modern extension — the floating-point unit, the vector instructions, the 128-bit and 256-bit registers — is turned off and must be explicitly enabled by the operating system. The CPU does this to protect the OS from legacy software that does not know how to save and restore the extra registers across context switches.
+When the CPU comes out of reset it supports an old, conservative subset of the x86 instruction set. Any modern extension — the floating-point unit, the vector instructions, the 128-bit and 256-bit registers — is turned off and must be explicitly enabled by the operating system. The CPU does this to protect the OS from legacy software that does not know how to save and restore the extra registers across context switches. It is like a multitasking office where employees share one big desk. If the desk has hidden drawers that only some employees know about, and one forgets to close a drawer, the next employee may overwrite what is inside. So the OS keeps the drawers locked until the scheduler promises to manage them.
 
 The particular extension this chapter enables is **SSE2** (Streaming SIMD Extensions 2), a family of instructions introduced by Intel in 2000. **SIMD** (Single Instruction, Multiple Data) is the class of instruction that operates on several values simultaneously — the canonical example being "add four 32-bit floats at the same time". SSE2 provides this capability through eight 128-bit registers named `XMM0` through `XMM7`, each wide enough to hold four 32-bit floats, two 64-bit doubles, or various combinations of integer types. Modern compilers can use SSE2 aggressively even for code that looks like ordinary C, but we deliberately disable compiler-generated SSE for kernel C so that only explicit low-level FPU/SSE ownership code touches those registers.
 
@@ -61,7 +61,7 @@ typedef struct __attribute__((aligned(16))) {
 } process_t;
 ```
 
-The `FXSAVE` instruction requires the destination address to be **16-byte aligned**, or the CPU raises a general protection fault. The struct is marked as aligned to sixteen bytes, and the four preceding `uint32_t` fields total sixteen bytes, so `fpu_state` naturally falls on a 16-byte boundary within the struct.
+The `FXSAVE` instruction requires the destination address to be **16-byte aligned**, or the CPU raises a general protection fault. The alignment requirement comes from the hardware: the CPU uses aligned 128-bit loads and stores to move the XMM registers in and out of memory, and those instructions fault on misaligned addresses. The struct is marked as aligned to sixteen bytes, and the four preceding `uint32_t` fields total sixteen bytes, so `fpu_state` naturally falls on a 16-byte boundary within the struct.
 
 When a new process is created, we copy the clean template into that process's `fpu_state` field with the kernel's integer-only memcpy routine.
 
@@ -79,11 +79,6 @@ This policy is stricter than simply enabling SSE2 globally. It prevents bugs whe
 
 ### Where the Machine Is by the End of Chapter 6
 
-By the end of this chapter:
+The CPU is now willing to execute explicit SSE2 save/restore instructions without faulting. That single change unlocks the rest of the floating-point story: we have a 512-byte template of a clean FPU state sitting in kernel memory, ready to be copied into any new process, and the `process_t` struct carries a private FPU state buffer at a 16-byte-aligned offset that the scheduler will save and restore on every context switch. Kernel C is deliberately kept off SSE, MMX, and x87, so process FPU state is only ever changed at explicit save/restore boundaries and nowhere else.
 
-- The CPU is willing to execute explicit SSE2 save/restore instructions without faulting.
-- A 512-byte template of a clean FPU state sits in kernel memory, ready to be copied into any new process.
-- The `process_t` struct carries a private FPU state buffer at a 16-byte-aligned offset, and the scheduler will save and restore it on every context switch.
-- Kernel C is kept off SSE/MMX/x87 so process FPU state is changed only at explicit save/restore boundaries.
-
-The kernel is now ready to preserve user FPU/SSE state without letting unrelated kernel C code touch it accidentally. Chapter 7 covers how the kernel discovers what memory is available before it can manage that memory.
+The important thing to hold in your head going into Chapter 7 is that the CPU itself is now fully configured — GDT, IDT, PIC, IRQ dispatch, FPU, and SSE are all owned by the kernel. Part I ends here with the machine fully governable. Part II starts with the next big question: now that the CPU is ours, how much RAM is actually out there, and how do we keep track of which pages are in use? Chapter 7 covers the first half of that answer — discovering what memory the firmware believes exists — so Chapter 8 can build the managers that hand it out.

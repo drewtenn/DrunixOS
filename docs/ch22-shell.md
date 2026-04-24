@@ -34,6 +34,8 @@ The read-only flag causes the shell to reject subsequent assignments to a variab
 
 ### PATH-Based Command Resolution
 
+The shell needs to find where a command lives on disk. If the user typed a path, trust it; otherwise search each directory in PATH until a match appears.
+
 When the user types a name that does not match any built-in, the shell searches for a corresponding **ELF** (Executable and Linkable Format, the binary format described in Chapter 15) file on disk. The search follows the standard `PATH` algorithm.
 
 If the name contains a `/`, it is treated as a literal path and probed directly. Otherwise, the shell splits the `PATH` variable on `:` to obtain a list of directories and, for each directory, concatenates the directory path with the command name and probes whether the result exists. The first match wins.
@@ -48,7 +50,7 @@ First, `SYS_FORK` clones the shell. The child resets its foreground-job signal h
 
 Second, the child calls `SYS_EXEC` with the path, argument vector, and exported environment. The kernel loads the **ELF** binary from disk, allocates a fresh page directory for it, maps its segments into user space, rebuilds the initial user stack, and replaces the child process image in place. The child's PID does not change.
 
-Third, the shell calls `SYS_SETPGID` to place the child in its own **process group** — a collection of processes that share a common group identifier, the **PGID** (Process Group ID). This is the foundation of job control: signals sent to a PGID reach every process in the group simultaneously, and the TTY driver directs keyboard input only to the group that currently holds the terminal foreground.
+Third, the shell calls `SYS_SETPGID` to place the child in its own **process group** — a collection of processes that share a common group identifier, the **PGID** (Process Group ID). Putting the child in its own group lets the TTY direct keyboard signals to the whole group, so Ctrl+C reaches every process in the job at once rather than bouncing back into the shell. This is the foundation of job control: signals sent to a PGID reach every process in the group simultaneously, and the TTY driver directs keyboard input only to the group that currently holds the terminal foreground.
 
 Fourth, the shell calls `SYS_TCSETPGRP` to hand the terminal to the child's process group. The TTY's foreground PGID is updated to the child's; from this moment Ctrl+C and Ctrl+Z signals are directed at the child rather than the shell. The shell then calls `SYS_WAITPID` and blocks until the child either exits or stops.
 
@@ -62,7 +64,7 @@ To connect them, the shell first asks the kernel to allocate a **pipe** — a un
 
 The left child replaces its standard output (fd 1) with the write end of the pipe using `SYS_DUP2`, closes the raw pipe fds, and execs the left command. The right child replaces its standard input (fd 0) with the read end using `SYS_DUP2`, closes its pipe fds, and execs the right command. The parent closes both pipe ends.
 
-Closing the write end in the parent is the critical detail. When the left child exits, both the child's copy and the parent's copy of the write end are closed. The right child then sees **EOF** (End of File — the condition that no further data will ever arrive) on its read end and terminates naturally, rather than blocking forever waiting for input that can never come.
+Closing the write end in the parent is the critical detail. EOF only happens when *every* copy of the write end is closed; by closing our copy in the parent, we ensure the child sees EOF when the left program exits. When the left child exits, both the child's copy and the parent's copy of the write end are closed. The right child then sees **EOF** (End of File — the condition that no further data will ever arrive) on its read end and terminates naturally, rather than blocking forever waiting for input that can never come.
 
 Both children run in the same process group so a Ctrl+Z stops the entire pipeline together. `SYS_EXEC` preserves the calling process's fd table, so the `dup2` redirection performed in the forked child before exec is transparently visible to the exec'd program.
 
@@ -102,7 +104,9 @@ All of this happens entirely inside the shell's line editor — no new syscalls 
 
 ### Running Inside the Desktop
 
-The boot shell is still an ordinary ring-3 process, but the kernel now opens it as one window inside the desktop rather than as the only desktop surface. The launcher can open built-in Files, Processes, and Help windows. Standard output from the shell, its direct children, and the TTY foreground process group continues to route to the shell terminal window even while another built-in mini app has focus. That routing matters because the shell may be visually behind a Files or Processes window while a foreground program is still writing to fd 1. The desktop checks process ownership before accepting console bytes; output that does not belong to the shell session falls back to the legacy console path instead of being mixed into the shell surface. If the framebuffer path is available, the shell terminal surface renders its padded `8x16` glyph grid, underline cursor, and scrollback view directly into the linear framebuffer; otherwise the same terminal state is mirrored into cells for the VGA text fallback.
+The boot shell is still an ordinary ring-3 process, but the kernel now opens it as one window inside the desktop rather than as the only desktop surface. The launcher can open built-in Files, Processes, and Help windows.
+
+Standard output from the shell, its direct children, and the TTY foreground process group continues to route to the shell terminal window even while another built-in mini app has focus. That routing matters because the shell may be visually behind a Files or Processes window while a foreground program is still writing to fd 1. The desktop checks process ownership before accepting console bytes; output that does not belong to the shell session falls back to the legacy console path instead of being mixed into the shell surface. If the framebuffer path is available, the shell terminal surface renders its padded `8x16` glyph grid, underline cursor, and scrollback view directly into the linear framebuffer; otherwise the same terminal state is mirrored into cells for the VGA text fallback.
 
 The mouse pointer is desktop state rather than shell state. PS/2 mouse packets move a pixel-positioned cursor, and clicking a window focuses it and raises it above its siblings. Clicking a title bar starts a drag, clicking a close button closes that window, and clicking a taskbar entry focuses the matching open window. The taskbar's menu region toggles the launcher, whose entries can open the shell, Files, Processes, or Help. When the Processes window receives focus, its contents are refreshed from the current process table so the view is a snapshot of the system at the moment the user asks to see it. The shell does not need to know any of this happened: it continues to read fd 0, write fd 1, and manage jobs through the same syscalls as before.
 

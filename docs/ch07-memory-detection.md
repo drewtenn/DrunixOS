@@ -4,6 +4,8 @@
 
 ### Why We Cannot Assume Anything About RAM
 
+Before we hand out any memory, the kernel must discover which regions of the physical address space are actually RAM and which are reserved for hardware. On a real PC, this is not obvious — and we must find out before we leave real mode.
+
 Chapter 6 left us with SSE enabled and a clean FPU template in hand. Before we can build an allocator, we face a more fundamental problem: the kernel needs to know two things about physical memory before it can hand any of it out — how much there is, and which regions are safe to use. Neither answer can be guessed. The physical address space of a PC is not a clean contiguous block of RAM — it is a patchwork of usable memory, hardware-mapped regions (the VGA buffer, firmware ROM), and legacy holes left over from decades of backward compatibility. Writing to the wrong address can corrupt firmware data, silently fail, or, worst of all, appear to work and then break something unrelated minutes later.
 
 The authoritative source of this information on x86 is a BIOS interface called **E820**, named after the `INT 0x15` function number (`AX = 0xE820`) that retrieves it. E820 returns a list of memory regions, each tagged with a base address, a length, and a type code that identifies whether the region is usable RAM, reserved for hardware, or some other special category.
@@ -87,4 +89,4 @@ The gap between `0x9FC00` and `0x100000` — the roughly 384 KB region containin
 
 ### Where the Machine Is by the End of Chapter 7
 
-After `pmm_init` returns, we have a reliable, hardware-provided map of which pages of physical memory are usable. That map is the foundation the rest of the memory management stack in Chapter 8 is built on: the page allocator, the paging system, and the heap all depend on knowing which physical pages are real RAM and which are reserved for something else.
+After `pmm_init` returns, we have a reliable, hardware-provided map of which pages of physical memory are usable. That map is the foundation the rest of the memory management stack in Chapter 8 is built on: the page allocator, the paging system, and the heap all depend on knowing which physical pages are real RAM and which are reserved for something else. With the map in hand, Chapter 8 can turn it into a bitmap of free pages, switch the CPU into paged virtual memory, and layer a heap on top — all of which need the reliable ground truth we have just established.

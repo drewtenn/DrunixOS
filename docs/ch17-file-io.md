@@ -4,7 +4,7 @@
 
 ### The File Descriptor Table
 
-Chapter 16 left us with a complete syscall ABI and blocking wait queues. Every open file in a Unix-like system is identified by a small integer called a **file descriptor** (fd). The fd is not a pointer into the filesystem — it is an index into a per-process table. Each slot in the table holds our view of an open file: the inode number, the current read/write position, the file's cached size, and a flag indicating whether the descriptor is writable.
+Chapter 16 left us with a complete syscall ABI and blocking wait queues. Every open file in a Unix-like system is identified by a small integer called a **file descriptor** (fd), which is an index into a per-process table. This is what lets a process track multiple open files with simple numbers like 0, 1, 2, rather than managing pointers into the filesystem directly. Each slot in the table holds our view of an open file: the inode number, the current read/write position, the file's cached size, and a flag indicating whether the descriptor is writable.
 
 Each process carries this table inside its `process_t` descriptor. The table has a fixed number of slots. By convention, the first three are pre-reserved: fd 0 is standard input (connected to the TTY input path), fd 1 is standard output (connected to the active console presentation path, which may be the framebuffer desktop shell or the VGA fallback console), and fd 2 is standard error (not yet implemented). Regular disk-backed files start at fd 3 and occupy higher slots.
 
@@ -32,7 +32,7 @@ Identifying files by inode number rather than by raw disk **LBA** (Logical Block
 
 When a process calls `SYS_READ`, we dispatch based on the fd number. A read from fd 0 goes directly to standard input and blocks until terminal data is available. A read from fd 3 or higher goes through the file table.
 
-For a file read, we first check whether the current `offset` has reached `size` — if so we return 0, signalling **EOF** (End of File). Otherwise the kernel asks the filesystem to read from that inode at the current offset into the caller's buffer. The filesystem layer performs the actual block-level I/O (Chapter 13), translating the logical byte offset into block indices and LBAs. On return, the descriptor's `offset` advances by the number of bytes read. Subsequent reads automatically continue from where the previous one stopped, because the offset is maintained across calls in the fd table entry.
+For a file read, the kernel first checks whether the read position has reached the file size. If so, it returns 0, which signals **EOF** (End of File, the condition that no further data exists beyond this point). Otherwise the kernel asks the filesystem to read from that inode at the current offset into the caller's buffer. The filesystem layer performs the actual block-level I/O (Chapter 13), translating the logical byte offset into block indices and LBAs. On return, the descriptor's `offset` advances by the number of bytes read. Subsequent reads automatically continue from where the previous one stopped, because the offset is maintained across calls in the fd table entry.
 
 `SYS_LSEEK` repositions the offset of an open file descriptor without reading or writing. It accepts a signed displacement and a mode — set to an absolute position (`SEEK_SET`), advance relative to the current position (`SEEK_CUR`), or move relative to the end of the file (`SEEK_END`). After a seek, the next read or write starts from the new position. Seeking is rejected on non-file descriptors such as pipes or the TTY.
 

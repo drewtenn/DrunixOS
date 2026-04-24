@@ -31,7 +31,7 @@ uint32_t  sig_blocked;           /* task-local signal mask               */
 uint32_t  sig_handlers[NSIG];    /* disposition table, shareable by clone */
 ```
 
-`NSIG` is 32 — the size of a `uint32_t` bitmask. Bit N in a task's `sig_pending` means signal N has been sent to that specific task but not yet delivered. Bit N in the thread group's process-directed pending mask means signal N was sent to the process identity, the TGID, rather than to a particular TID. Bit N in `sig_blocked` means delivery of signal N is postponed for the current task until the bit is cleared.
+**NSIG** (number of signals) is 32 — the size of a `uint32_t` bitmask. Bit N in a task's `sig_pending` means signal N has been sent to that specific task but not yet delivered. Bit N in the thread group's process-directed pending mask means signal N was sent to the process identity, the **TGID** (Thread Group ID, the shared identifier for all tasks in a process), rather than to a particular **TID** (Task ID, the unique identifier for a single task within the group). Bit N in `sig_blocked` means delivery of signal N is postponed for the current task until the bit is cleared.
 
 Each entry in `sig_handlers` holds one of three values:
 
@@ -60,6 +60,8 @@ User programs send signals through `SYS_KILL` by passing either a positive PID o
 
 ### The Delivery Window
 
+The kernel faces a dangerous moment: a signal can arrive while the process is mid-instruction. We solve this by deferring delivery until one specific safe point — right before returning to user space.
+
 A signal's pending bit is set the moment `sched_send_signal` runs — possibly during an interrupt, possibly during another process's syscall. The signal is not delivered at that instant. Delivery happens at one specific location: **the moment a process is about to return to ring-3 code after a syscall or IRQ**.
 
 The life of a signal, from send to handler return:
@@ -70,7 +72,7 @@ This is the only safe point for delivery because it is the only moment when the 
 
 Both `syscall_common` and `irq_common` call `sched_signal_check` immediately before their final restore-and-`iret` sequence. They pass the current stack pointer as an argument; `sched_signal_check` returns the stack pointer to use for the restore — unchanged if no signal is delivered, or adjusted to point at a newly built signal frame if one was pushed onto the user stack. The trampoline loads the returned value into ESP, then falls through to the same register-pop and `iret` it would have executed anyway. The signal delivery mechanism is therefore invisible to the rest of the trampoline — it sees only "here is the frame to restore."
 
-`sched_signal_check` first checks task-directed pending bits and then the thread group's process-directed pending bits, always applying the current task's `sig_blocked` mask. It picks the lowest-numbered deliverable signal, clears the pending bit from its source, and looks up the handler:
+`sched_signal_check` first checks task-directed pending bits and then the thread group's process-directed pending bits, always applying the current task's `sig_blocked` mask. Task-directed signals are checked first because they name a specific task by TID — deferring them in favour of process-directed signals that any task in the group could handle would violate the caller's intent. It picks the lowest-numbered deliverable signal, clears the pending bit from its source, and looks up the handler:
 
 - **SIG_IGN**: nothing to do; returns unchanged `frame_esp`.
 - **SIG_DFL** and fatal: calls `sched_mark_signaled(signum, dumped_core)` to encode a signal-style wait status, then calls `schedule()` to switch immediately to the next READY process. The trampoline eventually restores some other process's register frame and `iret`s to it.
