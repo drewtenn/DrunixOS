@@ -20,6 +20,7 @@ REQUIRED = [
     "ARM64 syscall: time/info ok",
     "ARM64 syscall: memory ok",
     "ARM64 syscall: mutation ok",
+    "ARM64 syscall: fd/path ok",
     "ARM64 syscall: errno ok",
     "ARM64 init: pass",
     "ARM64 init exited with status 0",

@@ -92,6 +92,26 @@ long arm64_sys_openat(int dirfd, const char *path, int flags, int mode)
 	return arm64_syscall4(56, dirfd, (long)path, flags, mode);
 }
 
+long arm64_sys_dup(int oldfd)
+{
+	return arm64_syscall1(23, oldfd);
+}
+
+long arm64_sys_dup3(int oldfd, int newfd, int flags)
+{
+	return arm64_syscall3(24, oldfd, newfd, flags);
+}
+
+long arm64_sys_fcntl(int fd, int cmd, long arg)
+{
+	return arm64_syscall3(25, fd, cmd, arg);
+}
+
+long arm64_sys_ioctl(int fd, unsigned long request, void *arg)
+{
+	return arm64_syscall3(29, fd, (long)request, (long)arg);
+}
+
 long arm64_sys_mkdirat(int dirfd, const char *path, int mode)
 {
 	return arm64_syscall3(34, dirfd, (long)path, mode);
@@ -102,14 +122,42 @@ long arm64_sys_unlinkat(int dirfd, const char *path, int flags)
 	return arm64_syscall3(35, dirfd, (long)path, flags);
 }
 
+long arm64_sys_faccessat(int dirfd, const char *path, int mode)
+{
+	return arm64_syscall3(48, dirfd, (long)path, mode);
+}
+
+long arm64_sys_chdir(const char *path)
+{
+	return arm64_syscall1(49, (long)path);
+}
+
 long arm64_sys_close(int fd)
 {
 	return arm64_syscall1(57, fd);
 }
 
+long arm64_sys_pipe2(int pipefd[2], int flags)
+{
+	return arm64_syscall2(59, (long)pipefd, flags);
+}
+
+long arm64_sys_lseek(int fd, long offset, int whence)
+{
+	return arm64_syscall3(62, fd, offset, whence);
+}
+
 long arm64_sys_read(int fd, void *buf, unsigned long len)
 {
 	return arm64_syscall3(63, fd, (long)buf, (long)len);
+}
+
+long arm64_sys_readlinkat(int dirfd,
+                          const char *path,
+                          char *buf,
+                          unsigned long len)
+{
+	return arm64_syscall4(78, dirfd, (long)path, (long)buf, (long)len);
 }
 
 long arm64_sys_getpid(void)

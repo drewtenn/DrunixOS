@@ -46,11 +46,15 @@ int main(void)
 	long pid;
 	long ppid;
 	long tid;
+	long dupfd;
+	long dup3fd;
 	char buf[32];
 	char statbuf[256];
 	char dirbuf[512];
 	char utsbuf[390];
 	char timebuf[16];
+	int pipefds[2];
+	char pipec;
 	long brk0;
 	long map;
 
@@ -133,6 +137,43 @@ int main(void)
 	if (arm64_sys_unlinkat(-100, "/arm64.dir", 0x200) != 0)
 		return fail_msg("ARM64 syscall: fail rmdir\n", 26);
 	put("ARM64 syscall: mutation ok\n", 27);
+
+	if (arm64_sys_faccessat(-100, "/bin/arm64init", 0) != 0)
+		return fail_msg("ARM64 syscall: fail faccessat\n", 30);
+	if (arm64_sys_chdir("/bin") != 0)
+		return fail_msg("ARM64 syscall: fail chdir\n", 26);
+	n = arm64_sys_getcwd(buf, sizeof(buf));
+	if (n != 5 || buf[0] != '/' || buf[1] != 'b' || buf[2] != 'i' ||
+	    buf[3] != 'n' || buf[4] != '\0')
+		return fail_msg("ARM64 syscall: fail cwd bin\n", 28);
+	fd = arm64_sys_openat(-100, "/bin/arm64init", 0, 0);
+	if (fd < 0)
+		return fail();
+	if (arm64_sys_lseek((int)fd, 0, 0) != 0)
+		return fail_msg("ARM64 syscall: fail lseek\n", 26);
+	dupfd = arm64_sys_dup((int)fd);
+	if (dupfd < 0)
+		return fail_msg("ARM64 syscall: fail dup\n", 24);
+	if (arm64_sys_fcntl((int)dupfd, 3, 0) < 0)
+		return fail_msg("ARM64 syscall: fail fcntl\n", 26);
+	dup3fd = arm64_sys_dup3((int)fd, 10, 02000000);
+	if (dup3fd != 10 || arm64_sys_fcntl(10, 1, 0) != 1)
+		return fail_msg("ARM64 syscall: fail dup3\n", 25);
+	if (arm64_sys_ioctl((int)dupfd, 0x5413, buf) == -38)
+		return fail();
+	if (arm64_sys_close((int)dup3fd) != 0 ||
+	    arm64_sys_close((int)dupfd) != 0 || arm64_sys_close((int)fd) != 0)
+		return fail();
+	if (arm64_sys_readlinkat(-100, "/bin/arm64init", buf, sizeof(buf)) == -38)
+		return fail_msg("ARM64 syscall: fail readlinkat\n", 31);
+	if (arm64_sys_pipe2(pipefds, 0) != 0)
+		return fail_msg("ARM64 syscall: fail pipe2\n", 26);
+	if (arm64_sys_write(pipefds[1], "q", 1) != 1 ||
+	    arm64_sys_read(pipefds[0], &pipec, 1) != 1 || pipec != 'q')
+		return fail_msg("ARM64 syscall: fail pipe rw\n", 28);
+	if (arm64_sys_close(pipefds[0]) != 0 || arm64_sys_close(pipefds[1]) != 0)
+		return fail();
+	put("ARM64 syscall: fd/path ok\n", 26);
 
 	if (arm64_sys_openat(-100, "/missing-arm64-syscall", 0, 0) >= 0)
 		return fail();
