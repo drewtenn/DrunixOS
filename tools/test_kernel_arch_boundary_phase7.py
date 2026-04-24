@@ -137,6 +137,7 @@ ARM64_SHARED_RUNTIME_OBJS = [
     "kernel/proc/syscall/vfs/path.arm64.o",
     "kernel/proc/syscall/vfs/stat.arm64.o",
     "kernel/proc/syscall/vfs/dirents.arm64.o",
+    "kernel/proc/syscall/vfs/mutation.arm64.o",
     "kernel/proc/syscall/time.arm64.o",
     "kernel/proc/syscall/info.arm64.o",
     "kernel/proc/syscall/mem.arm64.o",
@@ -144,7 +145,6 @@ ARM64_SHARED_RUNTIME_OBJS = [
 ]
 
 ARM64_COMPILE_ONLY_OBJS = [
-    "kernel/proc/syscall/vfs/mutation.arm64.o",
     "kernel/proc/syscall/signal.arm64.o",
 ]
 

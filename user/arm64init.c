@@ -119,6 +119,21 @@ int main(void)
 		return fail_msg("ARM64 syscall: fail munmap\n", 27);
 	put("ARM64 syscall: memory ok\n", 25);
 
+	fd = arm64_sys_openat(-100, "/arm64.tmp", 0100 | 02 | 01000, 0644);
+	if (fd < 0)
+		return fail_msg("ARM64 syscall: fail create file\n", 32);
+	if (arm64_sys_write((int)fd, "x", 1) != 1)
+		return fail_msg("ARM64 syscall: fail write file\n", 31);
+	if (arm64_sys_close((int)fd) != 0)
+		return fail();
+	if (arm64_sys_unlinkat(-100, "/arm64.tmp", 0) != 0)
+		return fail_msg("ARM64 syscall: fail unlink file\n", 32);
+	if (arm64_sys_mkdirat(-100, "/arm64.dir", 0755) != 0)
+		return fail_msg("ARM64 syscall: fail mkdir\n", 26);
+	if (arm64_sys_unlinkat(-100, "/arm64.dir", 0x200) != 0)
+		return fail_msg("ARM64 syscall: fail rmdir\n", 26);
+	put("ARM64 syscall: mutation ok\n", 27);
+
 	if (arm64_sys_openat(-100, "/missing-arm64-syscall", 0, 0) >= 0)
 		return fail();
 	put("ARM64 syscall: errno ok\n", 24);

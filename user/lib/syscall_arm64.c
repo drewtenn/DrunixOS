@@ -92,6 +92,16 @@ long arm64_sys_openat(int dirfd, const char *path, int flags, int mode)
 	return arm64_syscall4(56, dirfd, (long)path, flags, mode);
 }
 
+long arm64_sys_mkdirat(int dirfd, const char *path, int mode)
+{
+	return arm64_syscall3(34, dirfd, (long)path, mode);
+}
+
+long arm64_sys_unlinkat(int dirfd, const char *path, int flags)
+{
+	return arm64_syscall3(35, dirfd, (long)path, flags);
+}
+
 long arm64_sys_close(int fd)
 {
 	return arm64_syscall1(57, fd);

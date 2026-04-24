@@ -21,6 +21,8 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unknown(uint32_t eax)
 
 #ifdef __aarch64__
 #define ARM64_LINUX_SYS_WRITE 64u
+#define ARM64_LINUX_SYS_MKDIRAT 34u
+#define ARM64_LINUX_SYS_UNLINKAT 35u
 #define ARM64_LINUX_SYS_OPENAT 56u
 #define ARM64_LINUX_SYS_CLOSE 57u
 #define ARM64_LINUX_SYS_GETDENTS64 61u
@@ -55,8 +57,14 @@ static uint64_t arm64_syscall_write(arch_trap_frame_t *frame)
 	const char *buf = (const char *)(uintptr_t)arch_syscall_arg1(frame);
 	uint32_t len = (uint32_t)arch_syscall_arg2(frame);
 
+	if (sched_current())
+		return arm64_syscall_ret32(syscall_case_write(
+		    (uint32_t)fd,
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame)));
+
 	if (fd != 1u && fd != 2u)
-		return (uint64_t)-1;
+		return (uint64_t)(int64_t)-9;
 	arch_console_write(buf, len);
 	return len;
 }
@@ -93,6 +101,17 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		break;
 	case ARM64_LINUX_SYS_OPENAT:
 		ret = arm64_syscall_ret32(syscall_case_openat(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame)));
+		break;
+	case ARM64_LINUX_SYS_MKDIRAT:
+		ret = arm64_syscall_ret32(syscall_case_mkdirat(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame)));
+		break;
+	case ARM64_LINUX_SYS_UNLINKAT:
+		ret = arm64_syscall_ret32(syscall_case_unlinkat(
 		    (uint32_t)arch_syscall_arg0(frame),
 		    (uint32_t)arch_syscall_arg1(frame),
 		    (uint32_t)arch_syscall_arg2(frame)));
