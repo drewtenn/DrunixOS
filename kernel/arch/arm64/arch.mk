@@ -32,6 +32,7 @@ ARM_KOBJS := kernel/arch/arm64/boot.o \
 
 ARM_COMPILE_ONLY_OBJS := kernel/proc/elf.arm64.o \
                          kernel/arch/arm64/proc/elf64.arm64.o \
+                         kernel/console/runtime.arm64.o \
                          kernel/proc/process.arm64.o \
                          kernel/proc/resources.arm64.o \
                          kernel/proc/sched.arm64.o \

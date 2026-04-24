@@ -5,7 +5,7 @@
 
 #include "tty.h"
 #include "arch.h"
-#include "desktop.h"
+#include "console/runtime.h"
 #include "../proc/sched.h"
 #include "kstring.h"
 #include <stdint.h>
@@ -35,12 +35,7 @@ static void tty_termios_set_defaults(termios_t *termios)
 
 static void tty_feedback(const char *buf, uint32_t len)
 {
-	desktop_state_t *desktop = desktop_is_active() ? desktop_global() : 0;
-
-	if (desktop && desktop_write_console_output(desktop, buf, len) == (int)len)
-		return;
-
-	arch_console_write(buf, len);
+	(void)console_runtime_write_feedback(buf, len);
 }
 
 /* ── public API ─────────────────────────────────────────────────────────── */

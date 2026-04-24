@@ -8,15 +8,13 @@
  */
 
 #include "syscall_internal.h"
-#include "desktop.h"
+#include "console/runtime.h"
 #include "pipe.h"
 #include "process.h"
 #include "sched.h"
 #include "tty.h"
 #include "vfs.h"
 #include <stdint.h>
-
-extern void print_bytes(const char *buf, int n);
 
 /*
  * fd_alloc: find the lowest free fd slot in the process's table.
@@ -52,41 +50,9 @@ int syscall_fd_is_console_output(const file_handle_t *fh)
 	return fh->type == FD_TYPE_TTY && fh->writable;
 }
 
-int syscall_desktop_should_route_console_output(desktop_state_t *desktop,
-                                                process_t *cur)
-{
-	uint32_t shell_pid;
-	tty_t *tty;
-
-	if (!desktop || !cur)
-		return 0;
-	if (desktop_process_owns_shell(desktop, cur->pid, cur->pgid))
-		return 1;
-
-	shell_pid = desktop_shell_pid(desktop);
-	if (shell_pid == 0)
-		return 0;
-	if (cur->parent_pid == shell_pid)
-		return 1;
-
-	tty = tty_get((int)cur->tty_id);
-	if (tty && tty->fg_pgid != 0 && tty->fg_pgid == cur->pgid)
-		return 1;
-
-	return 0;
-}
-
 int syscall_write_console_bytes(process_t *cur, const char *buf, uint32_t len)
 {
-	desktop_state_t *desktop = desktop_is_active() ? desktop_global() : 0;
-
-	if (desktop && syscall_desktop_should_route_console_output(desktop, cur) &&
-	    desktop_write_console_output(desktop, buf, len) == (int)len) {
-		return (int)len;
-	}
-
-	print_bytes(buf, (int)len);
-	return (int)len;
+	return console_runtime_write_process_output(cur, buf, len);
 }
 
 /*

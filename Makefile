@@ -40,7 +40,7 @@ NASMFLAGS :=
 ifneq ($(origin no_desktop),undefined)
 NO_DESKTOP ?= $(no_desktop)
 endif
-NO_DESKTOP ?= 0
+NO_DESKTOP ?= 1
 ifeq ($(NO_DESKTOP),1)
 CFLAGS += -DDRUNIX_NO_DESKTOP
 endif
