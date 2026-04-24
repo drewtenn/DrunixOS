@@ -11,5 +11,11 @@ long arm64_sys_getpid(void);
 long arm64_sys_getppid(void);
 long arm64_sys_gettid(void);
 long arm64_sys_getcwd(char *buf, unsigned long size);
+long arm64_sys_fstat(int fd, void *statbuf);
+long arm64_sys_newfstatat(int dirfd, const char *path, void *statbuf, int flags);
+long arm64_sys_getdents64(int fd, void *dirp, unsigned long count);
+long arm64_sys_uname(void *utsname);
+long arm64_sys_clock_gettime(int clock_id, void *timespec);
+long arm64_sys_gettimeofday(void *timeval, void *timezone);
 
 #endif

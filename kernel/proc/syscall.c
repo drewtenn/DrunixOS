@@ -23,10 +23,16 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unknown(uint32_t eax)
 #define ARM64_LINUX_SYS_WRITE 64u
 #define ARM64_LINUX_SYS_OPENAT 56u
 #define ARM64_LINUX_SYS_CLOSE 57u
+#define ARM64_LINUX_SYS_GETDENTS64 61u
 #define ARM64_LINUX_SYS_READ 63u
+#define ARM64_LINUX_SYS_NEWFSTATAT 79u
+#define ARM64_LINUX_SYS_FSTAT 80u
 #define ARM64_LINUX_SYS_EXIT 93u
 #define ARM64_LINUX_SYS_EXIT_GROUP 94u
+#define ARM64_LINUX_SYS_CLOCK_GETTIME 113u
 #define ARM64_LINUX_SYS_SCHED_YIELD 124u
+#define ARM64_LINUX_SYS_UNAME 160u
+#define ARM64_LINUX_SYS_GETTIMEOFDAY 169u
 #define ARM64_LINUX_SYS_GETPID 172u
 #define ARM64_LINUX_SYS_GETPPID 173u
 #define ARM64_LINUX_SYS_GETTID 178u
@@ -91,11 +97,29 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		ret = arm64_syscall_ret32(
 		    syscall_case_close((uint32_t)arch_syscall_arg0(frame)));
 		break;
+	case ARM64_LINUX_SYS_GETDENTS64:
+		ret = arm64_syscall_ret32(syscall_case_getdents64(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame)));
+		break;
 	case ARM64_LINUX_SYS_READ:
 		ret = arm64_syscall_ret32(syscall_case_read(
 		    (uint32_t)arch_syscall_arg0(frame),
 		    (uint32_t)arch_syscall_arg1(frame),
 		    (uint32_t)arch_syscall_arg2(frame)));
+		break;
+	case ARM64_LINUX_SYS_NEWFSTATAT:
+		ret = arm64_syscall_ret32(syscall_case_fstatat64(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame),
+		    (uint32_t)arch_syscall_arg3(frame)));
+		break;
+	case ARM64_LINUX_SYS_FSTAT:
+		ret = arm64_syscall_ret32(syscall_case_fstat64(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame)));
 		break;
 	case ARM64_LINUX_SYS_WRITE:
 		ret = arm64_syscall_write(frame);
@@ -108,6 +132,20 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		break;
 	case ARM64_LINUX_SYS_SCHED_YIELD:
 		ret = arm64_syscall_ret32(syscall_case_yield());
+		break;
+	case ARM64_LINUX_SYS_CLOCK_GETTIME:
+		ret = arm64_syscall_ret32(syscall_case_clock_gettime(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame)));
+		break;
+	case ARM64_LINUX_SYS_UNAME:
+		ret = arm64_syscall_ret32(
+		    syscall_case_uname((uint32_t)arch_syscall_arg0(frame)));
+		break;
+	case ARM64_LINUX_SYS_GETTIMEOFDAY:
+		ret = arm64_syscall_ret32(syscall_case_gettimeofday(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame)));
 		break;
 	case ARM64_LINUX_SYS_GETPID:
 		ret = arm64_syscall_ret32(syscall_case_getpid());

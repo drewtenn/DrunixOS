@@ -131,21 +131,21 @@ ARM64_SHARED_RUNTIME_OBJS = [
     "kernel/proc/syscall/console.arm64.o",
     "kernel/proc/syscall/task.arm64.o",
     "kernel/proc/syscall/tty.arm64.o",
-]
-
-ARM64_COMPILE_ONLY_OBJS = [
     "kernel/proc/syscall/fd.arm64.o",
     "kernel/proc/syscall/fd_control.arm64.o",
     "kernel/proc/syscall/vfs/open.arm64.o",
     "kernel/proc/syscall/vfs/path.arm64.o",
     "kernel/proc/syscall/vfs/stat.arm64.o",
     "kernel/proc/syscall/vfs/dirents.arm64.o",
-    "kernel/proc/syscall/vfs/mutation.arm64.o",
-    "kernel/proc/syscall/process.arm64.o",
+    "kernel/proc/syscall/time.arm64.o",
     "kernel/proc/syscall/info.arm64.o",
+    "kernel/proc/syscall/process.arm64.o",
+]
+
+ARM64_COMPILE_ONLY_OBJS = [
+    "kernel/proc/syscall/vfs/mutation.arm64.o",
     "kernel/proc/syscall/signal.arm64.o",
     "kernel/proc/syscall/mem.arm64.o",
-    "kernel/proc/syscall/time.arm64.o",
 ]
 
 _COMMENT_RE = re.compile(r"/\*.*?\*/|//.*?$", re.DOTALL | re.MULTILINE)
@@ -302,16 +302,17 @@ def check_late_phase7_boundaries():
 
 def extract_make_variable(text, name):
     lines = text.splitlines()
+    values = []
     for idx, line in enumerate(lines):
-        if not re.match(rf"^{name}\s*:=", line):
+        match = re.match(rf"^{name}\s*(?::=|\+=)", line)
+        if not match:
             continue
-        parts = [line.split(":=", 1)[1]]
+        parts = [re.split(r"(?::=|\+=)", line, maxsplit=1)[1]]
         while parts[-1].rstrip().endswith("\\") and idx + 1 < len(lines):
             idx += 1
             parts.append(lines[idx])
-        return "\n".join(parts)
-    else:
-        return ""
+        values.append("\n".join(parts))
+    return "\n".join(values)
 
 
 def check_arm64_shared_runtime_linkage():

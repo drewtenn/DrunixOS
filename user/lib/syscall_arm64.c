@@ -98,3 +98,33 @@ long arm64_sys_getcwd(char *buf, unsigned long size)
 {
 	return arm64_syscall2(17, (long)buf, (long)size);
 }
+
+long arm64_sys_fstat(int fd, void *statbuf)
+{
+	return arm64_syscall2(80, fd, (long)statbuf);
+}
+
+long arm64_sys_newfstatat(int dirfd, const char *path, void *statbuf, int flags)
+{
+	return arm64_syscall4(79, dirfd, (long)path, (long)statbuf, flags);
+}
+
+long arm64_sys_getdents64(int fd, void *dirp, unsigned long count)
+{
+	return arm64_syscall3(61, fd, (long)dirp, (long)count);
+}
+
+long arm64_sys_uname(void *utsname)
+{
+	return arm64_syscall1(160, (long)utsname);
+}
+
+long arm64_sys_clock_gettime(int clock_id, void *timespec)
+{
+	return arm64_syscall2(113, clock_id, (long)timespec);
+}
+
+long arm64_sys_gettimeofday(void *timeval, void *timezone)
+{
+	return arm64_syscall2(169, (long)timeval, (long)timezone);
+}
