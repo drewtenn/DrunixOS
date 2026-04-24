@@ -317,8 +317,8 @@ typedef struct process {
  *              refcounts are bumped).  Pass NULL to give the process the
  *              default stdin/stdout/stderr controlling TTY setup.
  *
- * Lays out argc/argv/envp/auxv/strings at the top of the new process's user
- * stack in Linux/System V i386 ABI order, with ESP pointing at argc on entry.
+ * Delegates initial user-stack construction to the active architecture, which
+ * lays out argc/argv/envp/auxv/strings at the top of the new process's stack.
  *
  * Returns 0 on success, negative on error.
  */
@@ -329,15 +329,6 @@ int process_create_file(process_t *proc,
                         const char *const *envp,
                         int envc,
                         const file_handle_t *inherit_fds);
-
-#ifdef KTEST_ENABLED
-int process_build_user_stack_frame_for_test(uint32_t pd_phys,
-                                            const char *const *argv,
-                                            int argc,
-                                            const char *const *envp,
-                                            int envc,
-                                            uint32_t *out_esp);
-#endif
 
 /*
  * process_build_initial_frame: synthesise the first kernel-stack frame for a

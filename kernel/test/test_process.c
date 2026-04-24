@@ -352,7 +352,7 @@ static void test_process_builds_linux_i386_initial_stack_shape(ktest_case_t *tc)
 	static process_t proc;
 	const char *argv[] = {"linuxprobe", 0};
 	const char *envp[] = {"DRUNIX=1", 0};
-	uint32_t esp = USER_STACK_TOP;
+	uintptr_t esp = USER_STACK_TOP;
 	uint32_t *stack;
 	const char *arg0;
 	const char *env0;
@@ -367,12 +367,13 @@ static void test_process_builds_linux_i386_initial_stack_shape(ktest_case_t *tc)
 	                              PG_PRESENT | PG_WRITABLE | PG_USER),
 	                0u);
 	KTEST_ASSERT_EQ(tc,
-	                (uint32_t)process_build_user_stack_frame_for_test(
-	                    proc.pd_phys, argv, 1, envp, 1, &esp),
+	                (uint32_t)arch_process_build_user_stack(
+	                    (arch_aspace_t)proc.pd_phys, argv, 1, envp, 1, &esp),
 	                0u);
-	stack = (uint32_t *)mapped_alias(&proc, esp);
+	stack = (uint32_t *)mapped_alias(&proc, (uint32_t)esp);
 	KTEST_ASSERT_NOT_NULL(tc, stack);
 
+	KTEST_EXPECT_EQ(tc, (uint32_t)esp & 3u, 0u);
 	KTEST_EXPECT_EQ(tc, stack[0], 1u);
 	KTEST_EXPECT_EQ(tc, stack[2], 0u);
 	KTEST_EXPECT_EQ(tc, stack[4], 0u);
@@ -380,6 +381,9 @@ static void test_process_builds_linux_i386_initial_stack_shape(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc, stack[6], PAGE_SIZE);
 	KTEST_EXPECT_EQ(tc, stack[7], 0u); /* AT_NULL */
 	KTEST_EXPECT_EQ(tc, stack[8], 0u);
+	KTEST_EXPECT_TRUE(tc, stack[1] > (uint32_t)esp);
+	KTEST_EXPECT_TRUE(tc, stack[3] > stack[1]);
+	KTEST_EXPECT_TRUE(tc, stack[3] < USER_STACK_TOP);
 
 	arg0 = (const char *)mapped_alias(&proc, stack[1]);
 	env0 = (const char *)mapped_alias(&proc, stack[3]);

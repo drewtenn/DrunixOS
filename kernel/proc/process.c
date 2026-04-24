@@ -16,198 +16,6 @@
 #include "fs.h"
 #include <stdint.h>
 
-#define LINUX_AT_NULL 0u
-#define LINUX_AT_PAGESZ 6u
-
-/*
- * Build the Linux/System V i386 initial stack at the top of a freshly mapped
- * user stack and return the initial ESP the process should start with.
- *
- * The top user-stack page was just mapped in the target address space by the
- * caller. Resolve that page through arch_mm_query(), then write the initial
- * frame through the architecture temp-map helper so no address-space switch is
- * required here.
- *
- * Frame layout (high → low addresses, fits entirely within the top 4 KB
- * user stack page):
- *
- *   +--------------------------+  USER_STACK_TOP
- *   | argv/env strings         |  null-terminated C strings, concatenated
- *   +--------------------------+
- *   | 0..3 bytes zero pad      |  align next word to 4 bytes
- *   +--------------------------+
- *   | auxv terminator value    |
- *   | AT_NULL                  |
- *   | PAGE_SIZE                |
- *   | AT_PAGESZ                |
- *   | NULL                     |  envp terminator
- *   | envp[envc-1] (char*)     |
- *   |  ...                     |
- *   | envp[0]      (char*)     |
- *   | NULL                     |  argv terminator
- *   | argv[argc-1] (char*)     |
- *   |  ...                     |
- *   | argv[0]      (char*)     |  ← argv == ESP + 4
- *   | argc                     |  int argc ← ESP
- *   +--------------------------+
- *
- * Returns 0 on success, negative on error.
- */
-static int build_user_stack_frame(uint32_t pd_phys,
-                                  const char *const *argv,
-                                  int argc,
-                                  const char *const *envp,
-                                  int envc,
-                                  uint32_t *out_esp)
-{
-	/* Normalise the "no argv" case so the rest of this function can assume
-     * argc is a small non-negative integer. */
-	if (argc < 0 || argv == 0)
-		argc = 0;
-	if (envc < 0 || envp == 0)
-		envc = 0;
-	if ((uint32_t)argc > PROCESS_ARGV_MAX_COUNT)
-		return -1;
-	if ((uint32_t)envc > PROCESS_ENV_MAX_COUNT)
-		return -1;
-
-	/* Sum the string bytes (including NULs) and bail if they overflow. */
-	uint32_t argv_strbytes = 0;
-	for (int i = 0; i < argc; i++) {
-		const char *s = argv[i];
-		if (!s)
-			return -1;
-		uint32_t n = 0;
-		while (s[n])
-			n++;
-		argv_strbytes += n + 1; /* + NUL terminator */
-		if (argv_strbytes > PROCESS_ARGV_MAX_BYTES)
-			return -1;
-	}
-	uint32_t env_strbytes = 0;
-	for (int i = 0; i < envc; i++) {
-		const char *s = envp[i];
-		if (!s)
-			return -1;
-		uint32_t n = 0;
-		while (s[n])
-			n++;
-		env_strbytes += n + 1;
-		if (env_strbytes > PROCESS_ENV_MAX_BYTES)
-			return -1;
-	}
-	uint32_t strbytes = argv_strbytes + env_strbytes;
-
-	/*
-     * Compute layout.  Everything is measured as an offset below
-     * USER_STACK_TOP.  Grow the frame downward in three chunks:
-     *   1. raw string bytes (top of stack)
-     *   2. pad to 4-byte alignment
-     *   3. Linux raw initial stack words:
-     *      argc, argv[], NULL, envp[], NULL, auxv pairs, AT_NULL
-     */
-	uint32_t strings_off = strbytes; /* bytes consumed by strings */
-	uint32_t pad = (4u - (strings_off & 3u)) & 3u;
-	uint32_t aux_words = 4u; /* AT_PAGESZ pair + AT_NULL */
-	uint32_t stack_words =
-	    1u + (uint32_t)argc + 1u + (uint32_t)envc + 1u + aux_words;
-	uint32_t frame_off = strings_off + pad + stack_words * 4u;
-
-	/* Reject anything that would spill past the top stack page. */
-	if (frame_off > 0x1000u)
-		return -1;
-
-	/*
-     * Resolve the physical page backing the top user stack page (the one
-     * holding USER_STACK_TOP-1) and alias it into the kernel through the
-     * architecture temp-map helper so the stack image can be written without
-     * switching address spaces here.
-     */
-	uint32_t top_vpage = USER_STACK_TOP - 0x1000u;
-	arch_mm_mapping_t mapping;
-	uint8_t *page;
-
-	if (arch_mm_query((arch_aspace_t)pd_phys, top_vpage, &mapping) != 0)
-		return -1;
-	page = (uint8_t *)arch_page_temp_map(mapping.phys_addr);
-	if (!page)
-		return -1;
-
-	uint8_t *page_end = page + 0x1000u; /* one past last byte */
-
-	/*
-     * Step 1: copy each string into the top of the stack page and record
-     * the user-space virtual address of each copy in a local table.  We
-     * write from low-address-first within the reserved string area.
-     */
-	uint8_t *strbase_k = page_end - strings_off; /* kernel alias */
-	uint32_t strbase_u =
-	    USER_STACK_TOP - strings_off; /* user vaddr of same byte */
-
-	uint32_t uargv_ptrs[PROCESS_ARGV_MAX_COUNT]; /* user vaddrs for argv[] */
-	uint32_t uenv_ptrs[PROCESS_ENV_MAX_COUNT];   /* user vaddrs for envp[] */
-	uint32_t write_cursor = 0;
-	for (int i = 0; i < argc; i++) {
-		const char *s = argv[i];
-		uint32_t j = 0;
-		while (s[j]) {
-			strbase_k[write_cursor + j] = (uint8_t)s[j];
-			j++;
-		}
-		strbase_k[write_cursor + j] = 0;
-		uargv_ptrs[i] = strbase_u + write_cursor;
-		write_cursor += j + 1;
-	}
-	for (int i = 0; i < envc; i++) {
-		const char *s = envp[i];
-		uint32_t j = 0;
-		while (s[j]) {
-			strbase_k[write_cursor + j] = (uint8_t)s[j];
-			j++;
-		}
-		strbase_k[write_cursor + j] = 0;
-		uenv_ptrs[i] = strbase_u + write_cursor;
-		write_cursor += j + 1;
-	}
-
-	/*
-     * Step 2: write the Linux raw initial stack just below the strings.  The
-     * argv and envp vectors are inline after argc; auxv follows envp.
-     */
-	uint32_t *tail_k = (uint32_t *)(page_end - frame_off);
-	uint32_t idx = 0;
-
-	tail_k[idx++] = (uint32_t)argc;
-	for (int i = 0; i < argc; i++)
-		tail_k[idx++] = uargv_ptrs[i];
-	tail_k[idx++] = 0; /* argv terminator */
-
-	for (int i = 0; i < envc; i++)
-		tail_k[idx++] = uenv_ptrs[i];
-	tail_k[idx++] = 0; /* envp terminator */
-
-	tail_k[idx++] = LINUX_AT_PAGESZ;
-	tail_k[idx++] = PAGE_SIZE;
-	tail_k[idx++] = LINUX_AT_NULL;
-	tail_k[idx++] = 0;
-
-	*out_esp = USER_STACK_TOP - frame_off;
-	arch_page_temp_unmap(page);
-	return 0;
-}
-
-#ifdef KTEST_ENABLED
-int process_build_user_stack_frame_for_test(uint32_t pd_phys,
-                                            const char *const *argv,
-                                            int argc,
-                                            const char *const *envp,
-                                            int envc,
-                                            uint32_t *out_esp)
-{
-	return build_user_stack_frame(pd_phys, argv, argc, envp, envc, out_esp);
-}
-#endif
-
 static void process_fork_rollback_child(process_t *child_out)
 {
 	if (!child_out)
@@ -377,12 +185,12 @@ int process_create_file(process_t *proc,
 			return -4;
 	}
 
-	/* Step 4: assemble the argc/argv frame at the top of the user stack.
+	/* Step 4: ask the active architecture to populate the initial user stack.
      * Must run after the stack pages are mapped (step 3) and before the
-     * process descriptor records the initial ESP. */
-	uint32_t initial_esp = USER_STACK_TOP;
-	if (build_user_stack_frame(pd_phys, argv, argc, envp, envc, &initial_esp) !=
-	    0)
+     * process descriptor records the entry stack pointer. */
+	uintptr_t initial_stack = USER_STACK_TOP;
+	if (arch_process_build_user_stack(
+	        aspace, argv, argc, envp, envc, &initial_stack) != 0)
 		return -6;
 
 	/* Step 5: allocate a per-process kernel stack from the heap.
@@ -419,7 +227,7 @@ int process_create_file(process_t *proc,
 	proc->heap_start = (uint32_t)heap_start;
 	proc->brk =
 	    heap_start; /* empty heap: brk == heap_start, no pages committed */
-	proc->user_stack = initial_esp;
+	proc->user_stack = (uint32_t)initial_stack;
 	proc->stack_low_limit =
 	    USER_STACK_TOP - (uint32_t)USER_STACK_PAGES * 0x1000u;
 	proc->kstack_bottom = (uint32_t)kstack_raw;

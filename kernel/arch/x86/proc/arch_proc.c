@@ -15,6 +15,8 @@
 #include <stdint.h>
 
 #define SYS_SIGRETURN 119u
+#define LINUX_AT_NULL 0u
+#define LINUX_AT_PAGESZ 6u
 
 extern void process_enter_usermode(uint32_t entry,
                                    uint32_t user_esp,
@@ -71,6 +73,128 @@ static uint32_t arch_x86_elf_segment_flags(uint32_t p_flags)
 		flags |= ARCH_MM_MAP_READ;
 
 	return flags;
+}
+
+int arch_process_build_user_stack(arch_aspace_t aspace,
+                                  const char *const *argv,
+                                  int argc,
+                                  const char *const *envp,
+                                  int envc,
+                                  uintptr_t *stack_out)
+{
+	uint32_t argv_strbytes = 0;
+	uint32_t env_strbytes = 0;
+	uint32_t strings_off;
+	uint32_t pad;
+	uint32_t aux_words = 4u;
+	uint32_t stack_words;
+	uint32_t frame_off;
+	uint32_t top_vpage = USER_STACK_TOP - 0x1000u;
+	arch_mm_mapping_t mapping;
+	uint8_t *page;
+	uint8_t *page_end;
+	uint8_t *strbase_k;
+	uint32_t strbase_u;
+	uint32_t uargv_ptrs[PROCESS_ARGV_MAX_COUNT];
+	uint32_t uenv_ptrs[PROCESS_ENV_MAX_COUNT];
+	uint32_t write_cursor = 0;
+	uint32_t *tail_k;
+	uint32_t idx = 0;
+
+	if (!stack_out)
+		return -1;
+	if (argc < 0 || argv == 0)
+		argc = 0;
+	if (envc < 0 || envp == 0)
+		envc = 0;
+	if ((uint32_t)argc > PROCESS_ARGV_MAX_COUNT)
+		return -1;
+	if ((uint32_t)envc > PROCESS_ENV_MAX_COUNT)
+		return -1;
+
+	for (int i = 0; i < argc; i++) {
+		const char *s = argv[i];
+		uint32_t n = 0;
+
+		if (!s)
+			return -1;
+		while (s[n])
+			n++;
+		argv_strbytes += n + 1u;
+		if (argv_strbytes > PROCESS_ARGV_MAX_BYTES)
+			return -1;
+	}
+	for (int i = 0; i < envc; i++) {
+		const char *s = envp[i];
+		uint32_t n = 0;
+
+		if (!s)
+			return -1;
+		while (s[n])
+			n++;
+		env_strbytes += n + 1u;
+		if (env_strbytes > PROCESS_ENV_MAX_BYTES)
+			return -1;
+	}
+
+	strings_off = argv_strbytes + env_strbytes;
+	pad = (4u - (strings_off & 3u)) & 3u;
+	stack_words =
+	    1u + (uint32_t)argc + 1u + (uint32_t)envc + 1u + aux_words;
+	frame_off = strings_off + pad + stack_words * 4u;
+	if (frame_off > PAGE_SIZE)
+		return -1;
+
+	if (arch_mm_query(aspace, top_vpage, &mapping) != 0)
+		return -1;
+	page = (uint8_t *)arch_page_temp_map(mapping.phys_addr);
+	if (!page)
+		return -1;
+	page_end = page + PAGE_SIZE;
+	strbase_k = page_end - strings_off;
+	strbase_u = USER_STACK_TOP - strings_off;
+
+	for (int i = 0; i < argc; i++) {
+		const char *s = argv[i];
+		uint32_t j = 0;
+
+		while (s[j]) {
+			strbase_k[write_cursor + j] = (uint8_t)s[j];
+			j++;
+		}
+		strbase_k[write_cursor + j] = 0;
+		uargv_ptrs[i] = strbase_u + write_cursor;
+		write_cursor += j + 1u;
+	}
+	for (int i = 0; i < envc; i++) {
+		const char *s = envp[i];
+		uint32_t j = 0;
+
+		while (s[j]) {
+			strbase_k[write_cursor + j] = (uint8_t)s[j];
+			j++;
+		}
+		strbase_k[write_cursor + j] = 0;
+		uenv_ptrs[i] = strbase_u + write_cursor;
+		write_cursor += j + 1u;
+	}
+
+	tail_k = (uint32_t *)(page_end - frame_off);
+	tail_k[idx++] = (uint32_t)argc;
+	for (int i = 0; i < argc; i++)
+		tail_k[idx++] = uargv_ptrs[i];
+	tail_k[idx++] = 0;
+	for (int i = 0; i < envc; i++)
+		tail_k[idx++] = uenv_ptrs[i];
+	tail_k[idx++] = 0;
+	tail_k[idx++] = LINUX_AT_PAGESZ;
+	tail_k[idx++] = PAGE_SIZE;
+	tail_k[idx++] = LINUX_AT_NULL;
+	tail_k[idx++] = 0;
+
+	*stack_out = USER_STACK_TOP - frame_off;
+	arch_page_temp_unmap(page);
+	return 0;
 }
 
 int arch_elf_machine_supported(elf_class_t elf_class, uint16_t machine)
