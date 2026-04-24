@@ -30,19 +30,50 @@ ARM_KOBJS := kernel/arch/arm64/boot.o \
              kernel/lib/kprintf.arm64.o \
              kernel/lib/kstring.arm64.o
 
-ARM_COMPILE_ONLY_OBJS := kernel/proc/elf.arm64.o \
-                         kernel/arch/arm64/proc/elf64.arm64.o \
-                         kernel/console/runtime.arm64.o \
-                         kernel/proc/process.arm64.o \
-                         kernel/proc/resources.arm64.o \
-                         kernel/proc/sched.arm64.o \
-                         kernel/proc/task_group.arm64.o \
-                         kernel/proc/uaccess.arm64.o \
-                         kernel/proc/syscall.arm64.o \
+ARM_SHARED_KOBJS := kernel/lib/klog.arm64.o \
+                    kernel/console/runtime.arm64.o \
+                    kernel/mm/vma.arm64.o \
+                    kernel/mm/kheap.arm64.o \
+                    kernel/mm/slab.arm64.o \
+                    kernel/drivers/blkdev.arm64.o \
+                    kernel/drivers/blkdev_part.arm64.o \
+                    kernel/blk/bcache.arm64.o \
+                    kernel/drivers/chardev.arm64.o \
+                    kernel/drivers/tty.arm64.o \
+                    kernel/proc/elf.arm64.o \
+                    kernel/arch/arm64/proc/elf64.arm64.o \
+                    kernel/proc/process.arm64.o \
+                    kernel/proc/resources.arm64.o \
+                    kernel/proc/task_group.arm64.o \
+                    kernel/proc/sched.arm64.o \
+                    kernel/proc/uaccess.arm64.o \
+                    kernel/proc/core.arm64.o \
+                    kernel/proc/mem_forensics.arm64.o \
+                    kernel/proc/pipe.arm64.o \
+                    kernel/proc/init_launch.arm64.o \
+                    kernel/fs/fs.arm64.o \
+                    kernel/fs/vfs/core.arm64.o \
+                    kernel/fs/vfs/lookup.arm64.o \
+                    kernel/fs/vfs/mutation.arm64.o \
+                    kernel/fs/procfs.arm64.o \
+                    kernel/fs/sysfs.arm64.o
+
+ARM_COMPILE_ONLY_OBJS := kernel/proc/syscall.arm64.o \
                          kernel/proc/syscall/helpers.arm64.o \
                          kernel/proc/syscall/console.arm64.o \
+                         kernel/proc/syscall/task.arm64.o \
+                         kernel/proc/syscall/tty.arm64.o \
+                         kernel/proc/syscall/fd.arm64.o \
+                         kernel/proc/syscall/fd_control.arm64.o \
+                         kernel/proc/syscall/vfs/open.arm64.o \
+                         kernel/proc/syscall/vfs/path.arm64.o \
+                         kernel/proc/syscall/vfs/stat.arm64.o \
+                         kernel/proc/syscall/vfs/dirents.arm64.o \
+                         kernel/proc/syscall/vfs/mutation.arm64.o \
+                         kernel/proc/syscall/process.arm64.o \
+                         kernel/proc/syscall/info.arm64.o \
                          kernel/proc/syscall/signal.arm64.o \
-                         kernel/proc/syscall/task.arm64.o
+                         kernel/proc/syscall/mem.arm64.o
 
 kernel/mm/%.arm64.o: kernel/mm/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
@@ -50,10 +81,25 @@ kernel/mm/%.arm64.o: kernel/mm/%.c
 kernel/console/%.arm64.o: kernel/console/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
 
+kernel/blk/%.arm64.o: kernel/blk/%.c
+	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
+
+kernel/drivers/%.arm64.o: kernel/drivers/%.c
+	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
+
+kernel/fs/%.arm64.o: kernel/fs/%.c
+	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
+
+kernel/fs/vfs/%.arm64.o: kernel/fs/vfs/%.c
+	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
+
 kernel/proc/%.arm64.o: kernel/proc/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
 
 kernel/proc/syscall/%.arm64.o: kernel/proc/syscall/%.c
+	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
+
+kernel/proc/syscall/vfs/%.arm64.o: kernel/proc/syscall/vfs/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
 
 kernel/arch/arm64/proc/%.arm64.o: kernel/arch/arm64/proc/%.c
