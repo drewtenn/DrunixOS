@@ -34,10 +34,7 @@ REQUIRED = {
 
 def check(table, predicate, label):
     for path, patterns in table.items():
-        try:
-            text = path.read_text()
-        except FileNotFoundError:
-            text = ""
+        text = path.read_text()
         for pattern in patterns:
             if predicate(re.search(pattern, text)):
                 print(f"{label}: {path.relative_to(ROOT)} {pattern}", file=sys.stderr)

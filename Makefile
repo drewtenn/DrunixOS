@@ -492,7 +492,7 @@ clean:
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-busybox-compat test-linux-abi test-threadtest test-tcc test-nano test-ext3-linux-compat test-ext3-host-write-interop test-all \
-        check-phase6 check-phase7 check-arm64-userspace check-arm64-filesystem-init \
+        check-phase6 check-arm64-userspace \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean
