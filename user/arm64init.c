@@ -221,6 +221,8 @@ int main(void)
 	status = 0;
 	if (arm64_sys_wait4((int)child, &status, 0, 0) != child)
 		return fail_msg("ARM64 syscall: fail wait pid\n", 29);
+	if (status != (7 << 8))
+		return fail_msg("ARM64 syscall: fail wait status\n", 32);
 	put("ARM64 syscall: clone/wait ok\n", 29);
 
 	if (arm64_sys_getuid() != 0 || arm64_sys_geteuid() != 0 ||
