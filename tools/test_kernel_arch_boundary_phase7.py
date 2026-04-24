@@ -12,7 +12,6 @@ FORBIDDEN = {
         r"\bdesktop_attach_shell_pid\s*\(",
     ],
     ROOT / "kernel/proc/init_launch.c": [
-        r"\bstatic\s+process_t\s+init_proc\b",
         r"\bstatic\s+const\s+char\s+\*argv\s*\[",
         r"\bstatic\s+const\s+char\s+\*envp\s*\[",
     ],
@@ -54,6 +53,9 @@ REQUIRED = {
 }
 
 _COMMENT_RE = re.compile(r"/\*.*?\*/|//.*?$", re.DOTALL | re.MULTILINE)
+_STACK_LOCAL_PROCESS_RE = re.compile(
+    r"(?m)^\s*(?!static\b)process_t\s+[A-Za-z_]\w*(?:\s*=\s*[^;]+)?;"
+)
 
 
 def strip_comments(text):
@@ -68,6 +70,42 @@ def read_source(path):
         raise SystemExit(1)
 
 
+def extract_function_body(text, name):
+    anchor = re.search(rf"\b{name}\s*\(", text)
+    if not anchor:
+        return None
+    start = text.find("{", anchor.end())
+    if start == -1:
+        return None
+    idx = start + 1
+    depth = 1
+    while idx < len(text):
+        ch = text[idx]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start + 1:idx]
+        idx += 1
+    return None
+
+
+def check_init_launch_body():
+    path = ROOT / "kernel/proc/init_launch.c"
+    text = read_source(path)
+    body = extract_function_body(text, "boot_launch_init_process")
+    if body is None:
+        print(f"missing: {path.relative_to(ROOT)} boot_launch_init_process body", file=sys.stderr)
+        raise SystemExit(1)
+    if _STACK_LOCAL_PROCESS_RE.search(body):
+        print(
+            f"forbidden: {path.relative_to(ROOT)} stack-local process_t in boot_launch_init_process",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+
 def check(table, predicate, label):
     for path, patterns in table.items():
         text = read_source(path)
@@ -79,4 +117,5 @@ def check(table, predicate, label):
 
 check(REQUIRED, lambda m: not m, "missing")
 check(FORBIDDEN, bool, "forbidden")
+check_init_launch_body()
 print("phase7 boundary guard passed")
