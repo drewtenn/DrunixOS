@@ -721,7 +721,7 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
 	int init_pid = boot_launch_init_process(DRUNIX_INIT_PROGRAM,
 	                                        DRUNIX_INIT_ARG0,
 	                                        DRUNIX_INIT_ENV0,
-	                                        1);
+	                                        BOOT_LAUNCH_INIT_ATTACH_DESKTOP);
 	if (init_pid < 0) {
 		klog("PROC", "boot_launch_init_process failed");
 		for (;;)

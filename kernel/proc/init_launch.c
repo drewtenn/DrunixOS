@@ -10,6 +10,8 @@
 #include "sched.h"
 #include "vfs.h"
 
+static process_t boot_init_proc;
+
 static const char *boot_launch_kind_label(int launch_mode_flag)
 {
 	/* The flag controls whether the helper attaches the launched PID to the
@@ -20,14 +22,13 @@ static const char *boot_launch_kind_label(int launch_mode_flag)
 int boot_launch_init_process(const char *path,
                              const char *arg0,
                              const char *env0,
-                             int attach_desktop_pid)
+                             boot_launch_init_mode_t launch_mode)
 {
 	vfs_file_ref_t file_ref;
 	uint32_t elf_size = 0;
-	process_t init_proc;
 	const char *argv[1];
 	const char *envp[1];
-	const int launch_mode_flag = attach_desktop_pid;
+	const int launch_mode_flag = (launch_mode == BOOT_LAUNCH_INIT_ATTACH_DESKTOP);
 	const char *launch_kind = boot_launch_kind_label(launch_mode_flag);
 	char log_line[96];
 	int rc;
@@ -47,7 +48,7 @@ int boot_launch_init_process(const char *path,
 	klog_uint("FS", log_line, elf_size);
 	k_snprintf(log_line, sizeof(log_line), "%s launch: before process_create", launch_kind);
 	klog_uint("HEAP", log_line, kheap_free_bytes());
-	rc = process_create_file(&init_proc, file_ref, argv, 1, envp, 1, 0);
+	rc = process_create_file(&boot_init_proc, file_ref, argv, 1, envp, 1, 0);
 	k_snprintf(log_line, sizeof(log_line), "%s launch: after process_create", launch_kind);
 	klog_uint("HEAP", log_line, kheap_free_bytes());
 	if (rc != 0) {
@@ -55,7 +56,7 @@ int boot_launch_init_process(const char *path,
 		klog_uint("PROC", log_line, (uint32_t)(-rc));
 		return BOOT_LAUNCH_INIT_ERR_PROCESS_CREATE;
 	}
-	if (sched_add(&init_proc) < 0) {
+	if (sched_add(&boot_init_proc) < 0) {
 		k_snprintf(log_line, sizeof(log_line), "%s launch: sched_add failed", launch_kind);
 		klog("PROC", log_line);
 		return BOOT_LAUNCH_INIT_ERR_SCHED_ADD;
@@ -64,9 +65,9 @@ int boot_launch_init_process(const char *path,
 		desktop_state_t *desktop = desktop_global();
 
 		if (desktop) {
-			desktop_attach_shell_pid(desktop, (uint32_t)init_proc.pid);
+			desktop_attach_shell_pid(desktop, (uint32_t)boot_init_proc.pid);
 			desktop_render(desktop);
 		}
 	}
-	return (int)init_proc.pid;
+	return (int)boot_init_proc.pid;
 }

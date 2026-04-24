@@ -9,6 +9,7 @@ FORBIDDEN = {
     ROOT / "kernel/kernel.c": [
         r"\bvfs_open_file\s*\(\s*DRUNIX_INIT_PROGRAM",
         r"\bprocess_create_file\s*\(",
+        r"\bdesktop_attach_shell_pid\s*\(",
     ],
     ROOT / "kernel/proc/init_launch.c": [
         r"\bstatic\s+process_t\s+init_proc\b",
@@ -26,14 +27,18 @@ FORBIDDEN = {
 REQUIRED = {
     ROOT / "kernel/kernel.c": [
         r"\bboot_launch_init_process\s*\(",
+        r"\bBOOT_LAUNCH_INIT_ATTACH_DESKTOP\b",
     ],
     ROOT / "kernel/proc/init_launch.h": [
-        r"\bboot_launch_init_process\s*\(\s*const char \*[^,]+,\s*const char \*[^,]+,\s*const char \*[^,]+,\s*int\s+\w+\s*\)",
+        r"\bboot_launch_init_process\s*\(\s*const char \*[^,]+,\s*const char \*[^,]+,\s*const char \*[^,]+,\s*boot_launch_init_mode_t\s+\w+\s*\)",
+        r"\bBOOT_LAUNCH_INIT_ATTACH_DESKTOP\b",
     ],
     ROOT / "kernel/proc/init_launch.c": [
-        r"\bboot_launch_init_process\s*\(\s*const char \*[^,]+,\s*const char \*[^,]+,\s*const char \*[^,]+,\s*int\s+\w+\s*\)",
+        r"\bboot_launch_init_process\s*\(\s*const char \*[^,]+,\s*const char \*[^,]+,\s*const char \*[^,]+,\s*boot_launch_init_mode_t\s+\w+\s*\)",
         r"\bvfs_open_file\s*\(",
         r"\bprocess_create_file\s*\(",
+        r"\bdesktop_attach_shell_pid\s*\(",
+        r"\bdesktop_render\s*\(",
     ],
     ROOT / "kernel/arch/arch.h": [
         r"\barch_process_build_user_stack\b",
