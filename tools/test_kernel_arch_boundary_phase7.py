@@ -15,6 +15,12 @@ FORBIDDEN = {
         r"\bstatic\s+const\s+char\s+\*argv\s*\[",
         r"\bstatic\s+const\s+char\s+\*envp\s*\[",
     ],
+    ROOT / "kernel/arch/arm64/start_kernel.c": [
+        r"\barm64_user_smoke_boot\s*\(\s*\)",
+    ],
+    ROOT / "kernel/proc/process.c": [
+        r"\bbuild_user_stack_frame\s*\(",
+    ],
 }
 
 REQUIRED = {
@@ -30,6 +36,17 @@ REQUIRED = {
         r"\battach_desktop_pid\b",
         r"\bvfs_open_file\s*\(",
         r"\bprocess_create_file\s*\(",
+    ],
+    ROOT / "kernel/arch/arch.h": [
+        r"\barch_process_build_user_stack\b",
+    ],
+    ROOT / "kernel/arch/arm64/rootfs.c": [
+        r"\barm64_rootfs_register\b",
+    ],
+    ROOT / "kernel/arch/arm64/arch.mk": [
+        r"\brootfs_blob\.o\b",
+        r"\barm64init\.elf\b",
+        r"\barm64-root\.fs\b",
     ],
 }
 
