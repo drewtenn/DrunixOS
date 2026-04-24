@@ -85,3 +85,5 @@ venv/
 .no-desktop-flag
 .vga-text-flag
 .disk-sectors-flag
+.arm64-smoke-fallback-flag
+logs/*.stderr

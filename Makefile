@@ -326,6 +326,8 @@ check: clang-tidy-include-check test-headless
 check-phase6:
 	python3 tools/test_kernel_arch_boundary_phase6.py
 
+phase6-check: check-phase6 check-arm64-userspace
+
 check-phase7:
 	python3 tools/test_kernel_arch_boundary_phase7.py
 
@@ -511,7 +513,7 @@ clean:
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-busybox-compat test-linux-abi test-threadtest test-tcc test-nano test-ext3-linux-compat test-ext3-host-write-interop test-all \
-        check-phase6 check-phase7 check-arm64-userspace check-arm64-filesystem-init \
+        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean
@@ -556,6 +558,8 @@ check: kernel-arm64.elf | $(LOG_DIR)
 
 check-phase6:
 	python3 tools/test_kernel_arch_boundary_phase6.py
+
+phase6-check: check-phase6 check-arm64-userspace
 
 check-phase7:
 	python3 tools/test_kernel_arch_boundary_phase7.py
@@ -603,7 +607,7 @@ clean:
 .PHONY: all build kernel iso images disk fresh check \
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
-        check-phase6 check-phase7 check-arm64-userspace check-arm64-filesystem-init \
+        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init \
         pdf epub docs \
         rebuild clean
 endif
