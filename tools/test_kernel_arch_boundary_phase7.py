@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+from pathlib import Path
+import re
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+
+FORBIDDEN = {
+    ROOT / "kernel/arch/arm64/start_kernel.c": [
+        r"\barm64_user_smoke_boot\s*\(\s*\)",
+    ],
+    ROOT / "kernel/proc/process.c": [
+        r"\bbuild_user_stack_frame\s*\(",
+    ],
+}
+
+REQUIRED = {
+    ROOT / "kernel/proc/init_launch.c": [
+        r"\bboot_launch_init_process\b",
+    ],
+    ROOT / "kernel/arch/arch.h": [
+        r"\barch_process_build_user_stack\b",
+    ],
+    ROOT / "kernel/arch/arm64/rootfs.c": [
+        r"\barm64_rootfs_register\b",
+    ],
+    ROOT / "kernel/arch/arm64/arch.mk": [
+        r"\brootfs_blob\.o\b",
+        r"\barm64init\.elf\b",
+        r"\barm64-root\.fs\b",
+    ],
+}
+
+
+def check(table, predicate, label):
+    for path, patterns in table.items():
+        try:
+            text = path.read_text()
+        except FileNotFoundError:
+            text = ""
+        for pattern in patterns:
+            if predicate(re.search(pattern, text)):
+                print(f"{label}: {path.relative_to(ROOT)} {pattern}", file=sys.stderr)
+                raise SystemExit(1)
+
+
+check(REQUIRED, lambda m: not m, "missing")
+check(FORBIDDEN, bool, "forbidden")
+print("phase7 boundary guard passed")
