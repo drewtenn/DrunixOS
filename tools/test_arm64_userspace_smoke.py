@@ -16,8 +16,25 @@ REQUIRED_MARKERS = (
     "ARM64 user smoke: pass",
 )
 
+
+def refresh_arm64_boot_image():
+    for path in (
+        ROOT / "kernel/arch/arm64/start_kernel.o",
+        ROOT / "kernel-arm64.elf",
+        ROOT / "kernel8.img",
+    ):
+        path.unlink(missing_ok=True)
+
+
+refresh_arm64_boot_image()
 build = subprocess.run(
-    ["make", "ARCH=arm64", "build"],
+    [
+        "make",
+        "ARCH=arm64",
+        "INIT_PROGRAM=bin/missing-arm64",
+        "ARM64_SMOKE_FALLBACK=1",
+        "build",
+    ],
     cwd=ROOT,
     capture_output=True,
     text=True,
@@ -115,3 +132,16 @@ else:
         )
 
     print("arm64 userspace smoke check passed")
+
+refresh_arm64_boot_image()
+restore = subprocess.run(
+    ["make", "ARCH=arm64", "build"],
+    cwd=ROOT,
+    capture_output=True,
+    text=True,
+)
+if restore.returncode != 0:
+    raise SystemExit(
+        "failed to restore default arm64 build after smoke check:\n"
+        + (restore.stderr.strip() or restore.stdout.strip() or "no build output")
+    )

@@ -264,12 +264,12 @@ arch_aspace_t arm64_mmu_aspace_clone(arch_aspace_t src)
 			    (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER))
 				continue;
 
-			if (src_pt[j] & ARCH_MM_MAP_WRITE) {
-				src_pt[j] =
-				    (src_pt[j] & ~(uint32_t)ARCH_MM_MAP_WRITE) |
-				    ARCH_MM_MAP_COW;
-			}
-
+			/*
+			 * ARM64 still executes user code against identity-mapped RAM while
+			 * this software page-table model is being brought up.  Marking the
+			 * parent mapping COW would make later kernel copyout allocate a
+			 * non-identity backing page that user code cannot observe.
+			 */
 			new_pt[j] = src_pt[j];
 			pmm_incref(arm64_mmu_entry_addr(src_pt[j]));
 		}

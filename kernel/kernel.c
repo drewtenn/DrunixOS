@@ -22,6 +22,7 @@
 #include "desktop.h"
 #include "framebuffer.h"
 #include "keyboard.h"
+#include "init_launch.h"
 #include "klog.h"
 #include "kstring.h"
 #include "tty.h"
@@ -717,42 +718,16 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
 #define DRUNIX_INIT_ENV0 "PATH=/bin"
 #endif
 
-	/* Look up the initial user executable in the filesystem. */
-	klog("BOOT", "locating initial program");
-	vfs_file_ref_t shell_ref;
-	uint32_t elf_size;
-	if (vfs_open_file(DRUNIX_INIT_PROGRAM, &shell_ref, &elf_size) != 0) {
-		klog("FS", "initial program not found");
+	int init_pid = boot_launch_init_process(DRUNIX_INIT_PROGRAM,
+	                                        DRUNIX_INIT_ARG0,
+	                                        DRUNIX_INIT_ENV0,
+	                                        BOOT_LAUNCH_INIT_ATTACH_DESKTOP);
+	if (init_pid < 0) {
+		klog("PROC", "boot_launch_init_process failed");
 		for (;;)
 			__asm__ volatile("hlt");
 	}
-	klog_uint("FS", "initial program inode", shell_ref.inode_num);
-	klog_uint("FS", "initial program size", elf_size);
-
-	/* Create the initial process and register it with the scheduler.
-     * Pass a one-element argv so argv[0] follows the later exec convention. */
-	static const char *shell_argv[] = {DRUNIX_INIT_ARG0};
-	static const char *shell_envp[] = {DRUNIX_INIT_ENV0};
-	static process_t proc;
-	klog_uint("HEAP", "before process_create", kheap_free_bytes());
-	int rc =
-	    process_create_file(&proc, shell_ref, shell_argv, 1, shell_envp, 1, 0);
-	klog_uint("HEAP", "after process_create", kheap_free_bytes());
-	if (rc != 0) {
-		klog_uint("PROC", "process_create failed, code", (uint32_t)(-rc));
-		for (;;)
-			__asm__ volatile("hlt");
-	}
-	if (sched_add(&proc) < 0) {
-		klog("PROC", "sched_add failed");
-		for (;;)
-			__asm__ volatile("hlt");
-	}
-	klog_uint("PROC", "initial process pid", proc.pid);
-	if (desktop_is_active()) {
-		desktop_attach_shell_process(&boot_desktop, proc.pid, proc.pgid);
-		desktop_render(&boot_desktop);
-	}
+	klog_uint("PROC", "initial process pid", (uint32_t)init_pid);
 
 	/*
      * Bootstrap: promote the shell to RUNNING and launch it.

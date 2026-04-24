@@ -23,15 +23,31 @@ CFLAGS  := -m32 -g -ffreestanding -mno-sse -mno-sse2 -mno-mmx -msoft-float -Wsta
 INC     := -I kernel -I kernel/arch -I kernel/arch/$(ARCH) -I kernel/arch/$(ARCH)/mm -I kernel/platform/pc -I kernel/mm -I kernel/drivers -I kernel/blk -I kernel/proc -I kernel/fs -I kernel/lib -I kernel/gui
 DEPFLAGS := -MMD -MP
 MOUSE_SPEED ?= 4
+ARM64_SMOKE_FALLBACK ?= 0
+ifeq ($(ARCH),arm64)
+INIT_PROGRAM ?= bin/arm64init
+INIT_ARG0 ?= arm64init
+INIT_ENV0 ?= PATH=/usr/bin:/i686-linux-musl/bin:/bin
+ROOT_FS ?= dufs
+else
 INIT_PROGRAM ?= bin/shell
 INIT_ARG0 ?= shell
 INIT_ENV0 ?= PATH=/usr/bin:/i686-linux-musl/bin:/bin
 ROOT_FS ?= ext3
+endif
 CFLAGS += -DMOUSE_FRAMEBUFFER_PIXEL_SCALE=$(MOUSE_SPEED)
 CFLAGS += -DDRUNIX_INIT_PROGRAM=\"$(INIT_PROGRAM)\"
 CFLAGS += -DDRUNIX_INIT_ARG0=\"$(INIT_ARG0)\"
 CFLAGS += -DDRUNIX_INIT_ENV0=\"$(INIT_ENV0)\"
 CFLAGS += -DDRUNIX_ROOT_FS=\"$(ROOT_FS)\"
+CFLAGS += -DDRUNIX_ARM64_SMOKE_FALLBACK=$(ARM64_SMOKE_FALLBACK)
+ifeq ($(ARCH),arm64)
+ARM_CFLAGS += -DDRUNIX_INIT_PROGRAM=\"$(INIT_PROGRAM)\"
+ARM_CFLAGS += -DDRUNIX_INIT_ARG0=\"$(INIT_ARG0)\"
+ARM_CFLAGS += -DDRUNIX_INIT_ENV0=\"$(INIT_ENV0)\"
+ARM_CFLAGS += -DDRUNIX_ROOT_FS=\"$(ROOT_FS)\"
+ARM_CFLAGS += -DDRUNIX_ARM64_SMOKE_FALLBACK=$(ARM64_SMOKE_FALLBACK)
+endif
 NASMFLAGS :=
 
 #Build with NO_DESKTOP = 1 to skip desktop init entirely and boot straight to
@@ -86,6 +102,8 @@ endif
 	echo "$(MOUSE_SPEED)" | cmp -s - $@ || echo "$(MOUSE_SPEED)" > $@
 .init-program-flag: FORCE
 	printf '%s\n%s\n%s\n%s\n' "$(INIT_PROGRAM)" "$(INIT_ARG0)" "$(INIT_ENV0)" "$(ROOT_FS)" | cmp -s - $@ || printf '%s\n%s\n%s\n%s\n' "$(INIT_PROGRAM)" "$(INIT_ARG0)" "$(INIT_ENV0)" "$(ROOT_FS)" > $@
+.arm64-smoke-fallback-flag: FORCE
+	echo "$(ARM64_SMOKE_FALLBACK)" | cmp -s - $@ || echo "$(ARM64_SMOKE_FALLBACK)" > $@
 .no-desktop-flag: FORCE
 	echo "$(NO_DESKTOP)" | cmp -s - $@ || echo "$(NO_DESKTOP)" > $@
 .vga-text-flag: FORCE
@@ -120,7 +138,7 @@ FS_SECTORS     := $(shell expr $(DISK_SECTORS) - $(PARTITION_START))
 include user/programs.mk
 USER_PROGS    := $(PROGS)
 USER_BINS     := $(addprefix user/,$(USER_PROGS))
-USER_RUNTIME_HEADERS := $(wildcard user/lib/*.h)
+USER_RUNTIME_HEADERS := $(filter-out user/lib/syscall_arm64.h,$(wildcard user/lib/*.h))
 USER_RUNTIME_SYSROOT := $(foreach hdr,$(USER_RUNTIME_HEADERS),$(hdr) usr/include/$(notdir $(hdr))) \
                         user/lib/tcc_crt0.o usr/lib/drunix/crt0.o \
                         user/lib/libc.a usr/lib/drunix/libc.a \
@@ -149,7 +167,7 @@ TEST_LOGS     := $(foreach suffix,$(TEST_SUFFIXES),$(LOG_DIR)/serial-$(suffix).l
                  $(LOG_DIR)/ext3-host-readback.txt
 SENTINELS     := .ktest-flag .double-fault-test-flag .klog-debugcon-flag \
                  .mouse-speed-flag .init-program-flag .no-desktop-flag \
-                 .vga-text-flag .disk-sectors-flag
+                 .vga-text-flag .disk-sectors-flag .arm64-smoke-fallback-flag
 
 QEMU_DISKS    = -drive format=raw,file=$(1),if=ide,index=0 \
                  -drive format=raw,file=$(2),if=ide,index=1
@@ -308,8 +326,19 @@ check: clang-tidy-include-check test-headless
 check-phase6:
 	python3 tools/test_kernel_arch_boundary_phase6.py
 
+phase6-check: check-phase6 check-arm64-userspace
+
+check-phase7:
+	python3 tools/test_kernel_arch_boundary_phase7.py
+
 check-arm64-userspace:
 	python3 tools/test_arm64_userspace_smoke.py
+
+check-arm64-filesystem-init:
+	python3 tools/test_arm64_filesystem_init.py
+
+check-arm64-syscall-parity:
+	python3 tools/test_arm64_syscall_parity.py
 
 validate-ext3-linux: $(ROOT_DISK_IMG) tools/check_ext3_linux_compat.py tools/check_ext3_journal_activity.py
 	$(PYTHON) tools/check_ext3_linux_compat.py $(ROOT_DISK_IMG)
@@ -474,6 +503,7 @@ clean:
 	find kernel -name '*.o' -delete
 	find kernel -name '*.d' -delete
 	$(RM) *.elf kernel8.img core.* disk.fs dufs.fs disk-ext3w.fs disk-ext3-host.fs $(ROOT_DISK_IMG) $(DUFS_IMG) $(TEST_IMAGES) os.iso $(ISO_KERNEL) $(ISO_KERNEL_VGA) iso/boot/grub/grub.cfg "$(PDF)" "$(EPUB)" $(SENTINELS) $(ARM_SERIAL_LOG)
+	$(RM) build/arm64init.o build/crt0_arm64.o build/syscall_arm64.o build/arm64init.elf build/arm64-root.fs build/arm64-rootfs-empty
 	$(RM) $(RUN_LOGS) $(TEST_LOGS) build/ext3-host.txt
 	rm -rf build/busybox
 	rm -rf build/nano
@@ -486,15 +516,15 @@ clean:
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-busybox-compat test-linux-abi test-threadtest test-tcc test-nano test-ext3-linux-compat test-ext3-host-write-interop test-all \
-        check-phase6 check-arm64-userspace \
+        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean
 else
 
-$(ARM_KOBJS) $(ARM_COMPILE_ONLY_OBJS): CC = $(ARM_CC)
-$(ARM_KOBJS) $(ARM_COMPILE_ONLY_OBJS): CFLAGS = $(ARM_CFLAGS)
-$(ARM_KOBJS) $(ARM_COMPILE_ONLY_OBJS): INC = -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 -I kernel/mm -I kernel/proc -I kernel/fs -I kernel/drivers -I kernel/blk
+$(ARM_KOBJS) $(ARM_SHARED_KOBJS) $(ARM_COMPILE_ONLY_OBJS): CC = $(ARM_CC)
+$(ARM_KOBJS) $(ARM_SHARED_KOBJS) $(ARM_COMPILE_ONLY_OBJS): CFLAGS = $(ARM_CFLAGS)
+$(ARM_KOBJS) $(ARM_SHARED_KOBJS) $(ARM_COMPILE_ONLY_OBJS): INC = -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 -I kernel/mm -I kernel/proc -I kernel/fs -I kernel/drivers -I kernel/blk
 
 kernel/arch/arm64/%.o: kernel/arch/arm64/%.S
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) -c $< -o $@
@@ -502,15 +532,17 @@ kernel/arch/arm64/%.o: kernel/arch/arm64/%.S
 kernel/lib/%.arm64.o: kernel/lib/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(INC) -c $< -o $@
 
-kernel-arm64.elf: $(ARM_KOBJS) $(ARM_COMPILE_ONLY_OBJS)
-	$(ARM_LD) $(ARM_LDFLAGS) -o $@ $(ARM_KOBJS)
+kernel-arm64.elf: $(ARM_KOBJS) $(ARM_SHARED_KOBJS) Makefile kernel/arch/arm64/arch.mk
+	$(ARM_LD) $(ARM_LDFLAGS) --wrap=syscall_case_exit_exit_group -o $@ $(ARM_KOBJS) $(ARM_SHARED_KOBJS)
 
 kernel8.img: kernel-arm64.elf
 	$(ARM_OBJCOPY) -O binary $< $@
 
 kernel: kernel-arm64.elf
 
-build: kernel-arm64.elf kernel8.img
+build: kernel-arm64.elf kernel8.img build/arm64-root.fs $(ARM_COMPILE_ONLY_OBJS)
+
+kernel/arch/arm64/start_kernel.o: .init-program-flag .arm64-smoke-fallback-flag
 
 iso: kernel8.img
 
@@ -530,8 +562,19 @@ check: kernel-arm64.elf | $(LOG_DIR)
 check-phase6:
 	python3 tools/test_kernel_arch_boundary_phase6.py
 
+phase6-check: check-phase6 check-arm64-userspace
+
+check-phase7:
+	python3 tools/test_kernel_arch_boundary_phase7.py
+
 check-arm64-userspace:
 	python3 tools/test_arm64_userspace_smoke.py
+
+check-arm64-filesystem-init:
+	python3 tools/test_arm64_filesystem_init.py
+
+check-arm64-syscall-parity:
+	python3 tools/test_arm64_syscall_parity.py
 
 run: kernel-arm64.elf | $(LOG_DIR)
 	$(QEMU_ARM) -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf -serial null -serial stdio -monitor none -nographic -no-reboot
@@ -560,6 +603,7 @@ clean:
 	find kernel -name '*.o' -delete
 	find kernel -name '*.d' -delete
 	$(RM) *.elf kernel8.img core.* disk.fs dufs.fs disk-ext3w.fs disk-ext3-host.fs $(ROOT_DISK_IMG) $(DUFS_IMG) $(TEST_IMAGES) os.iso $(ISO_KERNEL) $(ISO_KERNEL_VGA) iso/boot/grub/grub.cfg "$(PDF)" "$(EPUB)" $(SENTINELS) $(ARM_SERIAL_LOG)
+	$(RM) build/arm64init.o build/crt0_arm64.o build/syscall_arm64.o build/arm64init.elf build/arm64-root.fs build/arm64-rootfs-empty
 	$(RM) $(RUN_LOGS) $(TEST_LOGS) build/ext3-host.txt
 	rm -rf build/busybox
 	rm -rf build/nano
@@ -569,9 +613,9 @@ clean:
 .PHONY: all build kernel iso images disk fresh check \
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
-        check-phase6 check-arm64-userspace \
+        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity \
         pdf epub docs \
         rebuild clean
 endif
 
--include $(KOBJS:.o=.d) $(KTOBJS:.o=.d) $(ARM_KOBJS:.o=.d) $(ARM_COMPILE_ONLY_OBJS:.o=.d)
+-include $(KOBJS:.o=.d) $(KTOBJS:.o=.d) $(ARM_KOBJS:.o=.d) $(ARM_SHARED_KOBJS:.o=.d) $(ARM_COMPILE_ONLY_OBJS:.o=.d)

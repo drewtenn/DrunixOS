@@ -134,6 +134,51 @@ static const char *mem_forensics_fault_name(uint32_t classification)
 	}
 }
 
+static uint32_t mem_forensics_fault_vector(const arch_trap_frame_t *frame)
+{
+#ifdef __aarch64__
+	uint32_t ec;
+
+	if (!frame)
+		return 0u;
+
+	ec = (uint32_t)((frame->esr_el1 >> 26) & 0x3Fu);
+	return (ec == 0x20u || ec == 0x21u || ec == 0x24u || ec == 0x25u) ? 14u
+	                                                                    : 0u;
+#else
+	return frame ? frame->vector : 0u;
+#endif
+}
+
+static uint32_t mem_forensics_fault_error_code(const arch_trap_frame_t *frame)
+{
+#ifdef __aarch64__
+	uint32_t err = 0u;
+	uint32_t ec;
+
+	if (!frame)
+		return 0u;
+
+	ec = (uint32_t)((frame->esr_el1 >> 26) & 0x3Fu);
+	if (ec == 0x24u || ec == 0x25u) {
+		if ((frame->esr_el1 & (1ull << 6)) != 0)
+			err |= PF_ERR_WRITE;
+	}
+	return err;
+#else
+	return frame ? frame->error_code : 0u;
+#endif
+}
+
+static uint32_t mem_forensics_fault_stack_pointer(const arch_trap_frame_t *frame)
+{
+#ifdef __aarch64__
+	return frame ? (uint32_t)frame->sp_el0 : 0u;
+#else
+	return frame ? frame->user_esp : 0u;
+#endif
+}
+
 static void mem_forensics_classify_fault(const struct process *proc,
                                          mem_forensics_report_t *out)
 {
@@ -141,6 +186,9 @@ static void mem_forensics_classify_fault(const struct process *proc,
 	uint32_t err;
 	uint32_t fault_page;
 	uint32_t fault_addr32;
+	uint32_t stack_ptr;
+	arch_mm_mapping_t mapping;
+	int mapped;
 
 	if (!proc->crash.valid) {
 		out->fault.valid = 0;
@@ -151,13 +199,14 @@ static void mem_forensics_classify_fault(const struct process *proc,
 	out->fault.valid = 1;
 	out->fault.signum = proc->crash.signum;
 	out->fault.cr2 = proc->crash.fault_addr;
-	out->fault.eip = proc->crash.frame.eip;
-	out->fault.vector = proc->crash.frame.vector;
-	out->fault.error_code = proc->crash.frame.error_code;
-	err = proc->crash.frame.error_code;
+	out->fault.eip = arch_trap_frame_ip(&proc->crash.frame);
+	out->fault.vector = mem_forensics_fault_vector(&proc->crash.frame);
+	out->fault.error_code = mem_forensics_fault_error_code(&proc->crash.frame);
+	err = out->fault.error_code;
 	out->fault.in_region = 0u;
+	stack_ptr = mem_forensics_fault_stack_pointer(&proc->crash.frame);
 
-	if (proc->crash.frame.vector != 14u) {
+	if (out->fault.vector != 14u) {
 		out->fault.classification = MEM_FORENSICS_FAULT_UNKNOWN;
 		return;
 	}
@@ -182,61 +231,30 @@ static void mem_forensics_classify_fault(const struct process *proc,
 		return;
 	}
 
-	if ((err & PF_ERR_PRESENT) == 0u) {
-		if (vma->kind == VMA_KIND_STACK) {
-			uint32_t stack_slack = proc->crash.frame.user_esp > 32u
-			                           ? proc->crash.frame.user_esp - 32u
-			                           : 0u;
+	if (vma->kind == VMA_KIND_STACK) {
+		uint32_t stack_slack = stack_ptr > 32u ? stack_ptr - 32u : 0u;
 
-			if ((vma->flags & VMA_FLAG_GROWSDOWN) == 0 ||
-			    fault_page < vma->start ||
-			    fault_page >= proc->stack_low_limit ||
-			    fault_addr32 < stack_slack || fault_addr32 >= vma->end) {
-				out->fault.classification = MEM_FORENSICS_FAULT_STACK_LIMIT;
-				return;
-			}
+		if ((vma->flags & VMA_FLAG_GROWSDOWN) == 0 ||
+		    fault_page < vma->start ||
+		    fault_page >= proc->stack_low_limit ||
+		    fault_addr32 < stack_slack || fault_addr32 >= vma->end) {
+			out->fault.classification = MEM_FORENSICS_FAULT_STACK_LIMIT;
+			return;
 		}
+	}
 
+	mapped = arch_mm_query((arch_aspace_t)proc->pd_phys, fault_page, &mapping) ==
+	             0 &&
+	         (mapping.flags & (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER)) ==
+	             (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER);
+	if (!mapped) {
 		out->fault.classification = MEM_FORENSICS_FAULT_LAZY_MISS;
 		return;
 	}
 
-	{
-		arch_mm_mapping_t mapping;
-
-		if (arch_mm_query((arch_aspace_t)proc->pd_phys, fault_page, &mapping) ==
-		        0 &&
-		    (mapping.flags & (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER)) ==
-		        ARCH_MM_MAP_PRESENT &&
-		    (mapping.flags & ARCH_MM_MAP_COW) == 0 &&
-		    (vma->flags & (VMA_FLAG_ANON | VMA_FLAG_PRIVATE)) ==
-		        (VMA_FLAG_ANON | VMA_FLAG_PRIVATE)) {
-			if (vma->kind == VMA_KIND_STACK) {
-				uint32_t stack_slack = proc->crash.frame.user_esp > 32u
-				                           ? proc->crash.frame.user_esp - 32u
-				                           : 0u;
-
-				if ((vma->flags & VMA_FLAG_GROWSDOWN) == 0 ||
-				    fault_page < vma->start ||
-				    fault_page >= proc->stack_low_limit ||
-				    fault_addr32 < stack_slack ||
-				    fault_addr32 >= vma->end) {
-					out->fault.classification = MEM_FORENSICS_FAULT_STACK_LIMIT;
-					return;
-				}
-			}
-
-			out->fault.classification = MEM_FORENSICS_FAULT_LAZY_MISS;
-			return;
-		}
-
-		if ((err & PF_ERR_WRITE) != 0u &&
-		    arch_mm_query((arch_aspace_t)proc->pd_phys, fault_page, &mapping) ==
-		        0 &&
-		    (mapping.flags & ARCH_MM_MAP_COW) != 0) {
-			out->fault.classification = MEM_FORENSICS_FAULT_COW_WRITE;
-			return;
-		}
+	if ((err & PF_ERR_WRITE) != 0u && (mapping.flags & ARCH_MM_MAP_COW) != 0) {
+		out->fault.classification = MEM_FORENSICS_FAULT_COW_WRITE;
+		return;
 	}
 
 	out->fault.classification = MEM_FORENSICS_FAULT_PROTECTION;

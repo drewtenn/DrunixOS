@@ -5,8 +5,14 @@
 
 #include "../../arch.h"
 #include "../../../proc/process.h"
+#include "../../../mm/pmm_core.h"
+#include "../mm/pmm.h"
 #include "kstring.h"
+#include "init_layout.h"
 #include <stdint.h>
+
+#define LINUX_AT_NULL 0u
+#define LINUX_AT_PAGESZ 6u
 
 typedef struct arm64_kernel_context {
 	uint64_t x19;
@@ -77,6 +83,139 @@ static void arm64_build_launch_context(process_t *proc)
 	proc->arch_state.context = (uintptr_t)ctx;
 }
 
+int arch_process_build_user_stack(arch_aspace_t aspace,
+                                  const char *const *argv,
+                                  int argc,
+                                  const char *const *envp,
+                                  int envc,
+                                  uintptr_t *stack_out)
+{
+	uint32_t argv_strbytes = 0;
+	uint32_t env_strbytes = 0;
+	uint32_t strings_off;
+	uint32_t stack_qwords;
+	uint32_t frame_off;
+	uint32_t pad;
+	uint8_t *page;
+	uint8_t *page_end;
+	uint8_t *strbase_k;
+	uintptr_t strbase_u;
+	uint64_t uargv_ptrs[PROCESS_ARGV_MAX_COUNT];
+	uint64_t uenv_ptrs[PROCESS_ENV_MAX_COUNT];
+	uint32_t write_cursor = 0;
+	uint64_t *tail_k;
+	uint32_t idx = 0;
+	int rc = -1;
+
+	if (!stack_out)
+		return -1;
+	if (argc < 0 || argv == 0)
+		argc = 0;
+	if (envc < 0 || envp == 0)
+		envc = 0;
+	if ((uint32_t)argc > PROCESS_ARGV_MAX_COUNT)
+		return -1;
+	if ((uint32_t)envc > PROCESS_ENV_MAX_COUNT)
+		return -1;
+
+	for (int i = 0; i < argc; i++) {
+		const char *s = argv[i];
+		uint32_t n = 0;
+
+		if (!s)
+			return -1;
+		while (s[n])
+			n++;
+		argv_strbytes += n + 1u;
+		if (argv_strbytes > PROCESS_ARGV_MAX_BYTES)
+			return -1;
+	}
+	for (int i = 0; i < envc; i++) {
+		const char *s = envp[i];
+		uint32_t n = 0;
+
+		if (!s)
+			return -1;
+		while (s[n])
+			n++;
+		env_strbytes += n + 1u;
+		if (env_strbytes > PROCESS_ENV_MAX_BYTES)
+			return -1;
+	}
+
+	strings_off = argv_strbytes + env_strbytes;
+	stack_qwords =
+	    1u + (uint32_t)argc + 1u + (uint32_t)envc + 1u + 4u;
+	frame_off = strings_off + stack_qwords * (uint32_t)sizeof(uint64_t);
+	pad = (16u - (frame_off & 15u)) & 15u;
+	frame_off += pad;
+	if (frame_off > PAGE_SIZE)
+		return -1;
+
+	(void)aspace;
+	pmm_mark_used(ARM64_INIT_STACK_BASE,
+	              ARM64_INIT_STACK_TOP - ARM64_INIT_STACK_BASE);
+	for (uintptr_t addr = ARM64_INIT_STACK_BASE; addr < ARM64_INIT_STACK_TOP;
+	     addr += PAGE_SIZE) {
+		if (arch_mm_map(aspace,
+		                addr,
+		                addr,
+		                ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ |
+		                    ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER) != 0)
+			return -1;
+	}
+	page = (uint8_t *)ARM64_INIT_STACK_BASE;
+	k_memset(page, 0, ARM64_INIT_STACK_TOP - ARM64_INIT_STACK_BASE);
+	page_end = (uint8_t *)ARM64_INIT_STACK_TOP;
+	strbase_k = page_end - strings_off;
+	strbase_u = ARM64_INIT_STACK_TOP - strings_off;
+
+	for (int i = 0; i < argc; i++) {
+		const char *s = argv[i];
+		uint32_t j = 0;
+
+		while (s[j]) {
+			strbase_k[write_cursor + j] = (uint8_t)s[j];
+			j++;
+		}
+		strbase_k[write_cursor + j] = 0;
+		uargv_ptrs[i] = (uint64_t)(strbase_u + write_cursor);
+		write_cursor += j + 1u;
+	}
+	for (int i = 0; i < envc; i++) {
+		const char *s = envp[i];
+		uint32_t j = 0;
+
+		while (s[j]) {
+			strbase_k[write_cursor + j] = (uint8_t)s[j];
+			j++;
+		}
+		strbase_k[write_cursor + j] = 0;
+		uenv_ptrs[i] = (uint64_t)(strbase_u + write_cursor);
+		write_cursor += j + 1u;
+	}
+
+	tail_k = (uint64_t *)(page_end - frame_off);
+	tail_k[idx++] = (uint64_t)(uint32_t)argc;
+	for (int i = 0; i < argc; i++)
+		tail_k[idx++] = uargv_ptrs[i];
+	tail_k[idx++] = 0;
+	for (int i = 0; i < envc; i++)
+		tail_k[idx++] = uenv_ptrs[i];
+	tail_k[idx++] = 0;
+	tail_k[idx++] = LINUX_AT_PAGESZ;
+	tail_k[idx++] = PAGE_SIZE;
+	tail_k[idx++] = LINUX_AT_NULL;
+	tail_k[idx++] = 0;
+
+	*stack_out = ARM64_INIT_STACK_TOP - frame_off;
+	rc = 0;
+	goto out_unmap;
+
+out_unmap:
+	return rc;
+}
+
 void arch_process_build_initial_frame(process_t *proc)
 {
 	arm64_build_launch_context(proc);
@@ -95,10 +234,37 @@ int arch_process_clone_frame(process_t *child_out,
                              const process_t *parent,
                              uint32_t child_stack)
 {
-	(void)child_out;
-	(void)parent;
-	(void)child_stack;
-	return -1;
+	const arch_trap_frame_t *parent_frame;
+	arch_trap_frame_t *child_frame;
+	arm64_kernel_context_t *ctx;
+
+	if (!child_out || !parent)
+		return -1;
+
+	parent_frame = (const arch_trap_frame_t *)arch_current_irq_frame();
+	if (!parent_frame) {
+		if (child_stack)
+			child_out->user_stack = child_stack;
+		arch_process_build_initial_frame(child_out);
+		return 0;
+	}
+
+	child_frame = arm64_process_user_frame(child_out);
+	ctx = arm64_process_kernel_context(child_out);
+	if (!child_frame || !ctx)
+		return -1;
+
+	k_memcpy(child_frame, parent_frame, sizeof(*child_frame));
+	child_frame->x[0] = 0;
+	if (child_stack)
+		child_frame->sp_el0 = child_stack;
+	child_out->user_stack = (uint32_t)child_frame->sp_el0;
+
+	k_memset(ctx, 0, sizeof(*ctx));
+	ctx->x19 = (uint64_t)(uintptr_t)child_frame;
+	ctx->x30 = (uint64_t)(uintptr_t)arm64_process_first_resume;
+	child_out->arch_state.context = (uintptr_t)ctx;
+	return 0;
 }
 
 void arch_process_restore_tls(const process_t *proc)

@@ -8,6 +8,9 @@
 #include "wait.h"
 #include "vma.h"
 #include "vfs.h"
+#ifdef __aarch64__
+#include "proc/init_layout.h"
+#endif
 #include <stdint.h>
 
 /*
@@ -23,19 +26,33 @@
  *   Highest virtual address: USER_STACK_TOP (exclusive, stack grows down).
  *   Lowest mapped page:      USER_STACK_TOP - USER_STACK_PAGES * 4096.
  */
+#ifdef __aarch64__
+#define USER_STACK_TOP ((uint32_t)ARM64_INIT_STACK_TOP)
+#else
 #define USER_STACK_TOP 0xC0000000u
+#endif
 #define USER_STACK_PAGES 4
 #define USER_STACK_MAX_PAGES 64u
 
 /* The heap ceiling: the heap must not grow at or above this address. */
+#ifdef __aarch64__
+#define USER_HEAP_MAX                                                          \
+	((uint32_t)ARM64_INIT_STACK_BASE -                                      \
+	 (uint32_t)(USER_STACK_MAX_PAGES) * 0x1000u)
+#else
 #define USER_HEAP_MAX                                                          \
 	(USER_STACK_TOP - (uint32_t)(USER_STACK_MAX_PAGES) * 0x1000u)
+#endif
 
 /*
  * Anonymous mmap() allocations are placed high in the address space and grow
  * downward so they never collide with the ELF image / brk-managed heap.
  */
+#ifdef __aarch64__
+#define USER_MMAP_MIN 0x02400000u
+#else
 #define USER_MMAP_MIN 0x40000000u
+#endif
 
 /* Per-process kernel stack size (heap-allocated, one per process).
  * Must be large enough to hold the deepest kernel call chain: the
@@ -317,8 +334,8 @@ typedef struct process {
  *              refcounts are bumped).  Pass NULL to give the process the
  *              default stdin/stdout/stderr controlling TTY setup.
  *
- * Lays out argc/argv/envp/auxv/strings at the top of the new process's user
- * stack in Linux/System V i386 ABI order, with ESP pointing at argc on entry.
+ * Delegates initial user-stack construction to the active architecture, which
+ * lays out argc/argv/envp/auxv/strings at the top of the new process's stack.
  *
  * Returns 0 on success, negative on error.
  */
@@ -329,15 +346,6 @@ int process_create_file(process_t *proc,
                         const char *const *envp,
                         int envc,
                         const file_handle_t *inherit_fds);
-
-#ifdef KTEST_ENABLED
-int process_build_user_stack_frame_for_test(uint32_t pd_phys,
-                                            const char *const *argv,
-                                            int argc,
-                                            const char *const *envp,
-                                            int envc,
-                                            uint32_t *out_esp);
-#endif
 
 /*
  * process_build_initial_frame: synthesise the first kernel-stack frame for a

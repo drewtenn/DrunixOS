@@ -34,6 +34,8 @@ With interrupts live, the kernel mounts its namespaces through the **VFS** (Virt
 
 The last stretch launches the first user program. The scheduler table is cleared, the shell executable is located on disk, loaded as an **ELF** (Executable and Linkable Format, the standard executable file format on x86/Linux) image, marked runnable, and selected as the first process to run. One final privilege drop switches into ring 3 and does not return. From that instant on, the shell is in user mode, the timer can preempt it, and the kernel is reacting to events instead of marching through startup code.
 
+At the userspace-smoke milestone, arm64 now boots to a serial console and can launch a built-in EL0 smoke-test process using Linux/AArch64 syscall conventions. The interactive shell remains an x86-only path until the following phase. On the filesystem-init path, that following ARM64 work mounts an embedded DUFS root filesystem and launches `/bin/arm64init` as PID 1, while the smoke-test image remains available as an explicit fallback.
+
 ### Why the Screen Driver Matters So Early
 
 All the way through that sequence, the kernel keeps printing status lines. Early boot still relies on the **VGA** (Video Graphics Array) text buffer because it is simple, fixed, and available before any dynamic display setup. The VGA text buffer is the one display mechanism available immediately after boot, before any graphics drivers exist. It is simple enough to use from assembly and is our first output path. Later in `start_kernel`, after memory management and the filesystem are ready, the kernel switches the user-facing shell into a desktop surface. If GRUB supplied a usable 32-bit RGB linear framebuffer, that desktop is presented as pixels; otherwise it falls back to the VGA text buffer.
@@ -126,7 +128,7 @@ By the end of this chapter, the CPU has crossed the line from "bootstrapping the
 - Hardware interrupts are enabled, so the CPU can now be preempted by timer ticks and input events.
 - The VGA text driver can draw characters, manage colours, move the cursor, scroll, and show history from its 500-row scrollback ring.
 - When GRUB provides a supported linear framebuffer, the kernel presents the shell inside a windowed framebuffer desktop with an 8x16 font, launcher, taskbar window selection, draggable title bars, built-in Files, Processes, and Help windows, and a PS/2 mouse pointer.
-- DUFS is mounted at `/`, with `devfs` at `/dev` and `procfs` at `/proc`.
-- The shell has been loaded from disk and launched in ring 3 as the first user-space process.
+- On x86, the shell has been loaded from disk and launched in ring 3 as the first user-space process.
+- On arm64, DUFS is mounted at `/`, with `devfs` at `/dev` and `procfs` at `/proc`, and `/bin/arm64init` is launched as PID 1.
 
 The important thing to hold in your head going into Chapter 4 is that the machine is no longer a fragile boot stub. We have a working kernel console, a valid trap path, and a live user process. From here on, when something goes wrong, the CPU has somewhere to go and the kernel has somewhere to tell us about it.

@@ -1,4 +1,5 @@
 KOBJS = kernel/arch/x86/boot/kernel-entry.o kernel/kernel.o \
+        kernel/proc/init_launch.o \
         kernel/module.o kernel/module_exports.o \
         kernel/lib/klog.o \
         kernel/lib/kstring.o kernel/lib/kprintf.o kernel/lib/ksort.o \

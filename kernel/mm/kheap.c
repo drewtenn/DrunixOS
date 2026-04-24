@@ -16,8 +16,14 @@ typedef struct heap_block {
 
 /* A new free block is only split off if it can hold a header + this minimum */
 #define HEAP_MIN_SPLIT (sizeof(heap_block_t) + 16u)
+#define HEAP_ALIGN ((uint32_t)sizeof(uintptr_t))
 
 static heap_block_t *heap_head;
+
+static uint32_t heap_align_size(uint32_t size)
+{
+	return (size + HEAP_ALIGN - 1u) & ~(HEAP_ALIGN - 1u);
+}
 
 void kheap_init(void)
 {
@@ -32,6 +38,7 @@ void *kmalloc(uint32_t size)
 {
 	heap_block_t *cur = heap_head;
 
+	size = heap_align_size(size);
 	while (cur) {
 		if (cur->magic != HEAP_MAGIC)
 			return 0; /* heap corruption */

@@ -61,6 +61,12 @@ void *arch_page_temp_map(uint64_t phys_addr);
 void arch_page_temp_unmap(void *ptr);
 uint32_t arch_mm_present_begin(void);
 void arch_mm_present_end(uint32_t state);
+int arch_process_build_user_stack(arch_aspace_t aspace,
+                                  const char *const *argv,
+                                  int argc,
+                                  const char *const *envp,
+                                  int envc,
+                                  uintptr_t *stack_out);
 void arch_process_build_initial_frame(process_t *proc);
 void arch_process_build_exec_frame(process_t *proc,
                                    arch_aspace_t old_aspace,
