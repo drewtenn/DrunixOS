@@ -210,6 +210,35 @@ int main(void)
 		return fail_msg("ARM64 syscall: fail exec missing\n", 33);
 	put("ARM64 syscall: process ok\n", 26);
 
+	if (arm64_sys_getuid() != 0 || arm64_sys_geteuid() != 0 ||
+	    arm64_sys_getgid() != 0 || arm64_sys_getegid() != 0 ||
+	    arm64_sys_set_tid_address(&status) != pid)
+		return fail_msg("ARM64 syscall: fail ids\n", 24);
+	if (arm64_sys_getpgid(0) <= 0 || arm64_sys_getsid(0) <= 0 ||
+	    arm64_sys_getpriority(0, 0) != 0 ||
+	    arm64_sys_setpriority(0, 0, 0) != 0)
+		return fail_msg("ARM64 syscall: fail groups\n", 27);
+	if (arm64_sys_getrusage(0, dirbuf) != 0 ||
+	    arm64_sys_sysinfo(dirbuf) != 0 ||
+	    arm64_sys_prlimit64(0, 3, 0, timebuf) != 0 ||
+	    arm64_sys_sched_getaffinity(0, sizeof(timebuf), timebuf) != 4 ||
+	    arm64_sys_sync() != 0)
+		return fail_msg("ARM64 syscall: fail resources\n", 30);
+	(void)arm64_sys_umask(022);
+	if (arm64_sys_statx(-100, "/bin/arm64init", 0, 0x7ff, statbuf) != 0 ||
+	    arm64_sys_fchmodat(-100, "/bin/arm64init", 0644) != 0 ||
+	    arm64_sys_fchownat(-100, "/bin/arm64init", 0, 0, 0) != 0 ||
+	    arm64_sys_utimensat(-100, "/bin/arm64init", 0, 0) != 0)
+		return fail_msg("ARM64 syscall: fail metadata util\n", 34);
+	fd = arm64_sys_openat(-100, "/arm64.util", 0100 | 02 | 01000, 0644);
+	if (fd < 0 || arm64_sys_write((int)fd, "abcd", 4) != 4 ||
+	    arm64_sys_ftruncate((int)fd, 1) != 0 ||
+	    arm64_sys_close((int)fd) != 0 ||
+	    arm64_sys_truncate("/arm64.util", 0) != 0 ||
+	    arm64_sys_unlinkat(-100, "/arm64.util", 0) != 0)
+		return fail_msg("ARM64 syscall: fail truncate util\n", 34);
+	put("ARM64 syscall: utility ok\n", 26);
+
 	if (arm64_sys_openat(-100, "/missing-arm64-syscall", 0, 0) >= 0)
 		return fail();
 	put("ARM64 syscall: errno ok\n", 24);

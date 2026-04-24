@@ -26,10 +26,14 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unknown(uint32_t eax)
 #define ARM64_LINUX_SYS_DUP3 24u
 #define ARM64_LINUX_SYS_FCNTL 25u
 #define ARM64_LINUX_SYS_IOCTL 29u
+#define ARM64_LINUX_SYS_TRUNCATE 45u
+#define ARM64_LINUX_SYS_FTRUNCATE 46u
 #define ARM64_LINUX_SYS_MKDIRAT 34u
 #define ARM64_LINUX_SYS_UNLINKAT 35u
 #define ARM64_LINUX_SYS_FACCESSAT 48u
 #define ARM64_LINUX_SYS_CHDIR 49u
+#define ARM64_LINUX_SYS_FCHMODAT 53u
+#define ARM64_LINUX_SYS_FCHOWNAT 54u
 #define ARM64_LINUX_SYS_OPENAT 56u
 #define ARM64_LINUX_SYS_CLOSE 57u
 #define ARM64_LINUX_SYS_PIPE2 59u
@@ -39,18 +43,35 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unknown(uint32_t eax)
 #define ARM64_LINUX_SYS_READLINKAT 78u
 #define ARM64_LINUX_SYS_NEWFSTATAT 79u
 #define ARM64_LINUX_SYS_FSTAT 80u
+#define ARM64_LINUX_SYS_SYNC 81u
+#define ARM64_LINUX_SYS_UTIMENSAT 88u
 #define ARM64_LINUX_SYS_EXIT 93u
 #define ARM64_LINUX_SYS_EXIT_GROUP 94u
+#define ARM64_LINUX_SYS_SET_TID_ADDRESS 96u
 #define ARM64_LINUX_SYS_CLOCK_GETTIME 113u
+#define ARM64_LINUX_SYS_SCHED_GETAFFINITY 123u
 #define ARM64_LINUX_SYS_SCHED_YIELD 124u
 #define ARM64_LINUX_SYS_KILL 129u
 #define ARM64_LINUX_SYS_RT_SIGACTION 134u
 #define ARM64_LINUX_SYS_RT_SIGPROCMASK 135u
+#define ARM64_LINUX_SYS_SETPRIORITY 140u
+#define ARM64_LINUX_SYS_GETPRIORITY 141u
+#define ARM64_LINUX_SYS_SETPGID 154u
+#define ARM64_LINUX_SYS_GETPGID 155u
+#define ARM64_LINUX_SYS_GETSID 156u
+#define ARM64_LINUX_SYS_SETSID 157u
 #define ARM64_LINUX_SYS_UNAME 160u
+#define ARM64_LINUX_SYS_GETRUSAGE 165u
+#define ARM64_LINUX_SYS_UMASK 166u
 #define ARM64_LINUX_SYS_GETTIMEOFDAY 169u
 #define ARM64_LINUX_SYS_GETPID 172u
 #define ARM64_LINUX_SYS_GETPPID 173u
+#define ARM64_LINUX_SYS_GETUID 174u
+#define ARM64_LINUX_SYS_GETEUID 175u
+#define ARM64_LINUX_SYS_GETGID 176u
+#define ARM64_LINUX_SYS_GETEGID 177u
 #define ARM64_LINUX_SYS_GETTID 178u
+#define ARM64_LINUX_SYS_SYSINFO 179u
 #define ARM64_LINUX_SYS_BRK 214u
 #define ARM64_LINUX_SYS_MUNMAP 215u
 #define ARM64_LINUX_SYS_CLONE 220u
@@ -58,6 +79,8 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unknown(uint32_t eax)
 #define ARM64_LINUX_SYS_MMAP 222u
 #define ARM64_LINUX_SYS_MPROTECT 226u
 #define ARM64_LINUX_SYS_WAIT4 260u
+#define ARM64_LINUX_SYS_PRLIMIT64 261u
+#define ARM64_LINUX_SYS_STATX 291u
 #define ARM64_LINUX_SYS_GETCWD 17u
 
 extern void arm64_console_loop(void) __attribute__((weak));
@@ -154,6 +177,18 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		    (uint32_t)arch_syscall_arg1(frame),
 		    (uint32_t)arch_syscall_arg2(frame)));
 		break;
+	case ARM64_LINUX_SYS_TRUNCATE:
+		ret = arm64_syscall_ret32(syscall_case_truncate64(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    0));
+		break;
+	case ARM64_LINUX_SYS_FTRUNCATE:
+		ret = arm64_syscall_ret32(syscall_case_ftruncate64(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    0));
+		break;
 	case ARM64_LINUX_SYS_OPENAT:
 		ret = arm64_syscall_ret32(syscall_case_openat(
 		    (uint32_t)arch_syscall_arg0(frame),
@@ -169,6 +204,17 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 	case ARM64_LINUX_SYS_CHDIR:
 		ret = arm64_syscall_ret32(
 		    syscall_case_chdir((uint32_t)arch_syscall_arg0(frame)));
+		break;
+	case ARM64_LINUX_SYS_FCHMODAT:
+		ret = arm64_syscall_ret32(syscall_case_fchmodat(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame)));
+		break;
+	case ARM64_LINUX_SYS_FCHOWNAT:
+		ret = arm64_syscall_ret32(syscall_case_fchownat(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg4(frame)));
 		break;
 	case ARM64_LINUX_SYS_MKDIRAT:
 		ret = arm64_syscall_ret32(syscall_case_mkdirat(
@@ -232,6 +278,15 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		    (uint32_t)arch_syscall_arg0(frame),
 		    (uint32_t)arch_syscall_arg1(frame)));
 		break;
+	case ARM64_LINUX_SYS_SYNC:
+		ret = arm64_syscall_ret32(syscall_case_sync());
+		break;
+	case ARM64_LINUX_SYS_UTIMENSAT:
+		ret = arm64_syscall_ret32(syscall_case_utimensat(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg3(frame)));
+		break;
 	case ARM64_LINUX_SYS_WRITE:
 		ret = arm64_syscall_write(frame);
 		break;
@@ -243,6 +298,14 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		break;
 	case ARM64_LINUX_SYS_SCHED_YIELD:
 		ret = arm64_syscall_ret32(syscall_case_yield());
+		break;
+	case ARM64_LINUX_SYS_SET_TID_ADDRESS:
+		ret = arm64_syscall_ret32(syscall_case_set_tid_address());
+		break;
+	case ARM64_LINUX_SYS_SCHED_GETAFFINITY:
+		ret = arm64_syscall_ret32(syscall_case_sched_getaffinity(
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame)));
 		break;
 	case ARM64_LINUX_SYS_KILL:
 		ret = arm64_syscall_ret32(syscall_case_kill(
@@ -263,6 +326,28 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		    (uint32_t)arch_syscall_arg2(frame),
 		    (uint32_t)arch_syscall_arg3(frame)));
 		break;
+	case ARM64_LINUX_SYS_SETPRIORITY:
+		ret = arm64_syscall_ret32(syscall_case_setpriority());
+		break;
+	case ARM64_LINUX_SYS_GETPRIORITY:
+		ret = arm64_syscall_ret32(syscall_case_getpriority());
+		break;
+	case ARM64_LINUX_SYS_SETPGID:
+		ret = arm64_syscall_ret32(syscall_case_setpgid(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame)));
+		break;
+	case ARM64_LINUX_SYS_GETPGID:
+		ret = arm64_syscall_ret32(
+		    syscall_case_getpgid((uint32_t)arch_syscall_arg0(frame)));
+		break;
+	case ARM64_LINUX_SYS_GETSID:
+		ret = arm64_syscall_ret32(
+		    syscall_case_getsid((uint32_t)arch_syscall_arg0(frame)));
+		break;
+	case ARM64_LINUX_SYS_SETSID:
+		ret = arm64_syscall_ret32(syscall_case_setsid());
+		break;
 	case ARM64_LINUX_SYS_CLOCK_GETTIME:
 		ret = arm64_syscall_ret32(syscall_case_clock_gettime(
 		    (uint32_t)arch_syscall_arg0(frame),
@@ -271,6 +356,15 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 	case ARM64_LINUX_SYS_UNAME:
 		ret = arm64_syscall_ret32(
 		    syscall_case_uname((uint32_t)arch_syscall_arg0(frame)));
+		break;
+	case ARM64_LINUX_SYS_GETRUSAGE:
+		ret = arm64_syscall_ret32(syscall_case_getrusage(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame)));
+		break;
+	case ARM64_LINUX_SYS_UMASK:
+		ret = arm64_syscall_ret32(
+		    syscall_case_umask((uint32_t)arch_syscall_arg0(frame)));
 		break;
 	case ARM64_LINUX_SYS_GETTIMEOFDAY:
 		ret = arm64_syscall_ret32(syscall_case_gettimeofday(
@@ -283,8 +377,19 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 	case ARM64_LINUX_SYS_GETPPID:
 		ret = arm64_syscall_ret32(syscall_case_getppid());
 		break;
+	case ARM64_LINUX_SYS_GETUID:
+	case ARM64_LINUX_SYS_GETEUID:
+	case ARM64_LINUX_SYS_GETGID:
+	case ARM64_LINUX_SYS_GETEGID:
+		ret = arm64_syscall_ret32(
+		    syscall_case_getuid32_getgid32_geteuid32_getegid32());
+		break;
 	case ARM64_LINUX_SYS_GETTID:
 		ret = arm64_syscall_ret32(syscall_case_gettid());
+		break;
+	case ARM64_LINUX_SYS_SYSINFO:
+		ret = arm64_syscall_ret32(
+		    syscall_case_sysinfo((uint32_t)arch_syscall_arg0(frame)));
 		break;
 	case ARM64_LINUX_SYS_BRK:
 		ret = arm64_syscall_ret32(
@@ -337,6 +442,21 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		    (uint32_t)arch_syscall_arg1(frame),
 		    (uint32_t)arch_syscall_arg2(frame),
 		    (uint32_t)arch_syscall_arg3(frame)));
+		break;
+	case ARM64_LINUX_SYS_PRLIMIT64:
+		ret = arm64_syscall_ret32(syscall_case_prlimit64(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame),
+		    (uint32_t)arch_syscall_arg3(frame)));
+		break;
+	case ARM64_LINUX_SYS_STATX:
+		ret = arm64_syscall_ret32(syscall_case_statx(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame),
+		    (uint32_t)arch_syscall_arg3(frame),
+		    (uint32_t)arch_syscall_arg4(frame)));
 		break;
 	default:
 		ret = (uint64_t)-38;

@@ -112,6 +112,16 @@ long arm64_sys_ioctl(int fd, unsigned long request, void *arg)
 	return arm64_syscall3(29, fd, (long)request, (long)arg);
 }
 
+long arm64_sys_truncate(const char *path, unsigned long len)
+{
+	return arm64_syscall2(45, (long)path, (long)len);
+}
+
+long arm64_sys_ftruncate(int fd, unsigned long len)
+{
+	return arm64_syscall2(46, fd, (long)len);
+}
+
 long arm64_sys_mkdirat(int dirfd, const char *path, int mode)
 {
 	return arm64_syscall3(34, dirfd, (long)path, mode);
@@ -130,6 +140,20 @@ long arm64_sys_faccessat(int dirfd, const char *path, int mode)
 long arm64_sys_chdir(const char *path)
 {
 	return arm64_syscall1(49, (long)path);
+}
+
+long arm64_sys_fchmodat(int dirfd, const char *path, int mode)
+{
+	return arm64_syscall3(53, dirfd, (long)path, mode);
+}
+
+long arm64_sys_fchownat(int dirfd,
+                        const char *path,
+                        unsigned int uid,
+                        unsigned int gid,
+                        int flags)
+{
+	return arm64_syscall6(54, dirfd, (long)path, uid, gid, flags, 0);
 }
 
 long arm64_sys_close(int fd)
@@ -185,6 +209,24 @@ long arm64_sys_fstat(int fd, void *statbuf)
 	return arm64_syscall2(80, fd, (long)statbuf);
 }
 
+long arm64_sys_sync(void)
+{
+	return arm64_syscall0(81);
+}
+
+long arm64_sys_utimensat(int dirfd,
+                         const char *path,
+                         const void *times,
+                         int flags)
+{
+	return arm64_syscall4(88, dirfd, (long)path, (long)times, flags);
+}
+
+long arm64_sys_set_tid_address(int *tidptr)
+{
+	return arm64_syscall1(96, (long)tidptr);
+}
+
 long arm64_sys_newfstatat(int dirfd, const char *path, void *statbuf, int flags)
 {
 	return arm64_syscall4(79, dirfd, (long)path, (long)statbuf, flags);
@@ -205,9 +247,69 @@ long arm64_sys_clock_gettime(int clock_id, void *timespec)
 	return arm64_syscall2(113, clock_id, (long)timespec);
 }
 
+long arm64_sys_sched_getaffinity(int pid, unsigned long size, void *mask)
+{
+	return arm64_syscall3(123, pid, (long)size, (long)mask);
+}
+
+long arm64_sys_getpriority(int which, int who)
+{
+	return arm64_syscall2(141, which, who);
+}
+
+long arm64_sys_setpriority(int which, int who, int prio)
+{
+	return arm64_syscall3(140, which, who, prio);
+}
+
+long arm64_sys_getpgid(int pid)
+{
+	return arm64_syscall1(155, pid);
+}
+
+long arm64_sys_getsid(int pid)
+{
+	return arm64_syscall1(156, pid);
+}
+
+long arm64_sys_getrusage(int who, void *usage)
+{
+	return arm64_syscall2(165, who, (long)usage);
+}
+
+long arm64_sys_umask(int mask)
+{
+	return arm64_syscall1(166, mask);
+}
+
 long arm64_sys_gettimeofday(void *timeval, void *timezone)
 {
 	return arm64_syscall2(169, (long)timeval, (long)timezone);
+}
+
+long arm64_sys_getuid(void)
+{
+	return arm64_syscall0(174);
+}
+
+long arm64_sys_geteuid(void)
+{
+	return arm64_syscall0(175);
+}
+
+long arm64_sys_getgid(void)
+{
+	return arm64_syscall0(176);
+}
+
+long arm64_sys_getegid(void)
+{
+	return arm64_syscall0(177);
+}
+
+long arm64_sys_sysinfo(void *info)
+{
+	return arm64_syscall1(179, (long)info);
 }
 
 long arm64_sys_kill(int pid, int sig)
@@ -281,4 +383,23 @@ long arm64_sys_execve(const char *path,
 long arm64_sys_wait4(int pid, int *status, int options, void *rusage)
 {
 	return arm64_syscall4(260, pid, (long)status, options, (long)rusage);
+}
+
+long arm64_sys_prlimit64(int pid,
+                         int resource,
+                         const void *new_limit,
+                         void *old_limit)
+{
+	return arm64_syscall4(
+	    261, pid, resource, (long)new_limit, (long)old_limit);
+}
+
+long arm64_sys_statx(int dirfd,
+                     const char *path,
+                     int flags,
+                     unsigned int mask,
+                     void *statxbuf)
+{
+	return arm64_syscall6(
+	    291, dirfd, (long)path, flags, (long)mask, (long)statxbuf, 0);
 }
