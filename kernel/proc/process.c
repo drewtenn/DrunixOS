@@ -37,6 +37,47 @@ void process_clone_rollback(process_t *child)
 	k_memset(child, 0, sizeof(*child));
 }
 
+static void process_release_inline_open_files(process_t *proc)
+{
+	if (!proc || proc->files)
+		return;
+
+	for (unsigned i = 0; i < MAX_FDS; i++) {
+		file_handle_t *fh = &proc->open_files[i];
+
+		if (fh->type == FD_TYPE_NONE)
+			continue;
+
+		if (fh->type == FD_TYPE_FILE && fh->writable)
+			vfs_flush(fh->u.file.ref);
+
+		if (fh->type == FD_TYPE_PIPE_READ) {
+			pipe_buf_t *pb = pipe_get((int)fh->u.pipe.pipe_idx);
+			if (pb) {
+				if (pb->read_open > 0)
+					pb->read_open--;
+				sched_wake_all(&pb->waiters);
+				if (pb->read_open == 0 && pb->write_open == 0)
+					pipe_free((int)fh->u.pipe.pipe_idx);
+			}
+		} else if (fh->type == FD_TYPE_PIPE_WRITE) {
+			pipe_buf_t *pb = pipe_get((int)fh->u.pipe.pipe_idx);
+			if (pb) {
+				if (pb->write_open > 0)
+					pb->write_open--;
+				sched_wake_all(&pb->waiters);
+				if (pb->read_open == 0 && pb->write_open == 0)
+					pipe_free((int)fh->u.pipe.pipe_idx);
+			}
+		}
+
+		fh->type = FD_TYPE_NONE;
+		fh->writable = 0;
+		fh->access_mode = 0;
+		fh->append = 0;
+	}
+}
+
 static int process_clone_duplicate_as(process_t *child_out,
                                       const process_t *parent)
 {
@@ -154,6 +195,7 @@ int process_create_file(process_t *proc,
 {
 	process_t *parent = sched_current();
 	uint8_t *kstack_raw = 0;
+	int copied_inherit_fds = 0;
 	int rc = 0;
 
 	k_memset(proc, 0, sizeof(*proc));
@@ -349,6 +391,7 @@ int process_create_file(process_t *proc,
 					pb->write_open++;
 			}
 		}
+		copied_inherit_fds = 1;
 	} else {
 		/* Fresh defaults: stdin/stdout/stderr point at the controlling TTY,
          * matching a normal Linux login shell before redirection. */
@@ -387,6 +430,8 @@ int process_create_file(process_t *proc,
 	return 0;
 
 fail_kstack:
+	if (copied_inherit_fds)
+		process_release_inline_open_files(proc);
 	process_release_kstack(proc);
 fail_user_space:
 	process_release_user_space(proc);
