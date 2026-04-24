@@ -38,7 +38,7 @@ typedef struct {
 	int left_down;
 } desktop_pointer_event_t;
 
-typedef struct {
+typedef struct desktop_state {
 	int active;
 	int launcher_open;
 	desktop_app_kind_t launcher_selection;

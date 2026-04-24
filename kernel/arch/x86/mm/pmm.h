@@ -9,14 +9,14 @@
 /* ── Multiboot1 types ─────────────────────────────────────────────────────── */
 
 /* Multiboot memory-map entry (Multiboot1 spec §3.3) */
-typedef struct {
+typedef struct multiboot_mmap_entry {
 	uint32_t size; /* size of this entry, NOT counting this field */
 	uint64_t addr;
 	uint64_t len;
 	uint32_t type; /* 1 = usable RAM */
 } __attribute__((packed)) multiboot_mmap_entry_t;
 
-typedef struct {
+typedef struct multiboot_info {
 	uint32_t flags;
 	uint32_t mem_lower;
 	uint32_t mem_upper;

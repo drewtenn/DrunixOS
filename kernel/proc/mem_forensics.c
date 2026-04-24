@@ -140,6 +140,7 @@ static void mem_forensics_classify_fault(const struct process *proc,
 	const vm_area_t *vma;
 	uint32_t err;
 	uint32_t fault_page;
+	uint32_t fault_addr32;
 
 	if (!proc->crash.valid) {
 		out->fault.valid = 0;
@@ -149,19 +150,26 @@ static void mem_forensics_classify_fault(const struct process *proc,
 
 	out->fault.valid = 1;
 	out->fault.signum = proc->crash.signum;
-	out->fault.cr2 = proc->crash.cr2;
+	out->fault.cr2 = proc->crash.fault_addr;
 	out->fault.eip = proc->crash.frame.eip;
 	out->fault.vector = proc->crash.frame.vector;
 	out->fault.error_code = proc->crash.frame.error_code;
 	err = proc->crash.frame.error_code;
-	fault_page = proc->crash.cr2 & ~0xFFFu;
+	out->fault.in_region = 0u;
 
 	if (proc->crash.frame.vector != 14u) {
 		out->fault.classification = MEM_FORENSICS_FAULT_UNKNOWN;
 		return;
 	}
 
-	vma = vma_find_const(proc, proc->crash.cr2);
+	if ((proc->crash.fault_addr >> 32) != 0) {
+		out->fault.classification = MEM_FORENSICS_FAULT_UNKNOWN;
+		return;
+	}
+
+	fault_addr32 = (uint32_t)proc->crash.fault_addr;
+	fault_page = fault_addr32 & ~0xFFFu;
+	vma = vma_find_const(proc, fault_addr32);
 	out->fault.in_region = vma ? 1u : 0u;
 
 	if (!vma) {
@@ -183,7 +191,7 @@ static void mem_forensics_classify_fault(const struct process *proc,
 			if ((vma->flags & VMA_FLAG_GROWSDOWN) == 0 ||
 			    fault_page < vma->start ||
 			    fault_page >= proc->stack_low_limit ||
-			    proc->crash.cr2 < stack_slack || proc->crash.cr2 >= vma->end) {
+			    fault_addr32 < stack_slack || fault_addr32 >= vma->end) {
 				out->fault.classification = MEM_FORENSICS_FAULT_STACK_LIMIT;
 				return;
 			}
@@ -211,8 +219,8 @@ static void mem_forensics_classify_fault(const struct process *proc,
 				if ((vma->flags & VMA_FLAG_GROWSDOWN) == 0 ||
 				    fault_page < vma->start ||
 				    fault_page >= proc->stack_low_limit ||
-				    proc->crash.cr2 < stack_slack ||
-				    proc->crash.cr2 >= vma->end) {
+				    fault_addr32 < stack_slack ||
+				    fault_addr32 >= vma->end) {
 					out->fault.classification = MEM_FORENSICS_FAULT_STACK_LIMIT;
 					return;
 				}
@@ -404,7 +412,14 @@ int mem_forensics_render_fault(const struct process *proc,
 	mem_forensics_emitf(&rb, "Signal:\t%u\n", report.fault.signum);
 	mem_forensics_emitf(&rb, "Tid:\t%u\n", proc->tid);
 	mem_forensics_emitf(&rb, "Tgid:\t%u\n", proc->tgid);
-	mem_forensics_emitf(&rb, "CR2:\t0x%08x\n", report.fault.cr2);
+	if ((report.fault.cr2 >> 32) != 0) {
+		mem_forensics_emitf(&rb,
+		                    "CR2:\t0x%08x%08x\n",
+		                    (uint32_t)(report.fault.cr2 >> 32),
+		                    (uint32_t)report.fault.cr2);
+	} else {
+		mem_forensics_emitf(&rb, "CR2:\t0x%08x\n", (uint32_t)report.fault.cr2);
+	}
 	mem_forensics_emitf(&rb, "EIP:\t0x%08x\n", report.fault.eip);
 	mem_forensics_emitf(&rb, "Err:\t0x%08x\n", report.fault.error_code);
 	mem_forensics_emitf(&rb,

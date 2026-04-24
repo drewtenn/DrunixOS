@@ -11,7 +11,6 @@
 #define SYSCALL_INTERNAL_H
 
 #include "process.h"
-#include "desktop.h"
 #include "tty.h"
 #include "vfs.h"
 #include <stdint.h>
@@ -91,8 +90,6 @@ int resolve_user_path_at(process_t *proc,
 void syscall_invlpg(uint32_t virt);
 tty_t *syscall_tty_from_fd(process_t *cur, uint32_t fd, uint32_t *tty_idx_out);
 int syscall_fd_is_console_output(const file_handle_t *fh);
-int syscall_desktop_should_route_console_output(desktop_state_t *desktop,
-                                                process_t *cur);
 int syscall_write_console_bytes(process_t *cur, const char *buf, uint32_t len);
 
 uint32_t syscall_case_write(uint32_t ebx, uint32_t ecx, uint32_t edx);

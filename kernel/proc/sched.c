@@ -5,22 +5,14 @@
 
 #include "sched.h"
 #include "process.h"
+#include "arch.h"
 #include "resources.h"
-#include "gdt.h"
-#include "paging.h"
 #include "kheap.h"
 #include "klog.h"
 #include "kstring.h"
 #include "uaccess.h"
 #include "core.h"
 #include <stdint.h>
-
-/* SYS_SIGRETURN syscall number — used by the signal trampoline. */
-#define SYS_SIGRETURN 119
-
-/* switch_context (switch.asm): save callee-saved regs + ESP, switch stacks + CR3 */
-extern void
-switch_context(uint32_t *old_esp_ptr, uint32_t new_esp, uint32_t new_cr3);
 
 /* ── Process table ──────────────────────────────────────────────────────── */
 
@@ -30,24 +22,7 @@ static int g_need_switch = 0;
 static uint32_t g_next_pid = 1;
 static uint32_t g_ticks = 0;
 
-/*
- * g_irq_frame_esp: set by irq_common in isr.asm immediately after building
- * the saved-register frame.  Used by schedule_if_needed() for the ring-0
- * check and by sched_signal_check() for signal frame construction.
- */
-extern uint32_t g_irq_frame_esp;
-
 /* ── Internal helpers ───────────────────────────────────────────────────── */
-
-static void sanitize_return_segments(uint32_t *frame)
-{
-	if (!frame || (frame[15] & 3u) != 3u)
-		return;
-
-	if (!g_current->user_tls_present &&
-	    (frame[0] & 0xFFFFu) == GDT_USER_TLS_SEG)
-		frame[0] = 0;
-}
 
 /*
  * sched_pick_next: round-robin from g_current, skipping non-READY slots.
@@ -357,9 +332,10 @@ int sched_add(process_t *proc)
 			proc_table[i] = *proc;
 
 			/* Build the initial kernel stack frame for a new (non-forked)
-             * process.  process_fork() sets saved_esp to the child's custom
+             * process.  process_fork() sets arch_state.context to the child's
+             * custom
              * frame; process_create() leaves it 0. */
-			if (proc_table[i].saved_esp == 0)
+			if (proc_table[i].arch_state.context == 0)
 				process_build_initial_frame(&proc_table[i]);
 
 #ifndef KTEST_ENABLED
@@ -420,13 +396,13 @@ void sched_exec_current(process_t *replacement)
 	g_current->group = group;
 	g_current->state = PROC_RUNNING;
 
-	gdt_set_tss_esp0(g_current->kstack_top);
-	process_restore_user_tls(g_current);
-	__asm__ volatile("fxrstor %0" ::"m"(*g_current->fpu_state));
-	switch_context((uint32_t *)0, g_current->saved_esp, g_current->pd_phys);
+	arch_context_prepare(g_current);
+	arch_context_switch(
+	    (arch_context_t *)0, (arch_context_t)g_current->arch_state.context,
+	    g_current->pd_phys);
 
 	for (;;)
-		__asm__ volatile("hlt");
+		arch_idle_wait();
 }
 
 uint32_t sched_current_pid(void)
@@ -610,7 +586,8 @@ uint32_t sched_ticks(void)
 }
 
 /*
- * schedule: pick the next READY process and switch to it via switch_context.
+ * schedule: pick the next READY process and switch to it via the arch context
+ * handoff.
  *
  * Blocking callers arrive here through sched_block() / sched_block_until(),
  * which queue the current process and transition it to PROC_BLOCKED first.
@@ -630,7 +607,7 @@ void schedule(void)
              * task (keyboard input, pipe writer, SIGCONT, etc.), then retry.
              */
 			do {
-				__asm__ volatile("sti; hlt; cli");
+				arch_idle_wait();
 				next = sched_pick_next();
 			} while (!next);
 		} else {
@@ -641,7 +618,7 @@ void schedule(void)
 	/*
      * A blocked syscall can wake the current process from an IRQ while it is
      * still inside schedule().  In that case sched_pick_next() may hand us
-     * back the same process.  switch_context() cannot safely switch a stack
+     * back the same process.  The arch handoff cannot safely switch a stack
      * to itself, because it snapshots old_esp before the callee-saved pushes
      * and would "return" through stale stack contents.
      */
@@ -652,7 +629,7 @@ void schedule(void)
 
 	/* Save prev's FPU/SSE state (skip for zombies — they won't resume) */
 	if (prev && prev->state != PROC_ZOMBIE)
-		__asm__ volatile("fxsave %0" : "=m"(*prev->fpu_state));
+		arch_fpu_save(prev);
 
 	/* Timer preemption: prev is still RUNNING → mark it READY.
      * Blocking callers already set their state before calling schedule(). */
@@ -662,17 +639,16 @@ void schedule(void)
 	/* Switch to the next process */
 	g_current = next;
 	next->state = PROC_RUNNING;
-	gdt_set_tss_esp0(next->kstack_top);
-	process_restore_user_tls(next);
-
-	/* Restore next's FPU/SSE state before switching stacks */
-	__asm__ volatile("fxrstor %0" ::"m"(*next->fpu_state));
+	arch_context_prepare(next);
 
 	/* Swap kernel stacks + page directory.
      * For zombies, pass NULL to skip saving (their stack is abandoned). */
-	uint32_t *save_ptr =
-	    (prev && prev->state != PROC_ZOMBIE) ? &prev->saved_esp : (uint32_t *)0;
-	switch_context(save_ptr, next->saved_esp, next->pd_phys);
+	arch_context_t *save_ptr =
+	    (prev && prev->state != PROC_ZOMBIE)
+	        ? &prev->arch_state.context
+	        : (arch_context_t *)0;
+	arch_context_switch(
+	    save_ptr, (arch_context_t)next->arch_state.context, next->pd_phys);
 	/* Execution resumes here when this process is rescheduled. */
 }
 
@@ -682,10 +658,7 @@ void schedule_if_needed(void)
 		return;
 	g_need_switch = 0;
 
-	/* Don't preempt kernel code.
-     * CS is at offset 60 = frame[15] from the irq_common frame base. */
-	uint32_t saved_cs = *(uint32_t *)(g_irq_frame_esp + 60);
-	if ((saved_cs & 3) != 3)
+	if (!arch_irq_frame_is_user(arch_current_irq_frame()))
 		return;
 
 	schedule();
@@ -882,8 +855,8 @@ void sched_send_sigint_foreground(void)
 	tty_ctrl_c(0);
 }
 
-void sched_record_user_fault(const trap_frame_t *frame,
-                             uint32_t cr2,
+void sched_record_user_fault(const arch_trap_frame_t *frame,
+                             uint64_t fault_addr,
                              int signum)
 {
 	if (!g_current)
@@ -893,12 +866,14 @@ void sched_record_user_fault(const trap_frame_t *frame,
 
 	klog_uint("FAULT", "pid", g_current->pid);
 	klog_uint("FAULT", "signum", (uint32_t)signum);
-	klog_hex("FAULT", "eip", frame ? frame->eip : 0);
-	klog_hex("FAULT", "cr2", cr2);
+	klog_hex("FAULT", "eip", frame ? arch_trap_frame_ip(frame) : 0);
+	if ((fault_addr >> 32) != 0)
+		klog_uint("FAULT", "fault_addr_hi", (uint32_t)(fault_addr >> 32));
+	klog_hex("FAULT", "fault_addr_lo", (uint32_t)fault_addr);
 
 	g_current->crash.valid = 1;
 	g_current->crash.signum = (uint32_t)signum;
-	g_current->crash.cr2 = cr2;
+	g_current->crash.fault_addr = fault_addr;
 	k_memcpy(&g_current->crash.frame, frame, sizeof(g_current->crash.frame));
 
 	g_current->sig_pending |= (1u << signum);
@@ -925,58 +900,6 @@ void sched_record_user_fault(const trap_frame_t *frame,
  *   [ESP]   = ret_addr    → trampoline
  *   [ESP+4] = signum
  */
-static int build_signal_frame(uint32_t *frame, int signum, uint32_t handler_va)
-{
-	struct __attribute__((packed)) {
-		uint32_t ret_addr;
-		uint32_t signum;
-		uint32_t saved_eip;
-		uint32_t saved_eflags;
-		uint32_t saved_eax;
-		uint32_t saved_esp;
-		uint8_t tramp[8];
-	} sf;
-
-	/*
-     * Kernel frame offsets (uint32_t indices from the gs slot):
-     *   [11] EAX, [14] EIP_user, [16] EFLAGS, [17] ESP_user
-     */
-	uint32_t old_esp = frame[17];
-	uint32_t saved_eip = frame[14];
-	uint32_t saved_eflags = frame[16];
-	uint32_t saved_eax = frame[11];
-
-	uint32_t new_esp = old_esp - 32;
-	/* Trampoline code starts at offset 24 = sf[6]. */
-	uint32_t trampoline_va = new_esp + 24;
-
-	sf.ret_addr = trampoline_va;
-	sf.signum = (uint32_t)signum;
-	sf.saved_eip = saved_eip;
-	sf.saved_eflags = saved_eflags;
-	sf.saved_eax = saved_eax;
-	sf.saved_esp = old_esp;
-
-	/* Trampoline: B8 nn 00 00 00  CD 80  90
-     *             mov eax, 119    int 0x80  nop             */
-	sf.tramp[0] = 0xB8;
-	sf.tramp[1] = (uint8_t)(SYS_SIGRETURN & 0xFF);
-	sf.tramp[2] = (uint8_t)((SYS_SIGRETURN >> 8) & 0xFF);
-	sf.tramp[3] = (uint8_t)((SYS_SIGRETURN >> 16) & 0xFF);
-	sf.tramp[4] = (uint8_t)((SYS_SIGRETURN >> 24) & 0xFF);
-	sf.tramp[5] = 0xCD;
-	sf.tramp[6] = 0x80;
-	sf.tramp[7] = 0x90;
-
-	if (uaccess_copy_to_user(g_current, new_esp, &sf, sizeof(sf)) != 0)
-		return -1;
-
-	/* Redirect the saved frame: EIP → handler, ESP → signal frame. */
-	frame[14] = handler_va;
-	frame[17] = new_esp;
-	return 0;
-}
-
 /*
  * is_fatal_default: return 1 if the default action for `sig` is termination.
  * SIGCHLD is ignored by default.  SIGSTOP/SIGTSTP stop (handled separately).
@@ -995,17 +918,14 @@ static int dumps_core_default(int sig)
 
 uint32_t sched_signal_check(uint32_t frame_esp)
 {
+	arch_trap_frame_t *frame = (arch_trap_frame_t *)frame_esp;
+
 	if (!g_current)
 		return frame_esp;
 
-	uint32_t *frame = (uint32_t *)frame_esp;
-	sanitize_return_segments(frame);
+	arch_trap_frame_sanitize(g_current, frame);
 
-	/*
-     * Only deliver signals when returning to ring-3 code.  The saved CS is
-     * at byte offset 60 from the frame base = frame[15].
-     */
-	if ((frame[15] & 3) != 3)
+	if (!arch_irq_frame_is_user(frame_esp))
 		return frame_esp;
 
 	if (g_current->group && g_current->group->group_exit) {
@@ -1083,7 +1003,8 @@ uint32_t sched_signal_check(uint32_t frame_esp)
      */
 	if (signum == SIGCONT) {
 		if (handler > SIG_IGN) {
-			if (build_signal_frame(frame, signum, handler) != 0)
+			if (arch_signal_setup_frame(g_current, frame, signum, handler) !=
+			    0)
 				goto bad_signal_frame;
 		}
 		return frame_esp;
@@ -1115,9 +1036,9 @@ uint32_t sched_signal_check(uint32_t frame_esp)
 	} else {
 		if (from_crash)
 			g_current->crash.valid = 0;
-		if (build_signal_frame(frame, signum, handler) != 0)
+		if (arch_signal_setup_frame(g_current, frame, signum, handler) != 0)
 			goto bad_signal_frame;
-		return frame_esp; /* ESP unchanged; frame[14] and [17] were updated */
+		return frame_esp;
 	}
 
 bad_signal_frame:

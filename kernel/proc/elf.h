@@ -3,11 +3,21 @@
 #ifndef ELF_H
 #define ELF_H
 
+#include "arch.h"
 #include "vfs.h"
 #include <stdint.h>
 
 /* ELF magic: bytes 0–3 of e_ident, read as a little-endian uint32 */
 #define ELF_MAGIC 0x464C457Fu /* "\x7FELF" */
+
+/* e_ident offsets */
+#define EI_CLASS 4u
+
+typedef enum {
+	ELF_CLASS_NONE = 0,
+	ELF_CLASS_32 = 1,
+	ELF_CLASS_64 = 2,
+} elf_class_t;
 
 /* e_type values */
 #define ET_REL 1  /* relocatable object (.o) */
@@ -15,7 +25,8 @@
 #define ET_CORE 4 /* core dump file */
 
 /* e_machine values */
-#define EM_386 3 /* Intel 80386 */
+#define EM_386 3       /* Intel 80386 */
+#define EM_AARCH64 183 /* AArch64 */
 
 /* p_type values */
 #define PT_LOAD 1 /* loadable segment */
@@ -105,36 +116,6 @@ typedef struct {
 } __attribute__((packed)) Elf32_Nhdr;
 
 /*
- * elf_load: parse an ELF32 executable from disk via the DUFS inode and load
- * it into a process address space.
- *
- * inode_num:       DUFS inode number of the ELF binary.
- * pd_phys:         physical address of the target process page directory.
- * entry_out:       set to the ELF entry point virtual address on success.
- * image_start_out: set to the lowest mapped PT_LOAD virtual address.
- * heap_start_out:  set to the page-rounded end of the highest PT_LOAD segment
- *                  on success; this is the natural starting address for the
- *                  process heap (initial brk).
- *
- * For each PT_LOAD segment the function:
- *   1. Allocates physical pages via pmm_alloc_page().
- *   2. Maps them into pd_phys with PG_PRESENT | PG_WRITABLE | PG_USER.
- *   3. Writes the file data into those pages via the kernel's identity map
- *      (no need to switch page directories during loading).
- *   4. Zeroes the bss portion (p_memsz > p_filesz).
- *
- * Returns 0 on success, or a negative error code:
- *   -1  disk read error
- *   -2  bad ELF magic
- *   -3  not an executable (e_type != ET_EXEC)
- *   -4  wrong architecture (e_machine != EM_386)
- *   -5  no program headers
- *   -6  could not read program header
- *   -7  out of physical memory
- *   -8  paging_map_page failed (out of pages for new page table)
- *   -9  disk read error while copying segment data
- */
-/*
  * ELF32 section header — 40 bytes.
  * Used by the module loader to locate sections in a relocatable object.
  */
@@ -174,10 +155,17 @@ typedef struct {
                          * ELF32_R_TYPE(r_info): R_386_* relocation type */
 } __attribute__((packed)) Elf32_Rel;
 
+int arch_elf_machine_supported(elf_class_t elf_class, uint16_t machine);
+int arch_elf_load_user_image(vfs_file_ref_t file_ref,
+                             arch_aspace_t aspace,
+                             uintptr_t *entry_out,
+                             uintptr_t *image_start_out,
+                             uintptr_t *heap_start_out);
+
 int elf_load_file(vfs_file_ref_t file_ref,
-                  uint32_t pd_phys,
-                  uint32_t *entry_out,
-                  uint32_t *image_start_out,
-                  uint32_t *heap_start_out);
+                  arch_aspace_t aspace,
+                  uintptr_t *entry_out,
+                  uintptr_t *image_start_out,
+                  uintptr_t *heap_start_out);
 
 #endif

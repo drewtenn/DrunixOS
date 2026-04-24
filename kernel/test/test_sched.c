@@ -24,15 +24,15 @@
  * treated as an empty slot by sched_add().
  *
  * sched_add() now synthesises an initial kernel-stack frame for any process
- * whose saved_esp is 0. These tests do not allocate real kernel stacks, so
- * the dummy descriptors carry a non-zero saved_esp sentinel to skip that
+ * whose arch_state.context is 0. These tests do not allocate real kernel
+ * stacks, so the dummy descriptors carry a non-zero sentinel to skip that
  * path.
  */
 
 static void init_dummy_proc(process_t *proc)
 {
 	k_memset(proc, 0, sizeof(*proc));
-	proc->saved_esp = 1;
+	proc->arch_state.context = 1;
 }
 
 static void queue_blocked_proc(wait_queue_t *queue, process_t *proc)
@@ -176,7 +176,7 @@ static void test_sched_add_unique_pids_three(ktest_case_t *tc)
  * verify sched_waitpid returns the correct status and the slot transitions to
  * PROC_UNUSED (a second waitpid returns -1).
  *
- * The dummy processes must carry a non-zero saved_esp sentinel so sched_add()
+ * The dummy processes must carry a non-zero context sentinel so sched_add()
  * does not try to synthesise an initial launch frame on a non-existent kernel
  * stack. pd_phys and kstack_bottom remain 0 so sched_reap's teardown helpers
  * are safe no-ops.
@@ -348,6 +348,34 @@ static void test_sched_mark_exit_wakes_child_state_waiters(ktest_case_t *tc)
 	KTEST_EXPECT_NULL(tc, running->state_waiters.tail);
 }
 
+static void test_sched_record_user_fault_preserves_full_fault_addr(ktest_case_t *tc)
+{
+	static process_t proc;
+	arch_trap_frame_t frame;
+	process_t *running;
+	uint64_t fault_addr = 0x1234567887654321ull;
+
+	sched_init();
+	init_dummy_proc(&proc);
+	KTEST_ASSERT_TRUE(tc, sched_add(&proc) >= 1);
+
+	running = sched_bootstrap();
+	KTEST_ASSERT_NOT_NULL(tc, running);
+
+	k_memset(&frame, 0, sizeof(frame));
+	frame.eip = 0x00401234u;
+	frame.vector = 14u;
+	frame.error_code = 0x5u;
+
+	sched_record_user_fault(&frame, fault_addr, SIGSEGV);
+
+	KTEST_EXPECT_EQ(tc, running->crash.valid, 1u);
+	KTEST_EXPECT_EQ(tc, running->crash.signum, (uint32_t)SIGSEGV);
+	KTEST_EXPECT_TRUE(tc, running->crash.fault_addr == fault_addr);
+	KTEST_EXPECT_EQ(tc, running->crash.frame.eip, frame.eip);
+	KTEST_EXPECT_EQ(tc, running->crash.frame.vector, frame.vector);
+}
+
 static void test_sched_mark_exit_closes_pipe_fds_before_reap(ktest_case_t *tc)
 {
 	static process_t child;
@@ -446,6 +474,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_sched_send_signal_wakes_blocked_process_and_unqueues_it),
     KTEST_CASE(test_sched_tick_wakes_timed_blocked_process),
     KTEST_CASE(test_sched_mark_exit_wakes_child_state_waiters),
+    KTEST_CASE(test_sched_record_user_fault_preserves_full_fault_addr),
     KTEST_CASE(test_sched_mark_exit_closes_pipe_fds_before_reap),
     KTEST_CASE(test_thread_exit_keeps_group_alive_until_last_task),
     KTEST_CASE(test_exit_group_marks_all_group_tasks),

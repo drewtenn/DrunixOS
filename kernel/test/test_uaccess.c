@@ -827,7 +827,7 @@ test_process_fork_then_sched_add_child_clears_exec_guard(ktest_case_t *tc)
 		return;
 	}
 	/* Skip initial-frame construction; this test never context-switches. */
-	parent.saved_esp = 1;
+	parent.arch_state.context = 1;
 
 	if (sched_add(&parent) < 1) {
 		KTEST_EXPECT_TRUE(tc, 0);
@@ -986,7 +986,7 @@ test_repeated_fork_exec_cleanup_preserves_parent_refs(ktest_case_t *tc)
 		child.pd_phys = 0;
 		child.kstack_bottom = 0;
 		child.kstack_top = 0;
-		child.saved_esp = 0;
+		child.arch_state.context = 0;
 		process_exec_cleanup(old_child_pd, old_child_kstack);
 
 		if (paging_walk(parent.pd_phys, TEST_BSS_ADDR, &parent_bss_pte) != 0 ||
@@ -1235,7 +1235,7 @@ test_process_fork_rolls_back_when_kstack_alloc_fails(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc, child.pd_phys, 0u);
 	KTEST_EXPECT_EQ(tc, child.kstack_bottom, 0u);
 	KTEST_EXPECT_EQ(tc, child.kstack_top, 0u);
-	KTEST_EXPECT_EQ(tc, child.saved_esp, 0u);
+	KTEST_EXPECT_EQ(tc, child.arch_state.context, 0u);
 
 	release_kernel_heap_allocs(heap_ptrs, heap_count);
 

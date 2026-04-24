@@ -8,7 +8,7 @@
 
 #include "syscall_internal.h"
 #include "syscall_linux.h"
-#include "desktop.h"
+#include "console/runtime.h"
 #include "kstring.h"
 #include "pipe.h"
 #include "process.h"
@@ -146,18 +146,10 @@ static uint32_t syscall_ioctl(uint32_t fd, uint32_t request, uint32_t argp)
 	switch (request) {
 	case LINUX_TIOCGWINSZ: {
 		uint16_t ws[4];
-		desktop_state_t *desktop = desktop_is_active() ? desktop_global() : 0;
 
 		if (argp == 0)
 			return (uint32_t)-1;
-		if (desktop && desktop->shell_terminal.rows > 0 &&
-		    desktop->shell_terminal.cols > 0) {
-			ws[0] = (uint16_t)desktop->shell_terminal.rows;
-			ws[1] = (uint16_t)desktop->shell_terminal.cols;
-		} else {
-			ws[0] = 25u;
-			ws[1] = 80u;
-		}
+		console_runtime_winsize(&ws[0], &ws[1]);
 		ws[2] = 0;
 		ws[3] = 0;
 		if (uaccess_copy_to_user(cur, argp, ws, sizeof(ws)) != 0)

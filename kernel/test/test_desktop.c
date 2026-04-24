@@ -294,7 +294,7 @@ test_desktop_open_processes_refreshes_after_late_process(ktest_case_t *tc)
 	desktop_init(&desktop, &display);
 
 	k_memset(&proc, 0, sizeof(proc));
-	proc.saved_esp = 1;
+	proc.arch_state.context = 1;
 	k_strncpy(proc.name, "lateproc", sizeof(proc.name) - 1);
 	pid = sched_add(&proc);
 	KTEST_ASSERT_TRUE(tc, pid > 0);

@@ -269,8 +269,8 @@ void sched_send_sigint_foreground(void);
  * path.  The signal is forcibly unmasked so synchronous faults do not spin
  * forever re-entering the same exception.
  */
-void sched_record_user_fault(const trap_frame_t *frame,
-                             uint32_t cr2,
+void sched_record_user_fault(const arch_trap_frame_t *frame,
+                             uint64_t fault_addr,
                              int signum);
 
 /*

@@ -4,6 +4,7 @@
  */
 
 #include "core.h"
+#include "arch.h"
 #include "elf.h"
 #include "fs.h"
 #include "kheap.h"
@@ -201,8 +202,6 @@ static uint32_t count_user_segments(process_t *proc)
 
 static void fill_prstatus(core_prstatus_t *st, process_t *proc, int signum)
 {
-	trap_frame_t *tf = &proc->crash.frame;
-
 	k_memset(st, 0, sizeof(*st));
 
 	st->pr_info.si_signo = signum;
@@ -214,23 +213,7 @@ static void fill_prstatus(core_prstatus_t *st, process_t *proc, int signum)
 	st->pr_pgrp = (int32_t)proc->pgid;
 	st->pr_sid = (int32_t)proc->sid;
 
-	st->pr_reg[0] = tf->ebx;
-	st->pr_reg[1] = tf->ecx;
-	st->pr_reg[2] = tf->edx;
-	st->pr_reg[3] = tf->esi;
-	st->pr_reg[4] = tf->edi;
-	st->pr_reg[5] = tf->ebp;
-	st->pr_reg[6] = tf->eax;
-	st->pr_reg[7] = tf->ds;
-	st->pr_reg[8] = tf->es;
-	st->pr_reg[9] = tf->fs;
-	st->pr_reg[10] = tf->gs;
-	st->pr_reg[11] = 0xFFFFFFFFu; /* orig_eax: not tracked in this kernel */
-	st->pr_reg[12] = tf->eip;
-	st->pr_reg[13] = tf->cs;
-	st->pr_reg[14] = tf->eflags;
-	st->pr_reg[15] = tf->user_esp;
-	st->pr_reg[16] = tf->user_ss;
+	arch_core_fill_prstatus_regs(st->pr_reg, &proc->crash.frame);
 }
 
 static uint32_t prstatus_note_size(void)

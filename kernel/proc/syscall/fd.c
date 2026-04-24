@@ -10,7 +10,7 @@
 #include "syscall_linux.h"
 #include "blkdev.h"
 #include "chardev.h"
-#include "desktop.h"
+#include "console/runtime.h"
 #include "klog.h"
 #include "pipe.h"
 #include "process.h"
@@ -109,19 +109,13 @@ static uint32_t syscall_write_fd(uint32_t fd, uint32_t user_buf, uint32_t count)
 
 	if (syscall_fd_is_console_output(fh)) {
 		uint8_t kbuf[USER_IO_CHUNK];
-		desktop_state_t *batch_desktop;
-		int use_console_batch;
+		uintptr_t console_batch = 0;
 		uint32_t written = 0;
 
 		if (uaccess_prepare(cur, user_buf, count, 0) != 0)
 			return (uint32_t)-1;
 
-		batch_desktop = desktop_is_active() ? desktop_global() : 0;
-		use_console_batch =
-		    batch_desktop &&
-		    syscall_desktop_should_route_console_output(batch_desktop, cur);
-		if (use_console_batch)
-			desktop_begin_console_batch(batch_desktop);
+		console_batch = console_runtime_begin_process_output(cur);
 
 		while (written < count) {
 			uint32_t chunk = count - written;
@@ -129,15 +123,13 @@ static uint32_t syscall_write_fd(uint32_t fd, uint32_t user_buf, uint32_t count)
 				chunk = USER_IO_CHUNK;
 			if (uaccess_copy_from_user(cur, kbuf, user_buf + written, chunk) !=
 			    0) {
-				if (use_console_batch)
-					desktop_end_console_batch(batch_desktop);
+				console_runtime_end_process_output(console_batch);
 				return written ? written : (uint32_t)-1;
 			}
 			syscall_write_console_bytes(cur, (const char *)kbuf, chunk);
 			written += chunk;
 		}
-		if (use_console_batch)
-			desktop_end_console_batch(batch_desktop);
+		console_runtime_end_process_output(console_batch);
 		return written;
 	}
 

@@ -201,7 +201,7 @@ static process_t *start_syscall_test_process(process_t *proc)
 	if (!proc->pd_phys)
 		return 0;
 
-	proc->saved_esp = 1; /* syscall tests do not context-switch this task */
+	proc->arch_state.context = 1; /* syscall tests do not context-switch this task */
 	proc->tty_id = 0;
 	proc->open_files[0].type = FD_TYPE_TTY;
 	proc->open_files[0].writable = 1;
@@ -253,7 +253,7 @@ static void init_core_dump_proc(process_t *proc)
 	k_strncpy(proc->psargs, "crash badptr", sizeof(proc->psargs) - 1u);
 	proc->crash.valid = 1u;
 	proc->crash.signum = SIGSEGV;
-	proc->crash.cr2 = 0xDEADBEEFu;
+	proc->crash.fault_addr = 0xDEADBEEFu;
 	proc->crash.frame.vector = 14u;
 	proc->crash.frame.error_code = 0x6u;
 	proc->crash.frame.eip = 0x00402A16u;
@@ -267,7 +267,7 @@ static void test_process_build_initial_frame_layout(ktest_case_t *tc)
 	init_frame_proc(&proc, kstack_words, 0x00401000u, 0xBFFFE000u);
 	process_build_initial_frame(&proc);
 
-	uint32_t *frame = (uint32_t *)proc.saved_esp;
+	uint32_t *frame = (uint32_t *)proc.arch_state.context;
 	KTEST_ASSERT_NOT_NULL(tc, frame);
 
 	KTEST_EXPECT_EQ(tc, frame[0], 0u);
@@ -294,7 +294,7 @@ static void test_process_build_exec_frame_layout(ktest_case_t *tc)
 	init_frame_proc(&proc, kstack_words, 0x00402000u, 0xBFFFD000u);
 	process_build_exec_frame(&proc, 0x00123000u, 0x00ABC000u);
 
-	uint32_t *frame = (uint32_t *)proc.saved_esp;
+	uint32_t *frame = (uint32_t *)proc.arch_state.context;
 	KTEST_ASSERT_NOT_NULL(tc, frame);
 
 	KTEST_EXPECT_EQ(tc, frame[0], 0u);
@@ -312,6 +312,16 @@ static void test_process_build_exec_frame_layout(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc, frame[25], GDT_USER_DS);
 }
 
+static void test_elf_machine_validation_is_arch_owned(ktest_case_t *tc)
+{
+	KTEST_EXPECT_EQ(
+	    tc, (uint32_t)arch_elf_machine_supported(ELF_CLASS_32, EM_386), 1u);
+	KTEST_EXPECT_EQ(tc,
+	                (uint32_t)arch_elf_machine_supported(ELF_CLASS_64,
+	                                                    EM_AARCH64),
+	                0u);
+}
+
 static void
 test_sched_add_builds_initial_frame_for_never_run_process(ktest_case_t *tc)
 {
@@ -320,7 +330,7 @@ test_sched_add_builds_initial_frame_for_never_run_process(ktest_case_t *tc)
 
 	sched_init();
 	init_frame_proc(&proc, kstack_words, 0x00403000u, 0xBFFFC000u);
-	proc.saved_esp = 0;
+	proc.arch_state.context = 0;
 
 	int pid = sched_add(&proc);
 	KTEST_ASSERT_TRUE(tc, pid >= 1);
@@ -328,9 +338,9 @@ test_sched_add_builds_initial_frame_for_never_run_process(ktest_case_t *tc)
 	process_t *slot = sched_find_pid((uint32_t)pid);
 	KTEST_ASSERT_NOT_NULL(tc, slot);
 	KTEST_EXPECT_EQ(tc, slot->state, PROC_READY);
-	KTEST_EXPECT_NE(tc, slot->saved_esp, 0u);
+	KTEST_EXPECT_NE(tc, slot->arch_state.context, 0u);
 
-	uint32_t *frame = (uint32_t *)slot->saved_esp;
+	uint32_t *frame = (uint32_t *)slot->arch_state.context;
 	KTEST_ASSERT_NOT_NULL(tc, frame);
 	KTEST_EXPECT_EQ(tc, frame[4], (uint32_t)process_initial_launch);
 	KTEST_EXPECT_EQ(tc, frame[19], 0x00403000u);
@@ -775,7 +785,7 @@ static void test_mem_forensics_classifies_unmapped_fault(ktest_case_t *tc)
 	init_vma_proc(&proc);
 	proc.crash.valid = 1;
 	proc.crash.signum = SIGSEGV;
-	proc.crash.cr2 = 0xDEADBEEFu;
+	proc.crash.fault_addr = 0xDEADBEEFu;
 	proc.crash.frame.vector = 14u;
 	proc.crash.frame.error_code = 0x6u;
 
@@ -800,7 +810,7 @@ static void test_mem_forensics_classifies_lazy_miss_for_shadow_heap_mapping(
 
 	proc.crash.valid = 1;
 	proc.crash.signum = SIGSEGV;
-	proc.crash.cr2 = proc.heap_start;
+	proc.crash.fault_addr = proc.heap_start;
 	proc.crash.frame.vector = 14u;
 	proc.crash.frame.error_code = 0x7u;
 
@@ -834,7 +844,7 @@ static void test_mem_forensics_classifies_cow_write_fault(ktest_case_t *tc)
 
 	proc.crash.valid = 1;
 	proc.crash.signum = SIGSEGV;
-	proc.crash.cr2 = proc.heap_start;
+	proc.crash.fault_addr = proc.heap_start;
 	proc.crash.frame.vector = 14u;
 	proc.crash.frame.error_code = 0x7u;
 
@@ -862,7 +872,7 @@ static void test_mem_forensics_classifies_protection_fault(ktest_case_t *tc)
 
 	proc.crash.valid = 1;
 	proc.crash.signum = SIGSEGV;
-	proc.crash.cr2 = 0x80000000u;
+	proc.crash.fault_addr = 0x80000000u;
 	proc.crash.frame.vector = 14u;
 	proc.crash.frame.error_code = 0x7u;
 
@@ -879,13 +889,44 @@ static void test_mem_forensics_classifies_unknown_fault_vector(ktest_case_t *tc)
 	init_vma_proc(&proc);
 	proc.crash.valid = 1;
 	proc.crash.signum = SIGSEGV;
-	proc.crash.cr2 = proc.heap_start;
+	proc.crash.fault_addr = proc.heap_start;
 	proc.crash.frame.vector = 13u;
 	proc.crash.frame.error_code = 0u;
 
 	KTEST_ASSERT_EQ(tc, mem_forensics_collect(&proc, &report), 0u);
 	KTEST_EXPECT_EQ(
 	    tc, report.fault.classification, MEM_FORENSICS_FAULT_UNKNOWN);
+}
+
+static void test_mem_forensics_preserves_high_fault_addr_as_unknown(
+    ktest_case_t *tc)
+{
+	static process_t proc;
+	mem_forensics_report_t report;
+	char buf[256];
+	uint32_t size = 0u;
+
+	init_vma_proc(&proc);
+	proc.crash.valid = 1;
+	proc.crash.signum = SIGSEGV;
+	proc.crash.fault_addr = 0x1234567887654321ull;
+	proc.crash.frame.vector = 14u;
+	proc.crash.frame.error_code = 0x6u;
+
+	KTEST_ASSERT_EQ(tc, mem_forensics_collect(&proc, &report), 0u);
+	KTEST_EXPECT_TRUE(tc, report.fault.cr2 == proc.crash.fault_addr);
+	KTEST_EXPECT_EQ(
+	    tc, report.fault.classification, MEM_FORENSICS_FAULT_UNKNOWN);
+	KTEST_EXPECT_EQ(tc, report.fault.in_region, 0u);
+
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)mem_forensics_render_fault(
+	                    &proc, buf, sizeof(buf), &size),
+	                0u);
+	if (size >= sizeof(buf))
+		size = sizeof(buf) - 1u;
+	buf[size] = '\0';
+	KTEST_EXPECT_TRUE(tc, k_strstr(buf, "CR2:\t0x1234567887654321") != 0);
 }
 
 static void test_mem_forensics_classifies_stack_limit_fault(ktest_case_t *tc)
@@ -896,7 +937,7 @@ static void test_mem_forensics_classifies_stack_limit_fault(ktest_case_t *tc)
 	init_vma_proc(&proc);
 	proc.crash.valid = 1;
 	proc.crash.signum = SIGSEGV;
-	proc.crash.cr2 = proc.stack_low_limit - PAGE_SIZE;
+	proc.crash.fault_addr = proc.stack_low_limit - PAGE_SIZE;
 	proc.crash.frame.vector = 14u;
 	proc.crash.frame.error_code = 0x6u;
 	proc.crash.frame.user_esp = proc.stack_low_limit;
@@ -1807,31 +1848,33 @@ test_process_restore_user_tls_switches_global_gdt_slot(ktest_case_t *tc)
 	k_memset(&first, 0, sizeof(first));
 	k_memset(&second, 0, sizeof(second));
 
-	first.user_tls_present = 1;
-	first.user_tls_base = 0x11111000u;
-	first.user_tls_limit = 0x00000FFFu;
-	first.user_tls_limit_in_pages = 0;
+	first.arch_state.user_tls_present = 1;
+	first.arch_state.user_tls_base = 0x11111000u;
+	first.arch_state.user_tls_limit = 0x00000FFFu;
+	first.arch_state.user_tls_limit_in_pages = 0;
 
-	second.user_tls_present = 1;
-	second.user_tls_base = 0x22222000u;
-	second.user_tls_limit = 0x000FFFFFu;
-	second.user_tls_limit_in_pages = 1;
+	second.arch_state.user_tls_present = 1;
+	second.arch_state.user_tls_base = 0x22222000u;
+	second.arch_state.user_tls_limit = 0x000FFFFFu;
+	second.arch_state.user_tls_limit_in_pages = 1;
 
 	process_restore_user_tls(&first);
 	gdt_get_user_tls_for_test(&base, &limit, &limit_in_pages, &present);
 	KTEST_EXPECT_EQ(tc, present, 1);
-	KTEST_EXPECT_EQ(tc, base, first.user_tls_base);
-	KTEST_EXPECT_EQ(tc, limit, first.user_tls_limit);
-	KTEST_EXPECT_EQ(tc, limit_in_pages, first.user_tls_limit_in_pages);
+	KTEST_EXPECT_EQ(tc, base, first.arch_state.user_tls_base);
+	KTEST_EXPECT_EQ(tc, limit, first.arch_state.user_tls_limit);
+	KTEST_EXPECT_EQ(tc, limit_in_pages, first.arch_state.user_tls_limit_in_pages);
 
 	process_restore_user_tls(&second);
 	gdt_get_user_tls_for_test(&base, &limit, &limit_in_pages, &present);
 	KTEST_EXPECT_EQ(tc, present, 1);
-	KTEST_EXPECT_EQ(tc, base, second.user_tls_base);
-	KTEST_EXPECT_EQ(tc, limit, second.user_tls_limit);
-	KTEST_EXPECT_EQ(tc, limit_in_pages, second.user_tls_limit_in_pages);
+	KTEST_EXPECT_EQ(tc, base, second.arch_state.user_tls_base);
+	KTEST_EXPECT_EQ(tc, limit, second.arch_state.user_tls_limit);
+	KTEST_EXPECT_EQ(tc,
+	                limit_in_pages,
+	                second.arch_state.user_tls_limit_in_pages);
 
-	second.user_tls_present = 0;
+	second.arch_state.user_tls_present = 0;
 	process_restore_user_tls(&second);
 	gdt_get_user_tls_for_test(&base, &limit, &limit_in_pages, &present);
 	KTEST_EXPECT_EQ(tc, present, 0);
@@ -1893,6 +1936,7 @@ static void test_linux_syscalls_install_tls_and_map_mmap2(ktest_case_t *tc)
 static ktest_case_t cases[] = {
     KTEST_CASE(test_process_build_initial_frame_layout),
     KTEST_CASE(test_process_build_exec_frame_layout),
+    KTEST_CASE(test_elf_machine_validation_is_arch_owned),
     KTEST_CASE(test_sched_add_builds_initial_frame_for_never_run_process),
     KTEST_CASE(test_process_builds_linux_i386_initial_stack_shape),
     KTEST_CASE(test_vma_add_keeps_regions_sorted_and_findable),
@@ -1911,6 +1955,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_mem_forensics_classifies_cow_write_fault),
     KTEST_CASE(test_mem_forensics_classifies_protection_fault),
     KTEST_CASE(test_mem_forensics_classifies_unknown_fault_vector),
+    KTEST_CASE(test_mem_forensics_preserves_high_fault_addr_as_unknown),
     KTEST_CASE(test_mem_forensics_classifies_stack_limit_fault),
     KTEST_CASE(test_mem_forensics_counts_present_heap_pages),
     KTEST_CASE(test_process_resources_start_with_single_refs),

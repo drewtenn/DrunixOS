@@ -7,7 +7,7 @@
  */
 
 #include "syscall_internal.h"
-#include "desktop.h"
+#include "console/runtime.h"
 #include "sched.h"
 #include <limits.h>
 #include <stdint.h>
@@ -25,8 +25,7 @@ static int syscall_scroll_count(uint32_t count)
 
 uint32_t SYSCALL_NOINLINE syscall_case_drunix_clear(void)
 {
-
-	if (desktop_is_active() && desktop_clear_console(desktop_global()))
+	if (console_runtime_clear())
 		return 0;
 	clear_screen();
 	return 0;
@@ -34,9 +33,7 @@ uint32_t SYSCALL_NOINLINE syscall_case_drunix_clear(void)
 
 uint32_t SYSCALL_NOINLINE syscall_case_drunix_scroll_up(uint32_t ebx)
 {
-
-	if (desktop_is_active() &&
-	    desktop_scroll_console(desktop_global(), syscall_scroll_count(ebx)))
+	if (console_runtime_scroll(syscall_scroll_count(ebx)))
 		return 0;
 	scroll_up(syscall_scroll_count(ebx));
 	return 0;
@@ -44,9 +41,7 @@ uint32_t SYSCALL_NOINLINE syscall_case_drunix_scroll_up(uint32_t ebx)
 
 uint32_t SYSCALL_NOINLINE syscall_case_drunix_scroll_down(uint32_t ebx)
 {
-
-	if (desktop_is_active() &&
-	    desktop_scroll_console(desktop_global(), -syscall_scroll_count(ebx)))
+	if (console_runtime_scroll(-syscall_scroll_count(ebx)))
 		return 0;
 	scroll_down(syscall_scroll_count(ebx));
 	return 0;
