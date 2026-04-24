@@ -15,11 +15,14 @@ FORBIDDEN = {
         r"\bstatic\s+const\s+char\s+\*argv\s*\[",
         r"\bstatic\s+const\s+char\s+\*envp\s*\[",
     ],
-    ROOT / "kernel/arch/arm64/start_kernel.c": [
-        r"\barm64_user_smoke_boot\s*\(\s*\)",
-    ],
     ROOT / "kernel/proc/process.c": [
         r"\bbuild_user_stack_frame\s*\(",
+    ],
+}
+
+LATE_FORBIDDEN = {
+    ROOT / "kernel/arch/arm64/start_kernel.c": [
+        r"\barm64_user_smoke_boot\s*\(\s*\)",
     ],
 }
 
@@ -45,6 +48,9 @@ REQUIRED = {
     ROOT / "kernel/arch/arm64/proc/arch_proc.c": [
         r"\barch_process_build_user_stack\b",
     ],
+}
+
+LATE_REQUIRED = {
     ROOT / "kernel/arch/arm64/rootfs.c": [
         r"\barm64_rootfs_register\b",
     ],
@@ -187,4 +193,6 @@ check(FORBIDDEN, bool, "forbidden")
 check_init_launch_body()
 check_process_create_file_body()
 check_arm64_user_stack_body()
+check(LATE_REQUIRED, lambda m: not m, "missing")
+check(LATE_FORBIDDEN, bool, "forbidden")
 print("phase7 boundary guard passed")
