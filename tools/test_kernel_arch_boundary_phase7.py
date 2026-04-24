@@ -6,6 +6,10 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 
 FORBIDDEN = {
+    ROOT / "kernel/kernel.c": [
+        r"\bvfs_open_file\s*\(\s*DRUNIX_INIT_PROGRAM",
+        r"\bprocess_create_file\s*\(",
+    ],
     ROOT / "kernel/arch/arm64/start_kernel.c": [
         r"\barm64_user_smoke_boot\s*\(\s*\)",
     ],
@@ -15,6 +19,9 @@ FORBIDDEN = {
 }
 
 REQUIRED = {
+    ROOT / "kernel/kernel.c": [
+        r"\bboot_launch_init_process\s*\(",
+    ],
     ROOT / "kernel/proc/init_launch.c": [
         r"\bboot_launch_init_process\b",
     ],
