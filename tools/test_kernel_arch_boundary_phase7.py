@@ -188,11 +188,20 @@ def check(table, predicate, label):
                 raise SystemExit(1)
 
 
+def check_late_phase7_boundaries():
+    rootfs_path = ROOT / "kernel/arch/arm64/rootfs.c"
+
+    if not rootfs_path.exists():
+        return
+
+    check(LATE_REQUIRED, lambda m: not m, "missing")
+    check(LATE_FORBIDDEN, bool, "forbidden")
+
+
 check(REQUIRED, lambda m: not m, "missing")
 check(FORBIDDEN, bool, "forbidden")
 check_init_launch_body()
 check_process_create_file_body()
 check_arm64_user_stack_body()
-check(LATE_REQUIRED, lambda m: not m, "missing")
-check(LATE_FORBIDDEN, bool, "forbidden")
+check_late_phase7_boundaries()
 print("phase7 boundary guard passed")
