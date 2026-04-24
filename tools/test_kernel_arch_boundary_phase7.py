@@ -54,7 +54,20 @@ REQUIRED = {
 
 _COMMENT_RE = re.compile(r"/\*.*?\*/|//.*?$", re.DOTALL | re.MULTILINE)
 _STACK_LOCAL_PROCESS_RE = re.compile(
-    r"(?m)^\s*(?!static\b)process_t\s+[A-Za-z_]\w*(?:\s*=\s*[^;]+)?;"
+    r"""
+    (?ms)
+    (?:^|;)
+    \s*
+    (?!static\b)
+    (?:
+        (?:const|volatile|register|restrict)\s+
+    )*
+    process_t
+    \b
+    (?!\s*\*)
+    [^;]*;
+    """,
+    re.VERBOSE,
 )
 
 
