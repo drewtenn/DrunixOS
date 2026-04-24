@@ -38,9 +38,17 @@ def strip_comments(text):
     return _COMMENT_RE.sub("", text)
 
 
+def read_source(path):
+    try:
+        return strip_comments(path.read_text())
+    except FileNotFoundError:
+        print(f"missing: {path.relative_to(ROOT)}", file=sys.stderr)
+        raise SystemExit(1)
+
+
 def check(table, predicate, label):
     for path, patterns in table.items():
-        text = strip_comments(path.read_text())
+        text = read_source(path)
         for pattern in patterns:
             if predicate(re.search(pattern, text)):
                 print(f"{label}: {path.relative_to(ROOT)} {pattern}", file=sys.stderr)

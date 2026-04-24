@@ -16,6 +16,19 @@ def stderr_message(stderr_text):
     return f"stderr:\n{stderr_text}" if stderr_text else "stderr: <empty>"
 
 
+def fail(message, stderr_text):
+    raise SystemExit(message + "\n" + stderr_message(stderr_text))
+
+
+def read_serial_log():
+    if not LOG.exists():
+        return None
+    try:
+        return LOG.read_text(errors="ignore")
+    except FileNotFoundError:
+        return None
+
+
 def run_case(make_args, required, forbidden=()):
     build = subprocess.run(
         ["make", "ARCH=arm64", "build", *make_args],
@@ -53,42 +66,43 @@ def run_case(make_args, required, forbidden=()):
         try:
             deadline = time.time() + BOOT_TIMEOUT
             while time.time() < deadline:
-                if LOG.exists():
-                    text = LOG.read_text(errors="ignore")
+                text = read_serial_log()
+                if text is not None:
                     if all(marker in text for marker in required):
                         break
+                if proc.poll() is not None:
+                    break
                 time.sleep(1)
         finally:
             if proc.poll() is None:
                 proc.kill()
             proc.wait()
     stderr_text = ERR.read_text(errors="ignore").strip()
-    log_exists = LOG.exists()
-    text = LOG.read_text(errors="ignore") if log_exists else ""
+    text = read_serial_log()
+    log_exists = text is not None
+    if text is None:
+        text = ""
 
     missing = [marker for marker in required if marker not in text]
     if missing:
         if not log_exists:
-            raise SystemExit(
+            fail(
                 "QEMU exited before creating serial log: "
                 + str(LOG)
-                + "\n"
-                + stderr_message(stderr_text)
+                + f"\nQEMU return code: {proc.returncode}",
+                stderr_text,
             )
-        raise SystemExit(
-            "missing ARM64 filesystem init markers: "
-            + ", ".join(missing)
-            + "\n"
-            + stderr_message(stderr_text)
+        fail(
+            "missing ARM64 filesystem init markers: " + ", ".join(missing),
+            stderr_text,
         )
 
     forbidden_seen = [marker for marker in forbidden if marker in text]
     if forbidden_seen:
-        raise SystemExit(
+        fail(
             "forbidden ARM64 filesystem init markers present: "
-            + ", ".join(forbidden_seen)
-            + "\n"
-            + stderr_message(stderr_text)
+            + ", ".join(forbidden_seen),
+            stderr_text,
         )
 
 
