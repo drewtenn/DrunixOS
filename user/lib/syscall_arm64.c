@@ -2,16 +2,99 @@
 
 #include "syscall_arm64.h"
 
-long arm64_sys_write(int fd, const char *buf, unsigned long len)
+static long arm64_syscall0(long nr)
 {
-	register long x0 __asm__("x0") = fd;
-	register long x1 __asm__("x1") = (long)buf;
-	register long x2 __asm__("x2") = (long)len;
-	register long x8 __asm__("x8") = 64;
+	register long x0 __asm__("x0");
+	register long x8 __asm__("x8") = nr;
+
+	__asm__ volatile("svc #0" : "=r"(x0) : "r"(x8) : "memory");
+	return x0;
+}
+
+static long arm64_syscall1(long nr, long a0)
+{
+	register long x0 __asm__("x0") = a0;
+	register long x8 __asm__("x8") = nr;
+
+	__asm__ volatile("svc #0" : "+r"(x0) : "r"(x8) : "memory");
+	return x0;
+}
+
+static long arm64_syscall2(long nr, long a0, long a1)
+{
+	register long x0 __asm__("x0") = a0;
+	register long x1 __asm__("x1") = a1;
+	register long x8 __asm__("x8") = nr;
+
+	__asm__ volatile("svc #0" : "+r"(x0) : "r"(x1), "r"(x8) : "memory");
+	return x0;
+}
+
+static long arm64_syscall3(long nr, long a0, long a1, long a2)
+{
+	register long x0 __asm__("x0") = a0;
+	register long x1 __asm__("x1") = a1;
+	register long x2 __asm__("x2") = a2;
+	register long x8 __asm__("x8") = nr;
 
 	__asm__ volatile("svc #0"
 	                 : "+r"(x0)
 	                 : "r"(x1), "r"(x2), "r"(x8)
 	                 : "memory");
 	return x0;
+}
+
+static long arm64_syscall4(long nr, long a0, long a1, long a2, long a3)
+{
+	register long x0 __asm__("x0") = a0;
+	register long x1 __asm__("x1") = a1;
+	register long x2 __asm__("x2") = a2;
+	register long x3 __asm__("x3") = a3;
+	register long x8 __asm__("x8") = nr;
+
+	__asm__ volatile("svc #0"
+	                 : "+r"(x0)
+	                 : "r"(x1), "r"(x2), "r"(x3), "r"(x8)
+	                 : "memory");
+	return x0;
+}
+
+long arm64_sys_write(int fd, const char *buf, unsigned long len)
+{
+	return arm64_syscall3(64, fd, (long)buf, (long)len);
+}
+
+long arm64_sys_openat(int dirfd, const char *path, int flags, int mode)
+{
+	return arm64_syscall4(56, dirfd, (long)path, flags, mode);
+}
+
+long arm64_sys_close(int fd)
+{
+	return arm64_syscall1(57, fd);
+}
+
+long arm64_sys_read(int fd, void *buf, unsigned long len)
+{
+	return arm64_syscall3(63, fd, (long)buf, (long)len);
+}
+
+long arm64_sys_getpid(void)
+{
+	return arm64_syscall0(172);
+}
+
+long arm64_sys_getppid(void)
+{
+	return arm64_syscall0(173);
+}
+
+long arm64_sys_gettid(void)
+{
+	return arm64_syscall0(178);
+}
+
+long arm64_sys_getcwd(char *buf, unsigned long size)
+{
+	return arm64_syscall2(17, (long)buf, (long)size);
 }

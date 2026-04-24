@@ -14,7 +14,19 @@
 #include "klog.h"
 #include "kstring.h"
 #include "fs.h"
+#ifdef __aarch64__
+#include "proc/init_layout.h"
+#endif
 #include <stdint.h>
+
+#ifdef __aarch64__
+#define PROCESS_USER_STACK_TOP ARM64_INIT_STACK_TOP
+#define PROCESS_USER_STACK_LOW ARM64_INIT_STACK_BASE
+#else
+#define PROCESS_USER_STACK_TOP USER_STACK_TOP
+#define PROCESS_USER_STACK_LOW                                                  \
+	(USER_STACK_TOP - (uint32_t)USER_STACK_MAX_PAGES * PAGE_SIZE)
+#endif
 
 static void process_fork_rollback_child(process_t *child_out)
 {
@@ -287,8 +299,7 @@ int process_create_file(process_t *proc,
 	proc->brk =
 	    heap_start; /* empty heap: brk == heap_start, no pages committed */
 	proc->user_stack = (uint32_t)initial_stack;
-	proc->stack_low_limit =
-	    USER_STACK_TOP - (uint32_t)USER_STACK_PAGES * 0x1000u;
+	proc->stack_low_limit = (uint32_t)PROCESS_USER_STACK_LOW;
 	proc->kstack_bottom = (uint32_t)kstack_raw;
 	proc->kstack_top = (uint32_t)(kguard + 0x1000u + KSTACK_SIZE);
 	proc->arch_state.context = 0; /* scheduler builds the initial switch frame */
@@ -330,8 +341,8 @@ int process_create_file(process_t *proc,
 		goto fail_kstack;
 	}
 	if (vma_add(proc,
-	            USER_STACK_TOP - (uint32_t)USER_STACK_MAX_PAGES * PAGE_SIZE,
-	            USER_STACK_TOP,
+	            PROCESS_USER_STACK_LOW,
+	            PROCESS_USER_STACK_TOP,
 	            VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_ANON |
 	                VMA_FLAG_PRIVATE | VMA_FLAG_GROWSDOWN,
 	            VMA_KIND_STACK) != 0) {

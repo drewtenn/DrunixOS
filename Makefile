@@ -337,6 +337,9 @@ check-arm64-userspace:
 check-arm64-filesystem-init:
 	python3 tools/test_arm64_filesystem_init.py
 
+check-arm64-syscall-parity:
+	python3 tools/test_arm64_syscall_parity.py
+
 validate-ext3-linux: $(ROOT_DISK_IMG) tools/check_ext3_linux_compat.py tools/check_ext3_journal_activity.py
 	$(PYTHON) tools/check_ext3_linux_compat.py $(ROOT_DISK_IMG)
 	$(E2FSCK) -fn disk.fs
@@ -513,7 +516,7 @@ clean:
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-busybox-compat test-linux-abi test-threadtest test-tcc test-nano test-ext3-linux-compat test-ext3-host-write-interop test-all \
-        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init \
+        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean
@@ -570,6 +573,9 @@ check-arm64-userspace:
 check-arm64-filesystem-init:
 	python3 tools/test_arm64_filesystem_init.py
 
+check-arm64-syscall-parity:
+	python3 tools/test_arm64_syscall_parity.py
+
 run: kernel-arm64.elf | $(LOG_DIR)
 	$(QEMU_ARM) -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf -serial null -serial stdio -monitor none -nographic -no-reboot
 
@@ -607,7 +613,7 @@ clean:
 .PHONY: all build kernel iso images disk fresh check \
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
-        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init \
+        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity \
         pdf epub docs \
         rebuild clean
 endif

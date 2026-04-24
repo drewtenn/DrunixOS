@@ -65,14 +65,15 @@ ARM_SHARED_KOBJS := kernel/lib/klog.arm64.o \
                     kernel/fs/procfs.arm64.o \
                     kernel/fs/sysfs.arm64.o
 
-ARM_COMPILE_ONLY_OBJS := kernel/proc/syscall/fd.arm64.o \
-                         kernel/proc/syscall/fd_control.arm64.o \
-                         kernel/proc/syscall/vfs/open.arm64.o \
-                         kernel/proc/syscall/vfs/path.arm64.o \
-                         kernel/proc/syscall/vfs/stat.arm64.o \
+ARM_SHARED_KOBJS += kernel/proc/syscall/fd.arm64.o \
+                    kernel/proc/syscall/fd_control.arm64.o \
+                    kernel/proc/syscall/vfs/open.arm64.o \
+                    kernel/proc/syscall/vfs/path.arm64.o \
+                    kernel/proc/syscall/process.arm64.o
+
+ARM_COMPILE_ONLY_OBJS := kernel/proc/syscall/vfs/stat.arm64.o \
                          kernel/proc/syscall/vfs/dirents.arm64.o \
                          kernel/proc/syscall/vfs/mutation.arm64.o \
-                         kernel/proc/syscall/process.arm64.o \
                          kernel/proc/syscall/info.arm64.o \
                          kernel/proc/syscall/signal.arm64.o \
                          kernel/proc/syscall/mem.arm64.o \

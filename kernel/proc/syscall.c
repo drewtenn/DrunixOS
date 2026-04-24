@@ -21,11 +21,23 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unknown(uint32_t eax)
 
 #ifdef __aarch64__
 #define ARM64_LINUX_SYS_WRITE 64u
+#define ARM64_LINUX_SYS_OPENAT 56u
+#define ARM64_LINUX_SYS_CLOSE 57u
+#define ARM64_LINUX_SYS_READ 63u
 #define ARM64_LINUX_SYS_EXIT 93u
 #define ARM64_LINUX_SYS_EXIT_GROUP 94u
 #define ARM64_LINUX_SYS_SCHED_YIELD 124u
+#define ARM64_LINUX_SYS_GETPID 172u
+#define ARM64_LINUX_SYS_GETPPID 173u
+#define ARM64_LINUX_SYS_GETTID 178u
+#define ARM64_LINUX_SYS_GETCWD 17u
 
 extern void arm64_console_loop(void) __attribute__((weak));
+
+static uint64_t arm64_syscall_ret32(uint32_t value)
+{
+	return (uint64_t)(int64_t)(int32_t)value;
+}
 
 static uint64_t arm64_syscall_write(arch_trap_frame_t *frame)
 {
@@ -64,6 +76,27 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 
 	nr = arch_syscall_number(frame);
 	switch (nr) {
+	case ARM64_LINUX_SYS_GETCWD:
+		ret = arm64_syscall_ret32(syscall_case_getcwd(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame)));
+		break;
+	case ARM64_LINUX_SYS_OPENAT:
+		ret = arm64_syscall_ret32(syscall_case_openat(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame)));
+		break;
+	case ARM64_LINUX_SYS_CLOSE:
+		ret = arm64_syscall_ret32(
+		    syscall_case_close((uint32_t)arch_syscall_arg0(frame)));
+		break;
+	case ARM64_LINUX_SYS_READ:
+		ret = arm64_syscall_ret32(syscall_case_read(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame)));
+		break;
 	case ARM64_LINUX_SYS_WRITE:
 		ret = arm64_syscall_write(frame);
 		break;
@@ -74,7 +107,16 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		ret = arm64_syscall_exit(frame, 1u);
 		break;
 	case ARM64_LINUX_SYS_SCHED_YIELD:
-		ret = syscall_case_yield();
+		ret = arm64_syscall_ret32(syscall_case_yield());
+		break;
+	case ARM64_LINUX_SYS_GETPID:
+		ret = arm64_syscall_ret32(syscall_case_getpid());
+		break;
+	case ARM64_LINUX_SYS_GETPPID:
+		ret = arm64_syscall_ret32(syscall_case_getppid());
+		break;
+	case ARM64_LINUX_SYS_GETTID:
+		ret = arm64_syscall_ret32(syscall_case_gettid());
 		break;
 	default:
 		ret = (uint64_t)-38;

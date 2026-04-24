@@ -155,6 +155,15 @@ int arch_process_build_user_stack(arch_aspace_t aspace,
 	(void)aspace;
 	pmm_mark_used(ARM64_INIT_STACK_BASE,
 	              ARM64_INIT_STACK_TOP - ARM64_INIT_STACK_BASE);
+	for (uintptr_t addr = ARM64_INIT_STACK_BASE; addr < ARM64_INIT_STACK_TOP;
+	     addr += PAGE_SIZE) {
+		if (arch_mm_map(aspace,
+		                addr,
+		                addr,
+		                ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ |
+		                    ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER) != 0)
+			return -1;
+	}
 	page = (uint8_t *)ARM64_INIT_STACK_BASE;
 	k_memset(page, 0, ARM64_INIT_STACK_TOP - ARM64_INIT_STACK_BASE);
 	page_end = (uint8_t *)ARM64_INIT_STACK_TOP;
