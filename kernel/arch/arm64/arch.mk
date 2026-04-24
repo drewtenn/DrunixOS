@@ -26,6 +26,8 @@ ARM_KOBJS := kernel/arch/arm64/boot.o \
              kernel/mm/pmm_core.arm64.o \
              kernel/arch/arm64/timer.o \
              kernel/arch/arm64/uart.o \
+             kernel/arch/arm64/rootfs.o \
+             kernel/arch/arm64/rootfs_blob.o \
              kernel/arch/arm64/start_kernel.o \
              kernel/lib/kprintf.arm64.o \
              kernel/lib/kstring.arm64.o
@@ -120,6 +122,27 @@ build/arm64-smoke-user.elf: build/arm64-smoke-user.o
 	$(ARM_LD) -nostdlib -e _start -Ttext 0x200000 -o $@ $<
 
 kernel/arch/arm64/proc/smoke_blob.o: kernel/arch/arm64/proc/smoke_blob.S build/arm64-smoke-user.elf
+	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
+
+build/arm64init.o: user/arm64init.c user/lib/syscall_arm64.h
+	@mkdir -p $(dir $@)
+	$(ARM_CC) $(ARM_CFLAGS) -I user/lib -c $< -o $@
+
+build/crt0_arm64.o: user/lib/crt0_arm64.S
+	@mkdir -p $(dir $@)
+	$(ARM_CC) $(ARM_CFLAGS) -c $< -o $@
+
+build/syscall_arm64.o: user/lib/syscall_arm64.c user/lib/syscall_arm64.h
+	@mkdir -p $(dir $@)
+	$(ARM_CC) $(ARM_CFLAGS) -I user/lib -c $< -o $@
+
+build/arm64init.elf: build/crt0_arm64.o build/syscall_arm64.o build/arm64init.o
+	$(ARM_LD) -nostdlib -e _start -Ttext 0x00400000 -o $@ $^
+
+build/arm64-root.fs: build/arm64init.elf tools/mkfs.py
+	$(PYTHON) tools/mkfs.py $@ 32768 build/arm64init.elf bin/arm64init
+
+kernel/arch/arm64/rootfs_blob.o: kernel/arch/arm64/rootfs_blob.S build/arm64-root.fs
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
 
 QEMU_ARM ?= qemu-system-aarch64

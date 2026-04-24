@@ -120,7 +120,7 @@ FS_SECTORS     := $(shell expr $(DISK_SECTORS) - $(PARTITION_START))
 include user/programs.mk
 USER_PROGS    := $(PROGS)
 USER_BINS     := $(addprefix user/,$(USER_PROGS))
-USER_RUNTIME_HEADERS := $(wildcard user/lib/*.h)
+USER_RUNTIME_HEADERS := $(filter-out user/lib/syscall_arm64.h,$(wildcard user/lib/*.h))
 USER_RUNTIME_SYSROOT := $(foreach hdr,$(USER_RUNTIME_HEADERS),$(hdr) usr/include/$(notdir $(hdr))) \
                         user/lib/tcc_crt0.o usr/lib/drunix/crt0.o \
                         user/lib/libc.a usr/lib/drunix/libc.a \
@@ -480,6 +480,7 @@ clean:
 	find kernel -name '*.o' -delete
 	find kernel -name '*.d' -delete
 	$(RM) *.elf kernel8.img core.* disk.fs dufs.fs disk-ext3w.fs disk-ext3-host.fs $(ROOT_DISK_IMG) $(DUFS_IMG) $(TEST_IMAGES) os.iso $(ISO_KERNEL) $(ISO_KERNEL_VGA) iso/boot/grub/grub.cfg "$(PDF)" "$(EPUB)" $(SENTINELS) $(ARM_SERIAL_LOG)
+	$(RM) build/arm64init.o build/crt0_arm64.o build/syscall_arm64.o build/arm64init.elf build/arm64-root.fs
 	$(RM) $(RUN_LOGS) $(TEST_LOGS) build/ext3-host.txt
 	rm -rf build/busybox
 	rm -rf build/nano
@@ -516,7 +517,7 @@ kernel8.img: kernel-arm64.elf
 
 kernel: kernel-arm64.elf
 
-build: kernel-arm64.elf kernel8.img $(ARM_COMPILE_ONLY_OBJS)
+build: kernel-arm64.elf kernel8.img build/arm64-root.fs $(ARM_COMPILE_ONLY_OBJS)
 
 iso: kernel8.img
 
@@ -572,6 +573,7 @@ clean:
 	find kernel -name '*.o' -delete
 	find kernel -name '*.d' -delete
 	$(RM) *.elf kernel8.img core.* disk.fs dufs.fs disk-ext3w.fs disk-ext3-host.fs $(ROOT_DISK_IMG) $(DUFS_IMG) $(TEST_IMAGES) os.iso $(ISO_KERNEL) $(ISO_KERNEL_VGA) iso/boot/grub/grub.cfg "$(PDF)" "$(EPUB)" $(SENTINELS) $(ARM_SERIAL_LOG)
+	$(RM) build/arm64init.o build/crt0_arm64.o build/syscall_arm64.o build/arm64init.elf build/arm64-root.fs
 	$(RM) $(RUN_LOGS) $(TEST_LOGS) build/ext3-host.txt
 	rm -rf build/busybox
 	rm -rf build/nano

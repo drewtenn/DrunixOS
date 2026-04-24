@@ -20,12 +20,6 @@ FORBIDDEN = {
     ],
 }
 
-LATE_FORBIDDEN = {
-    ROOT / "kernel/arch/arm64/start_kernel.c": [
-        r"\barm64_user_smoke_boot\s*\(\s*\)",
-    ],
-}
-
 REQUIRED = {
     ROOT / "kernel/kernel.c": [
         r"\bboot_launch_init_process\s*\(",
@@ -58,6 +52,50 @@ LATE_REQUIRED = {
         r"\brootfs_blob\.o\b",
         r"\barm64init\.elf\b",
         r"\barm64-root\.fs\b",
+    ],
+}
+
+TASK5_REQUIRED = {
+    ROOT / "kernel/arch/arm64/rootfs.c": [
+        r"\barm64_rootfs_register\b",
+        r"\barm64_rootfs_read_sector\b",
+        r"\blba\s*>=\s*sectors\b",
+        r"\bblkdev_register_disk\b",
+    ],
+    ROOT / "kernel/arch/arm64/rootfs.h": [
+        r"\barm64_rootfs_register\s*\(",
+    ],
+    ROOT / "kernel/arch/arm64/rootfs_blob.S": [
+        r"\barm64_rootfs_start\b",
+        r"\barm64_rootfs_end\b",
+        r'\.incbin\s+"build/arm64-root\.fs"',
+    ],
+    ROOT / "user/arm64init.c": [
+        r"\barm64_sys_write\s*\(",
+        r"ARM64 init: entered\\n",
+        r"ARM64 init: pass\\n",
+    ],
+    ROOT / "user/lib/crt0_arm64.S": [
+        r"\b_start\b",
+        r"\bmov\s+x8,\s*#93\b",
+        r"\bsvc\s+#0\b",
+    ],
+    ROOT / "user/lib/syscall_arm64.c": [
+        r"\barm64_sys_write\s*\(",
+        r"\bregister\s+long\s+x8\b",
+        r"\bsvc\s+#0\b",
+    ],
+    ROOT / "user/lib/syscall_arm64.h": [
+        r"\barm64_sys_write\s*\(",
+    ],
+    ROOT / "kernel/arch/arm64/arch.mk": [
+        r"\brootfs\.o\b",
+        r"\brootfs_blob\.o\b",
+        r"\barm64init\.elf\b",
+        r"\barm64-root\.fs\b",
+    ],
+    ROOT / "Makefile": [
+        r"(?m)^build:\s+kernel-arm64\.elf\s+kernel8\.img\s+build/arm64-root\.fs\s+\$\(ARM_COMPILE_ONLY_OBJS\)",
     ],
 }
 
@@ -213,12 +251,27 @@ def check(table, predicate, label):
 
 def check_late_phase7_boundaries():
     rootfs_path = ROOT / "kernel/arch/arm64/rootfs.c"
+    start_path = ROOT / "kernel/arch/arm64/start_kernel.c"
 
     if not rootfs_path.exists():
         return
 
     check(LATE_REQUIRED, lambda m: not m, "missing")
-    check(LATE_FORBIDDEN, bool, "forbidden")
+    start_text = read_source(start_path)
+    if not re.search(r"\bboot_launch_init_process\s*\(", start_text):
+        return
+    fallback_blocks = (
+        r"(?ms)#\s*if\s+DRUNIX_ARM64_SMOKE_FALLBACK\b"
+        r".*?\barm64_user_smoke_boot\s*\(\s*\).*?"
+        r"#\s*endif"
+    )
+    unguarded_text = re.sub(fallback_blocks, "", start_text)
+    if re.search(r"\barm64_user_smoke_boot\s*\(\s*\)", unguarded_text):
+        print(
+            f"forbidden: {start_path.relative_to(ROOT)} unguarded arm64_user_smoke_boot",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
 
 def extract_make_variable(text, name):
@@ -261,7 +314,11 @@ def check_arm64_shared_runtime_linkage():
 
     makefile = ROOT / "Makefile"
     make_text = read_source(makefile)
-    if not re.search(r"(?m)^build:\s+kernel-arm64\.elf\s+kernel8\.img\s+\$\(ARM_COMPILE_ONLY_OBJS\)", make_text):
+    if not re.search(
+        r"(?m)^build:\s+kernel-arm64\.elf\s+kernel8\.img\s+"
+        r"(?:build/arm64-root\.fs\s+)?\$\(ARM_COMPILE_ONLY_OBJS\)",
+        make_text,
+    ):
         print(
             f"missing: {makefile.relative_to(ROOT)} ARM64 build compile-only dependency",
             file=sys.stderr,
@@ -275,5 +332,6 @@ check_init_launch_body()
 check_process_create_file_body()
 check_arm64_user_stack_body()
 check_arm64_shared_runtime_linkage()
+check(TASK5_REQUIRED, lambda m: not m, "missing")
 check_late_phase7_boundaries()
 print("phase7 boundary guard passed")
