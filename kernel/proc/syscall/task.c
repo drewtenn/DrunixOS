@@ -33,7 +33,8 @@ uint32_t SYSCALL_NOINLINE syscall_case_exit_exit_group(uint32_t exit_group,
 	schedule();
 	__builtin_unreachable();
 }
-#else
+#endif
+
 static int linux_wait_child_matches(const process_t *cur,
                                     const process_t *child,
                                     int32_t selector)
@@ -537,6 +538,10 @@ uint32_t SYSCALL_NOINLINE syscall_case_set_tid_address(void)
 
 uint32_t SYSCALL_NOINLINE syscall_case_drunix_modload(uint32_t ebx)
 {
+#ifdef __aarch64__
+	(void)ebx;
+	return (uint32_t)-1;
+#else
 	{
 		/*
          * ebx = pointer to null-terminated module filename in user space.
@@ -574,8 +579,10 @@ uint32_t SYSCALL_NOINLINE syscall_case_drunix_modload(uint32_t ebx)
 			return ret;
 		}
 	}
+#endif
 }
 
+#ifndef __aarch64__
 uint32_t SYSCALL_NOINLINE syscall_case_exit_exit_group(uint32_t exit_group,
                                                        uint32_t ebx)
 {
@@ -594,6 +601,7 @@ uint32_t SYSCALL_NOINLINE syscall_case_exit_exit_group(uint32_t exit_group,
 	schedule();
 	__builtin_unreachable();
 }
+#endif
 
 uint32_t SYSCALL_NOINLINE syscall_case_waitpid(uint32_t ebx,
                                                uint32_t ecx,
@@ -624,4 +632,3 @@ uint32_t SYSCALL_NOINLINE syscall_case_wait4(uint32_t ebx,
 		return syscall_wait_common(ebx, ecx, edx, esi);
 	}
 }
-#endif

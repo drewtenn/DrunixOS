@@ -58,6 +58,7 @@ int main(void)
 	unsigned char rtoldmask[8];
 	unsigned int sigmask;
 	int pipefds[2];
+	int status;
 	char pipec;
 	long brk0;
 	long map;
@@ -199,6 +200,15 @@ int main(void)
 	    oldsigact[0] != 1)
 		return fail_msg("ARM64 syscall: fail rt sigaction\n", 33);
 	put("ARM64 syscall: signal ok\n", 25);
+
+	if (arm64_sys_clone(0x00000800u | 17u, 0, 0, 0, 0) != -22)
+		return fail_msg("ARM64 syscall: fail clone validation\n", 37);
+	status = 0;
+	if (arm64_sys_wait4(-1, &status, 1, 0) != -1)
+		return fail_msg("ARM64 syscall: fail wait4 empty\n", 32);
+	if (arm64_sys_execve("/missing-arm64-exec", 0, 0) != -1)
+		return fail_msg("ARM64 syscall: fail exec missing\n", 33);
+	put("ARM64 syscall: process ok\n", 26);
 
 	if (arm64_sys_openat(-100, "/missing-arm64-syscall", 0, 0) >= 0)
 		return fail();

@@ -49,5 +49,14 @@ long arm64_sys_mmap(void *addr,
                     unsigned long offset);
 long arm64_sys_munmap(void *addr, unsigned long len);
 long arm64_sys_mprotect(void *addr, unsigned long len, int prot);
+long arm64_sys_clone(unsigned long flags,
+                     void *child_stack,
+                     void *parent_tid,
+                     void *tls,
+                     void *child_tid);
+long arm64_sys_execve(const char *path,
+                      char *const argv[],
+                      char *const envp[]);
+long arm64_sys_wait4(int pid, int *status, int options, void *rusage);
 
 #endif

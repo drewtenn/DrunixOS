@@ -255,3 +255,30 @@ long arm64_sys_mprotect(void *addr, unsigned long len, int prot)
 {
 	return arm64_syscall3(226, (long)addr, (long)len, prot);
 }
+
+long arm64_sys_clone(unsigned long flags,
+                     void *child_stack,
+                     void *parent_tid,
+                     void *tls,
+                     void *child_tid)
+{
+	return arm64_syscall6(220,
+	                      (long)flags,
+	                      (long)child_stack,
+	                      (long)parent_tid,
+	                      (long)tls,
+	                      (long)child_tid,
+	                      0);
+}
+
+long arm64_sys_execve(const char *path,
+                      char *const argv[],
+                      char *const envp[])
+{
+	return arm64_syscall3(221, (long)path, (long)argv, (long)envp);
+}
+
+long arm64_sys_wait4(int pid, int *status, int options, void *rusage)
+{
+	return arm64_syscall4(260, pid, (long)status, options, (long)rusage);
+}
