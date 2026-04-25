@@ -12,7 +12,7 @@ That does not mean Drunix imports a hosted C++ environment. A hosted environment
 
 ### The Freestanding C++ Contract
 
-The first C++ milestone was deliberately narrow: prove one C++ binary first, then move ordinary utilities over once the runtime behaved. The long-term contract is not "everything must become C++", though. Drunix keeps both runtime lanes first-class. User programs can be written in C or in a freestanding subset of C++ and built as ordinary **DUFS** (Drunix's native filesystem) binaries. The kernel remains C and assembly. The syscall ABI remains the same `int 0x80` contract from Chapter 16. The process loader still sees an ELF executable with one entry point and a conventional user stack.
+The first C++ milestone was deliberately narrow: prove one C++ binary first, then move ordinary utilities over once the runtime behaved. The long-term contract is not "everything must become C++", though. Drunix keeps both runtime lanes first-class. User programs can be written in C or in a freestanding subset of C++ and built as ordinary **DUFS** (Drunix's native filesystem) binaries. The kernel remains C and assembly. The syscall ABI remains the same architecture-specific software-interrupt contract from Chapter 16. The process loader still sees an ELF executable with one entry point and a conventional user stack.
 
 The supported subset covers the parts that are useful immediately:
 
@@ -56,7 +56,7 @@ C++ support sits on top of the C user runtime rather than beside it. The same sy
 
 ![](diagrams/ch30-diag02.svg)
 
-The bottom layer is still the kernel ABI: `int 0x80`, file descriptors, `SYS_BRK`, and the same process model every user program uses. Above that sits the C runtime from Chapters 20 and 21: `_start`, syscall wrappers, `malloc`, `free`, `stdio`, strings, and POSIX-style adapters. C programs link this layer directly. The C++ support layer is additive by comparison: constructor and destructor runners, allocation operators, and ABI hooks. C++ programs such as `cpphello`, `cat`, `grep`, and `sort` link the C runtime plus that C++ layer into single static executables.
+The bottom layer is still the kernel ABI: the architecture-specific syscall instruction, file descriptors, `SYS_BRK`, and the same process model every user program uses. Above that sits the C runtime from Chapters 20 and 21: `_start`, syscall wrappers, `malloc`, `free`, `stdio`, strings, and POSIX-style adapters. C programs link this layer directly. The C++ support layer is additive by comparison: constructor and destructor runners, allocation operators, and ABI hooks. C++ programs such as `cpphello`, `cat`, `grep`, and `sort` link the C runtime plus that C++ layer into single static executables.
 
 This layering keeps C programs boring. The shell and `chello` link through the C path. The converted utilities link through the C++ path and include the C++ runtime objects explicitly. Empty constructor and destructor ranges are no-ops for programs that do not define global C++ objects, so the extra startup hooks do not change the C calling convention, the process stack, or the syscall path.
 

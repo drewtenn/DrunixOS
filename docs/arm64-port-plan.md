@@ -224,9 +224,10 @@ and address-space assumptions must stay behind the architecture boundary.
 
 ## Relationship to the existing book
 
-The book chapters `ch01`–`ch30` describe the x86 kernel as-is.  They
-stay authoritative for the x86 target.  A new `ch31-aarch64-bringup.md`
-lands alongside the Milestone 1 implementation and covers the AArch64
-boot flow, EL demotion, mini-UART, exception vectors, and the Generic
-Timer.  Follow-on milestones add chapters in the normal way per
-`docs/contributing/docs.md`.
+The book is written arch-neutrally: every chapter explains the OS concept first
+and then folds in per-architecture mechanics for both x86 and AArch64.
+Subsystems that exist on x86 but have not yet landed on AArch64 are still
+discussed at the concept level today, with AArch64 specifics carried under a
+*"On AArch64 (planned, milestone N)"* marker that is removed when the
+milestone lands.  See `docs/superpowers/specs/2026-04-24-book-architecture-neutral-design.md`
+for the design.

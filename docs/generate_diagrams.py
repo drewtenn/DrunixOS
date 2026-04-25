@@ -153,11 +153,13 @@ DIAGRAM_BUCKETS = {
     'ch01-diag01.svg': 'snapshot',
     'ch01-diag02.svg': 'layout',
     'ch01-diag03.svg': 'layout',
+    'ch01-diag04.svg': 'snapshot',
     # Chapter 2
     # Chapter 3
     'ch03-diag01.svg': 'grid_snapshot',
     # Chapter 4
     'ch04-diag01.svg': 'layout',
+    'ch04-diag02.svg': 'table',
     # Chapter 5
     'ch05-diag01.svg': 'handoff_path',
     'ch05-diag02.svg': 'comparison',
@@ -170,6 +172,7 @@ DIAGRAM_BUCKETS = {
     'ch08-diag05.svg': 'comparison',
     'ch08-diag06.svg': 'layout',
     'ch08-diag07.svg': 'walk',
+    'ch08-diag08.svg': 'walk',
     # Chapter 9
     'ch09-diag01.svg': 'tagged_transcript',
     'ch09-diag02.svg': 'tagged_transcript',
@@ -195,6 +198,7 @@ DIAGRAM_BUCKETS = {
     'ch15-diag04.svg': 'comparison',
     # Chapter 16
     'ch16-diag01.svg': 'handoff_path',
+    'ch16-diag02.svg': 'layout',
     # Chapter 17
     # Chapter 18
     'ch18-diag01.svg': 'handoff_path',
@@ -204,6 +208,7 @@ DIAGRAM_BUCKETS = {
     'ch19-diag02.svg': 'layout',
     # Chapter 20
     'ch20-diag01.svg': 'handoff_path',
+    'ch20-diag02.svg': 'layout',
     # Chapter 21
     'ch21-diag01.svg': 'layer_stack',
     # Chapter 22
@@ -1599,6 +1604,8 @@ stack(Path('ch01-diag02.svg'),'Entry stack after _start pushes Multiboot values'
  ('Initial ESP','Stack pointer undefined on entry','blue'),('EBX','Multiboot info pointer, 2nd argument','blue'),('EAX','Multiboot magic number, 1st argument','blue')],h=290)
 stack(Path('ch01-diag03.svg'),'Kernel image layout','Sections grow upward from the load address, so the boot header sits at the lowest address.',[
  ('zeroed data','uninitialized globals, memory bitmap, kernel stack','gray'),('writable data','mutable global values','blue'),('read-only data','constant values','green'),('kernel code','executable instructions','amber'),('boot header','GRUB header, first 8 KB','blue')],h=310,top_note='higher addresses',bottom_note='lower addresses (kernel loaded at 0x100000)')
+flow(Path('ch01-diag04.svg'),'AArch64 entry state','Register and privilege state when the primary core reaches the EL1 continuation after eret.',[
+ ('Exception level','EL1 (dropped from EL2 via eret)','green'),('PC','kernel EL1 entry point (0x80000 + offset)','amber'),('SP_EL1','top of kernel stack region','blue'),('Secondary cores','parked in spin loop','gray')])
 # Chapter 2
 # Chapter 3
 grid_snapshot(
@@ -1629,6 +1636,18 @@ grid_snapshot(
 )
 # Chapter 4
 stack(Path('ch04-diag01.svg'),'Interrupt frame on the kernel stack','The trampoline saves one uniform frame before handing control to C.',[('Saved user stack','Only present on a ring-3 to ring-0 entry','gray'),('Interrupt return frame','Saved EFLAGS, CS, and EIP','green'),('Vector and error code','Raw interrupt identity and optional error detail','amber'),('General-purpose registers','Snapshot taken by pusha','blue'),('Segment registers','Saved DS, ES, FS, and GS','blue'),('Handler argument','Pointer to the saved frame passed to C','green')],h=372)
+table(
+    Path('ch04-diag02.svg'),
+    'AArch64 exception vector table',
+    'Sixteen 128-byte slots arranged as four exception classes across four contexts, addressed relative to VBAR_EL1.',
+    ['Context', 'Synchronous', 'IRQ', 'FIQ', 'SError'],
+    [
+        ('Current EL, SP_EL0', '0x000', '0x080', '0x100', '0x180'),
+        ('Current EL, SP_ELx', '0x200', '0x280', '0x300', '0x380'),
+        ('Lower EL, AArch64',  '0x400', '0x480', '0x500', '0x580'),
+        ('Lower EL, AArch32',  '0x600', '0x680', '0x700', '0x780'),
+    ],
+)
 # Chapter 5
 flow(Path('ch05-diag01.svg'),'Interrupt dispatch path','A hardware interrupt is turned into a driver callback inside the kernel.',[('Device interrupt','Timer or keyboard event','blue'),('Interrupt controller','CPU vector assignment','green'),('IRQ trampoline','Saved registers and interrupt frame','amber'),('Interrupt dispatcher','Handler lookup and EOI','blue'),('Driver callback','Device-specific handler code','green')],h=420)
 compare_timelines(Path('ch05-diag02.svg'),'RTC seed and PIT upkeep','Boot reads the hardware clock once; runtime keeps time by counting timer ticks.', 'Boot', [('Read RTC', 'stable calendar sample', 'blue'), ('Decode fields', 'convert from BCD if needed', 'green'), ('Seed Unix time', 'initial seconds counter', 'amber')], 'Runtime', [('Timer tick', '100 Hz IRQ 0', 'blue'), ('Count to 100', 'subsecond accumulator', 'green'), ('Add one second', 'advance Unix time', 'amber')], preferred_w=150, gap=18, row_gap=42, h=360)
@@ -1651,6 +1670,7 @@ compare_segments(Path('ch08-diag04.svg'),'Heap split on allocation','Allocation 
 compare_segments(Path('ch08-diag05.svg'),'Heap coalescing','Coalescing is another before/after change: adjacent free neighbours become one larger reusable block.', 'Before', [('Free block A', '64 B', 'green', 2), ('Free block B', '32 B', 'green', 1), ('Free block C', '128 B', 'green', 4)], 'After', [('Merged block', '256 B plus absorbed headers', 'amber', 7)], h=332)
 stack(Path('ch08-diag06.svg'),'Slab page layout','Each slab page starts with metadata, then packs fixed-size object slots.',[('page header','next pointer, free count, free-list head','blue'),('object slot 0','','green'),('object slot 1','','green'),('more object slots','','green'),('unused padding','space smaller than one full object','gray')],h=320)
 flow(Path('ch08-diag07.svg'),'Slab free list','Each free slot points at the next one, starting from the free-list head.',[('free-list head','','amber'),('free slot 0','','green'),('free slot 1','','green'),('last free slot','','green'),('end of list','','gray')],h=245)
+flow(Path('ch08-diag08.svg'),'AArch64 4-level translation walk','A 48-bit virtual address is split into five fields; the MMU follows four levels of page tables to reach the final 4 KB frame.',[('L0 table (TTBR1)','VA bits 47-39, 9-bit index','blue'),('L1 table','VA bits 38-30, 9-bit index','green'),('L2 table','VA bits 29-21, 9-bit index','amber'),('L3 table','VA bits 20-12, 9-bit index','blue'),('4 KB page + offset','VA bits 11-0, 12-bit byte offset','green')],h=420)
 # Chapter 9
 tagged_transcript(Path('ch09-diag01.svg'), 'Kernel log format', 'Each log line starts with a subsystem tag, then the human-readable message.',
                   [('MEM', 'free pages: 31500'), ('DISK', 'drive ready'), ('FILES', 'filesystem mounted'), ('FAULT', 'page-fault exception')], h=258)
@@ -1765,6 +1785,7 @@ stack(Path('ch15-diag03.svg'),'Initial user stack','The kernel builds argument s
 flow(Path('ch15-diag04.svg'),'Forked kernel stacks','The child gets a copied trap frame with the return value changed to zero.',[('parent frame','parent sees child id','blue'),('copied frame','same saved state','green'),('child frame','child sees zero','amber'),('two returns','parent and child continue','blue')],h=285)
 # Chapter 16
 compare_timelines(Path('ch16-diag01.svg'),'System call handoff','User mode loads registers and traps; kernel mode saves a frame, dispatches the handler, then returns through `iret`.', 'User mode', [('Load registers', '`EAX` number, other args', 'blue'), ('`int 0x80`', 'controlled ring transition', 'amber'), ('Resume', 'return value restored in `EAX`', 'green')], 'Kernel mode', [('Trap gate entry', 'switch to the kernel stack', 'blue'), ('Save syscall frame', 'preserve user registers', 'green'), ('Dispatch handler', 'choose by syscall number', 'amber'), ('`iret`', 'restore saved user state', 'green')], preferred_w=138, gap=16, row_gap=40, h=372)
+stack(Path('ch16-diag02.svg'),'AArch64 syscall trap frame','On syscall entry the exception stub saves the full register file onto the kernel stack; `eret` restores it on return.',[('SPSR_EL1','saved processor status; encodes EL0 on return','blue'),('ELR_EL1','return address; instruction after `svc #0`','blue'),('SP_EL0','user-mode stack pointer','green'),('x30 (LR)','link register','gray'),('x29 (FP)','frame pointer','gray'),('x28–x19','callee-saved general-purpose registers (10 slots)','gray'),('x18','platform register','gray'),('x17–x16','inter-procedure-call scratch registers','gray'),('x15–x9','caller-saved general-purpose registers','gray'),('x8','syscall number on entry','amber'),('x7–x6','caller-saved (unused for syscall args)','gray'),('x5','fifth argument','green'),('x4','fourth argument','green'),('x3','third argument','green'),('x2','second argument','green'),('x1','first argument','green'),('x0','first argument on entry; return value on exit','amber')],top_note='lower addresses (top of frame)',bottom_note='higher addresses (frame base)')
 # Chapter 17
 # Chapter 18
 flow(Path('ch18-diag01.svg'),'Keyboard to terminal path','A keypress is decoded, queued in the terminal buffer, and eventually copied to user space.',[('keyboard interrupt','raw scancode from hardware','blue'),('key decoder','turn scancode into a character','green'),('terminal input buffer','raw or line-buffered queue','amber'),('wake blocked reader','reader can run again','blue'),('user read returns','copy bytes to user space','green')],h=380)
@@ -1790,6 +1811,7 @@ flow(Path('ch19-diag01.svg'),'Signal lifecycle','Signals are marked pending, the
 stack(Path('ch19-diag02.svg'),'Signal frame','The kernel saves user context, then builds a small frame to enter the signal handler.',[('return helper','where the handler returns','amber'),('signal number','argument passed to the handler','blue'),('saved user context','state restored after the handler finishes','green'),('resume helper','tiny code that asks the kernel to continue','gray')],h=310)
 # Chapter 20
 timeline(Path('ch20-diag01.svg'),'User runtime entry','The kernel prepares the initial stack, `_start` turns that frame into a C call to `main`, and the return value flows to `exit`.',[('initial user stack','kernel writes argc, argv, and envp','blue'),('`_start`','store `environ`, then call `main`','green'),('`main(argc, argv, envp)`','run user code','amber'),('`sys_exit(ret)`',"return `main`'s value to the kernel",'blue')], preferred_w=140, gap=16, h=332)
+stack(Path('ch20-diag02.svg'),'AArch64 initial user stack','SP points to argc; argv and envp pointer arrays follow, then auxv entries, then the raw string data.',[('argc','argument count (64-bit word)','blue'),('argv[0]','pointer to program-name string','green'),('argv[1] … argv[argc-1]','pointers to remaining argument strings','green'),('argv NULL terminator','NULL marks end of argv array','gray'),('envp[0] … envp[n-1]','pointers to environment strings','amber'),('envp NULL terminator','NULL marks end of envp array','gray'),('AT_PHDR … auxv entries','key–value pairs: page size, capabilities, vDSO address, …','blue'),('AT_NULL terminator','type 0 marks end of auxv','gray'),('string data','argument and environment strings, raw bytes','green')],top_note='lower addresses — initial SP points here (argc)',bottom_note='higher addresses')
 # Chapter 21
 stack(Path('ch21-diag01.svg'),'C library layers','Higher library pieces are built on top of simpler helper layers.',[('stream I/O layer','formatted input and output helpers','blue'),('utility layer','general helpers built on strings and kernel calls','green'),('character helpers','tests and transforms single characters','gray'),('string helpers','copy, compare, and scan strings','gray'),('kernel-call wrapper','thin layer over the kernel ABI','amber')],h=300)
 # Chapter 22

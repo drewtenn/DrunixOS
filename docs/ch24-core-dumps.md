@@ -64,12 +64,16 @@ typedef struct __attribute__((packed)) {
     core_timeval_t pr_stime;   /* system time (zeroed)        */
     core_timeval_t pr_cutime;
     core_timeval_t pr_cstime;
-    elf_gregset_t  pr_reg;     /* 17 general-purpose registers */
+    elf_gregset_t  pr_reg;     /* architecture-defined register set */
     int32_t        pr_fpvalid;
 } core_prstatus_t;
 ```
 
-The seventeen general-purpose registers in `pr_reg` are written in a specific order that matches the Linux i386 `user_regs_struct` layout, which is what GDB expects:
+The `pr_reg` field — the general-purpose register set — is where the two supported architectures diverge. Everything else in `core_prstatus_t` is portable across architectures; only the register snapshot inside `pr_reg` has a layout that is specific to the CPU.
+
+#### On x86: i386 register set in NT_PRSTATUS
+
+On x86, the seventeen general-purpose registers in `pr_reg` are written in the order that matches the Linux i386 `user_regs_struct` layout, which is what GDB expects when it opens a 32-bit core file:
 
 | Index | Register |
 |-------|----------|
@@ -92,6 +96,12 @@ The seventeen general-purpose registers in `pr_reg` are written in a specific or
 | 16 | SS |
 
 These values are drawn directly from the saved crash frame (`proc->crash.frame`), which was copied from the CPU's interrupt frame before any cleanup took place.
+
+#### On AArch64: AArch64 register set in NT_PRSTATUS
+
+*On AArch64 (planned, milestone 4): the per-arch register layout follows the AArch64 ELF ABI — `x0`–`x30`, `SP`, `PC`, `PSTATE`.*
+
+The AArch64 ELF ABI defines thirty-three slots in the register snapshot: the thirty-one general-purpose integer registers `x0` through `x30` (where `x30` doubles as the link register), the stack pointer `SP`, the program counter `PC`, and the processor state register `PSTATE`. GDB and LLDB both expect these registers in that order when opening a 64-bit AArch64 core file. The crash frame captured by the AArch64 exception handler will already hold all of these values in the same sequence used by the kernel's exception entry path, so filling `pr_reg` is a direct copy with no reordering needed.
 
 **NT_PRPSINFO (type 3)** is the process information note. Its descriptor is a 124-byte structure matching Linux's `elf_prpsinfo` for 32-bit targets:
 
@@ -158,4 +168,6 @@ After all data is written, the filesystem's flush step ensures the data reaches 
 
 When a process dies from an unhandled fatal signal and a crash frame was recorded, we now write a fully-formed ELF core file to disk before discarding the process. The file contains two Linux-compatible `CORE` notes — `NT_PRSTATUS` with register and signal context, and `NT_PRPSINFO` with process identity — plus three `DRUNIX` text notes mirroring `/proc/<pid>/vmstat`, `/proc/<pid>/fault`, and `/proc/<pid>/maps`. These are followed by the raw bytes of every user-space page that was mapped at the moment of the fault.
 
-The `process_t` descriptor carries two new fields — `name` and `psargs` — populated at process-creation time so the information is available regardless of what the process did to its own stack before crashing. The file format is layout-compatible with Linux's 32-bit core format, so standard tools such as GDB can load the file and restore the full crash context without any modification.
+The portable outer shell of `NT_PRSTATUS` is identical across architectures. The only per-arch part is the `pr_reg` register snapshot inside it: on x86 the kernel writes seventeen registers in the i386 `user_regs_struct` order; on AArch64 (planned, milestone 4) it will write thirty-three registers following the AArch64 ELF ABI ordering of `x0`–`x30`, `SP`, `PC`, and `PSTATE`.
+
+The `process_t` descriptor carries two new fields — `name` and `psargs` — populated at process-creation time so the information is available regardless of what the process did to its own stack before crashing. The file format is layout-compatible with Linux's 32-bit core format on x86, so standard tools such as GDB can load the file and restore the full crash context without any modification.

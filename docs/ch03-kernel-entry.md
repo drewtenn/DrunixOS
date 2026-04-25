@@ -36,9 +36,25 @@ The last stretch launches the first user program. The scheduler table is cleared
 
 At the userspace-smoke milestone, arm64 now boots to a serial console and can launch a built-in EL0 smoke-test process using Linux/AArch64 syscall conventions. The interactive shell remains an x86-only path until the following phase. On the filesystem-init path, that following ARM64 work mounts an embedded DUFS root filesystem and launches `/bin/arm64init` as PID 1, while the smoke-test image remains available as an explicit fallback.
 
-### Why the Screen Driver Matters So Early
+### Why the First Console Matters So Early
 
-All the way through that sequence, the kernel keeps printing status lines. Early boot still relies on the **VGA** (Video Graphics Array) text buffer because it is simple, fixed, and available before any dynamic display setup. The VGA text buffer is the one display mechanism available immediately after boot, before any graphics drivers exist. It is simple enough to use from assembly and is our first output path. Later in `start_kernel`, after memory management and the filesystem are ready, the kernel switches the user-facing shell into a desktop surface. If GRUB supplied a usable 32-bit RGB linear framebuffer, that desktop is presented as pixels; otherwise it falls back to the VGA text buffer.
+All the way through that sequence, the kernel keeps printing status lines. This might seem like a minor detail — printing text is about the least glamorous part of building an operating system — but it is actually the most important tool we have at this stage. Every future subsystem gets debugged through text output. Without a working console, the kernel is blind.
+
+Every architecture faces the same predicament: before memory management, filesystems, or a scheduler exist, there must be one reliable output path. The mechanism differs between architectures, but the requirement is universal. Here is how the two paths we follow solve it:
+
+- **x86 PC**: The VGA text buffer at `0xB8000` is a region of physical memory the display hardware continuously reads and renders as an 80-column by 25-row grid. Writing bytes there produces characters on screen with no driver stack, no interrupt, and no setup beyond a few port writes to manage the cursor. It is available immediately after boot.
+
+- **AArch64 (raspi3b)**: The BCM2835 mini-UART — the **BCM2835** is the system-on-chip used in the Raspberry Pi 3, and the **mini-UART** is its lightweight built-in serial interface — becomes our first console after a short register-programming sequence. It is simpler than VGA, with no character grid or cursor concept: bytes go in, bytes come out as serial data. But it is just as reliable and just as available before any higher-level infrastructure exists.
+
+Both subsections below walk through the hardware details. The goal in both cases is the same: the moment our C code starts running, we want to be able to tell the developer what is happening.
+
+### On x86: VGA text buffer
+
+*This buffer and its attribute model are PC hardware; the AArch64 path reaches
+a comparable cell-grid console through a framebuffer text console driven by the
+VideoCore mailbox interface (see the platform notes appendix, ch31).*
+
+Early boot still relies on the **VGA** (Video Graphics Array) text buffer because it is simple, fixed, and available before any dynamic display setup. The VGA text buffer is the one display mechanism available immediately after boot, before any graphics drivers exist. It is simple enough to use from assembly and is our first output path. Later in `start_kernel`, after memory management and the filesystem are ready, the kernel switches the user-facing shell into a desktop surface. If GRUB supplied a usable 32-bit RGB linear framebuffer, that desktop is presented as pixels; otherwise it falls back to the VGA text buffer.
 
 The VGA text buffer is a region of physical memory at address `0xB8000`. The display hardware continuously reads from that memory and interprets it as an 80-column by 25-row grid of character cells. If we change bytes in that region, the next refresh shows different characters on the monitor. There is no higher-level protocol involved yet. The "driver" is just memory writes plus a few controller-register updates.
 
@@ -57,7 +73,7 @@ Each attribute byte is split into two colour nibbles:
 
 Given a row `r` and column `c`, the byte offset into the buffer is `2 * (r * 80 + c)`. Writing a character means placing the ASCII code at that offset and the attribute byte at the next byte. A tiny helper does exactly this pair of writes for every visible character.
 
-### The Blinking Cursor
+#### The blinking cursor
 
 The underline cursor that marks the next write position is not stored in the text buffer itself. It lives in VGA controller registers. To reach those registers, the kernel uses **I/O ports**: a second x86 address space that is separate from ordinary memory and can only be accessed with the `IN` and `OUT` instructions.
 
@@ -65,7 +81,7 @@ The VGA controller exposes two ports at `0x3D4` and `0x3D5`. Port `0x3D4` is an 
 
 Because C has no built-in syntax for `IN` or `OUT`, the kernel wraps those instructions in tiny inline-assembly helpers. From this point on, that wrapper becomes part of everyday kernel life: the VGA controller, keyboard controller, timer, real-time clock, and ATA controller all talk through I/O ports.
 
-### Printing Strings
+#### Printing strings
 
 `print_string` walks a null-terminated string one byte at a time. For each byte it either interprets a control character or draws one character cell:
 
@@ -79,11 +95,11 @@ The function also understands a small subset of ANSI colour escape sequences, so
 
 A second entry point, `print_bytes`, uses the same output path but stops after a caller-supplied byte count instead of waiting for a terminating zero byte. That matters later when the kernel needs to print arbitrary byte streams that may contain embedded `0x00` bytes.
 
-### Scrolling
+#### Scrolling
 
 Scrolling happens when the cursor would move past the final row. The kernel copies rows 1 through 24 upward into rows 0 through 23, then clears row 24 to spaces in the default colour. It performs that copy twice: once in the hardware VGA buffer at `0xB8000`, and once in the kernel's shadow copy of the screen.
 
-### The Scrollback Buffer
+#### The scrollback buffer
 
 Before the driver discards the top visible row, it saves that row into a 500-row ring buffer called `scrollback`. A ring buffer is a fixed-size array treated as a loop: when the write position reaches the end, it wraps back to the beginning and starts overwriting the oldest entries.
 
@@ -101,6 +117,30 @@ The scrollback ring holds the rows that have already disappeared off the top of 
 The integer `sb_view` says how far back the user is looking. When `sb_view` is zero, the display shows the live screen exactly as recorded in `shadow_vga`. When `sb_view` is `N`, the repaint routine takes `N` rows from scrollback history and places them above the lower `25 - N` rows from the live shadow screen. Scrolling backward and forward simply adjusts `sb_view` and redraws the hardware buffer from that combined view.
 
 A separate variable, `shadow_cursor`, tracks the logical write position even when the hardware cursor is hidden. When `sb_view` is non-zero, the driver pushes the hardware cursor off-screen so it does not appear in the middle of old history. The moment new output arrives, the driver snaps the view back to live mode, restores the visible cursor, and continues writing at `shadow_cursor`.
+
+### On AArch64: BCM2835 mini-UART
+
+Let's walk through what "first console" means on the Raspberry Pi 3 side. There is no VGA controller and no memory-mapped text buffer. The Raspberry Pi 3 is built around the **BCM2835** system-on-chip — a single integrated circuit that contains the ARM CPU cores, memory controller, graphics hardware, and a collection of peripheral blocks. One of those peripheral blocks is the **auxiliary block**, which bundles three lower-priority devices together: the mini-UART and two SPI controllers. We only care about the mini-UART.
+
+The **mini-UART** is a lightweight serial interface built into the BCM2835. "Serial" here means the simplest possible wired communication: one wire for transmitted data, one for received data, and a shared agreement about timing. Unlike VGA, there is no concept of a character grid or cursor position; bytes go in one end and come out the other. That simplicity is exactly what we want at this stage. Before memory management exists, before interrupts are configured, a serial port that just sends bytes is the most dependable narrator we can have.
+
+Bringing the mini-UART up from cold requires a short fixed sequence of register writes. We configure it before touching anything else in `start_kernel`, because if we get this right, every step that follows can announce itself.
+
+The first register write enables the **auxiliary block** itself. The BCM2835 power-gates its peripheral blocks to save energy, and the auxiliary block starts disabled. There is a single enable register for the whole block; we set the mini-UART enable bit there. Without this step, writes to any other mini-UART register go nowhere.
+
+Next, we disable the transmitter (**TX**) and receiver (**RX**) temporarily. The mini-UART has no sensible reset state when the block powers on — the line control and baud registers may hold arbitrary values from a previous run or from hardware reset — so we shut off both the transmit and receive paths before reconfiguring them. This is the same reason an electrician turns off the breaker before rewiring a circuit: we do not want the hardware acting on half-configured state.
+
+With TX and RX off, we select **8-bit mode**. The mini-UART supports 7-bit or 8-bit character framing. We choose 8-bit because every character in our kernel's output path is a full byte; 7-bit mode would silently truncate the high bit of any character outside the lower ASCII range.
+
+Then we set the **baud divisor** — the number that controls how fast the serial line clocks bits. The BCM2835 mini-UART derives its clock from the system clock, and we divide that frequency down to `115200` bits per second, the conventional default for serial debugging. The divisor value is `(system_clock_hz / (8 * 115200)) - 1`; on the `raspi3b` QEMU model the system clock runs at a fixed frequency, so this resolves to a small integer we write directly into the baud-rate register.
+
+The GPIO step is the one that surprises people who have not worked with physical peripherals before. **GPIO** stands for General-Purpose Input/Output — a set of pins on the chip that can each be wired to one of several internal functions or left as plain digital I/O. The mini-UART's TX and RX lines are not automatically connected to the physical pins; the chip routes them through GPIO14 and GPIO15, but only when those pins are switched to **alternate function 5** (the BCM2835 uses the term "alternate function" for the set of pre-defined hardware signal paths that each GPIO pin can be assigned to; there are six such functions per pin, numbered 0 through 5). We write to the GPIO function-select registers to switch GPIO14 and GPIO15 to alt-fn 5. Until we do this, the mini-UART is configured internally but its signals have no path to the outside world.
+
+Finally, we re-enable TX and RX. From this point on, the mini-UART is ready: a write to the transmit-data register puts a byte into the hardware transmit FIFO (a small on-chip queue that holds bytes waiting to go out on the wire), and the hardware clocks that byte out over the serial line at 115200 baud.
+
+Sending a character is a simple busy-wait loop. We read the **line status register** until the transmitter-empty bit is set — meaning the FIFO has room for another byte — then we write the character. On real hardware this loop takes a few microseconds per character at 115200 baud. In QEMU it is essentially instantaneous. Either way, no interrupt, no DMA, no buffer management: just read a status bit, then write a byte.
+
+That is enough. The same `print_string` control-character logic that the VGA path uses — newlines, carriage returns, backspaces — works unchanged; the only difference is that each character now goes to the mini-UART transmit register instead of a cell in the text buffer at `0xB8000`. The console driver abstracts over both paths, so the rest of `start_kernel` does not need to know which one is active.
 
 ### The Framebuffer Desktop
 
@@ -122,13 +162,20 @@ Mouse input comes from the **PS/2 mouse** — the original round-connector mouse
 
 By the end of this chapter, the CPU has crossed the line from "bootstrapping the kernel" to "running a real system":
 
+**On x86:**
+
 - The one-time bootstrap path has finished.
 - The kernel owns the GDT and IDT, paging is active, and the heap is available.
 - The timer, keyboard, TTY layer, ATA driver, and filesystem registrations are in place.
 - Hardware interrupts are enabled, so the CPU can now be preempted by timer ticks and input events.
 - The VGA text driver can draw characters, manage colours, move the cursor, scroll, and show history from its 500-row scrollback ring.
 - When GRUB provides a supported linear framebuffer, the kernel presents the shell inside a windowed framebuffer desktop with an 8x16 font, launcher, taskbar window selection, draggable title bars, built-in Files, Processes, and Help windows, and a PS/2 mouse pointer.
-- On x86, the shell has been loaded from disk and launched in ring 3 as the first user-space process.
-- On arm64, DUFS is mounted at `/`, with `devfs` at `/dev` and `procfs` at `/proc`, and `/bin/arm64init` is launched as PID 1.
+- The shell has been loaded from disk and launched in ring 3 as the first user-space process.
 
-The important thing to hold in your head going into Chapter 4 is that the machine is no longer a fragile boot stub. We have a working kernel console, a valid trap path, and a live user process. From here on, when something goes wrong, the CPU has somewhere to go and the kernel has somewhere to tell us about it.
+**On AArch64:**
+
+- The BCM2835 mini-UART is configured and transmitting: auxiliary block enabled, 8-bit mode selected, baud divisor set, GPIO14 and GPIO15 switched to alternate function 5.
+- The kernel can print status lines over the serial console at every bootstrap step that follows.
+- DUFS is mounted at `/`, with `devfs` at `/dev` and `procfs` at `/proc`, and `/bin/arm64init` is launched as PID 1.
+
+The important thing to hold in your head going into Chapter 4 is that the machine is no longer a fragile boot stub. We have a working kernel console on each architecture, a valid trap path, and a live user process. From here on, when something goes wrong, the CPU has somewhere to go and the kernel has somewhere to tell us about it.

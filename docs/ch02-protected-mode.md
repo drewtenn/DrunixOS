@@ -8,6 +8,9 @@ Chapter 1 ended with GRUB having placed the CPU in protected mode — the 32-bit
 
 The structure is called the **Global Descriptor Table**, abbreviated **GDT**. GRUB installs a minimal one before jumping to our kernel — just enough for it to function while loading the kernel image — but that table belongs to GRUB's memory and is not guaranteed to remain valid. So the very first thing we do in `start_kernel` is build a permanent GDT in kernel memory and load it. This chapter explains what the GDT is, what goes in it, and how we take ownership of the CPU mode.
 
+*AArch64 has no segmentation; the analogous CPU-init step on that architecture
+is the EL2-to-EL1 demotion covered in ch01.*
+
 ### Why Protected Mode Requires a Descriptor Table
 
 Before protected mode, the CPU operates in **real mode**, a backwards-compatibility mode modelled on the Intel 8086. Two fundamental defects make real mode unsuitable for any serious operating system.

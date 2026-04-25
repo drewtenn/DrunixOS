@@ -12,36 +12,36 @@ This is the shape Linux uses too: not every page fault means "kill the process".
 
 ### What the CPU Reports on a Page Fault
 
-When the x86 CPU raises vector 14, it does two extra things that no other exception provides in quite the same way.
+When a page fault fires, the CPU does two extra things that no other exception provides in quite the same way.
 
-First, it writes the faulting linear address into **CR2** (Control Register 2, a CPU register dedicated to remembering the address that triggered the most recent page fault). The kernel reads `CR2` in `isr_handler` before doing anything else, because any later page fault would overwrite it.
+First, it records the faulting virtual address in a dedicated register. On x86, that register is **CR2** (Control Register 2, a CPU register dedicated to remembering the address that triggered the most recent page fault); the kernel reads `CR2` in the exception handler before doing anything else, because any later page fault would overwrite it. On AArch64 the same address is delivered through **`FAR_EL1`** (Fault Address Register at EL1, the AArch64 register that holds the virtual address that caused a page fault — the AArch64 analogue of x86's `CR2`).
 
-Second, it pushes a page-fault error code whose low bits tell the kernel what kind of translation failed. The three bits that matter are:
+Second, the CPU reports the cause of the fault. On x86 this comes as a page-fault error code pushed onto the interrupt frame; on AArch64 the cause bits come from `ESR_EL1` (Exception Syndrome Register at EL1, introduced in Chapter 16), which encodes the exception class and access type. The three cause bits that matter for policy are the same logical questions regardless of architecture:
 
 | Bit | Name | Meaning when set |
 |-----|------|------------------|
 | 0 | `P` | The page was present, so the fault is a protection failure rather than a missing mapping |
 | 1 | `W` | The access that faulted was a write |
-| 2 | `U` | The fault came from ring 3 rather than ring 0 |
+| 2 | `U` | The fault came from unprivileged mode rather than the kernel |
 
-The CPU packages those bits into the saved trap frame, and the exception handler reads them back through `f->error_code`.
+The exception handler reads these bits from the saved trap frame (x86: `f->error_code`; AArch64: decoded from `ESR_EL1`).
 
 The combination is what turns a raw fault into a policy decision. `P=0, U=1` means "user mode touched an address whose translation is missing". `P=1, W=1, U=1` means "user mode tried to write through a present but read-only mapping". The first case may be a lazy heap or stack page. The second case may be a copy-on-write promotion. Anything else is usually a real protection bug.
 
 ### The New Stop in the Fault Path
 
-The interrupt path itself changes in only one place. Ring-3 page faults now get one chance to recover before the signal path runs. Kernel faults still print state and halt. User faults that are truly invalid still become `SIGSEGV`. The new possibility is that some user faults are now recognised as incomplete-but-valid memory accesses.
+The interrupt path itself changes in only one place. Unprivileged page faults now get one chance to recover before the signal path runs. Kernel faults still print state and halt. User faults that are truly invalid still become `SIGSEGV`. The new possibility is that some user faults are now recognised as incomplete-but-valid memory accesses.
 
 The sequence is:
 
-1. The CPU faults on a ring-3 memory access and jumps to vector 14.
-2. The kernel saves the register frame and reads the faulting address from `CR2`.
+1. The CPU faults on an unprivileged memory access and transfers control to the page-fault handler.
+2. The kernel saves the register frame and reads the faulting address from the fault-address register (`CR2` on x86; `FAR_EL1` on AArch64).
 3. The page-fault handler classifies the access and checks whether the address belongs to a valid user mapping.
 4. If the fault is recoverable, the kernel installs or repairs the mapping and returns from the exception.
 5. The CPU retries the exact instruction that faulted, this time against the updated page tables.
 6. If the fault is not recoverable, the old `SIGSEGV` path runs unchanged.
 
-The important point is that the retry is free. There is no second special control transfer for the resumed instruction. `iret` restores the saved `EIP`, `CS`, and `EFLAGS`, and the CPU simply fetches the same instruction again. This works because the CPU stopped at a well-defined point — `CR2` holds the faulting address and the instruction that caused the fault is known, so we can simply resume it once the page is present.
+The important point is that the retry is free. There is no second special control transfer for the resumed instruction. The exception-return instruction (`iret` on x86; `eret` on AArch64) restores the saved program counter and processor state, and the CPU simply fetches the same instruction again. This works because the CPU stopped at a well-defined point — the fault-address register holds the offending address and the faulting instruction is known, so we can simply resume it once the page is present.
 
 ### The Decision Tree
 
@@ -49,7 +49,7 @@ The page-fault handler starts from one question: was this a missing translation,
 
 ![](diagrams/ch25-diag01.svg)
 
-The first split is the `U` bit. A page fault raised in ring 0 is still fatal here. The kernel has no recovery path for faults taken while it is executing on its own behalf, so the function returns failure immediately and the old exception path halts the CPU after printing the register dump.
+The first split is the `U` bit. A page fault raised in privileged mode is still fatal here. The kernel has no recovery path for faults taken while it is executing on its own behalf, so the function returns failure immediately and the old exception path halts the CPU after printing the register dump.
 
 The second split is the `P` bit:
 
@@ -64,7 +64,7 @@ That distinction is what lets one handler implement both demand paging and copy-
 
 The new `SYS_BRK` path now does almost nothing on growth. It checks that the requested break stays inside the legal heap window, records the larger reservation, and returns. No physical page is allocated. No PTE is installed. The virtual address range between the old break and the new break becomes *valid in principle* but still unmapped in the page tables.
 
-The first real access happens later. Suppose a process calls `sbrk(4096)` and then writes to the first byte of the newly reserved range. The CPU performs the page walk, discovers that the PTE is missing, writes the faulting address into `CR2`, and raises vector 14. The fault handler rounds that address down to a 4 KB page boundary, confirms that it lands inside the process's writable heap reservation, allocates one physical page from the physical memory manager, zeros it, maps it with `PG_PRESENT | PG_WRITABLE | PG_USER`, and returns success.
+The first real access happens later. Suppose a process calls `sbrk(4096)` and then writes to the first byte of the newly reserved range. The CPU performs the page walk, discovers that the PTE is missing, and raises a page fault with the faulting address recorded in the fault-address register. The fault handler rounds that address down to a 4 KB page boundary, confirms that it lands inside the process's writable heap reservation, allocates one physical page from the physical memory manager, zeros it, maps it with `PG_PRESENT | PG_WRITABLE | PG_USER`, and returns success.
 
 The mapping step itself invalidates the stale **TLB** (Translation Lookaside Buffer, the CPU's cache of recent virtual-to-physical translations) entry for that virtual page with `invlpg`, so the retried instruction will see the new PTE immediately rather than a cached "not present" result.
 
@@ -90,7 +90,7 @@ The page-fault handler no longer hard-codes "heap versus stack" by checking only
 
 Each VMA stores a half-open address range, a kind (`heap`, `stack`, or generic mapping), and permission flags such as readable, writable, executable, anonymous, private, and grow-down. Process creation seeds the table with the initial heap and stack entries. `SYS_BRK` adjusts the heap VMA's end. `SYS_MMAP`, `SYS_MUNMAP`, and `SYS_MPROTECT` add, split, remove, or retag generic VMAs without touching the ELF image metadata.
 
-This matters in the fault path because the first policy question is now "which VMA contains `CR2`?" If the answer is "none", the fault is still invalid and falls through to `SIGSEGV`. If the answer is a writable anonymous VMA, the handler can allocate and map a zeroed page on demand. There is one extra wrinkle now: because every process still inherits the kernel's low 128 MB identity map, an untouched anonymous address may fault as a present supervisor-only mapping rather than as a clean not-present miss. The handler explicitly detects that shadow-mapping case and treats it like the same lazy anonymous fault, replacing the inherited kernel-only PTE with a real user mapping. If the answer is a present but non-writable VMA and the PTE carries `PG_COW`, the same lookup confirms that the write is allowed in principle before the copy-on-write promotion proceeds.
+This matters in the fault path because the first policy question is now "which VMA contains the faulting address?" If the answer is "none", the fault is still invalid and falls through to `SIGSEGV`. If the answer is a writable anonymous VMA, the handler can allocate and map a zeroed page on demand. There is one extra wrinkle now: because every process still inherits the kernel's low 128 MB identity map, an untouched anonymous address may fault as a present supervisor-only mapping rather than as a clean not-present miss. The handler explicitly detects that shadow-mapping case and treats it like the same lazy anonymous fault, replacing the inherited kernel-only PTE with a real user mapping. If the answer is a present but non-writable VMA and the PTE carries `PG_COW`, the same lookup confirms that the write is allowed in principle before the copy-on-write promotion proceeds.
 
 ### The User Stack Can Grow Below the Current Bottom
 
@@ -98,19 +98,19 @@ The user stack still starts the same way it did in Chapter 15: the kernel maps f
 
 The difference is that the process descriptor now records `stack_low_limit`, the lowest currently mapped stack page, and the address-space contract reserves a larger stack window: up to `USER_STACK_MAX_PAGES`, which is 64 pages or 256 KB. `USER_HEAP_MAX` is moved upward accordingly, so the heap must stop below the entire potential stack window rather than below the four pages that happen to be mapped at process start.
 
-Stack growth stays in the page-fault handler. On a not-present ring-3 fault, after the heap test fails, the kernel computes two bounds:
+Stack growth stays in the page-fault handler. On a not-present unprivileged fault, after the heap test fails, the kernel computes two bounds:
 
 - the lowest legal page in the reserved stack window, `USER_STACK_TOP - USER_STACK_MAX_PAGES * PAGE_SIZE`
-- a 32-byte slack below the saved user `ESP`, or zero if `ESP` is already near the bottom of the address space
+- a 32-byte slack below the saved user stack pointer, or zero if the stack pointer is already near the bottom of the address space
 
-The 32-byte slack is deliberate. On x86, instructions such as `push`, `pusha`, and `enter` can touch memory slightly below the architectural value of `ESP` before the stack pointer itself is updated. Linux uses the same idea: a strict `CR2 >= ESP` check rejects valid stack growth patterns.
+The 32-byte slack is deliberate. On x86, instructions such as `push`, `pusha`, and `enter` can touch memory slightly below the architectural stack pointer before it is updated; AArch64 has similar pre-decrement addressing modes. Linux uses the same idea: a strict "faulting address >= stack pointer" check rejects valid stack growth patterns.
 
 If the faulting page lies:
 
 - above `stack_floor`,
 - below the current `stack_low_limit`,
 - below `USER_STACK_TOP`, and
-- no more than 32 bytes below the saved user `ESP`,
+- no more than 32 bytes below the saved user stack pointer,
 
 then the handler allocates and maps zeroed pages from the current `stack_low_limit - PAGE_SIZE` downward until the faulting page itself is covered, updating `cur->stack_low_limit` after each successful step.
 
@@ -153,13 +153,15 @@ These cases still fail:
 
 - a not-present user fault outside the heap and outside the legal stack window,
 - a write through a present but genuinely read-only PTE,
-- any ring-0 page fault, and
+- any kernel-mode page fault, and
 - any out-of-memory case while trying to allocate a demand page or a private CoW copy.
 
 That last case is worth making explicit. We don't panic when a copy-on-write promotion runs out of memory. We also don't leave the process half-updated. The handler returns failure, `isr_handler` records the user fault, and the process takes the same SIGSEGV path as any other unrecoverable memory access. This matches the design principle the Linux memory manager uses too: out-of-memory during fault resolution is a process-level failure, not necessarily a kernel-level one.
 
 ### Where the Machine Is by the End of Chapter 25
 
-The CPU's vector-14 path is no longer just a crash chute. Ring-3 page faults now go through a recovery path that reads `CR2` and the page-fault error code, consults the process's VMA table, and decides whether the fault means "allocate a heap page", "grow the stack", "back an anonymous `mmap()` page", "replace a supervisor-only shadow mapping with a user page", "resolve copy-on-write", or "deliver `SIGSEGV`".
+The page-fault path is no longer just a crash chute. Unprivileged page faults now go through a recovery path that reads the fault address and cause bits from arch-specific registers (`CR2` and the error code on x86; `FAR_EL1` and `ESR_EL1` on AArch64), consults the process's VMA table, and decides whether the fault means "allocate a heap page", "grow the stack", "back an anonymous `mmap()` page", "replace a supervisor-only shadow mapping with a user page", "resolve copy-on-write", or "deliver `SIGSEGV`".
+
+*On AArch64 (planned, milestone 3): demand paging is enabled once the AArch64 MMU and PMM bring-up land.*
 
 `SYS_BRK` now grows the heap lazily by recording a larger reservation without allocating pages, and shrinking the heap frees only the pages that were actually committed. The user stack starts with the same four eager pages as before, but the address-space contract reserves a 64-page window and the fault handler can backfill one or more stack pages down to the faulting address in a single recovery. A small per-process VMA table now gives the kernel a unified description of heap, stack, and anonymous `mmap()` regions. The old signal path still exists, but it is now the fallback when a fault is truly invalid rather than merely incomplete.

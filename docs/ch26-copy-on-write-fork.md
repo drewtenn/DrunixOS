@@ -48,7 +48,7 @@ The new algorithm is:
    - copy the resulting PTE into the child page table,
    - increment the physical frame's reference count.
 
-Kernel entries inside mixed PDEs are preserved verbatim. That point matters because PDE 1 can contain both user text around `0x00400000` and kernel identity mappings in the same page table. The loop therefore checks `PG_USER` on each PTE rather than assuming an entire PDE is user-owned.
+Kernel entries inside mixed page-table pages are preserved verbatim. The loop therefore checks the user-accessible permission bit on each PTE rather than assuming an entire top-level directory entry is user-owned.
 
 The result is that the parent and child get:
 
@@ -82,6 +82,10 @@ The child receives the same PTE bits. Both page tables now point at the same phy
 
 Read-only pages follow a slightly different path. If a user PTE was already non-writable before `fork()` — for example, a code page or true read-only data — the kernel leaves `PG_COW` clear and simply shares the same frame into the child while incrementing the physical reference count. That means one rule remains intact: writing to a genuinely read-only page still produces SIGSEGV rather than copy-on-write promotion. The presence or absence of `PG_COW` is our explicit promise about whether a write fault is recoverable.
 
+> **Note:** The read-only marker is the inverse of the writable bit in an x86 PTE, and the AP bits — the access-permission field in an AArch64 page-table entry that gates read/write/execute access for EL0 and EL1 — in an AArch64 PTE. TLB invalidation after rewriting a PTE uses `invlpg` on x86 and `TLBI` (TLB Invalidate, introduced in Chapter 8) on AArch64; the mechanism differs but the purpose is identical: ensure the CPU's cached translation reflects the new permission before the faulting instruction retries.
+
+*On AArch64 (planned, milestone 3): CoW fork is enabled once the AArch64 MMU bring-up lands.*
+
 ![](diagrams/ch26-diag02.svg)
 
 ### The First Write Splits the Shared Frame
@@ -90,7 +94,7 @@ Once parent and child return from `fork()`, reads are cheap. Both page tables tr
 
 Suppose the parent writes to a shared heap page first:
 
-1. The CPU performs the page walk, finds a present PTE, sees that the write bit is clear, and raises vector 14 with `P=1, W=1, U=1`.
+1. The CPU performs the page walk, finds a present PTE, sees that the write bit is clear, and raises a page-fault exception indicating a present-page write from user mode.
 2. The fault handler inspects the live PTE and sees `PG_COW` set.
 3. The handler reads the physical frame's reference count.
 
@@ -139,7 +143,7 @@ The classic shell pattern is:
 
 Under the eager model, step 1 copied the shell's full address space even though step 3 was about to discard it. Under copy-on-write, step 1 mostly allocates page-table pages and increments refcounts. The expensive 4 KB data copy moves to the uncommon case where either side actually writes into a shared page before the child calls `exec()`.
 
-That does not make `fork()` free. We still allocate a new page directory, new user page tables, and a new kernel stack for the child. We still copy the saved syscall frame so that the parent and child can return with different `EAX` values. But the cost now scales with the number of page tables that contain user mappings, not with the number of user frames those tables point at.
+That does not make `fork()` free. We still allocate a new page directory, new user page tables, and a new kernel stack for the child. We still copy the saved syscall frame so that the parent and child can return with different return values. But the cost now scales with the number of page tables that contain user mappings, not with the number of user frames those tables point at.
 
 For real workloads, that is the right asymmetry. A process can reserve a large heap, read from it, fork, and continue almost immediately. Only the pages that either side later dirties will be copied.
 

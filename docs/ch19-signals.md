@@ -4,7 +4,9 @@
 
 ### What a Signal Is
 
-Chapter 18 left us with a TTY that tracks a foreground process group and generates control-character events, but nothing to act on them yet. A **signal** is a kernel-mediated asynchronous notification delivered to a process. The word "asynchronous" is the key distinction from every other form of process-to-process or kernel-to-process communication: an ordinary read, write, or syscall takes place at a predictable moment the process chose. A signal can arrive at any point — between two instructions, in the middle of a system call, whenever the interrupted process is about to return to user space.
+Chapter 18 left us with a TTY that tracks a foreground process group and generates control-character events, but nothing to act on them yet. A **signal** is the kernel's way to inject control flow into a user process at a controlled boundary. Where an ordinary system call is a request the user process makes at a moment of its own choosing, a signal arrives from outside — from another process, from the kernel itself, or from a hardware event — at a moment the process did not choose and may not be prepared for. The kernel cannot simply jump into user code at a random instruction. Instead, it queues the signal, waits for the process to reach a safe transition point on its way back to user space, and then — and only then — performs a controlled injection: redirecting the return path so that user code lands inside a signal handler rather than wherever it was about to go.
+
+Two parts of that picture are fully portable across architectures: the queueing of pending signals and the per-signal disposition table that records what the process wants to do with each signal. A third part — how the kernel actually forges the handler invocation on the user stack — depends on the architecture, because the exact shape of registers and stack frames differs between x86 and AArch64.
 
 Linux defines signals using a standard numbering. We adopt the same numbers for the eight signals we support:
 
@@ -70,48 +72,37 @@ The life of a signal, from send to handler return:
 
 This is the only safe point for delivery because it is the only moment when the full user-space register context is sitting in a complete, well-defined frame on the kernel stack and can be copied and redirected without corrupting anything.
 
-Both `syscall_common` and `irq_common` call `sched_signal_check` immediately before their final restore-and-`iret` sequence. They pass the current stack pointer as an argument; `sched_signal_check` returns the stack pointer to use for the restore — unchanged if no signal is delivered, or adjusted to point at a newly built signal frame if one was pushed onto the user stack. The trampoline loads the returned value into ESP, then falls through to the same register-pop and `iret` it would have executed anyway. The signal delivery mechanism is therefore invisible to the rest of the trampoline — it sees only "here is the frame to restore."
+Both the syscall return path and the IRQ return path call the signal check routine immediately before their final restore-and-return sequence. They pass the current stack pointer as an argument; the routine returns the stack pointer to use for the restore — unchanged if no signal is delivered, or adjusted to point at a newly built signal frame if one was pushed onto the user stack. The delivery mechanism is therefore invisible to the rest of the return path — it sees only "here is the frame to restore."
 
-`sched_signal_check` first checks task-directed pending bits and then the thread group's process-directed pending bits, always applying the current task's `sig_blocked` mask. Task-directed signals are checked first because they name a specific task by TID — deferring them in favour of process-directed signals that any task in the group could handle would violate the caller's intent. It picks the lowest-numbered deliverable signal, clears the pending bit from its source, and looks up the handler:
+The signal check routine first checks task-directed pending bits and then the thread group's process-directed pending bits, always applying the current task's `sig_blocked` mask. Task-directed signals are checked first because they name a specific task by TID — deferring them in favour of process-directed signals that any task in the group could handle would violate the caller's intent. It picks the lowest-numbered deliverable signal, clears the pending bit from its source, and looks up the handler:
 
-- **SIG_IGN**: nothing to do; returns unchanged `frame_esp`.
-- **SIG_DFL** and fatal: calls `sched_mark_signaled(signum, dumped_core)` to encode a signal-style wait status, then calls `schedule()` to switch immediately to the next READY process. The trampoline eventually restores some other process's register frame and `iret`s to it.
-- **User handler**: calls `build_signal_frame`, which constructs a signal frame on the user stack and redirects the saved EIP to the handler. Returns the unchanged `frame_esp` — the trampoline restores the (now-modified) frame and `iret`s to the handler instead of the original user code.
+- **SIG_IGN**: nothing to do; returns unchanged.
+- **SIG_DFL** and fatal: marks the process as signal-killed and calls the scheduler to switch immediately to the next ready process. The return path eventually restores some other process's register frame and returns to it.
+- **User handler**: pushes a signal frame on the user stack and redirects the saved return address to the handler. The return path restores the (now-modified) frame and jumps to the handler instead of the original user code.
 
-The ring-3 check (`frame[15] & 3 == 3`) ensures signals are never delivered when returning to kernel-mode code. Signals are strictly a user-space concept.
+A check on the privilege level of the saved frame ensures signals are never delivered when returning to kernel-mode code. Signals are strictly a user-space concept.
 
-One subtlety remains when a process is asleep inside a blocking syscall. A signal wakeup moves the process from `PROC_BLOCKED` back to `PROC_READY`, but the resumed context is still inside the kernel loop that was implementing the syscall. Pipe reads, pipe writes, and TTY reads therefore check `cur->sig_pending` after each wakeup and return early with an interrupt-style error if a signal is pending. Control then reaches `syscall_common`, which calls `sched_signal_check` with the syscall's ring-3 iret frame, and the signal is delivered normally.
+One subtlety remains when a process is asleep inside a blocking syscall. A signal wakeup moves the process from `PROC_BLOCKED` back to `PROC_READY`, but the resumed context is still inside the kernel loop that was implementing the syscall. Pipe reads, pipe writes, and TTY reads therefore check `cur->sig_pending` after each wakeup and return early with an interrupt-style error if a signal is pending. Control then reaches the syscall return path, which calls the signal check routine with the syscall's user-mode return frame, and the signal is delivered normally.
 
-### The Signal Frame
+### Signal Delivery: The Arch-Specific Dance
 
-When a user handler must be called, the kernel pushes a **signal frame** onto the user stack to save the context that was about to be restored. The frame is 32 bytes and contains everything needed to resume normal execution after the handler returns.
+The queueing and disposition logic described above is fully portable. What changes between architectures is the mechanism the kernel uses to forge a handler invocation on the user stack. The kernel must construct a frame on the user stack that looks, to the returning hardware, like a normal function call into the handler — with a return address that leads back to a small piece of trampoline code that will issue a `sigreturn` system call to recover the original execution context. The exact shape of that frame mirrors the architecture's own trap frame, because the registers that need to be saved and restored are architecture-specific.
+
+#### On x86: signal trampoline and sigreturn
+
+On x86 the kernel builds a **signal frame** — a 32-byte structure pushed onto the user stack — when a user handler must be called. The frame saves everything needed to resume normal execution after the handler returns: the original instruction pointer (EIP), the flags register (EFLAGS), the general-purpose register that holds the syscall return value (EAX), and the original user stack pointer (ESP). It also embeds a short trampoline sequence directly in the frame — two instructions that move the `SYS_SIGRETURN` number into `EAX` and execute `int 0x80`.
+
+After the frame is built, the kernel modifies the saved i386 trap frame so that `iret` jumps to the handler with the signal number as its argument and `[esp]` pointing at the trampoline's address. To the handler, this looks exactly like an ordinary C function call.
 
 ![](diagrams/ch19-diag02.svg)
 
-`ret_addr` points to the trampoline bytes at offset 24 within the same frame. After the frame is built, the kernel modifies two fields in the saved kernel register frame:
+When the handler executes `ret`, the CPU pops the trampoline address and executes the two-instruction sequence, which re-enters the kernel via `int 0x80` as `SYS_SIGRETURN`. The sigreturn handler reads the saved context back out of the signal frame and writes it into the current trap frame — restoring the original EIP, EFLAGS, EAX, and ESP. When `iret` runs, the process resumes exactly where it was interrupted, with registers in the state they had before the signal arrived.
 
-- `frame[14]` (saved EIP) is set to the handler's virtual address.
-- `frame[17]` (saved ESP) is set to the new, lower user stack pointer.
+#### On AArch64: signal trampoline and sigreturn
 
-When `iret` runs, the CPU jumps to the handler with `[esp]` = `ret_addr` and `[esp+4]` = `signum`. To the handler, this looks exactly like an ordinary C function call.
+*On AArch64 (planned, milestone 4): the signal trampoline forges an AArch64 trap frame on the user stack and the trampoline's `svc #0` to `sigreturn` restores it.* Note this is structurally the same shape as on x86, just over the AArch64 register set.
 
-### Returning From a Signal Handler
-
-The handler is an ordinary C function. When it executes `ret`, the CPU pops `ret_addr` from the stack and jumps to the embedded trampoline code. The trampoline executes:
-
-```asm
-mov eax, 119    ; SYS_SIGRETURN
-int 0x80
-```
-
-`SYS_SIGRETURN (119)` in the kernel reads back the saved context from the signal frame. At the moment of the `int 0x80`, the user's ESP points to the `signum` slot (offset 4 in the frame), so the frame base is `user_esp − 4`. The kernel restores:
-
-- `frame[14]` ← `sig_frame[2]` (original EIP)
-- `frame[16]` ← `sig_frame[3]` (original EFLAGS)
-- `frame[11]` ← `sig_frame[4]` (original EAX — the syscall return value before the signal)
-- `frame[17]` ← `sig_frame[5]` (original ESP)
-
-After this restore, the process resumes exactly where it was interrupted, with registers in the same state they had before the signal arrived.
+Where x86 saves EIP, EFLAGS, EAX, and ESP, the AArch64 frame saves `ELR_EL1` (the interrupted instruction address), `SPSR_EL1` (the saved processor state), `SP_EL0` (the user stack pointer), and enough of the general-purpose register file to reconstruct the pre-signal state. The embedded trampoline issues `svc #0` rather than `int 0x80`. The kernel's `sigreturn` handler on AArch64 reads those fields back and writes them into the current EL1 exception frame so that `eret` returns the process to where it was before the signal. The user-visible contract — handler called as a C function, `sigreturn` called on exit, original context fully restored — is identical to x86.
 
 ### Registering and Masking Signals
 
@@ -125,7 +116,7 @@ A signal that is both pending and blocked is held indefinitely in `sig_pending`.
 
 Three signals form the stop/continue mechanism that enables job control in the shell:
 
-**SIGSTOP (19)** is the uncatchable stop. Like SIGKILL, it cannot be caught, blocked, or ignored. When `sched_signal_check` encounters a pending SIGSTOP, it calls `sched_mark_stopped(SIGSTOP)`, which transitions the process to `PROC_STOPPED`, encodes the stop signal in `exit_status` using Linux-compatible encoding `(stop_signal << 8) | 0x7F`, sends SIGCHLD to the parent, and wakes the parent if it is waiting. The scheduler then calls `schedule()` to switch away. The stopped process will not be picked by `sched_pick_next` until it receives SIGCONT.
+**SIGSTOP (19)** is the uncatchable stop. Like SIGKILL, it cannot be caught, blocked, or ignored. When the signal check routine encounters a pending SIGSTOP, it transitions the process to `PROC_STOPPED`, encodes the stop signal in `exit_status` using Linux-compatible encoding `(stop_signal << 8) | 0x7F`, sends SIGCHLD to the parent, and wakes the parent if it is waiting. The scheduler then switches away. The stopped process will not be picked by the scheduler until it receives SIGCONT.
 
 **SIGTSTP (20)** is the terminal stop — sent to the foreground process group when the user presses Ctrl+Z. Unlike SIGSTOP, SIGTSTP *can* be caught or ignored. If the handler is SIG_DFL, the process is stopped exactly as with SIGSTOP. If the process has installed a handler, the signal is delivered as a normal signal frame, and the handler can choose to do cleanup before stopping (or to ignore the stop entirely). If the disposition is SIG_IGN, the signal is discarded.
 
@@ -155,8 +146,10 @@ Two syscalls manage which process group owns the terminal. `SYS_TCSETPGRP` sets 
 
 ### Where the Machine Is by the End of Chapter 19
 
-Every process now carries a 32-entry signal disposition table and two bitmasks. The keyboard driver sends SIGINT on Ctrl+C and SIGTSTP on Ctrl+Z. Signals are held as pending bits until the target process is about to return to user space, at which point `sched_signal_check` delivers them — terminating the process (SIG_DFL for fatal signals), stopping it (SIGSTOP/SIGTSTP), or building a signal frame on the user stack to redirect execution to an installed handler.
+Every process now carries a 32-entry signal disposition table and two bitmasks. The keyboard driver sends SIGINT on Ctrl+C and SIGTSTP on Ctrl+Z. Signals are held as pending bits until the target process is about to return to user space, at which point the signal check routine delivers them — terminating the process (SIG_DFL for fatal signals), stopping it (SIGSTOP/SIGTSTP), or constructing a signal frame on the user stack to redirect execution to an installed handler.
+
+The signal frame and trampoline mechanism is the arch-specific core of delivery. On x86, the frame preserves the i386 register context and the embedded trampoline issues `int 0x80` to call `SYS_SIGRETURN`. On AArch64, the same structural approach applies over the AArch64 register set, with the trampoline issuing `svc #0` instead. Both architectures share the same portable queueing, disposition, and stop/continue logic.
 
 A stopped process enters `PROC_STOPPED` and is invisible to the scheduler until SIGCONT (or SIGKILL) arrives. The shell detects this via `SYS_WAITPID` with `WUNTRACED`, adds the stopped child to its job list, and offers `fg`, `bg`, and `jobs` builtins for resuming or inspecting jobs.
 
-The signal path now covers the full lifecycle: asynchronous delivery, handler invocation and return, process stop and continue, and wait-status reporting that distinguishes exit from stop. Together with the TTY's foreground process group tracking (Chapter 18), this gives us a complete job control subsystem.
+The signal path now covers the full lifecycle: asynchronous delivery, handler invocation and return via a per-arch trampoline, process stop and continue, and wait-status reporting that distinguishes exit from stop. Together with the TTY's foreground process group tracking (Chapter 18), this gives us a complete job control subsystem.

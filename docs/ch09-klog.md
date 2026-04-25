@@ -16,7 +16,7 @@ klog exposes three convenience functions, and between them they cover the common
 
 Underneath those wrappers sits the more general `klog_log(level, tag, msg)` entry point. That is what gives the log stream explicit severity levels such as `DEBUG`, `INFO`, `WARN`, and `ERROR` while still keeping the older helper calls small and readable.
 
-Every call produces a single line on the boot console and on QEMU's debugcon when that output is enabled. Early in boot that visible console is the VGA text buffer; after the desktop starts, user-facing shell output is routed through the desktop while kernel diagnostics remain available through debugcon and `/proc/kmsg`. The rendered format now includes a boot-relative timestamp, a severity, a subsystem tag, and the message text:
+Every call produces a single line on the boot console and on QEMU's debug sink when that output is enabled. Early in boot that visible console is the primary display buffer; after the desktop starts, user-facing shell output is routed through the desktop while kernel diagnostics remain available through the debug sink and `/proc/kmsg`. On x86 PC the debug sink is the QEMU debugcon port (`0xE9`); on AArch64 *(planned, milestone 2 of the arm64 port)*: klog's debug sink uses the mini-UART rather than the QEMU debugcon port. The rendered format now includes a boot-relative timestamp, a severity, a subsystem tag, and the message text:
 
 ![](diagrams/ch09-diag01.svg)
 
@@ -24,7 +24,7 @@ Every call produces a single line on the boot console and on QEMU's debugcon whe
 
 klog still depends on `print_string`, the legacy text output function from Chapter 3, and still mirrors output to the optional debug console. But the log is no longer write-only. Each rendered message is also copied into a fixed-size in-memory ring buffer so the most recent history survives after the visible screen has scrolled away or the desktop has taken over the display. The ring buffer is like a revolving door with a fixed number of slots — new messages push out old ones as the head pointer wraps, but the consumer reads at its own pace from the tail.
 
-The retained record is intentionally compact: it stores the uptime tick count, the chosen log level, a short tag, and a bounded message string. The timestamp comes from the same PIT-driven timebase that we advance every timer interrupt, so the log lines can be rendered later as `seconds.milliseconds since boot` without consulting the RTC again.
+The retained record is intentionally compact: it stores the uptime tick count, the chosen log level, a short tag, and a bounded message string. The timestamp comes from the same timer-driven timebase that we advance every timer interrupt, so the log lines can be rendered later as `seconds.milliseconds since boot` without consulting the real-time clock again.
 
 The numeric formatting helpers are still self-contained inside klog. `klog_uint` and `klog_hex` build a short formatted suffix and then hand the finished message to the shared logging path, so every public API ends up going through the same formatter, ring-buffer insertion, and console-mirroring code.
 

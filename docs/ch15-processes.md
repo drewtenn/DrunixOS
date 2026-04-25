@@ -2,17 +2,23 @@
 
 ## Chapter 15 — ELF Loader and Process Management
 
-### Why the Kernel Needs to Separate Itself From User Code
+### What a Process Is
 
 Chapter 14 left us with a VFS layer in place and the kernel able to open and read files by name through a stable interface. Everything described in the book so far runs at **ring 0** — the CPU's most privileged execution level, where any instruction is legal and any memory address can be accessed. A bug in ring-0 code can corrupt anything in the system, because nothing is protected from it. That is acceptable while the kernel is the only code running, but the moment you want to run a user program, the rules have to change.
 
-A real operating system runs user programs at **ring 3** — the least privileged execution level on x86. Ring 3 code cannot talk to hardware directly, cannot read or write kernel memory, cannot modify control registers, and cannot disable interrupts. Any attempt to do any of those things raises a fault that the kernel catches. This boundary — between the kernel in ring 0 and the user in ring 3 — is enforced by hardware on every single instruction and every single memory access, not by software checks the kernel has to remember to make.
+A **process** is the kernel's unit of isolated execution: a register file, an address-space root, a kernel stack, and whatever scheduler bookkeeping is needed to pick the process next. From the kernel's point of view, switching between processes is a mostly arch-neutral operation — park one process's state into its descriptor, load another's back out — performed over a data structure that both architectures share. What differs is the machine-level vocabulary the two architectures use for each part of that dance. The address-space root is a control register with a different name on each arch. The register save and restore touches a different set of named registers. The instruction that drops into user mode is different. The next three sections establish all of that.
 
-This chapter adds everything required to cross that boundary. By the end, we will read an **ELF** file (Executable and Linkable Format, the standard binary format on Linux and most Unix systems) off the disk, unpack its contents into a fresh private address space, and hand control to ring 3 with a single CPU instruction called `iret`. From there, the user program communicates with the kernel exclusively through **system calls** triggered by `int 0x80` — the same interface the 32-bit Linux kernel used for decades.
+On x86, user code runs at **ring 3** — the least privileged execution level. Ring-3 code cannot talk to hardware directly, cannot read or write kernel memory, cannot modify control registers, and cannot disable interrupts. Any attempt to do any of those things raises a fault that the kernel catches. This boundary is enforced by hardware on every single instruction and every single memory access.
 
-### What the CPU Requires Before It Will Enter Ring 3
+This chapter adds everything required to cross that boundary. By the end, we will read an **ELF** (Executable and Linkable Format, the standard binary format on Linux and most Unix systems) file off the disk, unpack its contents into a fresh private address space, and hand control to unprivileged code. From there, the user program communicates with the kernel exclusively through system calls.
 
-The core problem is this: ring-3 code cannot touch kernel memory, but the CPU must still switch to a kernel stack on interrupt, find a valid handler entry for `int 0x80`, and keep each process isolated from every other one. The hardware solves each piece of that with a separate structure, and all of them must be in place before the `iret` instruction can legally transfer from ring 0 to ring 3. There are four of them.
+### What the CPU Requires Before It Will Enter User Mode
+
+The core problem is that user code cannot touch kernel memory, but the CPU must still switch to a kernel stack on interrupt, find a valid handler entry for system calls, and keep each process isolated from every other one. The hardware solves each piece of that with a separate structure, and all of them must be in place before the kernel can legally transfer to user mode.
+
+### On x86: ESP, CR3, iret
+
+On x86 there are four things that must be true before the first user instruction can run.
 
 **First, the GDT must contain ring-3 segment descriptors.** The GDT set up in Chapter 2 had only kernel code and kernel data segments at DPL 0 (Descriptor Privilege Level 0 — accessible only by ring 0). The kernel now rebuilds the GDT in C code, expanding it from three entries to seven:
 
@@ -28,7 +34,7 @@ The core problem is this: ring-3 code cannot touch kernel memory, but the CPU mu
 
 The selector value has the requested privilege level encoded in its low two bits, so a user selector is not the same number as the offset: `0x18 | 3 = 0x1B` and `0x20 | 3 = 0x23`. When the CPU sees a selector with DPL 3 loaded into `CS`, it knows the code running under that selector is ring-3 code.
 
-**Second, the kernel has to install a Task State Segment.** The **TSS** is a 104-byte structure whose main job is to tell the CPU which kernel stack to switch to when an interrupt fires while ring-3 code is running. Ring-3 code has its own stack (the user stack), and the kernel cannot safely run on that stack — a user program could have corrupted it, and the kernel handler would corrupt itself trying to save state. So the CPU reads two fields from the runtime TSS, `ESP0` and `SS0`, which contain the kernel stack pointer and kernel stack segment, and it switches to that stack automatically before pushing the interrupt frame. Without a valid TSS, the first `int 0x80` from ring 3 would fail with a general protection fault.
+**Second, the kernel has to install a Task State Segment.** The **TSS** is a 104-byte structure whose main job is to tell the CPU which kernel stack to switch to when an interrupt fires while ring-3 code is running. Ring-3 code has its own stack (the user stack), and the kernel cannot safely run on that stack — a user program could have corrupted it, and the kernel handler would corrupt itself trying to save state. So the CPU reads two fields from the runtime TSS, `ESP0` and `SS0`, which contain the kernel stack pointer and kernel stack segment, and it switches to that stack automatically before pushing the interrupt frame. Without a valid TSS, the first system call from ring 3 would fail with a general protection fault.
 
 The runtime TSS is installed as a **system segment** in the GDT at index 5 (selector `0x28`), and the CPU is told about it with the `ltr` ("load task register") instruction.
 
@@ -38,13 +44,15 @@ The current kernel also keeps a second TSS in the GDT specifically for `#DF` (Do
 
 **Fourth, each process needs its own page directory.** The kernel cannot use a single shared page directory because user code must not be able to read or write kernel memory. Each process gets a fresh page directory whose entries cover the kernel's 0–128 MB region *without* the `PG_USER` flag set, and whose user-segment pages (mapped starting at `0x400000`) are set with `PG_USER | PG_WRITABLE | PG_PRESENT`. When a ring-3 instruction tries to reach a kernel address, the missing `PG_USER` bit causes a page fault; when ring-0 kernel code runs in the same address space, it ignores `PG_USER` and can reach anything it needs.
 
-### Rebuilding the GDT in C
+**CR3** (Control Register 3) is the x86 register that holds the physical address of the currently active page directory. Loading a new value into `CR3` is the one instruction that switches the CPU from one address space to another. Every context switch updates `CR3` to point at the incoming process's page directory, and from that moment every memory access is translated through the new process's tables.
+
+#### Rebuilding the GDT in C
 
 `gdt_init` builds a seven-entry GDT in static memory and hands it to a tiny assembly routine called `gdt_flush`. The assembly code is necessary because reloading segment registers involves a sequence that cannot be expressed in C without stepping on itself: it has to execute `lgdt`, then write the new kernel data selector into `DS`, `ES`, `FS`, `GS`, and `SS`, then perform a **far jump** to reload `CS`. A plain C assignment to `CS` is impossible on x86 — the only way to change it is through a jump, call, or return that specifies a segment. After the far jump lands, the assembly routine also executes `ltr` with the runtime TSS selector to register that TSS with the CPU.
 
-One subtle detail: all parameters must be saved into registers *before* the segment reloads begin. Reloading `SS` in the middle of a `push`/`pop` sequence would leave a brief window where `SS` and `ESP` disagreed about which stack was active, and a stray interrupt in that window would crash the system.
+One subtle detail: all parameters must be saved into registers *before* the segment reloads begin. Reloading `SS` in the middle of a `push`/`pop` sequence would leave a brief window where `SS` and **ESP** (the x86 stack pointer register) disagreed about which stack was active, and a stray interrupt in that window would crash the system.
 
-### Per-Process Page Directories
+#### Per-Process Page Directories
 
 The paging module from Chapter 8 is extended with two new functions.
 
@@ -52,7 +60,7 @@ The paging module from Chapter 8 is extended with two new functions.
 
 `paging_map_page` installs a single page table entry in an arbitrary page directory. If there is no page table yet for the target virtual address, it allocates one and marks the page directory entry with `PG_USER` so the CPU will descend into it on ring-3 lookups. If the existing page table was inherited from the kernel (that is, shared between processes), the function makes a private copy first — a crucial point, because otherwise a second process would overwrite the first process's user mappings in the shared kernel table and crash the first process the next time it ran.
 
-### The ELF Loader
+#### The ELF Loader
 
 An ELF file begins with a header that describes the layout of the file. The header contains, among other things, a pointer to a table of **program headers**, each of which describes a region of memory the loader must map before jumping to the entry point. For our purposes, only one type of program header matters: **`PT_LOAD`** (a Loadable segment — one that the ELF loader must copy into memory at a specific virtual address before execution begins).
 
@@ -64,9 +72,9 @@ An ELF file begins with a header that describes the layout of the file. The head
 4. Zero every byte in every page — this handles the common case where the segment's in-memory size (`p_memsz`) is larger than its on-disk size (`p_filesz`), which happens when the segment contains a BSS region.
 5. Copy the segment's on-disk bytes into the newly allocated physical pages. Because the kernel is identity-mapped, we write directly to the physical page through its identity-mapped kernel address without switching `CR3`.
 
-After every `PT_LOAD` segment has been processed, the loader records three addresses: the ELF header's entry point, the lowest mapped `PT_LOAD` address, and the page-rounded end of the highest mapped segment. The first is where ring 3 begins execution. The second and third let the kernel remember the loaded image range explicitly; the page-rounded high end also becomes the initial `heap_start` and `brk`, and the image range is what `/proc/<pid>/maps` later labels as the executable image.
+After every `PT_LOAD` segment has been processed, the loader records three addresses: the ELF header's entry point, the lowest mapped `PT_LOAD` address, and the page-rounded end of the highest mapped segment. The first is where user-mode execution begins. The second and third let the kernel remember the loaded image range explicitly; the page-rounded high end also becomes the initial `heap_start` and `brk`, and the image range is what `/proc/<pid>/maps` later labels as the executable image.
 
-### The Moment the CPU Enters Ring 3
+#### The Moment the CPU Enters Ring 3
 
 The final step is an `iret` instruction, which in this context does something it was never originally designed for: it performs a controlled drop from ring 0 to ring 3. The trick is that `iret` always pops a frame from the stack containing `EIP`, `CS`, and `EFLAGS`, and *when the popped `CS` has a different privilege level from the current one*, it also pops `ESP` and `SS`. We exploit this by manually constructing a fake interrupt frame on the stack that looks exactly like what the CPU would have pushed if it had interrupted a ring-3 program, and then executing `iret` to "return" to that fake state.
 
@@ -84,7 +92,7 @@ When `iret` executes, the CPU atomically:
 
 The data segment registers (`DS`, `ES`, `FS`, `GS`) are also set to `0x23` before the `iret`, because ring-3 code needs consistent segment selectors and `iret` does not touch those four.
 
-### System Calls: The Only Way Back Into the Kernel
+#### System Calls: The Only Way Back Into the Kernel
 
 Once the CPU is in ring 3, the only way the user program can reach the kernel is by triggering an `int 0x80`. The IDT entry for vector 128 points at an assembly stub that saves all registers, loads the kernel data segment, and branches into the syscall dispatcher.
 
@@ -94,6 +102,18 @@ The C handler returns a `uint32_t`. The trampoline takes that return value and w
 
 The relevant syscalls at this stage are `SYS_EXIT` (terminate a process), `SYS_WRITE` (print a string), `SYS_READ` (block until a keystroke arrives), `SYS_EXEC` (replace the current process image with another program), and `SYS_WAIT` (block until a child exits).
 
+### On AArch64: callee-saved registers, `TTBR0_EL1`, `eret`
+
+*On AArch64 (planned, milestone 4): the context switch saves `x19`–`x29`, `LR`, `SP`, and updates `TTBR0_EL1` for the incoming address space. First entry to userland uses `eret` after seeding `ELR_EL1` and `SPSR_EL1`.*
+
+The register vocabulary is different but the intent is identical: the kernel saves one process's execution state, restores another's, and then issues a single privileged instruction that atomically lowers the privilege level and begins executing user code.
+
+`TTBR0_EL1` (Translation Table Base Register 0 at EL1, first introduced in Chapter 8) is the AArch64 counterpart to x86's `CR3` — it holds the physical address of the root translation table for the lower virtual address range used by user code. A context switch writes the incoming process's table root into `TTBR0_EL1`, and from that point every user-space memory access is translated through the new process's tables.
+
+Where x86 saves and restores the full general-purpose register file on every kernel entry, AArch64 follows its own calling convention and saves only the **callee-saved registers** — `x19` through `x29` and the link register `LR` — at each voluntary or preemptive preemption point. The caller-saved registers (`x0`–`x18`) are not part of the context-switch save because, by calling-convention rule, the running code has already accepted that those registers may be clobbered.
+
+First entry to user mode cannot use a saved frame, because no user code has ever run. Instead, the kernel seeds two system registers and then executes `eret`. **`ELR_EL1`** (Exception Link Register at EL1, the AArch64 register that holds the return address from an exception or syscall) is loaded with the ELF entry point — the address the CPU will jump to. **`SPSR_EL1`** (Saved Program Status Register at EL1, the AArch64 register that captures the program status flags at exception entry) is loaded with a value that selects EL0 (unprivileged user mode) and enables interrupts. **`eret`** (Exception Return, the AArch64 instruction that returns from an exception by reloading `PC` from `ELR_EL1` and `PSTATE` from `SPSR_EL1`) then atomically drops to EL0 and begins executing the user program. The sequence is the AArch64 equivalent of the `iret` trick on x86: manufacture the state the CPU would have saved if an exception had arrived while user code was running, then "return" to it.
+
 ### Waiting for a Child to Exit
 
 Without a wait primitive, the shell's `fork()` + `SYS_EXEC` launch path would leave the parent shell runnable while the child was still printing, producing interleaved output. `SYS_WAIT` fixes this.
@@ -102,7 +122,7 @@ When the shell calls `SYS_WAIT` with the child's PID, the kernel blocks the shel
 
 ### Preemptive Round-Robin Scheduling
 
-With the ring-3 machinery in place the next step is running **multiple processes concurrently**. The **scheduler** uses a hardware timer to interrupt the running process every ten milliseconds and hand the CPU to the next one waiting.
+With the user-mode machinery in place the next step is running **multiple processes concurrently**. The **scheduler** uses a hardware timer to interrupt the running process every ten milliseconds and hand the CPU to the next one waiting.
 
 Several new fields on the `process_t` struct manage preemption and blocking:
 
@@ -145,7 +165,7 @@ The key change is that the scheduler no longer needs a different enum value for 
 
 When every slot is blocked and nothing is `RUNNING`, the scheduler enters an idle loop — it enables interrupts, executes `hlt`, and retries when any interrupt fires. This is the same idle pattern Linux uses.
 
-**Every process has its own kernel stack.** When a hardware interrupt fires while ring-3 code is running, the CPU reads `TSS.ESP0` and switches to that address before pushing the interrupt frame. If two processes shared a single kernel stack, saving the first process's frame and then taking an interrupt for the second would overwrite the first process's state. `process_create` therefore allocates a dedicated 16 KB stack for each process, and every context switch updates `TSS.ESP0` to point at the new current process's stack top. The double-fault path is separate: it does not use the current process's `ESP0`, but instead switches into the dedicated emergency TSS described earlier.
+**Every process has its own kernel stack.** When a hardware interrupt fires while user code is running, the CPU reads `TSS.ESP0` and switches to that address before pushing the interrupt frame. If two processes shared a single kernel stack, saving the first process's frame and then taking an interrupt for the second would overwrite the first process's state. `process_create` therefore allocates a dedicated 16 KB stack for each process, and every context switch updates `TSS.ESP0` to point at the new current process's stack top. The double-fault path is separate: it does not use the current process's `ESP0`, but instead switches into the dedicated emergency TSS described earlier.
 
 **The timer is driven by the PIT.** The **PIT** (Programmable Interval Timer) is an old timer chip — specifically the Intel 8253/8254 — found on every x86 PC. The kernel tells it to fire an interrupt every ten milliseconds, using its channel 0 configured with a divisor that yields roughly 100 Hz on IRQ0. The PIT is configured in `pit_init` using port writes to `0x43` (mode register) and `0x40` (channel 0 data), and the PIC mask is updated so that both IRQ0 (timer) and IRQ1 (keyboard) are enabled.
 
@@ -164,7 +184,7 @@ From the CPU's point of view, the final return from interrupt is ordinary. It re
 
 **A process running for the first time needs a synthetic frame.** A freshly created process has never been preempted, so there is no real saved frame to resume yet. The scheduler manufactures one on the new process's kernel stack: the saved segment registers are set to the user data selector, the general-purpose registers are zeroed, and the `iret` frame is built to drop into ring 3 at the ELF entry point with interrupts enabled. The kernel then records the stack pointer to that synthetic frame as the place where the process should later resume.
 
-**A new process enters `main` with `argc`, `argv`, and `envp` already on its stack.** When the kernel allocates and maps the four user stack pages, it does not stop at the empty stack top — it lays down a full System V i386 **ABI** (Application Binary Interface, the set of register and stack conventions the compiler assumes at function-call boundaries) argument frame first and hands back the resulting `ESP` as the process's initial stack pointer. That way, by the time the `iret` transfers control to ring 3, the user stack already looks like a conventional Unix process image, including an environment array.
+**A new process enters `main` with `argc`, `argv`, and `envp` already on its stack.** When the kernel allocates and maps the four user stack pages, it does not stop at the empty stack top — it lays down a full System V i386 **ABI** (Application Binary Interface, the set of register and stack conventions the compiler assumes at function-call boundaries) argument frame first and hands back the resulting `ESP` as the process's initial stack pointer. That way, by the time the transfer of control to user mode happens, the user stack already looks like a conventional Unix process image, including an environment array.
 
 The frame is built from the top of the stack page downward:
 
@@ -180,7 +200,7 @@ The frame is built from the top of the stack page downward:
 
 ![](diagrams/ch15-diag03.svg)
 
-Because the page directory and page tables live in the kernel's identity-mapped 0–128 MB region, the kernel can resolve the physical frame backing the top stack page and write the whole initial stack image through that kernel-visible pointer. No **CR3** reload is required, and no temporary mapping has to be torn down. The same path handles `argc == 0` and `envc == 0` gracefully, writing zero counts and NULL-terminated empty arrays in each case, so the ring-3 startup stub can always pop all three words off the stack without a special case.
+Because the page directory and page tables live in the kernel's identity-mapped 0–128 MB region, the kernel can resolve the physical frame backing the top stack page and write the whole initial stack image through that kernel-visible pointer. No `CR3` reload is required, and no temporary mapping has to be torn down. The same path handles `argc == 0` and `envc == 0` gracefully, writing zero counts and NULL-terminated empty arrays in each case, so the ring-3 startup stub can always pop all three words off the stack without a special case.
 
 To keep the frame inside a single 4 KB stack page, the kernel enforces four caps: at most 32 argv entries, at most 1 024 bytes total across all argv strings, at most 32 environment entries, and at most 1 024 bytes total across all environment strings. The `SYS_EXEC` path copies every argv and envp string into fixed-size kernel scratch buffers before building the new image, because the caller's address space is about to be replaced and any raw user pointers would then reference the wrong pages.
 
@@ -214,9 +234,9 @@ This is the copy-on-write model Linux uses too: the expensive physical copy is d
 
 #### Splitting the Return Value
 
-After cloning the address space, the kernel must arrange for the parent and child to resume execution at the same place but see different values in `EAX`. This is the tricky part of fork.
+After cloning the address space, the kernel must arrange for the parent and child to resume execution at the same place but see different values in the return register. This is the tricky part of fork.
 
-The trick is that the kernel already has exactly the right data structure for this moment: the saved syscall-return frame sitting on the parent's kernel stack. That frame contains the user registers that will be restored when the kernel returns to ring 3, including the return register `EAX`.
+The trick is that the kernel already has exactly the right data structure for this moment: the saved syscall-return frame sitting on the parent's kernel stack. That frame contains the user registers that will be restored when the kernel returns to user mode, including the return register `EAX` on x86.
 
 Fork works by copying that saved frame onto the child's kernel stack and then editing only one field in the child's copy: the saved `EAX` value is changed to zero.
 
@@ -238,14 +258,15 @@ Thread groups also change the visible process model. `/proc` lists TGIDs rather 
 
 ### Where the Machine Is by the End of Chapter 15
 
-We can now:
+We can now run isolated user programs on both arches. Specifically, we can:
 
 - Read an ELF file from disk, parse its program headers, and load its segments into a fresh private address space.
-- Enter ring 3 via a manufactured `iret` frame, with user-mode segment selectors and a fresh user stack.
-- Service system calls through `int 0x80`, reading arguments from the user's registers and writing return values back.
+- On x86: enter ring 3 via a manufactured `iret` frame, switch address spaces by writing `CR3`, and return to user code from system calls through the symmetric `iret` at the end of the syscall stub.
+- On AArch64 (planned, milestone 4): enter EL0 via `eret` after seeding `ELR_EL1` and `SPSR_EL1`, switch address spaces by writing `TTBR0_EL1`, and save and restore the callee-saved register set on each context switch.
+- Service system calls, reading arguments from the user's registers and writing return values back.
 - Preempt running processes every ten milliseconds via the PIT and round-robin schedule up to eight concurrent processes, saving and restoring register state, page directories, kernel stacks, and FPU/SSE state on every switch.
 - Wait for a child process to exit with `SYS_WAIT`, parking the caller until the scheduler wakes it.
 - Fork a running process via `SYS_FORK`, duplicating its page tables, sharing its user frames copy-on-write, and arranging for the parent and child to see different return values at the same return address.
 - Create Linux-style user threads with `SYS_CLONE`, sharing VM, fd, filesystem, and signal-disposition resources according to clone flags while preserving per-task TIDs.
 
-With this machinery in place, the first user program runs as a ring-3 process, can launch any ELF file on the DUFS disk, and waits for each child to exit before returning to the prompt.
+With this machinery in place, the first user program runs as an unprivileged process, can launch any ELF file on the DUFS disk, and waits for each child to exit before returning to the prompt.

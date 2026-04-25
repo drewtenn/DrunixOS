@@ -35,7 +35,7 @@ That split exists for debugging as much as for correctness. `lidt` is enough to 
 
 ### What Happens When You Type `next`
 
-When GDB says `next` or `step`, it is not performing magic from outside the machine. It resumes the target and arranges for execution to stop again after a small amount of code has run. On x86 that usually means a trap or temporary breakpoint exception of some kind will be delivered back through the CPU's normal exception machinery.
+When GDB says `next` or `step`, it is not performing magic from outside the machine. It resumes the target and arranges for execution to stop again after a small amount of code has run. That usually means a trap or temporary breakpoint exception of some kind will be delivered back through the CPU's normal exception machinery.
 
 This is the moment where interrupts and debugging meet. GDB asks the machine to run. The CPU runs guest code. Then the CPU needs to stop again by taking a trap. That trap is not a special debugger-only side channel inside the guest; it still enters through the same kind of exception-routing machinery the kernel uses for faults and software traps. If the kernel has not loaded its own IDT yet, there is no valid kernel-owned destination for that exception. The debugger may show a clean stop at the current instruction because QEMU's remote stub can seize the CPU externally, but the *next* stop still depends on the target being able to take a trap correctly. If it cannot, execution may appear to jump into low memory, firmware code, or an unknown address instead of returning to the expected source line.
 

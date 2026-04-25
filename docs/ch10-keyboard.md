@@ -15,6 +15,10 @@ This chapter follows the life of a single keystroke from the moment a key closes
 
 Between steps 1 and 6 the rest of the system is completely passive. The keyboard driver is one of the few places in the OS where execution flows from hardware to software rather than the other way around.
 
+Keyboard input is a portable concept — every architecture needs a way to get characters from the user into the kernel's ring buffer — but the specific hardware that delivers those characters varies by platform. On the PC we use the PS/2 controller described below; other platforms use different physical input buses. Modern hardware typically routes keyboard and mouse input through **USB HID** (Universal Serial Bus Human Interface Device, the standard input-device protocol used by USB keyboards, mice, and gamepads).
+
+*On AArch64 (planned): USB HID in place of the PS/2 controller.*
+
 ### Scancodes, Not ASCII
 
 A PC keyboard does not send ASCII. It sends **scancodes** — small numeric codes that identify which physical key was pressed or released. The **PS/2** keyboard protocol (named after IBM's 1987 Personal System/2 computer line, which standardised the connector and signalling still used by modern keyboards today) defines several sets of scancodes, and by default the keyboard uses **scancode set 1**, in which each key has a **make code** sent when the key is pressed and a **break code** sent when it is released. The break code for any key is the make code with bit 7 set — that is, the make code plus `0x80`.

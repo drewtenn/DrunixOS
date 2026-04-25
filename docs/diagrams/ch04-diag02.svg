@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="625.0" height="436" viewBox="0 0 625.0 436" role="img" aria-labelledby="title desc">
+  <title id="title">AArch64 exception vector table</title>
+  <desc id="desc">Sixteen 128-byte slots arranged as four exception classes across four contexts, addressed relative to VBAR_EL1.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 2 2 L 10 6 L 2 10" fill="none" stroke="#0f172a" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      .bg { fill: #ffffff; }
+      .panel { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+      .blue { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.5; }
+      .green { fill: #ecfdf5; stroke: #059669; stroke-width: 1.5; }
+      .amber { fill: #fef3c7; stroke: #d97706; stroke-width: 1.5; }
+      .gray { fill: #f1f5f9; stroke: #64748b; stroke-width: 1.3; }
+      .chip { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.5; }
+      .vector { fill: #ecfdf5; stroke: #059669; stroke-width: 1.5; }
+      .tag { fill: #dbeafe; stroke: #2563eb; stroke-width: 1.25; }
+      .cell { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.4; }
+      .attr { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.4; }
+      .row { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.2; }
+      .gap { fill: #f1f5f9; stroke: #cbd5e1; stroke-width: 1.2; }
+      .table-shell { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.2; }
+      .table-headband { fill: #f8fafc; }
+      .table-rule { stroke: #cbd5e1; stroke-width: 1; }
+      .edge-label-bg { fill: #ffffff; fill-opacity: 0.94; }
+      .title { fill: #0f172a; font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label { fill: #0f172a; font: 600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-tight { fill: #0f172a; font: 600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-mini { fill: #0f172a; font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-micro { fill: #0f172a; font: 600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .colhead { fill: #334155; font: 700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .small { fill: #334155; font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .muted { fill: #64748b; font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .mono { fill: #0f172a; font: 12px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+      .byte { fill: #0f172a; font: 600 12px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; text-anchor: middle; dominant-baseline: middle; }
+      .arrow { stroke: #0f172a; stroke-width: 2.2; stroke-linecap: round; marker-end: url(#arrow); }
+      .line { stroke: #334155; stroke-width: 1.6; stroke-linecap: round; }
+    </style>
+  </defs>
+  <rect class="bg" x="0" y="0" width="625.0" height="436" rx="12"/>
+  <text class="title" x="44" y="42">AArch64 exception vector table</text>
+  <text class="muted" x="44" y="68">Sixteen 128-byte slots arranged as four exception classes across four contexts,</text>
+  <text class="muted" x="44" y="84">addressed relative to VBAR_EL1.</text>
+  <rect class="panel" x="34" y="114" width="557.0" height="274" rx="10"/>
+  <rect class="table-shell" x="62" y="140" width="501.0" height="222" rx="8"/>
+  <rect class="table-headband" x="62" y="140" width="501.0" height="38" rx="8"/>
+  <line class="table-rule" x1="62" y1="178" x2="563.0" y2="178"/>
+  <text class="label" x="138.0" y="164.0" text-anchor="middle">Context</text>
+  <line class="table-rule" x1="214.0" y1="140" x2="214.0" y2="362"/>
+  <text class="label" x="265.5" y="164.0" text-anchor="middle">Synchronous</text>
+  <line class="table-rule" x1="317.0" y1="140" x2="317.0" y2="362"/>
+  <text class="label" x="358.0" y="164.0" text-anchor="middle">IRQ</text>
+  <line class="table-rule" x1="399.0" y1="140" x2="399.0" y2="362"/>
+  <text class="label" x="440.0" y="164.0" text-anchor="middle">FIQ</text>
+  <line class="table-rule" x1="481.0" y1="140" x2="481.0" y2="362"/>
+  <text class="label" x="522.0" y="164.0" text-anchor="middle">SError</text>
+  <line class="table-rule" x1="62" y1="224" x2="563.0" y2="224"/>
+  <text class="small" x="138.0" y="198.0" text-anchor="middle">Current EL,</text>
+  <text class="small" x="138.0" y="214.0" text-anchor="middle">SP_EL0</text>
+  <text class="mono" x="265.5" y="206.0" text-anchor="middle">0x000</text>
+  <text class="mono" x="358.0" y="206.0" text-anchor="middle">0x080</text>
+  <text class="mono" x="440.0" y="206.0" text-anchor="middle">0x100</text>
+  <text class="mono" x="522.0" y="206.0" text-anchor="middle">0x180</text>
+  <line class="table-rule" x1="62" y1="270" x2="563.0" y2="270"/>
+  <text class="small" x="138.0" y="244.0" text-anchor="middle">Current EL,</text>
+  <text class="small" x="138.0" y="260.0" text-anchor="middle">SP_ELx</text>
+  <text class="mono" x="265.5" y="252.0" text-anchor="middle">0x200</text>
+  <text class="mono" x="358.0" y="252.0" text-anchor="middle">0x280</text>
+  <text class="mono" x="440.0" y="252.0" text-anchor="middle">0x300</text>
+  <text class="mono" x="522.0" y="252.0" text-anchor="middle">0x380</text>
+  <line class="table-rule" x1="62" y1="316" x2="563.0" y2="316"/>
+  <text class="small" x="138.0" y="290.0" text-anchor="middle">Lower EL,</text>
+  <text class="small" x="138.0" y="306.0" text-anchor="middle">AArch64</text>
+  <text class="mono" x="265.5" y="298.0" text-anchor="middle">0x400</text>
+  <text class="mono" x="358.0" y="298.0" text-anchor="middle">0x480</text>
+  <text class="mono" x="440.0" y="298.0" text-anchor="middle">0x500</text>
+  <text class="mono" x="522.0" y="298.0" text-anchor="middle">0x580</text>
+  <text class="small" x="138.0" y="336.0" text-anchor="middle">Lower EL,</text>
+  <text class="small" x="138.0" y="352.0" text-anchor="middle">AArch32</text>
+  <text class="mono" x="265.5" y="344.0" text-anchor="middle">0x600</text>
+  <text class="mono" x="358.0" y="344.0" text-anchor="middle">0x680</text>
+  <text class="mono" x="440.0" y="344.0" text-anchor="middle">0x700</text>
+  <text class="mono" x="522.0" y="344.0" text-anchor="middle">0x780</text>
+  <text class="muted" x="591.0" y="418.0" text-anchor="end">Chapter 4, Figure 2</text>
+</svg>

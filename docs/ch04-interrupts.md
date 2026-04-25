@@ -4,9 +4,21 @@
 
 ### When Straight-Line Execution Stops
 
-Chapter 3 ended with the kernel still executing in a straight line. The **GDT** (Global Descriptor Table) is live, the early **IDT** (Interrupt Descriptor Table) is loaded, and the machine is one `sti` instruction away from becoming truly asynchronous. The important change in this chapter is not just that we fill in another table. It is that, from this point onward, the CPU may stop the current instruction stream between two instructions and enter the kernel for a completely different reason.
+Chapter 3 ended with the kernel still executing in a straight line. At any moment, though, something else could demand attention: the timer fires, the keyboard receives a keystroke, or the current instruction hits a fault it cannot complete. When that happens the CPU cannot just keep running. It needs to stop what it is doing, record enough state to resume later, and jump to a handler chosen by the kind of event that arrived.
 
-That is what an **interrupt** is. An interrupt is a signal that makes the CPU save enough state to resume later, switch to a handler chosen by an interrupt vector number, and run that handler before returning to the interrupted code.
+Both x86 and AArch64 solve that problem with the same strategy at a high level: the CPU consults a **fixed-position table** to decide where to jump. That table must be installed and registered with the CPU before the first exception or interrupt can arrive safely. What differs between the two architectures is the table's shape, the instruction that registers it, and the way events are classified into slots.
+
+The two starting points are:
+
+- **x86 PC**: A 256-entry **IDT** (Interrupt Descriptor Table) whose base address is loaded into the CPU by a single `lidt` instruction. Every exception and hardware interrupt maps to a numbered vector from 0 to 255, and each entry in the IDT names a handler address, a code segment, and a set of privilege rules for crossing into that handler.
+
+- **AArch64 (Raspberry Pi 3, QEMU `raspi3b`)**: A 2 KB **exception vector table** whose base address is written into the system register `VBAR_EL1` (Vector Base Address Register, Exception Level 1). Instead of 256 numbered slots, the table has sixteen fixed slots arranged as a 4 × 4 matrix of exception classes and CPU contexts. Each slot is exactly 128 bytes, giving enough room for an inline handler if the kernel wants one.
+
+Both paths end in the same place: the CPU has a valid landing point for any exception or interrupt that arrives, and the kernel is ready to receive events.
+
+### On x86: the Interrupt Descriptor Table
+
+#### Two kinds of event
 
 On x86 there are two broad kinds of interrupt.
 
@@ -27,7 +39,7 @@ Once the kernel has finished setting the table up, the vector space it actively 
 | 128     | Software `int 0x80`   | System-call entry gate                            |
 | 129–255 | —                     | Unused                                            |
 
-### The Shape of an IDT Entry
+#### The shape of an IDT entry
 
 Each IDT entry is eight bytes long. Intel calls this entry a **gate** because it is a controlled way for execution to cross into a handler. In C the layout is:
 
@@ -68,7 +80,7 @@ Vector `0x80`, the software interrupt the kernel uses for system calls, is the e
 
 There is one more special case: vector 8, `#DF` (Double Fault), is installed as a **task gate** instead of a normal interrupt gate. A task gate points at a dedicated **TSS** (Task State Segment, a CPU-defined structure that can hold a complete hardware task context, including a stack pointer). The kernel uses that task gate to enter the double-fault path on a known-good emergency stack even if the ordinary ring-0 stack is already damaged.
 
-### Why the PIC Must Be Remapped
+#### Why the PIC must be remapped
 
 Before the kernel can accept hardware IRQs, it has to correct an awkward piece of PC history. The original IBM PC wired IRQs 0 through 7 onto CPU vectors 8 through 15. That arrangement was acceptable in 16-bit real mode, but in protected mode those vector numbers already belong to CPU exceptions.
 
@@ -112,19 +124,19 @@ After remapping, the kernel also writes an **interrupt mask** to each PIC. An in
 
 The PIC is programmed entirely through **I/O ports** — the separate x86 port-address space introduced in Chapter 3. Ports `0x20` and `0x21` control the master PIC, and ports `0xA0` and `0xA1` control the slave PIC.
 
-### Loading the Table Before Enabling Interrupts
+#### Loading the table before enabling interrupts
 
 Once the kernel has filled in the IDT entries, it loads the table with `lidt`. The `lidt` instruction writes the base address and size of the IDT into the **IDTR** (Interrupt Descriptor Table Register), which is the CPU's dedicated register for "where the interrupt table lives".
 
 This step happens before the kernel enables ordinary hardware interrupts. That split matters. After `lidt`, the CPU already has a valid destination for exceptions and debugger traps. Only later, after the PIC is remapped and the early device handlers are registered, does the kernel execute `sti` (Set Interrupt Flag) to re-enable maskable hardware interrupts. In other words, the exception path comes alive first; asynchronous device delivery comes alive second.
 
-### Why the GNU Debugger Needs the IDT Early
+#### Why the GNU Debugger needs the IDT early
 
 This early `lidt` is not just for normal faults. It also matters for the **GNU Debugger** (**GDB**), which often resumes the target and relies on a trap or temporary breakpoint to stop again a moment later. Those stops still enter the kernel through the CPU's ordinary exception mechanism.
 
 If the kernel has not loaded its own IDT yet, a trap taken while stepping through early boot has nowhere valid to go. Instead of returning neatly to the debugger, the CPU can fall into firmware state or low memory. Loading the IDT early gives those traps a valid landing point even though the machine is still not accepting ordinary device IRQs yet.
 
-### Why the IDT Points at Assembly Stubs
+#### Why the IDT points at assembly stubs
 
 An IDT entry stores a raw machine address. The CPU jumps there directly when an interrupt arrives. A normal C function is not prepared for that.
 
@@ -136,7 +148,7 @@ Those stubs do the minimum amount of machine-specific cleanup needed to turn "ra
 
 Hardware IRQ stubs follow the same pattern. Each one pushes a dummy zero for the error-code slot, pushes its remapped vector number, and jumps to the common IRQ trampoline.
 
-### The Common Trampoline
+#### The common trampoline
 
 The shared trampolines — `isr_common` for exceptions and `irq_common` for hardware IRQs — save the rest of the machine state before calling into C.
 
@@ -157,7 +169,7 @@ By the time the C exception handler receives control, the stack has been normali
 
 The IRQ trampoline saves the same register state, but its C handoff is slightly different. Instead of passing a frame pointer to `irq_dispatch`, it passes the vector number and error-code slot as ordinary arguments, then optionally runs the scheduler and signal-delivery checks before restoring the saved state and executing `iret`.
 
-### The Saved Frame in C
+#### The saved frame in C
 
 The exception path treats the saved stack image as an `isr_frame_t` — a struct whose field order matches exactly what the assembly pushed:
 
@@ -177,7 +189,7 @@ Some exceptions need extra CPU state outside the frame itself. A page fault, for
 
 The frame is not only readable. It is also writable. Later kernel paths use the saved registers as a place to communicate return values back to interrupted code, and the scheduler can resume a process by restoring a different saved frame and letting `iret` return into that process's state instead.
 
-### Dispatching Hardware IRQs
+#### Dispatching hardware IRQs
 
 Hardware IRQ delivery uses the same low-level save-and-restore machinery, but the higher-level C path is deliberately small. `irq_dispatch` subtracts 32 from the remapped vector number to recover a zero-based IRQ line number, looks up that line in a 16-slot table of function pointers, and calls the registered handler if one exists.
 
@@ -185,13 +197,58 @@ After the device-specific handler returns, `irq_dispatch` sends an **EOI** (End 
 
 For IRQs 0 through 7, sending EOI means writing `0x20` to the master PIC command port at `0x20`. For IRQs 8 through 15, the kernel must send `0x20` to the slave PIC first and then to the master PIC. Centralising that logic in `irq_dispatch` keeps individual device drivers from having to know anything about PIC bookkeeping.
 
+### On AArch64: the exception vector table at `VBAR_EL1`
+
+We have spent the x86 section filling a 256-slot table with individual handler addresses. AArch64 takes a different angle on the same problem, and understanding why it differs makes both designs clearer.
+
+AArch64 introduces **exception levels** — a layered privilege model that replaces x86's ring numbering with four explicitly named levels. **EL0** is user space. **EL1** is the kernel (the level we operate at for most of the kernel's lifetime). **EL2** is the hypervisor level, and **EL3** is the firmware. Each transition between levels is an exception in the architectural sense, and the CPU needs to know where to jump for each combination of exception class and source context. Instead of mapping that space onto a flat vector number, AArch64 bakes the classification directly into the table layout.
+
+The kernel writes the base address of the table into `VBAR_EL1` (Vector Base Address Register for EL1 — the system register that tells the CPU where the EL1 exception vector table lives). From that moment on, every exception or interrupt taken at EL1 lands in one of the table's sixteen fixed slots.
+
+#### The four × four matrix
+
+The table is exactly 2 KB (0x800 bytes). It holds sixteen slots, each 128 bytes wide — enough room for a short inline handler or for a branch to one. The slots are arranged as four columns of exception class across four rows of CPU context. Columns, left to right: **synchronous exception** (a fault caused directly by the current instruction, such as an undefined instruction, a memory access error, or an `svc` system-call instruction), **IRQ** (a normal-priority external interrupt delivered from the interrupt controller), **FIQ** (Fast Interrupt reQuest, a higher-priority interrupt class that AArch64 reserves for secure-world or time-critical uses), and **SError** (System Error, an asynchronous CPU error class used for things like bus errors that arrive after the instruction that caused them).
+
+Rows, top to bottom: the four CPU contexts from which an exception can be taken while executing at EL1.
+
+- **Current EL with `SP_EL0`**: the kernel is at EL1 but is using the stack pointer that belongs to EL0. This is an unusual mode, but the architecture defines a slot for it.
+- **Current EL with `SP_ELx`**: the kernel is at EL1 and is using its own EL1 stack pointer. This is the normal kernel operating mode, so exceptions that occur inside the kernel — including nested IRQs — land in this row.
+- **Lower EL in AArch64 state**: the exception was taken from EL0 while the EL0 code was running in AArch64 mode. User-space exceptions and system calls land here.
+- **Lower EL in AArch32 state**: the exception was taken from EL0 while the EL0 code was running in 32-bit compatibility mode.
+
+Each slot's byte offset from `VBAR_EL1` advances by `0x80` (128 bytes) as you move one cell to the right or down:
+
+![](diagrams/ch04-diag02.svg)
+
+The neatness of the layout is deliberate. The CPU can compute the entry address with a single add: `VBAR_EL1 + (context_index × 0x200) + (class_index × 0x80)`. There is no indirection through a pointer table as there is in the IDT. The handler code itself lives at the computed address, not a pointer to it. That makes the vector table a true fixed-size block of executable code rather than an array of descriptors.
+
+#### Installing the table
+
+Installing the table is a two-instruction sequence in the kernel's early assembly boot path. The kernel computes the address of the `.vector_table` section, writes it into `VBAR_EL1` using the `msr` (Move to System Register) instruction, and issues an `isb` (Instruction Synchronization Barrier) to guarantee the register write is visible before any subsequent instruction executes. After that, any exception or interrupt taken at EL1 will find its slot in the table.
+
+This parallels what `lidt` does on x86, but because AArch64 has no separate "interrupt enable" register equivalent to x86's `IF` bit in `EFLAGS` for synchronous exceptions, the sequencing question is simpler. IRQs and FIQs have their own masking bits in the `DAIF` system register (Debug, SError, IRQ, FIQ mask flags). The kernel installs the vector table first, then clears the IRQ and FIQ mask bits once the interrupt controller and timer are ready — the same two-phase discipline as the x86 side.
+
+#### What Milestone 1 puts in each slot
+
+In the first bring-up milestone, the handlers are deliberately minimal. The synchronous handler for the "current EL with `SP_ELx`" row prints a register dump and halts, because a synchronous exception taken inside the kernel most likely means the kernel itself faulted — a situation where halting and printing state is more useful than trying to recover. The IRQ handler for the same row checks the interrupt controller, recognises the ARM Generic Timer, increments the tick counter, and reloads the timer interval for the next tick. All other slots branch to a catch-all handler that prints the slot offset and halts.
+
+That is enough for a heartbeat kernel: the timer fires, the IRQ slot in the current-EL-with-SP_ELx row handles it, and the tick count climbs on the console. The FIQ and SError slots are wired to the catch-all because nothing in the bring-up milestone uses either exception class.
+
 ### Where the Machine Is by the End of Chapter 4
 
 By the end of this chapter, the kernel has crossed an important line: execution is no longer purely synchronous.
+
+On x86:
 
 - CPU exceptions have a valid entry path through the IDT, with assembly stubs that turn raw interrupt entry into a uniform C-visible frame.
 - Hardware IRQs no longer collide with exception vectors because the PIC has been remapped from vectors 8–15 to vectors 32–47.
 - The timer and keyboard IRQ lines are the only unmasked device inputs, so the kernel is interruptible but still tightly controlled.
 - Both exception handling and hardware IRQ dispatch now end by restoring the saved machine state with `iret`, so interrupted code resumes exactly where it left off.
 
-From this point on, the CPU can enter the kernel between ordinary instructions because something happened elsewhere in the machine. The next step is to put a cleaner software dispatch layer on top of those raw IRQ vectors so device drivers can register handlers without caring about the remapped vector numbers.
+On AArch64:
+
+- The 2 KB exception vector table is installed at `VBAR_EL1` and the sixteen slots cover every combination of exception class and CPU context.
+- The IRQ slot for the normal kernel operating mode handles the ARM Generic Timer interrupt, increments the tick counter, and reloads the timer for the next period.
+- Synchronous exceptions and all other slots are wired to diagnostic handlers that halt and print state.
+
+From this point on, both architectures can enter the kernel between ordinary instructions because something happened elsewhere in the machine. The next step is to put a cleaner software dispatch layer on top of those raw interrupt paths so device drivers can register handlers without caring about the underlying table structure.
