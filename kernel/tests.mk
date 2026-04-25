@@ -1,4 +1,5 @@
 KTEST_SHARED_OBJS = kernel/test/ktest.o \
+                    kernel/test/test_arch_shared.o \
                     kernel/test/test_console_terminal.o \
                     kernel/test/test_pmm_core.o \
                     kernel/test/test_kheap.o \

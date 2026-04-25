@@ -412,6 +412,28 @@ INTENTS: tuple[TestIntent, ...] = (
             ),
             "arm64": (
                 SourceMarkers(
+                    "kernel/test/test_arch_shared.c",
+                    (
+                        "test_shared_vma_map_anonymous_places_regions_below_stack",
+                        "test_shared_vma_unmap_range_rejects_heap_or_stack",
+                        "test_shared_vma_protect_range_splits_and_requires_full_coverage",
+                        "test_shared_copy_to_user_spans_pages",
+                        "test_shared_copy_string_from_user_spans_pages",
+                        "test_shared_prepare_rejects_kernel_and_unmapped_ranges",
+                        "test_shared_proc_resource_put_exec_owner_releases_solo_owner",
+                        "test_shared_repeated_exec_owner_put_preserves_heap",
+                        "test_shared_syscall_fstat_reads_resource_fd_table",
+                        "test_shared_syscall_getcwd_reads_resource_fs_state",
+                        "test_shared_syscall_chdir_updates_resource_fs_state",
+                        "test_shared_syscall_brk_reads_resource_address_space",
+                        "test_shared_rt_sigaction_reads_resource_handlers",
+                        "test_shared_clone_rejects_sighand_without_vm",
+                        "test_shared_clone_rejects_thread_without_sighand",
+                        "test_shared_clone_thread_shares_group_and_selected_resources",
+                        "test_shared_clone_process_without_vm_gets_distinct_group_and_as",
+                    ),
+                ),
+                SourceMarkers(
                     "kernel/test/test_arch_arm64.c",
                     (
                         "test_arm64_pmm_alloc_free_reuses_pages",
@@ -517,11 +539,11 @@ INTENTS: tuple[TestIntent, ...] = (
             ),
             "arm64": (
                 SourceMarkers(
-                    "kernel/test/test_arch_arm64.c",
+                    "kernel/test/test_arch_shared.c",
                     (
-                        "test_arm64_vma_add_sorts_and_finds_regions",
-                        "test_arm64_vma_add_rejects_overlapping_regions",
-                        "test_arm64_vma_unmap_and_protect_split_generic_mapping",
+                        "test_shared_vma_map_anonymous_places_regions_below_stack",
+                        "test_shared_vma_unmap_range_rejects_heap_or_stack",
+                        "test_shared_vma_protect_range_splits_and_requires_full_coverage",
                     ),
                 ),
             ),
@@ -548,10 +570,10 @@ INTENTS: tuple[TestIntent, ...] = (
             ),
             "arm64": (
                 SourceMarkers(
-                    "kernel/test/test_arch_arm64.c",
+                    "kernel/test/test_arch_shared.c",
                     (
-                        "test_arm64_process_resources_start_with_single_refs",
-                        "test_arm64_process_resource_get_put_tracks_refs",
+                        "test_shared_proc_resource_put_exec_owner_releases_solo_owner",
+                        "test_shared_repeated_exec_owner_put_preserves_heap",
                     ),
                 ),
             ),
@@ -604,8 +626,12 @@ INTENTS: tuple[TestIntent, ...] = (
                     ),
                 ),
                 SourceMarkers(
-                    "kernel/test/test_arch_arm64.c",
-                    ("test_arm64_uaccess_copies_mapped_user_bytes",),
+                    "kernel/test/test_arch_shared.c",
+                    (
+                        "test_shared_copy_to_user_spans_pages",
+                        "test_shared_copy_string_from_user_spans_pages",
+                        "test_shared_prepare_rejects_kernel_and_unmapped_ranges",
+                    ),
                 ),
                 SourceMarkers(
                     "tools/test_arm64_syscall_parity.py",
@@ -642,6 +668,15 @@ INTENTS: tuple[TestIntent, ...] = (
                 SourceMarkers(
                     "user/arm64init.c",
                     ("ARM64 syscall: clone/wait ok",),
+                ),
+                SourceMarkers(
+                    "kernel/test/test_arch_shared.c",
+                    (
+                        "test_shared_clone_rejects_sighand_without_vm",
+                        "test_shared_clone_rejects_thread_without_sighand",
+                        "test_shared_clone_thread_shares_group_and_selected_resources",
+                        "test_shared_clone_process_without_vm_gets_distinct_group_and_as",
+                    ),
                 ),
                 SourceMarkers(
                     "tools/test_arm64_syscall_parity.py",
@@ -684,6 +719,16 @@ INTENTS: tuple[TestIntent, ...] = (
                         "ARM64 syscall: fd/path ok",
                         "ARM64 syscall: signal ok",
                         "ARM64 syscall: utility ok",
+                    ),
+                ),
+                SourceMarkers(
+                    "kernel/test/test_arch_shared.c",
+                    (
+                        "test_shared_syscall_fstat_reads_resource_fd_table",
+                        "test_shared_syscall_getcwd_reads_resource_fs_state",
+                        "test_shared_syscall_chdir_updates_resource_fs_state",
+                        "test_shared_syscall_brk_reads_resource_address_space",
+                        "test_shared_rt_sigaction_reads_resource_handlers",
                     ),
                 ),
                 SourceMarkers(
@@ -821,6 +866,7 @@ INTENTS: tuple[TestIntent, ...] = (
                         "test_arm64_pmm_alloc_free_reuses_pages",
                         "test_arm64_pmm_multiple_allocations_are_distinct",
                         "test_arm64_pmm_refcount_tracks_shared_page",
+                        "test_arm64_pmm_refcount_saturates_at_255",
                         "test_arm64_vma_add_sorts_and_finds_regions",
                         "test_arm64_vma_add_rejects_overlapping_regions",
                         "test_arm64_vma_unmap_and_protect_split_generic_mapping",

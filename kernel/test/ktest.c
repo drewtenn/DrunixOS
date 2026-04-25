@@ -111,6 +111,7 @@ void ktest_run_suite_counts(ktest_suite_t *suite,
 /* ── Top-level runner ───────────────────────────────────────────────────── */
 
 extern ktest_suite_t *ktest_suite_console_terminal(void);
+extern ktest_suite_t *ktest_suite_arch_shared(void);
 extern ktest_suite_t *ktest_suite_pmm_core(void);
 extern ktest_suite_t *ktest_suite_kheap(void);
 extern ktest_suite_t *ktest_suite_vfs(void);
@@ -142,6 +143,7 @@ void ktest_run_all(void)
 
 	if (ktest_suite_pmm)
 		run_and_tally(ktest_suite_pmm(), &total_pass, &total_fail);
+	run_and_tally(ktest_suite_arch_shared(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_console_terminal(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_pmm_core(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_kheap(), &total_pass, &total_fail);
