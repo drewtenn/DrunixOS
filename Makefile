@@ -315,16 +315,13 @@ kernel: os.iso
 #             this so that the filesystem state is preserved across boots.
 disk: $(ROOT_DISK_IMG) $(DUFS_IMG)
 
-# Short workflow aliases.
 build: kernel disk
 iso: os.iso
 images: disk
 fresh: run-fresh
-check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-test-wiring
+check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-shared-shell-tests check-targets-generic check-test-wiring
 check-phase6:
 	python3 tools/test_kernel_arch_boundary_phase6.py
-
-phase6-check: check-phase6 check-arm64-userspace
 
 check-phase7:
 	python3 tools/test_kernel_arch_boundary_phase7.py
@@ -346,23 +343,14 @@ check-ctrl-c:
 check-shell-history:
 	python3 tools/test_shell_history.py --arch x86
 
-check-arm64-userspace:
-	python3 tools/test_arm64_userspace_smoke.py
+check-userspace-smoke:
+	python3 tools/test_user_programs.py --arch x86
 
-check-arm64-filesystem-init:
-	python3 tools/test_arm64_filesystem_init.py
+check-filesystem-init:
+	python3 tools/test_shell_prompt.py --arch x86
 
-check-arm64-syscall-parity:
-	python3 tools/test_arm64_syscall_parity.py
-
-check-arm64-sleep:
-	python3 tools/test_sleep.py --arch arm64
-
-check-arm64-ctrl-c:
-	python3 tools/test_ctrl_c.py --arch arm64
-
-check-arm64-shell-history:
-	python3 tools/test_shell_history.py --arch arm64
+check-syscall-parity:
+	$(MAKE) ARCH=x86 test-headless
 
 check-arch-boundary-reuse:
 	python3 tools/test_arch_boundary_reuse.py
@@ -370,14 +358,11 @@ check-arch-boundary-reuse:
 check-shared-shell-tests:
 	python3 tools/test_shared_shell_tests_arch_neutral.py
 
+check-targets-generic:
+	python3 tools/test_make_targets_arch_neutral.py
+
 check-test-wiring:
 	python3 tools/test_check_wiring.py --arch x86
-
-check-arm64-check-wiring:
-	python3 tools/test_check_wiring.py --arch arm64
-
-check-arm64-vga-console:
-	python3 tools/test_arm64_vga_console.py
 
 validate-ext3-linux: $(ROOT_DISK_IMG) tools/check_ext3_linux_compat.py tools/check_ext3_journal_activity.py
 	$(PYTHON) tools/check_ext3_linux_compat.py $(ROOT_DISK_IMG)
@@ -560,7 +545,7 @@ clean:
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all \
         check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
-        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity check-arm64-sleep check-arm64-ctrl-c check-arm64-shell-history check-arch-boundary-reuse check-shared-shell-tests check-test-wiring check-arm64-check-wiring check-arm64-vga-console \
+        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-syscall-parity check-arch-boundary-reuse check-shared-shell-tests check-targets-generic check-test-wiring \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean
@@ -599,7 +584,7 @@ disk:
 
 fresh: run
 
-check: check-shared-shell check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity check-arch-boundary-reuse check-shared-shell-tests check-test-wiring
+check: check-shared-shell check-userspace-smoke check-filesystem-init check-syscall-parity check-arch-boundary-reuse check-shared-shell-tests check-targets-generic check-test-wiring
 
 test:
 	$(MAKE) ARCH=$(ARCH) check
@@ -624,18 +609,16 @@ check-shared-shell: check-shell-prompt check-user-programs check-sleep check-ctr
 check-phase6:
 	python3 tools/test_kernel_arch_boundary_phase6.py
 
-phase6-check: check-phase6 check-arm64-userspace
-
 check-phase7:
 	python3 tools/test_kernel_arch_boundary_phase7.py
 
-check-arm64-userspace:
+check-userspace-smoke:
 	python3 tools/test_arm64_userspace_smoke.py
 
-check-arm64-filesystem-init:
+check-filesystem-init:
 	python3 tools/test_arm64_filesystem_init.py
 
-check-arm64-syscall-parity:
+check-syscall-parity:
 	python3 tools/test_arm64_syscall_parity.py
 
 check-sleep:
@@ -647,25 +630,17 @@ check-ctrl-c:
 check-shell-history:
 	python3 tools/test_shell_history.py --arch arm64
 
-check-arm64-sleep: check-sleep
-
-check-arm64-ctrl-c: check-ctrl-c
-
-check-arm64-shell-history: check-shell-history
-
 check-arch-boundary-reuse:
 	python3 tools/test_arch_boundary_reuse.py
 
 check-shared-shell-tests:
 	python3 tools/test_shared_shell_tests_arch_neutral.py
 
+check-targets-generic:
+	python3 tools/test_make_targets_arch_neutral.py
+
 check-test-wiring:
 	python3 tools/test_check_wiring.py --arch arm64
-
-check-arm64-check-wiring: check-test-wiring
-
-check-arm64-vga-console:
-	python3 tools/test_arm64_vga_console.py
 
 run: kernel-arm64.elf | $(LOG_DIR)
 	$(QEMU_ARM) -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf -serial null -serial stdio -device usb-kbd -monitor none -no-reboot
@@ -695,7 +670,7 @@ clean:
 .PHONY: all build kernel iso images disk fresh check \
         test test-fresh test-headless test-all check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
         run run-fresh \
-        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity check-arm64-sleep check-arm64-ctrl-c check-arm64-shell-history check-arch-boundary-reuse check-shared-shell-tests check-test-wiring check-arm64-check-wiring check-arm64-vga-console \
+        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-syscall-parity check-arch-boundary-reuse check-shared-shell-tests check-targets-generic check-test-wiring \
         pdf epub docs \
         rebuild clean
 endif

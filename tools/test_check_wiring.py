@@ -19,6 +19,7 @@ def required_commands(arch: str) -> tuple[str, ...]:
         f"python3 tools/test_shell_history.py --arch {arch}",
         "python3 tools/test_arch_boundary_reuse.py",
         "python3 tools/test_shared_shell_tests_arch_neutral.py",
+        "python3 tools/test_make_targets_arch_neutral.py",
     )
     if arch == "arm64":
         return shared + (
