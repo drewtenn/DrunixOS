@@ -23,6 +23,7 @@ test-headless:
 	$(call qemu_headless_until_log,ktest,60,KTEST.*SUMMARY pass=)
 	grep -q "KTEST.*SUMMARY pass=" $(LOG_DIR)/debugcon-ktest.log
 	grep -q "KTEST.*SUMMARY pass=[0-9][0-9]* fail=0" $(LOG_DIR)/debugcon-ktest.log
+	$(MAKE) ARCH=$(ARCH) check-shared-shell check-shared-shell-tests
 
 # `test-halt` — run halt-inducing kernel tests headlessly.  QEMU is launched
 #               without a display and killed after a short timeout; the exit

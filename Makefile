@@ -24,6 +24,7 @@ INC     := -I kernel -I kernel/arch -I kernel/arch/$(ARCH) -I kernel/arch/$(ARCH
 DEPFLAGS := -MMD -MP
 MOUSE_SPEED ?= 4
 ARM64_SMOKE_FALLBACK ?= 0
+X86_SERIAL_CONSOLE ?= 0
 ifeq ($(ARCH),arm64)
 INIT_PROGRAM ?= bin/shell
 INIT_ARG0 ?= shell
@@ -41,6 +42,11 @@ CFLAGS += -DDRUNIX_INIT_ARG0=\"$(INIT_ARG0)\"
 CFLAGS += -DDRUNIX_INIT_ENV0=\"$(INIT_ENV0)\"
 CFLAGS += -DDRUNIX_ROOT_FS=\"$(ROOT_FS)\"
 CFLAGS += -DDRUNIX_ARM64_SMOKE_FALLBACK=$(ARM64_SMOKE_FALLBACK)
+ifeq ($(ARCH),x86)
+ifeq ($(X86_SERIAL_CONSOLE),1)
+CFLAGS += -DDRUNIX_X86_SERIAL_CONSOLE
+endif
+endif
 ifeq ($(ARCH),arm64)
 ARM_CFLAGS += -DDRUNIX_INIT_PROGRAM=\"$(INIT_PROGRAM)\"
 ARM_CFLAGS += -DDRUNIX_INIT_ARG0=\"$(INIT_ARG0)\"
@@ -105,6 +111,8 @@ endif
 	printf '%s\n%s\n%s\n%s\n' "$(INIT_PROGRAM)" "$(INIT_ARG0)" "$(INIT_ENV0)" "$(ROOT_FS)" | cmp -s - $@ || printf '%s\n%s\n%s\n%s\n' "$(INIT_PROGRAM)" "$(INIT_ARG0)" "$(INIT_ENV0)" "$(ROOT_FS)" > $@
 .arm64-smoke-fallback-flag: FORCE
 	echo "$(ARM64_SMOKE_FALLBACK)" | cmp -s - $@ || echo "$(ARM64_SMOKE_FALLBACK)" > $@
+.x86-serial-console-flag: FORCE
+	echo "$(X86_SERIAL_CONSOLE)" | cmp -s - $@ || echo "$(X86_SERIAL_CONSOLE)" > $@
 .no-desktop-flag: FORCE
 	echo "$(NO_DESKTOP)" | cmp -s - $@ || echo "$(NO_DESKTOP)" > $@
 .vga-text-flag: FORCE
@@ -126,6 +134,7 @@ kernel/arch/x86/boot/kernel-entry.o: .vga-text-flag FORCE
 kernel/lib/klog.o: .klog-debugcon-flag
 kernel/platform/pc/mouse.o: .mouse-speed-flag
 kernel/platform/pc/ata.o: .disk-sectors-flag
+kernel/arch/x86/arch.o: .x86-serial-console-flag
 kernel/test/test_desktop.o: .mouse-speed-flag
 
 #GRUB2 mkrescue(provided by : brew install i686 - elf - grub xorriso)
@@ -155,7 +164,8 @@ TEST_LOGS     := $(foreach suffix,$(TEST_SUFFIXES),$(LOG_DIR)/serial-$(suffix).l
                  $(LOG_DIR)/ext3-host-readback.txt
 SENTINELS     := .ktest-flag .double-fault-test-flag .klog-debugcon-flag \
                  .mouse-speed-flag .init-program-flag .no-desktop-flag \
-                 .vga-text-flag .disk-sectors-flag .arm64-smoke-fallback-flag
+                 .vga-text-flag .disk-sectors-flag .arm64-smoke-fallback-flag \
+                 .x86-serial-console-flag
 
 QEMU_DISKS    = -drive format=raw,file=$(1),if=ide,index=0 \
                  -drive format=raw,file=$(2),if=ide,index=1
@@ -310,7 +320,7 @@ build: kernel disk
 iso: os.iso
 images: disk
 fresh: run-fresh
-check: clang-tidy-include-check test-headless check-arch-boundary-reuse
+check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-test-wiring
 check-phase6:
 	python3 tools/test_kernel_arch_boundary_phase6.py
 
@@ -318,6 +328,23 @@ phase6-check: check-phase6 check-arm64-userspace
 
 check-phase7:
 	python3 tools/test_kernel_arch_boundary_phase7.py
+
+check-shared-shell: check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history
+
+check-shell-prompt:
+	python3 tools/test_shell_prompt.py --arch x86
+
+check-user-programs:
+	python3 tools/test_user_programs.py --arch x86
+
+check-sleep:
+	python3 tools/test_sleep.py --arch x86
+
+check-ctrl-c:
+	python3 tools/test_ctrl_c.py --arch x86
+
+check-shell-history:
+	python3 tools/test_shell_history.py --arch x86
 
 check-arm64-userspace:
 	python3 tools/test_arm64_userspace_smoke.py
@@ -329,16 +356,25 @@ check-arm64-syscall-parity:
 	python3 tools/test_arm64_syscall_parity.py
 
 check-arm64-sleep:
-	python3 tools/test_arm64_sleep.py
+	python3 tools/test_sleep.py --arch arm64
 
 check-arm64-ctrl-c:
-	python3 tools/test_arm64_ctrl_c.py
+	python3 tools/test_ctrl_c.py --arch arm64
 
 check-arm64-shell-history:
-	python3 tools/test_arm64_shell_history.py
+	python3 tools/test_shell_history.py --arch arm64
 
 check-arch-boundary-reuse:
 	python3 tools/test_arch_boundary_reuse.py
+
+check-shared-shell-tests:
+	python3 tools/test_shared_shell_tests_arch_neutral.py
+
+check-test-wiring:
+	python3 tools/test_check_wiring.py --arch x86
+
+check-arm64-check-wiring:
+	python3 tools/test_check_wiring.py --arch arm64
 
 check-arm64-vga-console:
 	python3 tools/test_arm64_vga_console.py
@@ -523,7 +559,8 @@ clean:
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all \
-        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity check-arm64-sleep check-arm64-ctrl-c check-arm64-shell-history check-arch-boundary-reuse check-arm64-vga-console \
+        check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
+        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity check-arm64-sleep check-arm64-ctrl-c check-arm64-shell-history check-arch-boundary-reuse check-shared-shell-tests check-test-wiring check-arm64-check-wiring check-arm64-vga-console \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean
@@ -562,13 +599,27 @@ disk:
 
 fresh: run
 
-check: check-shell-prompt check-user-programs check-arm64-sleep check-arm64-ctrl-c check-arm64-shell-history check-arch-boundary-reuse
+check: check-shared-shell check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity check-arch-boundary-reuse check-shared-shell-tests check-test-wiring
+
+test:
+	$(MAKE) ARCH=$(ARCH) check
+
+test-fresh:
+	$(MAKE) ARCH=$(ARCH) check
+
+test-headless:
+	$(MAKE) ARCH=$(ARCH) check
+
+test-all:
+	$(MAKE) ARCH=$(ARCH) check
 
 check-shell-prompt:
 	python3 tools/test_shell_prompt.py --arch arm64
 
 check-user-programs:
 	python3 tools/test_user_programs.py --arch arm64
+
+check-shared-shell: check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history
 
 check-phase6:
 	python3 tools/test_kernel_arch_boundary_phase6.py
@@ -587,17 +638,31 @@ check-arm64-filesystem-init:
 check-arm64-syscall-parity:
 	python3 tools/test_arm64_syscall_parity.py
 
-check-arm64-sleep:
-	python3 tools/test_arm64_sleep.py
+check-sleep:
+	python3 tools/test_sleep.py --arch arm64
 
-check-arm64-ctrl-c:
-	python3 tools/test_arm64_ctrl_c.py
+check-ctrl-c:
+	python3 tools/test_ctrl_c.py --arch arm64
 
-check-arm64-shell-history:
-	python3 tools/test_arm64_shell_history.py
+check-shell-history:
+	python3 tools/test_shell_history.py --arch arm64
+
+check-arm64-sleep: check-sleep
+
+check-arm64-ctrl-c: check-ctrl-c
+
+check-arm64-shell-history: check-shell-history
 
 check-arch-boundary-reuse:
 	python3 tools/test_arch_boundary_reuse.py
+
+check-shared-shell-tests:
+	python3 tools/test_shared_shell_tests_arch_neutral.py
+
+check-test-wiring:
+	python3 tools/test_check_wiring.py --arch arm64
+
+check-arm64-check-wiring: check-test-wiring
 
 check-arm64-vga-console:
 	python3 tools/test_arm64_vga_console.py
@@ -627,9 +692,10 @@ clean:
 	$(RM) docs/diagrams/*.png
 	$(MAKE) -C user clean
 
-.PHONY: all build kernel iso images disk fresh check check-shell-prompt check-user-programs \
+.PHONY: all build kernel iso images disk fresh check \
+        test test-fresh test-headless test-all check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
         run run-fresh \
-        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity check-arm64-sleep check-arm64-ctrl-c check-arm64-shell-history check-arch-boundary-reuse check-arm64-vga-console \
+        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity check-arm64-sleep check-arm64-ctrl-c check-arm64-shell-history check-arch-boundary-reuse check-shared-shell-tests check-test-wiring check-arm64-check-wiring check-arm64-vga-console \
         pdf epub docs \
         rebuild clean
 endif

@@ -86,4 +86,5 @@ venv/
 .vga-text-flag
 .disk-sectors-flag
 .arm64-smoke-fallback-flag
+.x86-serial-console-flag
 logs/*.stderr

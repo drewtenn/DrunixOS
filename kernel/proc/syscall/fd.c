@@ -156,7 +156,8 @@ static uint32_t syscall_write_fd(uint32_t fd, uint32_t user_buf, uint32_t count)
 			while (pb->count == PIPE_BUF_SIZE) {
 				if (fh->nonblock)
 					return copied ? copied : (uint32_t)-LINUX_EAGAIN;
-				if (pb->read_open == 0 || cur->sig_pending)
+				if (pb->read_open == 0 ||
+				    sched_process_has_unblocked_signal(cur))
 					return copied ? copied : (uint32_t)-1;
 				sched_block(&pb->waiters);
 			}
@@ -165,7 +166,8 @@ static uint32_t syscall_write_fd(uint32_t fd, uint32_t user_buf, uint32_t count)
 				while (pb->count == PIPE_BUF_SIZE) {
 					if (fh->nonblock)
 						return copied ? copied : (uint32_t)-LINUX_EAGAIN;
-					if (pb->read_open == 0 || cur->sig_pending)
+					if (pb->read_open == 0 ||
+					    sched_process_has_unblocked_signal(cur))
 						return copied ? copied : (uint32_t)-1;
 					sched_block(&pb->waiters);
 				}
@@ -296,7 +298,7 @@ static uint32_t syscall_read_fd(uint32_t fd, uint32_t user_buf, uint32_t count)
 				return 0;
 			if (fh->nonblock)
 				return (uint32_t)-LINUX_EAGAIN;
-			if (cur->sig_pending)
+			if (sched_process_has_unblocked_signal(cur))
 				return (uint32_t)-1;
 			sched_block(&pb->waiters);
 		}

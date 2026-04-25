@@ -70,6 +70,7 @@ typedef struct {
 	termios_t termios; /* current terminal settings                    */
 	uint32_t ctrl_sid; /* controlling session ID (0 = unclaimed)       */
 	uint32_t fg_pgid;  /* foreground process group ID (0 = none set)   */
+	uint32_t interrupted; /* VINTR/VSUSP interrupted a blocked read      */
 	wait_queue_t read_waiters; /* readers blocked for line/ring-buffer input */
 	uint32_t in_use; /* 1 if this slot is active                      */
 } tty_t;

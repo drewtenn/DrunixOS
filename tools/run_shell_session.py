@@ -58,9 +58,37 @@ def arch_config(arch: str) -> ShellArchConfig:
         )
 
     if arch == "x86":
-        raise NotImplementedError(
-            "x86 shell sessions need a VGA/keyboard adapter; no shared "
-            "byte-stream path exists yet"
+        return ShellArchConfig(
+            arch=arch,
+            build_args=(
+                "make",
+                "ARCH=x86",
+                "X86_SERIAL_CONSOLE=1",
+                "NO_DESKTOP=1",
+                "kernel",
+                "disk",
+            ),
+            qemu_args=(
+                os.environ.get("QEMU", "qemu-system-i386"),
+                "-display",
+                "none",
+                "-drive",
+                "format=raw,file=img/disk.img,if=ide,index=0",
+                "-drive",
+                "format=raw,file=img/dufs.img,if=ide,index=1",
+                "-cdrom",
+                "os.iso",
+                "-boot",
+                "d",
+                "-no-reboot",
+                "-no-shutdown",
+                "-serial",
+                "stdio",
+                "-monitor",
+                "none",
+            ),
+            serial_socket=None,
+            qemu_stderr=LOG_DIR / "qemu-x86-shell.stderr",
         )
 
     raise ValueError(f"unsupported architecture: {arch}")
@@ -173,14 +201,27 @@ class ShellSession:
             self.buffer.extend(chunk)
         raise TimeoutError(f"timed out waiting for {marker!r}\n\n{self.text()}")
 
-    def send_line(self, line: str) -> None:
-        data = line.encode("utf-8") + b"\n"
+    def wait_for_prompt(self, timeout: float = 20.0) -> str:
+        self.read_until("drunix:", timeout)
+        return self.read_until("> \x1b[0m", timeout)
+
+    def read_output_line(self, line: str, timeout: float = 20.0) -> str:
+        return self.read_until(f"\r\n{line}\r\n", timeout)
+
+    def send_bytes(self, data: bytes) -> None:
         if self.sock is not None:
             self.sock.sendall(data)
             return
         assert self.proc is not None and self.proc.stdin is not None
         self.proc.stdin.write(data)
         self.proc.stdin.flush()
+
+    def send_line(self, line: str) -> None:
+        self.send_bytes(line.encode("utf-8") + b"\n")
+
+    def send_command(self, line: str, timeout: float = 5.0) -> str:
+        self.send_line(line)
+        return self.read_until(f"{line}\r\n", timeout)
 
     def text(self) -> str:
         return self.buffer.decode("utf-8", errors="replace")

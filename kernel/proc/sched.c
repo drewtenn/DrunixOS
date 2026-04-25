@@ -843,6 +843,21 @@ void sched_send_signal(uint32_t pid, int signum)
 	}
 }
 
+int sched_process_has_unblocked_signal(const process_t *proc)
+{
+	uint32_t blocked;
+
+	if (!proc)
+		return 0;
+
+	blocked = proc->sig_blocked;
+	if ((proc->sig_pending & ~blocked) != 0)
+		return 1;
+	if (proc->group && (proc->group->sig_pending & ~blocked) != 0)
+		return 1;
+	return 0;
+}
+
 /*
  * sched_send_sigint_foreground: called by the keyboard driver on Ctrl+C.
  * Delegates to tty_ctrl_c(0), which routes SIGINT to the active foreground

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Compatibility wrapper for the shared sleep regression."""
+"""Compatibility wrapper for the generic check-wiring test."""
 
 from __future__ import annotations
 
 import sys
 
-from test_sleep import main
+from test_check_wiring import main
 
 
 if __name__ == "__main__":

@@ -12,8 +12,54 @@
 #include "pit.h"
 
 #define QEMU_DEBUG_PORT 0xE9
+#define COM1_PORT 0x3F8
+#define COM1_LSR (COM1_PORT + 5)
+#define COM1_FCR_ENABLE_CLEAR 0x07
+#define COM1_LSR_DATA_READY 0x01
+#define COM1_LSR_TX_EMPTY 0x20
 
 extern void print_bytes(const char *buf, int n);
+
+static arch_irq_handler_fn x86_periodic_timer_handler;
+
+#ifdef DRUNIX_X86_SERIAL_CONSOLE
+#include "tty.h"
+
+static int x86_serial_console_ready;
+
+static void x86_serial_console_init(void)
+{
+	if (x86_serial_console_ready)
+		return;
+
+	port_byte_out(COM1_PORT + 1, 0x00);
+	port_byte_out(COM1_PORT + 3, 0x80);
+	port_byte_out(COM1_PORT + 0, 0x03);
+	port_byte_out(COM1_PORT + 1, 0x00);
+	port_byte_out(COM1_PORT + 3, 0x03);
+	port_byte_out(COM1_PORT + 2, COM1_FCR_ENABLE_CLEAR);
+	port_byte_out(COM1_PORT + 4, 0x0B);
+	x86_serial_console_ready = 1;
+}
+
+static void x86_serial_console_putc(char c)
+{
+	x86_serial_console_init();
+	for (uint32_t spin = 0; spin < 100000u; spin++) {
+		if (port_byte_in(COM1_LSR) & COM1_LSR_TX_EMPTY)
+			break;
+	}
+	port_byte_out(COM1_PORT, (uint8_t)c);
+}
+
+static int x86_serial_console_getc(void)
+{
+	x86_serial_console_init();
+	if ((port_byte_in(COM1_LSR) & COM1_LSR_DATA_READY) == 0)
+		return -1;
+	return port_byte_in(COM1_PORT);
+}
+#endif
 
 static uint32_t arch_mm_to_paging_flags(uint32_t flags)
 {
@@ -29,6 +75,13 @@ static uint32_t arch_mm_to_paging_flags(uint32_t flags)
 		paging_flags |= PG_COW;
 
 	return paging_flags;
+}
+
+static void x86_timer_tick(void)
+{
+	arch_poll_input();
+	if (x86_periodic_timer_handler)
+		x86_periodic_timer_handler();
 }
 
 uint32_t arch_time_unix_seconds(void)
@@ -47,6 +100,13 @@ void arch_console_write(const char *buf, uint32_t len)
 		return;
 
 	print_bytes(buf, (int)len);
+#ifdef DRUNIX_X86_SERIAL_CONSOLE
+	for (uint32_t i = 0; i < len; i++) {
+		if (buf[i] == '\n')
+			x86_serial_console_putc('\r');
+		x86_serial_console_putc(buf[i]);
+	}
+#endif
 }
 
 void arch_debug_write(const char *buf, uint32_t len)
@@ -68,6 +128,16 @@ void arch_debug_write(const char *buf, uint32_t len)
 
 void arch_poll_input(void)
 {
+#ifdef DRUNIX_X86_SERIAL_CONSOLE
+	for (;;) {
+		int ch = x86_serial_console_getc();
+		if (ch < 0)
+			break;
+		if (ch == 0)
+			continue;
+		tty_input_char(0, (char)ch);
+	}
+#endif
 }
 
 void arch_irq_init(void)
@@ -97,7 +167,8 @@ void arch_irq_unmask(uint32_t irq)
 
 void arch_timer_set_periodic_handler(arch_irq_handler_fn fn)
 {
-	pit_set_periodic_handler(fn);
+	x86_periodic_timer_handler = fn;
+	pit_set_periodic_handler(x86_timer_tick);
 }
 
 void arch_timer_start(uint32_t hz)

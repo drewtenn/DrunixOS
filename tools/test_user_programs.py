@@ -17,18 +17,11 @@ from run_shell_session import ShellSession
 
 ROOT = Path(__file__).resolve().parents[1]
 
-SMOKES = {
-    "arm64": (
-        ("/bin/chello", "Hello from C userland!"),
-        ("/bin/hello", "Hello from ring 3!"),
-        ("/bin/cpphello", "new[] sum=6"),
-    ),
-    "x86": (
-        ("chello", "Hello from C userland!"),
-        ("hello", "Hello from ring 3!"),
-        ("cpphello", "new[] sum=6"),
-    ),
-}
+SMOKES = (
+    ("chello", "Hello from C userland!"),
+    ("hello", "Hello from ring 3!"),
+    ("cpphello", "new[] sum=6"),
+)
 
 
 def native_programs() -> list[str]:
@@ -46,19 +39,19 @@ def main() -> None:
 
     with ShellSession(args.arch) as session:
         session.read_until("drunix shell --", 30.0)
-        session.read_until("drunix:", 10.0)
+        session.wait_for_prompt(10.0)
 
         for program in native_programs():
             session.buffer.clear()
-            session.send_line(f"which {program}")
+            session.send_command(f"which {program}")
             session.read_until(f"/bin/{program}", 15.0)
-            session.read_until("drunix:", 15.0)
+            session.wait_for_prompt(15.0)
 
-        for command, marker in SMOKES[args.arch]:
+        for command, marker in SMOKES:
             session.buffer.clear()
-            session.send_line(command)
+            session.send_command(command)
             session.read_until(marker, 15.0)
-            session.read_until("drunix:", 15.0)
+            session.wait_for_prompt(15.0)
 
     print(f"{args.arch} user program smoke passed")
 

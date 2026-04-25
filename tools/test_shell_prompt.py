@@ -17,9 +17,10 @@ def main() -> int:
 
     with ShellSession(args.arch) as session:
         session.read_until("drunix shell --", timeout=20.0)
-        session.read_until("drunix:", timeout=5.0)
-        session.send_line("echo arm64-shell-ok")
-        session.read_until("arm64-shell-ok", timeout=5.0)
+        session.wait_for_prompt(timeout=5.0)
+        marker = f"{args.arch}-shell-ok"
+        session.send_command(f"echo {marker}", timeout=5.0)
+        session.read_output_line(marker, timeout=5.0)
 
     print(f"{args.arch} shell prompt check passed")
     return 0

@@ -256,6 +256,12 @@ int sched_session_has_pgid(uint32_t sid, uint32_t pgid);
 void sched_send_signal(uint32_t pid, int signum);
 
 /*
+ * sched_process_has_unblocked_signal: true when a task has a pending
+ * per-task or process-directed signal that is not masked.
+ */
+int sched_process_has_unblocked_signal(const process_t *proc);
+
+/*
  * sched_send_sigint_foreground: called by the keyboard driver on Ctrl-C.
  *
  * Delivers Ctrl-C through tty_ctrl_c(tty0), which routes SIGINT to the

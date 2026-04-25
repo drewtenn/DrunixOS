@@ -1311,12 +1311,10 @@ static int readline(char *buf, int max)
 	while (1) {
 		int rc = read_char();
 		if (rc < 0) {
-			if (g_prompt_signal == SIGINT || g_prompt_signal == SIGTSTP) {
+			if (g_prompt_signal == SIGINT || g_prompt_signal == SIGTSTP)
 				g_prompt_signal = 0;
-				buf[0] = '\0';
-				return 0;
-			}
-			continue;
+			buf[0] = '\0';
+			return 0;
 		}
 		char c = (char)rc;
 		if (c == '\r' || c == '\n') {

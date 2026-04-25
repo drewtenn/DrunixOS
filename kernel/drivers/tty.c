@@ -38,6 +38,17 @@ static void tty_feedback(const char *buf, uint32_t len)
 	(void)console_runtime_write_feedback(buf, len);
 }
 
+static int tty_read_was_interrupted(tty_t *tty, process_t *proc)
+{
+	if (sched_process_has_unblocked_signal(proc))
+		return 1;
+	if (tty->interrupted) {
+		tty->interrupted = 0;
+		return 1;
+	}
+	return 0;
+}
+
 /* ── public API ─────────────────────────────────────────────────────────── */
 
 void tty_init(void)
@@ -51,6 +62,7 @@ void tty_init(void)
 		tty_termios_set_defaults(&t->termios);
 		t->ctrl_sid = 0;
 		t->fg_pgid = 0;
+		t->interrupted = 0;
 		t->read_waiters.head = 0;
 		t->read_waiters.tail = 0;
 		t->in_use = 1;
@@ -158,7 +170,9 @@ void tty_ctrl_z(int tty_idx)
 
 	if (tty->fg_pgid != 0) {
 		tty_feedback("^Z\n", 3);
+		tty->interrupted = 1;
 		sched_send_signal_to_pgid(tty->fg_pgid, SIGTSTP);
+		tty_wake_readers(tty_idx);
 	}
 	/* If no fg_pgid, discard — there is no foreground process to stop. */
 }
@@ -173,7 +187,9 @@ void tty_ctrl_c(int tty_idx)
 		return;
 
 	tty_feedback("^C\n", 3);
+	tty->interrupted = 1;
 	sched_send_signal_to_pgid(tty->fg_pgid, SIGINT);
+	tty_wake_readers(tty_idx);
 }
 
 /*
@@ -194,10 +210,12 @@ int tty_read(int tty_idx, char *buf, uint32_t count)
 			return -1;
 
 		/* Signal interrupt */
-		if (cur->sig_pending)
+		if (tty_read_was_interrupted(tty, cur))
 			return -1;
 
 		arch_poll_input();
+		if (tty_read_was_interrupted(tty, cur))
+			return -1;
 
 		if (tty->termios.c_lflag & ICANON) {
 			if (tty->canon_ready) {
