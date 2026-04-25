@@ -107,6 +107,17 @@ def run_case(make_args, required, forbidden=()):
 
 
 run_case([], [
+    "Drunix ARM64 console",
+    "drunix> ",
+    "drunix shell -- type 'help' for commands",
+    "drunix:",
+], [
+    "ARM64 init launch failed",
+    "ARM64 init: entered",
+    "ARM64 user smoke: entered",
+])
+
+run_case(["INIT_PROGRAM=bin/arm64init", "INIT_ARG0=arm64init"], [
     "ARM64 init: entered",
     "ARM64 init: pass",
     "ARM64 init exited with status 0",

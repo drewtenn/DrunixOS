@@ -38,7 +38,17 @@ FORBIDDEN = [
 ]
 
 
-subprocess.run(["make", "ARCH=arm64", "build"], cwd=ROOT, check=True)
+subprocess.run(
+    [
+        "make",
+        "ARCH=arm64",
+        "INIT_PROGRAM=bin/arm64init",
+        "INIT_ARG0=arm64init",
+        "build",
+    ],
+    cwd=ROOT,
+    check=True,
+)
 LOG.parent.mkdir(exist_ok=True)
 LOG.unlink(missing_ok=True)
 ERR.unlink(missing_ok=True)
