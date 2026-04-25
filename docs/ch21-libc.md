@@ -4,7 +4,7 @@
 
 ### The Foundation a libc Builds On
 
-By the end of Chapter 20, user programs have three things: a startup stub that bridges the kernel's `iret` into `main`, a syscall wrapper library that hides every `int 0x80` behind ordinary C function calls, and a heap allocator backed by the `SYS_BRK` syscall. Those three pieces are enough to write programs that allocate memory and talk to the kernel. They are not enough to write programs that look like ordinary C — programs that call `printf`, compare strings with `strcmp`, classify characters with `isdigit`, or open files with `fopen`.
+By the end of Chapter 20, user programs have three things: a startup stub that bridges the kernel's entry point into `main` (CRT0 is `user/lib/crt0.asm` on x86, using the 32-bit i386 calling convention, and `user/lib/crt0.S` on AArch64, using the AArch64 calling convention), a syscall wrapper library that hides every raw syscall behind ordinary C function calls (the stub uses `int 0x80` on x86 and `svc #0` on AArch64; arguments and return value follow each arch's calling convention), and a heap allocator backed by the `SYS_BRK` syscall. Those three pieces are enough to write programs that allocate memory and talk to the kernel. They are not enough to write programs that look like ordinary C — programs that call `printf`, compare strings with `strcmp`, classify characters with `isdigit`, or open files with `fopen`.
 
 The **libc** (C standard library) is the layer that provides those familiar names. On a Linux system it is `glibc` or `musl`; our libc implementation sits on top of the raw syscall wrappers and heap allocator.
 
@@ -63,7 +63,7 @@ The flags word carries direction bits, error and EOF indicators, and a buffering
 
 ### The POSIX Wrapper Split
 
-The POSIX wrapper layer is deliberately thin: it provides POSIX names for the same operations already in the syscall library, as one-line forwarding calls. The split serves two purposes. First, it keeps all `int 0x80` inline assembly in exactly one place. Second, it gives programs written to POSIX conventions a header they can include without pulling in any assembly knowledge. The kernel ABI lives entirely below the syscall wrappers.
+The POSIX wrapper layer is deliberately thin: it provides POSIX names for the same operations already in the syscall library, as one-line forwarding calls. The split serves two purposes. First, it keeps all syscall inline assembly (`int 0x80` on x86, `svc #0` on AArch64) in exactly one place. Second, it gives programs written to POSIX conventions a header they can include without pulling in any assembly knowledge. The kernel ABI lives entirely below the syscall wrappers.
 
 The same pattern now extends to memory mapping. A tiny adapter layer exposes `mmap`, `munmap`, and `mprotect` as libc-style names while still delegating all register choreography to the raw syscall wrappers. User code therefore gets the familiar interface shape without spreading inline assembly or syscall-number knowledge beyond one file.
 
@@ -83,4 +83,4 @@ This mirrors Linux's design. The kernel has no concept of months, leap years, or
 
 ### Where the Machine Is by the End of Chapter 21
 
-User programs now have a complete, self-contained C runtime with no dependency on any host system library. The strict dependency hierarchy means modules can be linked individually — only the layers a program actually uses end up in the binary. The format engine, the sink abstraction, the POSIX wrapper split, and the in-userspace calendar conversion are all architectural decisions that eliminate duplication, keep assembly in one place, and correctly separate what the kernel knows (a second count) from what libc knows (months, weekdays, time zones). The raw `int 0x80` interface is completely hidden behind the syscall wrappers.
+User programs now have a complete, self-contained C runtime with no dependency on any host system library. The strict dependency hierarchy means modules can be linked individually — only the layers a program actually uses end up in the binary. The format engine, the sink abstraction, the POSIX wrapper split, and the in-userspace calendar conversion are all architectural decisions that eliminate duplication, keep assembly in one place, and correctly separate what the kernel knows (a second count) from what libc knows (months, weekdays, time zones). The raw syscall interface — `int 0x80` on x86, `svc #0` on AArch64 — is completely hidden behind the syscall wrappers.
