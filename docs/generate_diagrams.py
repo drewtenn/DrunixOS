@@ -198,6 +198,7 @@ DIAGRAM_BUCKETS = {
     'ch15-diag04.svg': 'comparison',
     # Chapter 16
     'ch16-diag01.svg': 'handoff_path',
+    'ch16-diag02.svg': 'layout',
     # Chapter 17
     # Chapter 18
     'ch18-diag01.svg': 'handoff_path',
@@ -1783,6 +1784,7 @@ stack(Path('ch15-diag03.svg'),'Initial user stack','The kernel builds argument s
 flow(Path('ch15-diag04.svg'),'Forked kernel stacks','The child gets a copied trap frame with the return value changed to zero.',[('parent frame','parent sees child id','blue'),('copied frame','same saved state','green'),('child frame','child sees zero','amber'),('two returns','parent and child continue','blue')],h=285)
 # Chapter 16
 compare_timelines(Path('ch16-diag01.svg'),'System call handoff','User mode loads registers and traps; kernel mode saves a frame, dispatches the handler, then returns through `iret`.', 'User mode', [('Load registers', '`EAX` number, other args', 'blue'), ('`int 0x80`', 'controlled ring transition', 'amber'), ('Resume', 'return value restored in `EAX`', 'green')], 'Kernel mode', [('Trap gate entry', 'switch to the kernel stack', 'blue'), ('Save syscall frame', 'preserve user registers', 'green'), ('Dispatch handler', 'choose by syscall number', 'amber'), ('`iret`', 'restore saved user state', 'green')], preferred_w=138, gap=16, row_gap=40, h=372)
+stack(Path('ch16-diag02.svg'),'AArch64 syscall trap frame','On syscall entry the exception stub saves the full register file onto the kernel stack; `eret` restores it on return.',[('SPSR_EL1','saved processor status; encodes EL0 on return','blue'),('ELR_EL1','return address; instruction after `svc #0`','blue'),('SP_EL0','user-mode stack pointer','green'),('x30 (LR)','link register','gray'),('x29 (FP)','frame pointer','gray'),('x28–x19','callee-saved general-purpose registers (10 slots)','gray'),('x18','platform register','gray'),('x17–x16','inter-procedure-call scratch registers','gray'),('x15–x9','caller-saved general-purpose registers','gray'),('x8','syscall number on entry','amber'),('x7–x6','caller-saved (unused for syscall args)','gray'),('x5','fifth argument','green'),('x4','fourth argument','green'),('x3','third argument','green'),('x2','second argument','green'),('x1','first argument','green'),('x0','first argument on entry; return value on exit','amber')],top_note='lower addresses (top of frame)',bottom_note='higher addresses (frame base)')
 # Chapter 17
 # Chapter 18
 flow(Path('ch18-diag01.svg'),'Keyboard to terminal path','A keypress is decoded, queued in the terminal buffer, and eventually copied to user space.',[('keyboard interrupt','raw scancode from hardware','blue'),('key decoder','turn scancode into a character','green'),('terminal input buffer','raw or line-buffered queue','amber'),('wake blocked reader','reader can run again','blue'),('user read returns','copy bytes to user space','green')],h=380)
