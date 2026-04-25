@@ -12,6 +12,7 @@ ARM_INC := -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 \
 
 ARM_KOBJS := kernel/arch/arm64/boot.o \
              kernel/arch/arm64/arch.o \
+             kernel/arch/arm64/video.o \
              kernel/arch/arm64/exceptions.o \
              kernel/arch/arm64/exceptions_s.o \
              kernel/arch/arm64/irq.o \
@@ -63,7 +64,11 @@ ARM_SHARED_KOBJS := kernel/lib/klog.arm64.o \
                     kernel/fs/vfs/lookup.arm64.o \
                     kernel/fs/vfs/mutation.arm64.o \
                     kernel/fs/procfs.arm64.o \
-                    kernel/fs/sysfs.arm64.o
+                    kernel/fs/sysfs.arm64.o \
+                    kernel/gui/display.arm64.o \
+                    kernel/gui/framebuffer.arm64.o \
+                    kernel/gui/font8x16.arm64.o \
+                    kernel/console/fb_text_console.arm64.o
 
 ARM_SHARED_KOBJS += kernel/proc/syscall/fd.arm64.o \
                     kernel/proc/syscall/fd_control.arm64.o \
@@ -84,6 +89,9 @@ kernel/mm/%.arm64.o: kernel/mm/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
 
 kernel/console/%.arm64.o: kernel/console/%.c
+	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
+
+kernel/gui/%.arm64.o: kernel/gui/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
 
 kernel/blk/%.arm64.o: kernel/blk/%.c

@@ -61,87 +61,72 @@ static uint32_t scale_color(uint8_t value, uint8_t mask_size)
 	return (uint32_t)div_u64_by_255(scaled);
 }
 
-int framebuffer_info_from_multiboot(const multiboot_info_t *mbi,
-                                    framebuffer_info_t *out)
+int framebuffer_info_from_rgb(uintptr_t address,
+                              uint32_t pitch,
+                              uint32_t width,
+                              uint32_t height,
+                              uint32_t bpp,
+                              uint8_t red_pos,
+                              uint8_t red_size,
+                              uint8_t green_pos,
+                              uint8_t green_size,
+                              uint8_t blue_pos,
+                              uint8_t blue_size,
+                              framebuffer_info_t *out)
 {
 	uint64_t visible_row_bytes;
 	uint64_t last_row_offset;
 	uint64_t framebuffer_bytes;
 
-	if (!mbi || !out)
+	if (!out)
 		return -1;
-	if ((mbi->flags & MULTIBOOT_FLAG_FRAMEBUFFER) == 0)
-		return -2;
-	if (mbi->framebuffer_addr == 0)
+	if (address == 0)
 		return -3;
-	if (mbi->framebuffer_addr > UINTPTR_MAX)
-		return -3;
-	if (mbi->framebuffer_type != MULTIBOOT_FRAMEBUFFER_TYPE_RGB)
-		return -4;
-	if (mbi->framebuffer_bpp != 32)
+	if (bpp != 32)
 		return -5;
-	if (mbi->framebuffer_width == 0 || mbi->framebuffer_height == 0)
+	if (width == 0 || height == 0)
 		return -6;
-	if (mbi->framebuffer_width > UINT32_MAX / 4u)
+	if (width > UINT32_MAX / 4u)
 		return -7;
-	if (mbi->framebuffer_pitch < mbi->framebuffer_width * 4u)
+	if (pitch < width * 4u)
 		return -7;
-	visible_row_bytes = (uint64_t)mbi->framebuffer_width * 4u;
-	last_row_offset =
-	    (uint64_t)(mbi->framebuffer_height - 1u) * mbi->framebuffer_pitch;
+	visible_row_bytes = (uint64_t)width * 4u;
+	last_row_offset = (uint64_t)(height - 1u) * pitch;
 	framebuffer_bytes = last_row_offset + visible_row_bytes;
 	if (framebuffer_bytes == 0 ||
-	    framebuffer_bytes - 1u > (uint64_t)UINTPTR_MAX - mbi->framebuffer_addr)
+	    framebuffer_bytes - 1u > (uint64_t)UINTPTR_MAX - address)
 		return -3;
-	if (mbi->framebuffer_width < GUI_FONT_W ||
-	    mbi->framebuffer_height < GUI_FONT_H)
+	if (width < GUI_FONT_W || height < GUI_FONT_H)
 		return -8;
-	if (mbi->framebuffer_red_mask_size == 0 ||
-	    mbi->framebuffer_green_mask_size == 0 ||
-	    mbi->framebuffer_blue_mask_size == 0)
+	if (red_size == 0 || green_size == 0 || blue_size == 0)
 		return -9;
-	if ((uint32_t)mbi->framebuffer_red_field_position +
-	        mbi->framebuffer_red_mask_size >
-	    32u)
+	if ((uint32_t)red_pos + red_size > 32u)
 		return -9;
-	if ((uint32_t)mbi->framebuffer_green_field_position +
-	        mbi->framebuffer_green_mask_size >
-	    32u)
+	if ((uint32_t)green_pos + green_size > 32u)
 		return -9;
-	if ((uint32_t)mbi->framebuffer_blue_field_position +
-	        mbi->framebuffer_blue_mask_size >
-	    32u)
+	if ((uint32_t)blue_pos + blue_size > 32u)
 		return -9;
-	if (rgb_mask_overlaps(mbi->framebuffer_red_field_position,
-	                      mbi->framebuffer_red_mask_size,
-	                      mbi->framebuffer_green_field_position,
-	                      mbi->framebuffer_green_mask_size))
+	if (rgb_mask_overlaps(red_pos, red_size, green_pos, green_size))
 		return -9;
-	if (rgb_mask_overlaps(mbi->framebuffer_red_field_position,
-	                      mbi->framebuffer_red_mask_size,
-	                      mbi->framebuffer_blue_field_position,
-	                      mbi->framebuffer_blue_mask_size))
+	if (rgb_mask_overlaps(red_pos, red_size, blue_pos, blue_size))
 		return -9;
-	if (rgb_mask_overlaps(mbi->framebuffer_green_field_position,
-	                      mbi->framebuffer_green_mask_size,
-	                      mbi->framebuffer_blue_field_position,
-	                      mbi->framebuffer_blue_mask_size))
+	if (rgb_mask_overlaps(green_pos, green_size, blue_pos, blue_size))
 		return -9;
 
 	k_memset(out, 0, sizeof(*out));
-	out->address = (uintptr_t)mbi->framebuffer_addr;
-	out->pitch = mbi->framebuffer_pitch;
-	out->width = mbi->framebuffer_width;
-	out->height = mbi->framebuffer_height;
-	out->bpp = mbi->framebuffer_bpp;
-	out->red_pos = mbi->framebuffer_red_field_position;
-	out->red_size = mbi->framebuffer_red_mask_size;
-	out->green_pos = mbi->framebuffer_green_field_position;
-	out->green_size = mbi->framebuffer_green_mask_size;
-	out->blue_pos = mbi->framebuffer_blue_field_position;
-	out->blue_size = mbi->framebuffer_blue_mask_size;
-	out->cell_cols = mbi->framebuffer_width / GUI_FONT_W;
-	out->cell_rows = mbi->framebuffer_height / GUI_FONT_H;
+	out->address = address;
+	out->pitch = pitch;
+	out->width = width;
+	out->height = height;
+	out->bpp = bpp;
+	out->red_pos = red_pos;
+	out->red_size = red_size;
+	out->green_pos = green_pos;
+	out->green_size = green_size;
+	out->blue_pos = blue_pos;
+	out->blue_size = blue_size;
+	out->cell_cols = width / GUI_FONT_W;
+	out->cell_rows = height / GUI_FONT_H;
 	return 0;
 }
 

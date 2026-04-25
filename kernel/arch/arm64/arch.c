@@ -9,6 +9,7 @@
 #include "mm/pmm.h"
 #include "timer.h"
 #include "uart.h"
+#include "video.h"
 
 extern char _kernel_start[];
 extern char _kernel_end[];
@@ -35,6 +36,9 @@ void arch_console_write(const char *buf, uint32_t len)
 			uart_putc('\r');
 		uart_putc(buf[i]);
 	}
+#if DRUNIX_ARM64_VGA
+	arm64_video_console_write(buf, len);
+#endif
 }
 
 void arch_debug_write(const char *buf, uint32_t len)

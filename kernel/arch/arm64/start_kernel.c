@@ -15,6 +15,7 @@
 #include "mm/pmm.h"
 #include "timer.h"
 #include "uart.h"
+#include "video.h"
 #include "kprintf.h"
 #include <stdint.h>
 
@@ -164,6 +165,12 @@ void arm64_start_kernel(void)
 	arch_mm_init();
 	kheap_init();
 	pmm_mark_used(HEAP_START, HEAP_END - HEAP_START);
+#if DRUNIX_ARM64_VGA
+	if (arm64_video_init() == 0)
+		uart_puts("ARM64 framebuffer console enabled\n");
+	else
+		uart_puts("ARM64 framebuffer console unavailable\n");
+#endif
 
 	k_snprintf(line,
 	           sizeof(line),

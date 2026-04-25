@@ -165,15 +165,39 @@ SDHCI/EMMC driver for the Pi 3.  Plugs into the existing
 `kernel/fs/ext3/*` and the VFS remain shared once the MMU/process
 prerequisites above are complete.
 
-### Milestone 6 — Framebuffer desktop
+### Milestone 6 — VGA-style framebuffer console
 
 VideoCore IV mailbox property interface (`0x3F00B880`) to allocate a
-framebuffer.  The rendering and widget code in `kernel/gui/` is mostly
-portable C, but presentation, interrupt masking, and address-space
-assumptions must already be behind the arch boundary before the desktop
-can be considered reusable on ARM.  PS/2 input is replaced either by
-USB HID (large effort) or by a serial-console-only default for the
-first ARM desktop boot.
+framebuffer on the QEMU/Pi ARM64 target.  The ARM build reuses the
+existing 8x16 font renderer and VGA attribute palette to mirror the
+serial console into a visible framebuffer text grid.
+
+This is not a literal PC VGA device and does not add PS/2, USB HID,
+mouse, or desktop support.  Input remains serial-backed.
+
+Exit criterion: `make ARCH=arm64 build` succeeds and
+`python3 tools/test_arm64_vga_console.py` captures a nonblank framebuffer
+screendump containing the ARM64 console boot.
+
+### Milestone 7 — ARM64 keyboard input
+
+Add a real ARM64 keyboard path before attempting the framebuffer desktop.
+For QEMU this should start with a narrow, testable input device choice such
+as USB HID keyboard support on the emulated Pi platform or a documented QEMU
+keyboard device that can feed the existing TTY/input layer without importing
+PC PS/2 assumptions.
+
+Exit criterion: an ARM64 graphical boot can accept keyboard input without
+using the serial console, route printable characters into the active console
+or TTY path, and preserve `make ARCH=arm64 check` as a headless serial test.
+
+### Milestone 8 — Framebuffer desktop
+
+Reuse the generic desktop/compositor once ARM64 has a real input device path
+and the process/display ownership model matches the x86 desktop path closely
+enough to avoid ARM64-specific desktop forks.  The rendering and widget code
+in `kernel/gui/` is mostly portable C, but presentation, interrupt masking,
+and address-space assumptions must stay behind the architecture boundary.
 
 ## Risks
 

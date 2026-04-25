@@ -4,7 +4,6 @@
 typedef struct multiboot_info multiboot_info_t;
 
 #include "pixel.h"
-#include "pmm.h"
 #include <stdint.h>
 
 #define GUI_FONT_W 8u
@@ -60,6 +59,18 @@ typedef struct framebuffer_info {
 
 int framebuffer_info_from_multiboot(const multiboot_info_t *mbi,
                                     framebuffer_info_t *out);
+int framebuffer_info_from_rgb(uintptr_t address,
+                              uint32_t pitch,
+                              uint32_t width,
+                              uint32_t height,
+                              uint32_t bpp,
+                              uint8_t red_pos,
+                              uint8_t red_size,
+                              uint8_t green_pos,
+                              uint8_t green_size,
+                              uint8_t blue_pos,
+                              uint8_t blue_size,
+                              framebuffer_info_t *out);
 int framebuffer_attach_back_buffer(framebuffer_info_t *fb,
                                    void *buffer,
                                    uint32_t pitch,

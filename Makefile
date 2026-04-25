@@ -47,6 +47,7 @@ ARM_CFLAGS += -DDRUNIX_INIT_ARG0=\"$(INIT_ARG0)\"
 ARM_CFLAGS += -DDRUNIX_INIT_ENV0=\"$(INIT_ENV0)\"
 ARM_CFLAGS += -DDRUNIX_ROOT_FS=\"$(ROOT_FS)\"
 ARM_CFLAGS += -DDRUNIX_ARM64_SMOKE_FALLBACK=$(ARM64_SMOKE_FALLBACK)
+ARM_CFLAGS += -DDRUNIX_ARM64_VGA=1
 endif
 NASMFLAGS :=
 
@@ -340,6 +341,9 @@ check-arm64-filesystem-init:
 check-arm64-syscall-parity:
 	python3 tools/test_arm64_syscall_parity.py
 
+check-arm64-vga-console:
+	python3 tools/test_arm64_vga_console.py
+
 validate-ext3-linux: $(ROOT_DISK_IMG) tools/check_ext3_linux_compat.py tools/check_ext3_journal_activity.py
 	$(PYTHON) tools/check_ext3_linux_compat.py $(ROOT_DISK_IMG)
 	$(E2FSCK) -fn disk.fs
@@ -516,7 +520,7 @@ clean:
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-busybox-compat test-linux-abi test-threadtest test-tcc test-nano test-ext3-linux-compat test-ext3-host-write-interop test-all \
-        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity \
+        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity check-arm64-vga-console \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean
@@ -524,7 +528,7 @@ else
 
 $(ARM_KOBJS) $(ARM_SHARED_KOBJS) $(ARM_COMPILE_ONLY_OBJS): CC = $(ARM_CC)
 $(ARM_KOBJS) $(ARM_SHARED_KOBJS) $(ARM_COMPILE_ONLY_OBJS): CFLAGS = $(ARM_CFLAGS)
-$(ARM_KOBJS) $(ARM_SHARED_KOBJS) $(ARM_COMPILE_ONLY_OBJS): INC = -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 -I kernel/mm -I kernel/proc -I kernel/fs -I kernel/drivers -I kernel/blk
+$(ARM_KOBJS) $(ARM_SHARED_KOBJS) $(ARM_COMPILE_ONLY_OBJS): INC = -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 -I kernel/mm -I kernel/proc -I kernel/fs -I kernel/drivers -I kernel/blk -I kernel/gui
 
 kernel/arch/arm64/%.o: kernel/arch/arm64/%.S
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) -c $< -o $@
@@ -542,7 +546,9 @@ kernel: kernel-arm64.elf
 
 build: kernel-arm64.elf kernel8.img build/arm64-root.fs $(ARM_COMPILE_ONLY_OBJS)
 
-kernel/arch/arm64/start_kernel.o: .init-program-flag .arm64-smoke-fallback-flag
+kernel/arch/arm64/start_kernel.o: .init-program-flag .arm64-smoke-fallback-flag Makefile
+kernel/arch/arm64/arch.o: Makefile
+kernel/arch/arm64/video.o: Makefile
 
 iso: kernel8.img
 
@@ -576,22 +582,13 @@ check-arm64-filesystem-init:
 check-arm64-syscall-parity:
 	python3 tools/test_arm64_syscall_parity.py
 
+check-arm64-vga-console:
+	python3 tools/test_arm64_vga_console.py
+
 run: kernel-arm64.elf | $(LOG_DIR)
-	$(QEMU_ARM) -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf -serial null -serial stdio -monitor none -nographic -no-reboot
-
-run-stdio: run
-
-run-grub-menu: run
-
-debug:
-	@echo "debug is not implemented for ARCH=arm64 yet"; exit 1
-
-debug-user:
-	@echo "debug-user is not implemented for ARCH=arm64 yet"; exit 1
+	$(QEMU_ARM) -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf -serial null -serial stdio -monitor none -no-reboot
 
 run-fresh: run
-
-debug-fresh: debug
 
 all: run
 
@@ -611,9 +608,8 @@ clean:
 	$(MAKE) -C user clean
 
 .PHONY: all build kernel iso images disk fresh check \
-        run run-stdio run-grub-menu run-fresh \
-        debug debug-user debug-fresh \
-        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity \
+        run run-fresh \
+        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity check-arm64-vga-console \
         pdf epub docs \
         rebuild clean
 endif

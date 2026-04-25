@@ -9,6 +9,7 @@
 #include "kstring.h"
 #include "mouse.h"
 #include "paging.h"
+#include "pmm.h"
 #include "process.h"
 #include "sched.h"
 #include "syscall.h"

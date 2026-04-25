@@ -6,7 +6,7 @@ Drunix is a hobby operating system with a feature-rich 32-bit x86 mainline and a
 
 The normal x86 boot path asks GRUB for a 1024x768x32 linear framebuffer and starts a simple GUI desktop. The boot shell is opened as the main desktop app inside that GUI shell, with keyboard input, PS/2 mouse pointer support, taskbar/menu launching, framebuffer text rendering, double-buffered flicker-free compositing with an overlay mouse cursor, and a VGA text-mode fallback when a suitable framebuffer is unavailable. The disk image includes a small mixed-language userland: the shell and `chello` exercise the C runtime path, while the utility programs exercise the C++ runtime path.
 
-The new AArch64 path is deliberately much smaller: `make ARCH=arm64 run` boots a Milestone 1 Raspberry Pi 3 / `qemu-system-aarch64` target that drops to EL1, initializes the mini-UART console, installs exception vectors, enables the ARM Generic Timer, and prints a five-tick heartbeat over serial. That bring-up is documented in Chapter 31, `docs/ch31-aarch64-bringup.md`.
+The AArch64 path now boots the Raspberry Pi 3 / `qemu-system-aarch64` target through EL1 setup, mini-UART, exception vectors, timer IRQs, MMU and heap setup, an initramfs-backed user program, and the same graphical-by-default workflow shape as x86. `make ARCH=arm64 run` opens the QEMU display and mirrors the ARM64 console into a framebuffer text terminal.
 
 <a href="docs/drunix-desktop.png">
   <img src="docs/drunix-desktop.png" alt="Drunix desktop running in QEMU with Files, Processes, Help, and Shell windows open">
@@ -15,7 +15,7 @@ The new AArch64 path is deliberately much smaller: `make ARCH=arm64 run` boots a
 ## Status
 
 - x86 remains the mainline Drunix target: desktop boot, ext3 and DUFS disk images, process and signal support, Linux ABI smoke coverage, copy-on-write fork, demand paging, and the freestanding C/C++ userland are all part of the regular workflow.
-- AArch64 is now in-tree as Milestone 1: a separate `ARCH=arm64` build boots on the QEMU `raspi3b` machine, prints over the BCM2835 mini-UART, handles timer IRQs, and proves a second architecture boot path without yet attempting MMU, VFS, userland, or desktop support.
+- AArch64 is now in-tree as a smaller but usable second target: `ARCH=arm64` builds boot on the QEMU `raspi3b` machine, initialize the BCM2835 mini-UART and framebuffer console, bring up MMU-backed kernel services, load an initramfs user program, and run the console prompt. Keyboard input and the desktop are tracked as later ARM64 phases.
 
 ## Dependencies
 
@@ -178,11 +178,15 @@ make fresh
 
 `make run-fresh` is kept as the longer compatibility name.
 
-For the AArch64 bring-up path, run the serial milestone directly:
+For the AArch64 bring-up path, run the normal graphical console directly:
 
 ```sh
 make ARCH=arm64 run
 ```
+
+This opens the QEMU display and mirrors the ARM64 serial console to a
+VGA-style framebuffer text console. Input remains serial-backed in this
+milestone; ARM64 keyboard support is a separate follow-up phase.
 
 On a normal x86 QEMU boot, Drunix opens the shell inside the framebuffer desktop. If the bootloader does not provide a usable 32-bit RGB framebuffer, the kernel falls back to the legacy VGA text presentation path.
 
@@ -202,8 +206,8 @@ Common workflows:
 - `make run` rebuilds the x86 kernel and ISO as needed, then launches QEMU without rebuilding `disk.img`
 - `make build` builds the x86 bootable ISO and both disk images without launching QEMU
 - `make check` runs the x86 headless in-kernel test suite
-- `make ARCH=arm64 run` boots the Milestone 1 AArch64 bring-up target in `qemu-system-aarch64`
-- `make ARCH=arm64 check` boots the AArch64 bring-up target headlessly and waits for `tick 5`
+- `make ARCH=arm64 run` boots the AArch64 target with the VGA-style framebuffer console enabled
+- `make ARCH=arm64 check` boots the AArch64 target headlessly and waits for the console prompt
 - `make all` defaults to the fresh x86 boot workflow; under `ARCH=arm64` it aliases `run`
 - `make rebuild` wipes build outputs, rebuilds the selected architecture's outputs, and boots from scratch
 - `make clean` removes build outputs
@@ -396,7 +400,9 @@ Other useful debug flows:
 - `make KLOG_TO_DEBUGCON=1 run` mirrors ordinary `klog()` output to QEMU debugcon
 - `make test-halt` boots a special image that verifies the dedicated double-fault path
 
-For the AArch64 milestone, use `make ARCH=arm64 run` for live serial output or `make ARCH=arm64 check` for the headless five-tick heartbeat check. `make ARCH=arm64 debug` and `make ARCH=arm64 debug-user` are not implemented yet.
+For the AArch64 target, use `make ARCH=arm64 run` for the graphical
+framebuffer mirror, or
+`make ARCH=arm64 check` for the headless console-prompt check.
 
 Runtime logs:
 
