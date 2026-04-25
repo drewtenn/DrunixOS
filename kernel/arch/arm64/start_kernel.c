@@ -191,7 +191,7 @@ void arm64_start_kernel(void)
 
 	arch_irq_init();
 	arch_timer_set_periodic_handler(arm64_timer_tick);
-	arch_timer_start(10u);
+	arch_timer_start(SCHED_HZ);
 	arch_interrupts_enable();
 	tty_init();
 #if DRUNIX_ARM64_VGA

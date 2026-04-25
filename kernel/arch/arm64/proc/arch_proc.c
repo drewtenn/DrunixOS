@@ -331,6 +331,7 @@ void arch_context_switch(arch_context_t *old_ctx,
 void arch_idle_wait(void)
 {
 	arch_poll_input();
+	__asm__ volatile("msr daifclr, #2");
 	__asm__ volatile("wfi");
 	arch_poll_input();
 }
