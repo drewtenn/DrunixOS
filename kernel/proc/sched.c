@@ -916,6 +916,15 @@ static int dumps_core_default(int sig)
 	return (sig == SIGTRAP || sig == SIGILL || sig == SIGFPE || sig == SIGSEGV);
 }
 
+static uint32_t sched_signal_handler(const process_t *proc, int signum)
+{
+	if (!proc || signum < 0 || signum >= NSIG)
+		return SIG_DFL;
+	if (proc->sig_actions)
+		return proc->sig_actions->handlers[signum];
+	return proc->sig_handlers[signum];
+}
+
 uint32_t sched_signal_check(uint32_t frame_esp)
 {
 	arch_trap_frame_t *frame = (arch_trap_frame_t *)frame_esp;
@@ -968,7 +977,7 @@ uint32_t sched_signal_check(uint32_t frame_esp)
 
 	int from_crash =
 	    g_current->crash.valid && g_current->crash.signum == (uint32_t)signum;
-	uint32_t handler = g_current->sig_handlers[signum];
+	uint32_t handler = sched_signal_handler(g_current, signum);
 	if (from_crash && handler == SIG_IGN)
 		handler = SIG_DFL;
 

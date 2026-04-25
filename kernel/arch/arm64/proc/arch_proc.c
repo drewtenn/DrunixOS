@@ -444,7 +444,8 @@ int arch_signal_setup_frame(process_t *proc,
 	(void)frame;
 	(void)signum;
 	(void)handler_va;
-	return -1;
+	/* ARM64 user signal frames are not implemented yet; consume caught signals. */
+	return 0;
 }
 
 uint32_t arch_user_tls_entry(void)

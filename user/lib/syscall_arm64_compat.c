@@ -333,8 +333,24 @@ int sys_kill(int pid, int signum)
 
 int sys_sigaction(int signum, void (*handler)(int), void (**old)(int))
 {
-	return (int)syscall4(
-	    ARM64_SYS_RT_SIGACTION, signum, (long)handler, (long)old, sizeof(unsigned int));
+	unsigned int act[8];
+	unsigned int oldact[8];
+	int r;
+
+	for (unsigned int i = 0; i < 8; i++) {
+		act[i] = 0;
+		oldact[i] = 0;
+	}
+
+	act[0] = (unsigned int)(unsigned long)handler;
+	r = (int)syscall4(ARM64_SYS_RT_SIGACTION,
+	                  signum,
+	                  (long)act,
+	                  old ? (long)oldact : 0,
+	                  sizeof(unsigned int));
+	if (r == 0 && old)
+		*old = (void (*)(int))(unsigned long)oldact[0];
+	return r;
 }
 
 int sys_sigprocmask(int how, unsigned int *set, unsigned int *oldset)

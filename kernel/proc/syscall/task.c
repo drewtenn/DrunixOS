@@ -304,8 +304,13 @@ syscall_execve(uint32_t user_path, uint32_t user_argv, uint32_t user_envp)
 	new_proc->sig_pending = exec_cur->sig_pending;
 	new_proc->sig_blocked = exec_cur->sig_blocked;
 	for (int i = 0; i < NSIG; i++) {
+		uint32_t old_handler = exec_cur->sig_actions
+		                           ? exec_cur->sig_actions->handlers[i]
+		                           : exec_cur->sig_handlers[i];
 		new_proc->sig_handlers[i] =
-		    (exec_cur->sig_handlers[i] == SIG_IGN) ? SIG_IGN : SIG_DFL;
+		    (old_handler == SIG_IGN) ? SIG_IGN : SIG_DFL;
+		if (new_proc->sig_actions)
+			new_proc->sig_actions->handlers[i] = new_proc->sig_handlers[i];
 	}
 	new_proc->crash.valid = 0;
 	new_proc->crash.signum = 0;

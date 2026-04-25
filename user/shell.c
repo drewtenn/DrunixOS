@@ -9,6 +9,8 @@
 
 #define KEY_PAGE_UP '\x01'   /* Legacy keyboard-driver scroll shortcut. */
 #define KEY_PAGE_DOWN '\x02' /* Legacy keyboard-driver scroll shortcut. */
+#define SHELL_HISTORY_MAX 16
+#define SHELL_HISTORY_LINE 128
 
 /* ANSI Color Codes */
 #define TERM_COLOR_CYAN "\x1b[36m"
@@ -34,9 +36,13 @@ static int tokenize(char *line, char **out_argv, int max_argv);
 static int readline(char *buf, int max);
 static void print_prompt(void);
 static void redraw_prompt_line(const char *buf, int len, int prev_len);
+static void shell_history_add(const char *line);
 static void tab_complete(char *buf, int *n, int max);
 
 static volatile int g_prompt_signal = 0;
+static char g_history[SHELL_HISTORY_MAX][SHELL_HISTORY_LINE];
+static int g_history_count = 0;
+static int g_history_next = 0;
 
 static void shell_prompt_signal(int sig)
 {
@@ -1191,7 +1197,79 @@ static int read_char(void)
 	return -1;
 }
 
-static void readline_handle_escape(void)
+static int shell_history_slot(int logical_index)
+{
+	if (g_history_count < SHELL_HISTORY_MAX)
+		return logical_index;
+	return (g_history_next + logical_index) % SHELL_HISTORY_MAX;
+}
+
+static void shell_history_add(const char *line)
+{
+	int slot;
+
+	if (!line || !*line)
+		return;
+	if (g_history_count > 0) {
+		int last = shell_history_slot(g_history_count - 1);
+		if (strcmp(g_history[last], line) == 0)
+			return;
+	}
+
+	slot = g_history_next;
+	strncpy(g_history[slot], line, SHELL_HISTORY_LINE - 1);
+	g_history[slot][SHELL_HISTORY_LINE - 1] = '\0';
+	g_history_next = (g_history_next + 1) % SHELL_HISTORY_MAX;
+	if (g_history_count < SHELL_HISTORY_MAX)
+		g_history_count++;
+}
+
+static void readline_copy_text(char *buf, int *n, int max, const char *text)
+{
+	int old_n = *n;
+
+	strncpy(buf, text, (size_t)max - 1u);
+	buf[max - 1] = '\0';
+	*n = (int)strlen(buf);
+	redraw_prompt_line(buf, *n, old_n);
+}
+
+static void readline_recall_history(char *buf,
+                                    int *n,
+                                    int max,
+                                    int *history_pos,
+                                    char *draft)
+{
+	if (g_history_count == 0)
+		return;
+	if (*history_pos == g_history_count) {
+		strncpy(draft, buf, SHELL_HISTORY_LINE - 1);
+		draft[SHELL_HISTORY_LINE - 1] = '\0';
+	}
+	if (*history_pos > 0)
+		(*history_pos)--;
+	readline_copy_text(
+	    buf, n, max, g_history[shell_history_slot(*history_pos)]);
+}
+
+static void readline_forward_history(char *buf,
+                                     int *n,
+                                     int max,
+                                     int *history_pos,
+                                     const char *draft)
+{
+	if (g_history_count == 0 || *history_pos >= g_history_count)
+		return;
+	(*history_pos)++;
+	if (*history_pos == g_history_count)
+		readline_copy_text(buf, n, max, draft);
+	else
+		readline_copy_text(
+		    buf, n, max, g_history[shell_history_slot(*history_pos)]);
+}
+
+static void
+readline_handle_escape(char *buf, int *n, int max, int *history_pos, char *draft)
 {
 	int c = read_char();
 
@@ -1213,12 +1291,23 @@ static void readline_handle_escape(void)
 		return;
 	}
 
-	/* Cursor, Home/End, and function-key sequences have no shell action yet. */
+	if (c == 'A') {
+		readline_recall_history(buf, n, max, history_pos, draft);
+		return;
+	}
+	if (c == 'B') {
+		readline_forward_history(buf, n, max, history_pos, draft);
+		return;
+	}
 }
 
 static int readline(char *buf, int max)
 {
 	int n = 0;
+	int history_pos = g_history_count;
+	char draft[SHELL_HISTORY_LINE];
+
+	draft[0] = '\0';
 	while (1) {
 		int rc = read_char();
 		if (rc < 0) {
@@ -1243,7 +1332,7 @@ static int readline(char *buf, int max)
 			continue;
 		}
 		if (c == '\x1b') {
-			readline_handle_escape();
+			readline_handle_escape(buf, &n, max, &history_pos, draft);
 			continue;
 		}
 		if (c == '\x03') {
@@ -1268,6 +1357,7 @@ static int readline(char *buf, int max)
 			continue;
 		putchar(c); /* echo the character */
 		buf[n++] = c;
+		buf[n] = '\0';
 	}
 	buf[n] = '\0';
 	return n;
@@ -2301,6 +2391,7 @@ int main(int argc, char **argv)
 		int n = readline(line, sizeof(line));
 		if (n == 0)
 			continue;
+		shell_history_add(line);
 
 		/* Tokenize the line in place so each token is a C string and
          * `tokens[]` holds argv pointers into the `line` buffer. */

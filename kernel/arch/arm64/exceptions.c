@@ -58,6 +58,7 @@ void arm64_sync_handler(arch_trap_frame_t *frame)
 				(void)syscall_dispatch_from_frame(frame);
 			else
 				(void)arm64_userspace_syscall_dispatch(frame);
+			(void)sched_signal_check((uint32_t)(uintptr_t)frame);
 			return;
 		}
 
@@ -82,6 +83,8 @@ void arm64_irq_handler(arch_trap_frame_t *frame)
 	source = CORE0_IRQ_SOURCE;
 	if (source & CNTPNSIRQ_BIT) {
 		arm64_irq_dispatch(ARM64_IRQ_LOCAL_TIMER);
+		schedule_if_needed();
+		(void)sched_signal_check((uint32_t)(uintptr_t)frame);
 		return;
 	}
 
