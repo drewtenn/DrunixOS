@@ -159,6 +159,7 @@ DIAGRAM_BUCKETS = {
     'ch03-diag01.svg': 'grid_snapshot',
     # Chapter 4
     'ch04-diag01.svg': 'layout',
+    'ch04-diag02.svg': 'table',
     # Chapter 5
     'ch05-diag01.svg': 'handoff_path',
     'ch05-diag02.svg': 'comparison',
@@ -1632,6 +1633,18 @@ grid_snapshot(
 )
 # Chapter 4
 stack(Path('ch04-diag01.svg'),'Interrupt frame on the kernel stack','The trampoline saves one uniform frame before handing control to C.',[('Saved user stack','Only present on a ring-3 to ring-0 entry','gray'),('Interrupt return frame','Saved EFLAGS, CS, and EIP','green'),('Vector and error code','Raw interrupt identity and optional error detail','amber'),('General-purpose registers','Snapshot taken by pusha','blue'),('Segment registers','Saved DS, ES, FS, and GS','blue'),('Handler argument','Pointer to the saved frame passed to C','green')],h=372)
+table(
+    Path('ch04-diag02.svg'),
+    'AArch64 exception vector table',
+    'Sixteen 128-byte slots arranged as four exception classes across four contexts, addressed relative to VBAR_EL1.',
+    ['Context', 'Synchronous', 'IRQ', 'FIQ', 'SError'],
+    [
+        ('Current EL, SP_EL0', '0x000', '0x080', '0x100', '0x180'),
+        ('Current EL, SP_ELx', '0x200', '0x280', '0x300', '0x380'),
+        ('Lower EL, AArch64',  '0x400', '0x480', '0x500', '0x580'),
+        ('Lower EL, AArch32',  '0x600', '0x680', '0x700', '0x780'),
+    ],
+)
 # Chapter 5
 flow(Path('ch05-diag01.svg'),'Interrupt dispatch path','A hardware interrupt is turned into a driver callback inside the kernel.',[('Device interrupt','Timer or keyboard event','blue'),('Interrupt controller','CPU vector assignment','green'),('IRQ trampoline','Saved registers and interrupt frame','amber'),('Interrupt dispatcher','Handler lookup and EOI','blue'),('Driver callback','Device-specific handler code','green')],h=420)
 compare_timelines(Path('ch05-diag02.svg'),'RTC seed and PIT upkeep','Boot reads the hardware clock once; runtime keeps time by counting timer ticks.', 'Boot', [('Read RTC', 'stable calendar sample', 'blue'), ('Decode fields', 'convert from BCD if needed', 'green'), ('Seed Unix time', 'initial seconds counter', 'amber')], 'Runtime', [('Timer tick', '100 Hz IRQ 0', 'blue'), ('Count to 100', 'subsecond accumulator', 'green'), ('Add one second', 'advance Unix time', 'amber')], preferred_w=150, gap=18, row_gap=42, h=360)
