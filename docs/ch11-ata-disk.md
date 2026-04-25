@@ -8,6 +8,10 @@ Up to this point every byte the kernel has touched has been in RAM. The kernel i
 
 The disk interface on every x86 PC made before **SATA** (Serial ATA, a newer point-to-point successor that replaced the parallel bus with a serial link) became common is called **ATA** — AT Attachment, named after the IBM PC/AT. The underlying protocol is also sometimes called IDE (Integrated Drive Electronics) or PATA (Parallel ATA). QEMU's default virtual hard drive presents itself as an ATA drive on the standard controller addresses, which makes writing a driver for it the natural next step.
 
+Block storage is a portable concept — every architecture needs a way to read and write persistent sectors, and the block layer interface the filesystem uses looks the same regardless of what controller sits underneath. On a PC the controller is ATA; on ARM-based single-board computers the standard alternative is **SDHCI/EMMC** (SD Host Controller Interface / embedded MultiMediaCard — the controller and embedded-flash standard the Raspberry Pi 3, for example, uses for its boot media).
+
+*On AArch64 (planned, milestone 5): SDHCI/EMMC in place of the PC ATA controller; the block layer interface is unchanged.*
+
 ### Two Ways to Move Data: PIO and DMA
 
 There are two distinct strategies for transferring data between an ATA drive and RAM. PIO is like the kernel carrying each word from disk to RAM by hand, one at a time — slow but simple. DMA is like setting up an automatic conveyor belt that moves data while the kernel does other work.
