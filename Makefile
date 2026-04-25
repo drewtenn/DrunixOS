@@ -359,7 +359,7 @@ build: kernel disk
 iso: os.iso
 images: disk
 fresh: run-fresh
-check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
+check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-arm64-platform-split check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
 check-phase6:
 	python3 tools/test_kernel_arch_boundary_phase6.py
 
@@ -396,6 +396,9 @@ check-syscall-parity:
 
 check-arch-boundary-reuse:
 	python3 tools/test_arch_boundary_reuse.py
+
+check-arm64-platform-split:
+	python3 tools/test_arm64_platform_split.py
 
 check-shared-shell-tests:
 	python3 tools/test_shared_shell_tests_arch_neutral.py
@@ -596,7 +599,7 @@ clean:
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all test-busybox-compat \
         check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
-        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
+        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-arm64-platform-split check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean
@@ -624,7 +627,7 @@ build: kernel-arm64.elf kernel8.img build/arm64-root.fs $(ARM_COMPILE_ONLY_OBJS)
 
 kernel/arch/arm64/start_kernel.o: .init-program-flag .arm64-smoke-fallback-flag Makefile
 kernel/arch/arm64/arch.o: Makefile
-kernel/arch/arm64/video.o: Makefile
+kernel/platform/raspi3b/video.o: Makefile
 $(ARM_KOBJS) $(ARM_SHARED_KOBJS) $(ARM_COMPILE_ONLY_OBJS) $(ARM_KTOBJS): .ktest-flag
 
 iso: kernel8.img
@@ -636,7 +639,7 @@ disk:
 
 fresh: run
 
-check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
+check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-arm64-platform-split check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
 
 test:
 	$(MAKE) ARCH=$(ARCH) check
@@ -701,6 +704,9 @@ test-busybox-compat: check-busybox-compat
 check-arch-boundary-reuse:
 	python3 tools/test_arch_boundary_reuse.py
 
+check-arm64-platform-split:
+	python3 tools/test_arm64_platform_split.py
+
 check-shared-shell-tests:
 	python3 tools/test_shared_shell_tests_arch_neutral.py
 
@@ -746,7 +752,7 @@ clean:
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all test-busybox-compat \
         check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
-        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
+        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-arm64-platform-split check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean

@@ -5,6 +5,7 @@
 
 #include "mmu.h"
 #include "pmm.h"
+#include "../../../platform/platform.h"
 #include "kstring.h"
 #include <stdint.h>
 
@@ -233,7 +234,7 @@ static void arm64_mmu_build_kernel_tables(void)
 
 	for (uint32_t i = 0; i < ARM64_MMU_ENTRIES; i++) {
 		uint64_t phys = (uint64_t)i * ARM64_MMU_L2_BLOCK_SIZE;
-		int device = phys >= 0x3F000000ull;
+		int device = phys >= PLATFORM_PERIPHERAL_BASE;
 
 		g_kernel_l2_low[i] = arm64_mmu_kernel_leaf_desc(phys, 2, device);
 	}

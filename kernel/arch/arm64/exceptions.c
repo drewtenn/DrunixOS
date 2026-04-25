@@ -3,17 +3,13 @@
  * exceptions.c — minimal AArch64 exception handlers for Milestone 1 bring-up.
  */
 
-#include "irq.h"
-#include "uart.h"
 #include "../arch.h"
+#include "../../platform/platform.h"
 #include "fault.h"
 #include "../../proc/sched.h"
 #include "../../proc/syscall.h"
 #include "kprintf.h"
 #include <stdint.h>
-
-#define CORE0_IRQ_SOURCE (*(volatile uint32_t *)0x40000060u)
-#define CNTPNSIRQ_BIT (1u << 1)
 
 static volatile uint32_t g_spurious_irq_count;
 
@@ -39,12 +35,12 @@ static void uart_put_hex64(const char *label, uint64_t value)
 	uint32_t lo = (uint32_t)value;
 
 	k_snprintf(line, sizeof(line), "%s=0x%08X%08X\n", label, hi, lo);
-	uart_puts(line);
+	platform_uart_puts(line);
 }
 
 static void arm64_report_kernel_sync_exception(const arch_trap_frame_t *frame)
 {
-	uart_puts("sync exception\n");
+	platform_uart_puts("sync exception\n");
 	uart_put_hex64("ESR_EL1", frame ? frame->esr_el1 : 0u);
 	uart_put_hex64("ELR_EL1", frame ? frame->elr_el1 : 0u);
 	uart_put_hex64("FAR_EL1", frame ? frame->far_el1 : 0u);
@@ -103,13 +99,9 @@ void arm64_sync_handler(arch_trap_frame_t *frame)
 
 void arm64_irq_handler(arch_trap_frame_t *frame)
 {
-	uint32_t source;
-
 	(void)frame;
 
-	source = CORE0_IRQ_SOURCE;
-	if (source & CNTPNSIRQ_BIT) {
-		arm64_irq_dispatch(ARM64_IRQ_LOCAL_TIMER);
+	if (platform_irq_dispatch()) {
 		schedule_if_needed();
 		(void)sched_signal_check((uint32_t)(uintptr_t)frame);
 		return;
@@ -121,13 +113,13 @@ void arm64_irq_handler(arch_trap_frame_t *frame)
 void arm64_fiq_handler(arch_trap_frame_t *frame)
 {
 	(void)frame;
-	uart_puts("fiq exception\n");
+	platform_uart_puts("fiq exception\n");
 	arm64_halt_forever();
 }
 
 void arm64_serror_handler(arch_trap_frame_t *frame)
 {
 	(void)frame;
-	uart_puts("serror exception\n");
+	platform_uart_puts("serror exception\n");
 	arm64_halt_forever();
 }

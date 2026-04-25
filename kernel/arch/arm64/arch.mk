@@ -12,14 +12,13 @@ ARM_CFLAGS ?= -ffreestanding -fno-stack-protector -fno-pic -fno-pie \
 ARM_LDFLAGS ?= -nostdlib -T kernel/arch/arm64/linker.ld
 ARM_INC := -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 \
            -I kernel/arch/arm64/mm -I kernel/mm -I kernel/proc -I kernel/fs \
-           -I kernel/drivers -I kernel/blk -I kernel/platform/pc -I kernel/gui
+           -I kernel/drivers -I kernel/blk -I kernel/platform \
+           -I kernel/platform/raspi3b -I kernel/platform/pc -I kernel/gui
 
 ARM_KOBJS := kernel/arch/arm64/boot.o \
              kernel/arch/arm64/arch.o \
-             kernel/arch/arm64/video.o \
              kernel/arch/arm64/exceptions.o \
              kernel/arch/arm64/exceptions_s.o \
-             kernel/arch/arm64/irq.o \
              kernel/arch/arm64/proc/entry.o \
              kernel/arch/arm64/proc/arch_proc.o \
              kernel/arch/arm64/proc/smoke.o \
@@ -30,8 +29,10 @@ ARM_KOBJS := kernel/arch/arm64/boot.o \
              kernel/arch/arm64/mm/temp_map.o \
              kernel/mm/pmm_core.arm64.o \
              kernel/arch/arm64/timer.o \
-             kernel/arch/arm64/uart.o \
-             kernel/arch/arm64/usb_keyboard.o \
+             kernel/platform/raspi3b/uart.o \
+             kernel/platform/raspi3b/irq.o \
+             kernel/platform/raspi3b/video.o \
+             kernel/platform/raspi3b/usb_hci.o \
              kernel/arch/arm64/rootfs.o \
              kernel/arch/arm64/rootfs_blob.o \
              kernel/arch/arm64/start_kernel.o \

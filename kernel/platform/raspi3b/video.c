@@ -1,10 +1,11 @@
 #include "video.h"
+#include "../platform.h"
 #include "../../console/fb_text_console.h"
-#include "mm/pmm.h"
+#include "../../arch/arm64/mm/pmm.h"
 
 #if DRUNIX_ARM64_VGA
 
-#define ARM64_MBOX_BASE 0x3F00B880u
+#define ARM64_MBOX_BASE (PLATFORM_PERIPHERAL_BASE + 0xB880u)
 #define ARM64_MBOX_READ 0u
 #define ARM64_MBOX_STATUS 6u
 #define ARM64_MBOX_WRITE 8u
@@ -307,6 +308,21 @@ void arm64_video_console_write(const char *buf, uint32_t len)
 	fb_text_console_write(&g_arm64_video_console, buf, len);
 }
 
+int platform_framebuffer_acquire(framebuffer_info_t **out)
+{
+	int rc;
+
+	if (!out)
+		return -1;
+
+	rc = arm64_video_init();
+	if (rc != 0)
+		return rc;
+
+	*out = arm64_video_framebuffer();
+	return *out ? 0 : -1;
+}
+
 #else
 
 int arm64_video_init(void)
@@ -330,4 +346,16 @@ void arm64_video_console_write(const char *buf, uint32_t len)
 	(void)len;
 }
 
+int platform_framebuffer_acquire(framebuffer_info_t **out)
+{
+	if (out)
+		*out = 0;
+	return -1;
+}
+
 #endif
+
+void platform_framebuffer_console_write(const char *buf, uint32_t len)
+{
+	arm64_video_console_write(buf, len);
+}

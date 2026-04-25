@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 
-#ifndef ARM64_IRQ_H
-#define ARM64_IRQ_H
+#ifndef KERNEL_PLATFORM_RASPI3B_IRQ_H
+#define KERNEL_PLATFORM_RASPI3B_IRQ_H
 
 #include <stdint.h>
 

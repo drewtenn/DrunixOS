@@ -10,14 +10,12 @@
 #include "../../fs/fs.h"
 #include "../../fs/vfs.h"
 #include "../../mm/kheap.h"
+#include "../../platform/platform.h"
 #include "../../proc/init_launch.h"
 #include "../../proc/sched.h"
 #include "rootfs.h"
 #include "mm/pmm.h"
 #include "timer.h"
-#include "uart.h"
-#include "usb_keyboard.h"
-#include "video.h"
 #include "kprintf.h"
 #ifdef KTEST_ENABLED
 #include "ktest.h"
@@ -93,7 +91,7 @@ void arm64_console_loop(void)
 		char ch;
 
 		__asm__ volatile("wfi");
-		while (uart_try_getc(&ch))
+		while (platform_uart_try_getc(&ch))
 			console_terminal_handle_char(&g_console_terminal, ch);
 	}
 }
@@ -101,13 +99,13 @@ void arm64_console_loop(void)
 static void arm64_mount_root_namespace(void)
 {
 	if (arm64_rootfs_register() != 0)
-		uart_puts("ARM64 rootfs register failed\n");
+		platform_uart_puts("ARM64 rootfs register failed\n");
 	if (bcache_init() != 0)
-		uart_puts("ARM64 block cache init failed\n");
+		platform_uart_puts("ARM64 block cache init failed\n");
 	vfs_reset();
 	dufs_register();
 	if (vfs_mount_with_source("/", "dufs", "/dev/sda1") != 0) {
-		uart_puts("ARM64 root mount failed\n");
+		platform_uart_puts("ARM64 root mount failed\n");
 		arm64_console_loop();
 	}
 }
@@ -115,11 +113,11 @@ static void arm64_mount_root_namespace(void)
 static void arm64_mount_synthetic_filesystems(void)
 {
 	if (vfs_mount("/dev", "devfs") != 0)
-		uart_puts("ARM64 devfs mount failed\n");
+		platform_uart_puts("ARM64 devfs mount failed\n");
 	if (vfs_mount("/proc", "procfs") != 0)
-		uart_puts("ARM64 procfs mount failed\n");
+		platform_uart_puts("ARM64 procfs mount failed\n");
 	if (vfs_mount_with_source("/sys", "sysfs", "sysfs") != 0)
-		uart_puts("ARM64 sysfs mount failed\n");
+		platform_uart_puts("ARM64 sysfs mount failed\n");
 }
 
 static void arm64_launch_init_or_fallback(void)
@@ -135,19 +133,19 @@ static void arm64_launch_init_or_fallback(void)
 	                                    DRUNIX_INIT_ENV0,
 	                                    BOOT_LAUNCH_INIT_STANDALONE);
 	if (init_pid < 0) {
-		uart_puts("ARM64 init launch failed: ");
-		uart_puts(DRUNIX_INIT_PROGRAM);
-		uart_puts("\n");
+		platform_uart_puts("ARM64 init launch failed: ");
+		platform_uart_puts(DRUNIX_INIT_PROGRAM);
+		platform_uart_puts("\n");
 #if DRUNIX_ARM64_SMOKE_FALLBACK
 		if (arm64_user_smoke_boot() != 0)
-			uart_puts("ARM64 user smoke: boot failed\n");
+			platform_uart_puts("ARM64 user smoke: boot failed\n");
 #endif
 		arm64_console_loop();
 	}
 
 	init_proc = sched_bootstrap();
 	if (!init_proc) {
-		uart_puts("ARM64 init bootstrap failed\n");
+		platform_uart_puts("ARM64 init bootstrap failed\n");
 		arm64_console_loop();
 	}
 	arch_process_launch(init_proc);
@@ -164,19 +162,21 @@ void arm64_start_kernel(void)
 	    .ctx = 0,
 	};
 
-	uart_init();
+	platform_init();
 	__asm__ volatile("msr vbar_el1, %0" : : "r"(vectors_el1));
 	__asm__ volatile("isb");
 
-	uart_puts("Drunix AArch64 v0 - hello from EL1\n");
+	platform_uart_puts("Drunix AArch64 v0 - hello from EL1\n");
 	arch_mm_init();
 	kheap_init();
 	pmm_mark_used(HEAP_START, HEAP_END - HEAP_START);
 #if DRUNIX_ARM64_VGA
-	if (arm64_video_init() == 0)
-		uart_puts("ARM64 framebuffer console enabled\n");
+	framebuffer_info_t *fb = 0;
+
+	if (platform_framebuffer_acquire(&fb) == 0)
+		platform_uart_puts("ARM64 framebuffer console enabled\n");
 	else
-		uart_puts("ARM64 framebuffer console unavailable\n");
+		platform_uart_puts("ARM64 framebuffer console unavailable\n");
 #endif
 
 	k_snprintf(line,
@@ -184,13 +184,13 @@ void arm64_start_kernel(void)
 	           "CurrentEL=0x%X (EL%u)\n",
 	           (unsigned int)arm64_read_currentel(),
 	           (unsigned int)(arm64_read_currentel() >> 2));
-	uart_puts(line);
+	platform_uart_puts(line);
 
 	k_snprintf(line,
 	           sizeof(line),
 	           "CNTFRQ_EL0=%uHz\n",
 	           (unsigned int)arm64_read_cntfrq());
-	uart_puts(line);
+	platform_uart_puts(line);
 
 	arch_irq_init();
 	arch_timer_set_periodic_handler(arm64_timer_tick);
@@ -205,8 +205,8 @@ void arm64_start_kernel(void)
 		__asm__ volatile("wfi");
 #endif
 #if DRUNIX_ARM64_VGA
-	if (arm64_usb_keyboard_init() != 0)
-		uart_puts("ARM64 USB keyboard unavailable\n");
+	if (platform_usb_hci_register() != 0)
+		platform_uart_puts("ARM64 USB keyboard unavailable\n");
 #endif
 	console_terminal_init(&g_console_terminal, &host);
 	console_terminal_start(&g_console_terminal);

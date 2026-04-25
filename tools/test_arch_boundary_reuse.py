@@ -28,7 +28,7 @@ def main() -> int:
         if path.suffix not in {".c", ".h"}:
             continue
         rel = path.relative_to(ROOT)
-        if rel.parts[:2] == ("kernel", "arch"):
+        if rel.parts[:2] in {("kernel", "arch"), ("kernel", "platform")}:
             continue
         if rel in ALLOWED_GENERIC_FILES:
             continue

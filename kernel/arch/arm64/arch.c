@@ -5,14 +5,11 @@
 
 #include "../arch.h"
 #include "../../drivers/tty.h"
-#include "irq.h"
+#include "../../platform/platform.h"
 #include "mm/mmu.h"
 #include "mm/pmm.h"
 #include "proc/init_layout.h"
 #include "timer.h"
-#include "uart.h"
-#include "usb_keyboard.h"
-#include "video.h"
 
 extern char _kernel_start[];
 extern char _kernel_end[];
@@ -36,11 +33,11 @@ void arch_console_write(const char *buf, uint32_t len)
 
 	for (uint32_t i = 0; i < len; i++) {
 		if (buf[i] == '\n')
-			uart_putc('\r');
-		uart_putc(buf[i]);
+			platform_uart_putc('\r');
+		platform_uart_putc(buf[i]);
 	}
 #if DRUNIX_ARM64_VGA
-	arm64_video_console_write(buf, len);
+	platform_framebuffer_console_write(buf, len);
 #endif
 }
 
@@ -53,19 +50,19 @@ void arch_poll_input(void)
 {
 	char ch;
 
-	while (uart_try_getc(&ch))
+	while (platform_uart_try_getc(&ch))
 		tty_input_char(0, ch);
-	arm64_usb_keyboard_poll();
+	platform_usb_hci_poll();
 }
 
 void arch_irq_init(void)
 {
-	arm64_irq_init();
+	platform_irq_init();
 }
 
 void arch_irq_register(uint32_t irq, arch_irq_handler_fn fn)
 {
-	arm64_irq_register(irq, fn);
+	platform_irq_register(irq, fn);
 }
 
 void arch_irq_mask(uint32_t irq)
@@ -80,7 +77,7 @@ void arch_irq_unmask(uint32_t irq)
 
 void arch_timer_set_periodic_handler(arch_irq_handler_fn fn)
 {
-	arm64_irq_register(ARM64_IRQ_LOCAL_TIMER, fn);
+	platform_irq_register(PLATFORM_IRQ_TIMER, fn);
 }
 
 void arch_timer_start(uint32_t hz)
@@ -90,7 +87,7 @@ void arch_timer_start(uint32_t hz)
 
 void arch_interrupts_enable(void)
 {
-	arm64_irq_enable();
+	platform_irq_enable();
 }
 
 void arch_mm_init(void)
@@ -116,7 +113,7 @@ void arch_mm_init(void)
 
 	arm64_mmu_init();
 	if (arm64_mmu_enabled())
-		uart_puts("ARM64 MMU enabled\n");
+		platform_uart_puts("ARM64 MMU enabled\n");
 	g_arm64_mm_ready = 1;
 }
 

@@ -1,9 +1,10 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
- * usb_keyboard.c - Minimal BCM2835 DWC2 + USB HID boot-keyboard path.
+ * usb_hci.c - Minimal BCM2835 DWC2 + USB HID boot-keyboard path.
  */
 
-#include "usb_keyboard.h"
+#include "usb_hci.h"
+#include "../platform.h"
 #include "../../drivers/tty.h"
 #include "kstring.h"
 #include "uart.h"
@@ -11,7 +12,7 @@
 
 #define BIT(n) (1u << (n))
 
-#define DWC2_BASE 0x3F980000u
+#define DWC2_BASE (PLATFORM_PERIPHERAL_BASE + 0x980000u)
 #define DWC2_REG(offset)                                                       \
 	(*(volatile uint32_t *)(uintptr_t)(DWC2_BASE + (offset)))
 
@@ -767,4 +768,19 @@ void arm64_usb_keyboard_poll(void)
 
 	g_usb_polling = 0;
 	usb_irq_restore(irq_state);
+}
+
+int platform_usb_hci_register(void)
+{
+	return arm64_usb_keyboard_init();
+}
+
+void platform_usb_hci_poll(void)
+{
+	arm64_usb_keyboard_poll();
+}
+
+int platform_block_register(void)
+{
+	return 0;
 }

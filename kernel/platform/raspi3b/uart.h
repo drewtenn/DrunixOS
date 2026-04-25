@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 
-#ifndef ARM64_UART_H
-#define ARM64_UART_H
+#ifndef KERNEL_PLATFORM_RASPI3B_UART_H
+#define KERNEL_PLATFORM_RASPI3B_UART_H
 
 void uart_init(void);
 void uart_putc(char c);

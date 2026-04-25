@@ -3,7 +3,7 @@
  * timer.c — ARM Generic Timer support for Milestone 1 bring-up.
  */
 
-#include "irq.h"
+#include "../../platform/platform.h"
 #include "timer.h"
 #include <stdint.h>
 
@@ -41,7 +41,7 @@ void arm64_timer_start(uint32_t hz)
 
 void arm64_timer_init(uint32_t hz)
 {
-	arm64_irq_init();
+	platform_irq_init();
 	arm64_timer_start(hz);
 }
 

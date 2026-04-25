@@ -1,12 +1,13 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
- * uart.c — BCM2835 mini-UART driver for the ARM64 bring-up path.
+ * uart.c - BCM2835 mini-UART driver for Raspberry Pi 3.
  */
 
+#include "../platform.h"
 #include "uart.h"
 #include <stdint.h>
 
-#define MMIO_BASE 0x3F000000UL
+#define MMIO_BASE PLATFORM_PERIPHERAL_BASE
 #define GPFSEL1 (*(volatile uint32_t *)(MMIO_BASE + 0x200004))
 #define GPPUD (*(volatile uint32_t *)(MMIO_BASE + 0x200094))
 #define GPPUDCLK0 (*(volatile uint32_t *)(MMIO_BASE + 0x200098))
@@ -83,4 +84,29 @@ int uart_try_getc(char *out)
 
 	*out = (char)(AUX_MU_IO & 0xFFu);
 	return 1;
+}
+
+void platform_init(void)
+{
+	uart_init();
+}
+
+void platform_uart_putc(char c)
+{
+	uart_putc(c);
+}
+
+void platform_uart_puts(const char *s)
+{
+	uart_puts(s);
+}
+
+char platform_uart_getc(void)
+{
+	return uart_getc();
+}
+
+int platform_uart_try_getc(char *out)
+{
+	return uart_try_getc(out);
 }
