@@ -8,7 +8,7 @@ Chapter 22 left us with a working interactive shell that can launch ELF programs
 
 ### The Input Format
 
-We accept ordinary 32-bit relocatable ELF objects — the `.o` files that the compiler produces before a linker combines them into an executable. Before doing any work we validate four conditions: the file begins with the four-byte ELF magic sequence (`0x7F 'E' 'L' 'F'`), the object type field is `ET_REL` (the ELF type constant for a relocatable object, as opposed to an executable or shared library), the machine field is `EM_386` (the ELF architecture constant for 32-bit x86), and the file size does not exceed `MODULE_MAX_SIZE`.
+We accept ordinary relocatable ELF objects — the `.o` files that the compiler produces before a linker combines them into an executable. Before doing any work we validate four conditions: the file begins with the four-byte ELF magic sequence (`0x7F 'E' 'L' 'F'`), the object type field is `ET_REL` (the ELF type constant for a relocatable object, as opposed to an executable or shared library), the machine field matches the architecture the kernel was compiled for (for example `EM_386` for 32-bit x86), and the file size does not exceed `MODULE_MAX_SIZE`.
 
 The load request starts like any other file access: the kernel resolves the module path through the **VFS** (Virtual File System), identifies the backing inode and file size, and reads the bytes from DUFS into kernel memory. The module loader is therefore not a side door around the filesystem; it consumes the same on-disk objects the rest of user space sees.
 
@@ -26,13 +26,13 @@ Undefined symbols — those the object references but does not define — are ma
 
 A relocatable object produced by the compiler contains placeholder values wherever it references a symbol whose final address is not yet known. Think of relocation like sorting a package labelled "recipient unknown". The compiler left a placeholder. When we load the module, we look up the real address and fill it in — exactly as the mail carrier would look up and write the recipient's address. A **relocation record** tells us exactly where one of these placeholders sits, which symbol's address should go there, and what arithmetic to apply. We handle the two relocation types that a simple C module produces.
 
-An `R_386_32` record describes a 32-bit absolute address reference. We add the symbol's runtime address to whatever value the compiler placed at the patch site — typically zero — and write the result back. A `call` or `jmp` to an absolute address uses this form.
+On x86, an `R_386_32` record describes a 32-bit absolute address reference. We add the symbol's runtime address to whatever value the compiler placed at the patch site — typically zero — and write the result back. A `call` or `jmp` to an absolute address uses this form.
 
-An `R_386_PC32` record describes a 32-bit PC-relative address reference — the signed displacement that an `E8 call` instruction encodes. We add the symbol's runtime address and then subtract the address of the patch site itself, producing the offset the CPU computes at execution time. Encountering any other relocation type is a hard failure; we have no arithmetic for it and refusing to continue is safer than leaving a partially patched module in memory.
+An `R_386_PC32` record describes a 32-bit PC-relative address reference — the signed displacement that an `E8 call` instruction encodes. We add the symbol's runtime address and then subtract the address of the patch site itself, producing the offset the CPU computes at execution time. The two relocation types handled are the ones that simple 32-bit x86 C code generates. Encountering any other relocation type is a hard failure; we have no arithmetic for it and refusing to continue is safer than leaving a partially patched module in memory.
 
 ### Memory Layout and Lifetime
 
-All allocatable sections for one module are packed into a single contiguous heap allocation. Because this is a 32-bit kernel whose heap pages are executable, we don't need to create a separate executable mapping — text sections land in the same buffer as data sections and the CPU can fetch instructions from them directly.
+All allocatable sections for one module are packed into a single contiguous heap allocation. Because the kernel heap pages are executable on the supported architectures, we don't need to create a separate executable mapping — text sections land in the same buffer as data sections and the CPU can fetch instructions from them directly.
 
 Once the relocation pass completes without error, we look up the symbol named `module_init` in the resolved symbol table and call it. If `module_init` returns zero the load is considered successful; a non-zero return signals that the module itself detected a problem during its own initialization.
 
@@ -52,4 +52,4 @@ A successfully loaded module can call any function in the export table and regis
 
 ### Where the Machine Is by the End of Chapter 23
 
-We are no longer limited to code that was linked at build time. A user process can ask us to load a relocatable ELF object from DUFS, parse its section and symbol tables, resolve its external references against the exported-symbol table, apply the two relocation types that 32-bit x86 C code generates, and call its entry point — all inside a single `SYS_DRUNIX_MODLOAD` call. The module lands in a single heap allocation, its text sections are immediately executable, and it becomes a permanent part of the running kernel for as long as the machine stays up.
+We are no longer limited to code that was linked at build time. A user process can ask us to load a relocatable ELF object from DUFS, parse its section and symbol tables, resolve its external references against the exported-symbol table, apply the relocation types the target architecture's C compiler generates, and call its entry point — all inside a single `SYS_DRUNIX_MODLOAD` call. The module lands in a single heap allocation, its text sections are immediately executable, and it becomes a permanent part of the running kernel for as long as the machine stays up.
