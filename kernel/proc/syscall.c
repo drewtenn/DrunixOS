@@ -151,6 +151,7 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 	if (!frame)
 		return (uint64_t)-1;
 
+	arch_user_sync_from_active();
 	nr = arch_syscall_number(frame);
 	switch (nr) {
 	case ARM64_LINUX_SYS_GETCWD:
@@ -443,6 +444,65 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		    (uint32_t)arch_syscall_arg2(frame),
 		    (uint32_t)arch_syscall_arg3(frame)));
 		break;
+	case SYS_NANOSLEEP:
+		ret = arm64_syscall_ret32(syscall_case_nanosleep(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame)));
+		break;
+	case SYS_FORK:
+		ret = arm64_syscall_ret32(syscall_case_fork_vfork());
+		break;
+	case SYS_RENAME:
+		ret = arm64_syscall_ret32(syscall_case_rename(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame)));
+		break;
+	case SYS_STAT:
+		ret = arm64_syscall_ret32(syscall_case_stat(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame)));
+		break;
+	case SYS_DRUNIX_CLEAR:
+		ret = arm64_syscall_ret32(syscall_case_drunix_clear());
+		break;
+	case SYS_DRUNIX_SCROLL_UP:
+		ret = arm64_syscall_ret32(
+		    syscall_case_drunix_scroll_up((uint32_t)arch_syscall_arg0(frame)));
+		break;
+	case SYS_DRUNIX_SCROLL_DOWN:
+		ret = arm64_syscall_ret32(syscall_case_drunix_scroll_down(
+		    (uint32_t)arch_syscall_arg0(frame)));
+		break;
+	case SYS_DRUNIX_MODLOAD:
+		ret = arm64_syscall_ret32(
+		    syscall_case_drunix_modload((uint32_t)arch_syscall_arg0(frame)));
+		break;
+	case SYS_DRUNIX_TCGETATTR:
+		ret = arm64_syscall_ret32(syscall_case_drunix_tcgetattr(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame)));
+		break;
+	case SYS_DRUNIX_TCSETATTR:
+		ret = arm64_syscall_ret32(syscall_case_drunix_tcsetattr(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame)));
+		break;
+	case SYS_DRUNIX_TCSETPGRP:
+		ret = arm64_syscall_ret32(syscall_case_drunix_tcsetpgrp(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame)));
+		break;
+	case SYS_DRUNIX_TCGETPGRP:
+		ret = arm64_syscall_ret32(
+		    syscall_case_drunix_tcgetpgrp((uint32_t)arch_syscall_arg0(frame)));
+		break;
+	case SYS_DRUNIX_GETDENTS_PATH:
+		ret = arm64_syscall_ret32(syscall_case_drunix_getdents_path(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame)));
+		break;
 	case ARM64_LINUX_SYS_PRLIMIT64:
 		ret = arm64_syscall_ret32(syscall_case_prlimit64(
 		    (uint32_t)arch_syscall_arg0(frame),
@@ -461,10 +521,11 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 	default:
 		ret = (uint64_t)-38;
 		break;
+		}
+		arch_syscall_set_result(frame, ret);
+		arch_user_sync_to_active();
+		return ret;
 	}
-	arch_syscall_set_result(frame, ret);
-	return ret;
-}
 
 uint32_t syscall_handler(uint32_t eax,
                          uint32_t ebx,

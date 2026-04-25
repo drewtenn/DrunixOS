@@ -35,30 +35,6 @@ test-halt:
 	grep -q "\[PANIC\] --- DOUBLE FAULT ---" $(LOG_DIR)/debugcon-df.log
 	grep -q "fault entered through dedicated TSS" $(LOG_DIR)/debugcon-df.log
 
-# `test-busybox-compat` — boot the unattended BusyBox compatibility runner as
-#                         the initial process, then extract its on-disk report.
-test-busybox-compat:
-	$(MAKE) KLOG_TO_DEBUGCON=1 INIT_PROGRAM=bin/bbcompat INIT_ARG0=bbcompat kernel disk
-	$(call prepare_test_images,bbcompat,$(LOG_DIR)/bbcompat.log)
-	$(call qemu_headless_for,bbcompat,120)
-	$(PYTHON) tools/dufs_extract.py $(IMG_DIR)/dufs-bbcompat.img bbcompat.log $(LOG_DIR)/bbcompat.log
-	cat $(LOG_DIR)/bbcompat.log
-	grep -q "BBCOMPAT SUMMARY passed 255/255" $(LOG_DIR)/bbcompat.log
-	! grep -q "BBCOMPAT FAIL" $(LOG_DIR)/bbcompat.log
-	! grep -Eq "unknown syscall|Unhandled syscall" $(LOG_DIR)/debugcon-bbcompat.log
-
-# `test-linux-abi` — boot a static Linux/i386 ELF that checks syscall return
-#                    values and errno-compatible negative results directly.
-test-linux-abi:
-	$(MAKE) KLOG_TO_DEBUGCON=1 INIT_PROGRAM=bin/linuxabi INIT_ARG0=linuxabi kernel disk
-	$(call prepare_test_images,linuxabi,$(LOG_DIR)/linuxabi.log)
-	$(call qemu_headless_for,linuxabi,30)
-	$(PYTHON) tools/dufs_extract.py $(IMG_DIR)/dufs-linuxabi.img linuxabi.log $(LOG_DIR)/linuxabi.log
-	cat $(LOG_DIR)/linuxabi.log
-	grep -q "LINUXABI SUMMARY passed 420/420" $(LOG_DIR)/linuxabi.log
-	! grep -q "LINUXABI FAIL" $(LOG_DIR)/linuxabi.log
-	! grep -Eq "unknown syscall|Unhandled syscall" $(LOG_DIR)/debugcon-linuxabi.log
-
 test-threadtest:
 	$(MAKE) KLOG_TO_DEBUGCON=1 INIT_PROGRAM=bin/threadtest INIT_ARG0=threadtest kernel disk
 	$(call prepare_test_images,threadtest,$(LOG_DIR)/threadtest.log)
@@ -68,43 +44,6 @@ test-threadtest:
 	grep -q "THREADTEST PASS" $(LOG_DIR)/threadtest.log
 	! grep -q "THREADTEST FAIL" $(LOG_DIR)/threadtest.log
 	! grep -Eq "unknown syscall|Unhandled syscall" $(LOG_DIR)/debugcon-threadtest.log
-
-test-tcc:
-	$(MAKE) KLOG_TO_DEBUGCON=1 INIT_PROGRAM=bin/tcccompat INIT_ARG0=tcccompat kernel disk
-	$(call prepare_test_images,tcc,$(LOG_DIR)/tcc.log)
-	$(call qemu_headless_for,tcc,120)
-	$(PYTHON) tools/dufs_extract.py $(IMG_DIR)/dufs-tcc.img tcc.log $(LOG_DIR)/tcc.log
-	cat $(LOG_DIR)/tcc.log
-	grep -q "TCCCOMPAT: version ok" $(LOG_DIR)/tcc.log
-	grep -q "TCCCOMPAT: compile ok" $(LOG_DIR)/tcc.log
-	grep -q "TCCCOMPAT: run ok" $(LOG_DIR)/tcc.log
-	grep -q "TCCCOMPAT: multi source write ok" $(LOG_DIR)/tcc.log
-	grep -q "TCCCOMPAT: multi compile ok" $(LOG_DIR)/tcc.log
-	grep -q "TCCCOMPAT: multi run ok" $(LOG_DIR)/tcc.log
-	grep -q "TCCCOMPAT: runtime source write ok" $(LOG_DIR)/tcc.log
-	grep -q "TCCCOMPAT: runtime compile ok" $(LOG_DIR)/tcc.log
-	grep -q "TCCCOMPAT: runtime run ok" $(LOG_DIR)/tcc.log
-	grep -q "TCCCOMPAT: readelf ok" $(LOG_DIR)/tcc.log
-	grep -q "TCCCOMPAT: objdump ok" $(LOG_DIR)/tcc.log
-	grep -q "TCCCOMPAT: gcc source write ok" $(LOG_DIR)/tcc.log
-	grep -q "TCCCOMPAT: gcc path env ok" $(LOG_DIR)/tcc.log
-	grep -q "TCCCOMPAT: gcc as ok" $(LOG_DIR)/tcc.log
-	grep -q "TCCCOMPAT: gcc compile ok" $(LOG_DIR)/tcc.log
-	grep -q "TCCCOMPAT PASS" $(LOG_DIR)/tcc.log
-	! grep -q "TCCCOMPAT FAIL" $(LOG_DIR)/tcc.log
-	! grep -Eq "unknown syscall|Unhandled syscall" $(LOG_DIR)/debugcon-tcc.log
-
-test-nano:
-	$(MAKE) KLOG_TO_DEBUGCON=1 INIT_PROGRAM=bin/nanocompat INIT_ARG0=nanocompat kernel disk
-	$(call prepare_test_images,nano,$(LOG_DIR)/nano.log)
-	$(call qemu_headless_for,nano,120)
-	$(PYTHON) tools/dufs_extract.py $(IMG_DIR)/dufs-nano.img nano.log $(LOG_DIR)/nano.log
-	cat $(LOG_DIR)/nano.log
-	grep -q "NANOCOMPAT: version ok" $(LOG_DIR)/nano.log
-	grep -q "NANOCOMPAT: write ok" $(LOG_DIR)/nano.log
-	grep -q "NANOCOMPAT PASS" $(LOG_DIR)/nano.log
-	! grep -q "NANOCOMPAT FAIL" $(LOG_DIR)/nano.log
-	! grep -Eq "unknown syscall|Unhandled syscall" $(LOG_DIR)/debugcon-nano.log
 
 # `test-ext3-linux-compat` — verify a freshly generated ext3 root with host
 #                            e2fsprogs, then boot Drunix writable ext3 smoke
@@ -144,6 +83,5 @@ test-ext3-host-write-interop:
 #              suite fails.
 test-all:
 	$(MAKE) test-headless
-	$(MAKE) test-linux-abi
-	$(MAKE) test-nano
+	$(MAKE) test-threadtest
 	$(MAKE) test-halt

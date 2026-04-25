@@ -13,14 +13,14 @@ ROOT_MAKEFILE = ROOT / "Makefile"
 
 
 def make_var(text, name):
-    match = re.search(rf"^{re.escape(name)}\s*=\s*(.+)$", text, re.MULTILINE)
+    match = re.search(rf"^{re.escape(name)}[ \t]*=[ \t]*(.*)$", text, re.MULTILINE)
     if not match:
         return None
     return match.group(1).split()
 
 
 def scalar_make_var(text, name):
-    match = re.search(rf"^{re.escape(name)}\s*=\s*(.+)$", text, re.MULTILINE)
+    match = re.search(rf"^{re.escape(name)}[ \t]*=[ \t]*(.*)$", text, re.MULTILINE)
     if not match:
         return None
     return match.group(1).strip()
@@ -40,10 +40,6 @@ def main():
     c_progs = make_var(text, "C_PROGS")
     cxx_progs = make_var(text, "CXX_PROGS")
     linux_progs = make_var(text, "LINUX_PROGS")
-    linux_binutils_progs = make_var(text, "LINUX_BINUTILS_PROGS")
-    linux_gcc_progs = make_var(text, "LINUX_GCC_PROGS")
-    linux_gcc_helper_progs = make_var(text, "LINUX_GCC_HELPER_PROGS")
-    linux_nano_progs = make_var(text, "LINUX_NANO_PROGS")
     c_runtime = make_var(text, "C_RUNTIME_OBJS")
     cxx_runtime = make_var(text, "CXX_RUNTIME_OBJS")
     c_link = scalar_make_var(text, "C_LINK_OBJS")
@@ -61,18 +57,6 @@ def main():
     if linux_progs is None:
         add_failure(failures, "user/Makefile must define LINUX_PROGS")
         linux_progs = []
-    if linux_binutils_progs is None:
-        add_failure(failures, "user/Makefile must define LINUX_BINUTILS_PROGS")
-        linux_binutils_progs = []
-    if linux_gcc_progs is None:
-        add_failure(failures, "user/Makefile must define LINUX_GCC_PROGS")
-        linux_gcc_progs = []
-    if linux_gcc_helper_progs is None:
-        add_failure(failures, "user/Makefile must define LINUX_GCC_HELPER_PROGS")
-        linux_gcc_helper_progs = []
-    if linux_nano_progs is None:
-        add_failure(failures, "user/Makefile must define LINUX_NANO_PROGS")
-        linux_nano_progs = []
     if c_runtime is None:
         add_failure(failures, "user/Makefile must define C_RUNTIME_OBJS")
         c_runtime = []
@@ -111,52 +95,24 @@ def main():
 
     if "chello" not in c_set:
         add_failure(failures, "C_PROGS must include chello as the small C runtime smoke program")
-    if "linuxhello" not in linux_set:
-        add_failure(failures, "LINUX_PROGS must include linuxhello as the static Linux i386 smoke program")
-    if "linuxprobe" not in linux_set:
-        add_failure(failures, "LINUX_PROGS must include linuxprobe as the static Linux i386 C compatibility probe")
-    if "busybox" not in linux_set:
-        add_failure(failures, "LINUX_PROGS must include busybox as the generated static Linux i386 userland target")
-    if "tcc" not in linux_set:
-        add_failure(failures, "LINUX_PROGS must include tcc as the generated static Linux i386 compiler target")
-    if "readelf" not in linux_set or "objdump" not in linux_set:
-        add_failure(failures, "LINUX_PROGS must include readelf and objdump as generated static Linux i386 binutils targets")
-    if set(linux_binutils_progs) != {"readelf", "objdump"}:
-        add_failure(failures, "LINUX_BINUTILS_PROGS must be the generated binutils targets: readelf objdump")
-    if "gcc" in linux_set:
-        add_failure(failures, "LINUX_PROGS must not install gcc through the generic /bin program lane")
-    if set(linux_gcc_progs) != {"gcc"}:
-        add_failure(failures, "LINUX_GCC_PROGS must be the generated GCC driver target: gcc")
-    if set(linux_gcc_helper_progs) != {"gcc-cc1", "gcc-as"}:
-        add_failure(failures, "LINUX_GCC_HELPER_PROGS must include the staged GCC helpers: gcc-cc1 gcc-as")
-    if "nano" not in linux_set:
-        add_failure(failures, "LINUX_PROGS must include nano as the generated static Linux i386 editor target")
-    if set(linux_nano_progs) != {"nano"}:
-        add_failure(failures, "LINUX_NANO_PROGS must be the generated nano target: nano")
+    if linux_set:
+        add_failure(
+            failures,
+            "LINUX_PROGS must stay empty; generated Linux compatibility payloads are deprecated",
+        )
 
     if "include programs.mk" not in makefile_text:
         add_failure(failures, "user/Makefile must include user/programs.mk as the shared user program manifest")
-    if not re.search(r"^\$\(LINUX_BINUTILS_PROGS\):\n\t\.\./tools/build_linux_binutils\.sh \$@ \$\(BINUTILS_VERSION\) \$\(BINUTILS_BUILD_DIR\)", makefile_text, re.MULTILINE):
-        add_failure(failures, "user/Makefile must build $(LINUX_BINUTILS_PROGS) with tools/build_linux_binutils.sh")
-    if not re.search(r"^\$\(LINUX_GCC_PROGS\):\n\t\.\./tools/build_linux_gcc_tool\.sh \$@ gcc \$\(GCC_TOOLCHAIN_VERSION\) \$\(GCC_TOOLCHAIN_BUILD_DIR\)", makefile_text, re.MULTILINE):
-        add_failure(failures, "user/Makefile must build $(LINUX_GCC_PROGS) with tools/build_linux_gcc_tool.sh")
-    if not re.search(r"^\$\(LINUX_NANO_PROGS\):\n\t\.\./tools/build_linux_nano\.sh \$@ \$\(NANO_VERSION\) \$\(NANO_BUILD_DIR\)", makefile_text, re.MULTILINE):
-        add_failure(failures, "user/Makefile must build $(LINUX_NANO_PROGS) with tools/build_linux_nano.sh")
     if not re.search(r"^include\s+user/programs\.mk$", root_text, re.MULTILINE):
         add_failure(failures, "top-level Makefile must include user/programs.mk for disk image packing")
     if not re.search(r"USER_PROGS\s*:?\=\s*\$\(PROGS\)", root_text):
         add_failure(failures, "top-level Makefile must derive USER_PROGS from the shared user/programs.mk manifest")
-    required_gcc_layout = {
+    forbidden_gcc_layout = {
         "user/gcc usr/bin/gcc",
         "user/gcc usr/bin/i686-linux-musl-gcc",
         "user/gcc-cc1 usr/libexec/gcc/i686-linux-musl/11.2.1/cc1",
         "user/gcc-as usr/bin/as",
         "user/gcc-as i686-linux-musl/bin/as",
-    }
-    for entry in required_gcc_layout:
-        if entry not in root_text:
-            add_failure(failures, f"top-level Makefile must stage GCC tool as {entry}")
-    forbidden_gcc_layout = {
         "user/gcc bin/gcc",
         "user/gcc bin/i686-linux-musl-gcc",
         "user/gcc-cc1 bin/cc1",
@@ -185,24 +141,7 @@ def main():
         if (USER / f"{prog}.c").exists():
             add_failure(failures, f"C++ program must not also have C source: user/{prog}.c")
 
-    linux_c_progs = {"linuxprobe", "linuxabi"}
-    linux_generated_progs = {"busybox", "tcc", "readelf", "objdump", "nano"}
     for prog in linux_progs:
-        has_asm = (USER / f"{prog}.asm").exists()
-        has_c = (USER / f"{prog}.c").exists()
-        if prog in linux_generated_progs:
-            if has_asm or has_c:
-                add_failure(failures, f"Generated Linux i386 program must not have local source: user/{prog}")
-        elif prog in linux_c_progs:
-            if not has_c:
-                add_failure(failures, f"Linux i386 C probe missing source: user/{prog}.c")
-            if has_asm:
-                add_failure(failures, f"Linux i386 C probe must not also have assembly source: user/{prog}.asm")
-        else:
-            if not has_asm:
-                add_failure(failures, f"Linux i386 smoke program missing assembly source: user/{prog}.asm")
-            if has_c:
-                add_failure(failures, f"Linux i386 assembly smoke program must not also have C source: user/{prog}.c")
         if (USER / f"{prog}.cpp").exists():
             add_failure(failures, f"Linux i386 smoke program must not use Drunix C++ runtime sources: user/{prog}.cpp")
 
@@ -211,7 +150,7 @@ def main():
             print(failure)
         return 1
 
-    print("userland C, C++, and Linux i386 runtime lanes are explicit and complete")
+    print("native userland C and C++ runtime lanes are explicit and complete")
     return 0
 
 

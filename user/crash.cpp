@@ -49,13 +49,21 @@ static void do_badptr(void)
 
 static void do_ud2(void)
 {
+#if defined(__aarch64__)
+    printf("crash: executing undefined instruction...\n");
+    __asm__ volatile (".inst 0x00000000");
+#else
     printf("crash: executing invalid opcode (UD2)...\n");
     __asm__ volatile ("ud2");   /* #UD: guaranteed invalid opcode */
+#endif
     printf("crash: ERROR — should not reach here\n");
 }
 
 static void do_gpfault(void)
 {
+#if defined(__aarch64__)
+    do_badptr();
+#else
     printf("crash: loading null selector into %%ds to force #GP...\n");
     /*
      * Loading selector 0x0007 into %ds: index=0 (null descriptor), RPL=3.
@@ -67,6 +75,7 @@ static void do_gpfault(void)
         : : : "eax"
     );
     printf("crash: ERROR — should not reach here\n");
+#endif
 }
 
 int main(int argc, char **argv)

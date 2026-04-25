@@ -25,8 +25,8 @@ DEPFLAGS := -MMD -MP
 MOUSE_SPEED ?= 4
 ARM64_SMOKE_FALLBACK ?= 0
 ifeq ($(ARCH),arm64)
-INIT_PROGRAM ?= bin/arm64init
-INIT_ARG0 ?= arm64init
+INIT_PROGRAM ?= bin/shell
+INIT_ARG0 ?= shell
 INIT_ENV0 ?= PATH=/usr/bin:/i686-linux-musl/bin:/bin
 ROOT_FS ?= dufs
 else
@@ -139,20 +139,7 @@ FS_SECTORS     := $(shell expr $(DISK_SECTORS) - $(PARTITION_START))
 include user/programs.mk
 USER_PROGS    := $(PROGS)
 USER_BINS     := $(addprefix user/,$(USER_PROGS))
-USER_RUNTIME_HEADERS := $(filter-out user/lib/syscall_arm64.h,$(wildcard user/lib/*.h))
-USER_RUNTIME_SYSROOT := $(foreach hdr,$(USER_RUNTIME_HEADERS),$(hdr) usr/include/$(notdir $(hdr))) \
-                        user/lib/tcc_crt0.o usr/lib/drunix/crt0.o \
-                        user/lib/libc.a usr/lib/drunix/libc.a \
-                        user/user.ld usr/lib/drunix/user.ld
-USER_GCC_TOOLS := user/gcc user/gcc-cc1 user/gcc-as
-USER_GCC_SYSROOT := user/gcc usr/bin/gcc \
-                    user/gcc usr/bin/i686-linux-musl-gcc \
-                    user/gcc-cc1 usr/libexec/gcc/i686-linux-musl/11.2.1/cc1 \
-                    user/gcc-as usr/bin/as \
-                    user/gcc-as i686-linux-musl/bin/as
 DISK_FILES    := $(foreach prog,$(USER_PROGS),user/$(prog) bin/$(prog)) \
-                 $(USER_RUNTIME_SYSROOT) \
-                 $(USER_GCC_SYSROOT) \
                  tools/hello.txt hello.txt \
                  tools/readme.txt readme.txt
 LOG_DIR       := logs
@@ -160,11 +147,11 @@ IMG_DIR       := img
 ROOT_DISK_IMG := $(IMG_DIR)/disk.img
 DUFS_IMG      := $(IMG_DIR)/dufs.img
 RUN_LOGS      := $(LOG_DIR)/serial.log $(LOG_DIR)/debugcon.log
-TEST_SUFFIXES := ktest df bbcompat linuxabi ext3w threadtest tcc nano
+TEST_SUFFIXES := ktest df ext3w threadtest
 TEST_IMAGES   := $(foreach suffix,$(TEST_SUFFIXES),$(IMG_DIR)/disk-$(suffix).img $(IMG_DIR)/dufs-$(suffix).img) $(IMG_DIR)/disk-ext3-host.img
 TEST_LOGS     := $(foreach suffix,$(TEST_SUFFIXES),$(LOG_DIR)/serial-$(suffix).log $(LOG_DIR)/debugcon-$(suffix).log) \
-                 $(LOG_DIR)/bbcompat.log $(LOG_DIR)/linuxabi.log $(LOG_DIR)/ext3wtest.log \
-                 $(LOG_DIR)/threadtest.log $(LOG_DIR)/tcc.log $(LOG_DIR)/nano.log \
+                 $(LOG_DIR)/ext3wtest.log \
+                 $(LOG_DIR)/threadtest.log \
                  $(LOG_DIR)/ext3-host-readback.txt
 SENTINELS     := .ktest-flag .double-fault-test-flag .klog-debugcon-flag \
                  .mouse-speed-flag .init-program-flag .no-desktop-flag \
@@ -252,8 +239,8 @@ kernel-vga.elf: $(KOBJS_VGA) $(KTOBJS)
 # Declared phony so make always delegates to the user subdirectory's own
 # dependency tracking — changes to user/*.c or user/lib/* are picked up
 # without needing a manual clean.
-.PHONY: $(USER_BINS) $(USER_GCC_TOOLS)
-$(USER_BINS) $(USER_GCC_TOOLS):
+.PHONY: $(USER_BINS)
+$(USER_BINS):
 	$(MAKE) -C user $(@F)
 
 user/lib/libc.a user/lib/tcc_crt0.o:
@@ -264,12 +251,12 @@ user/lib/libc.a user/lib/tcc_crt0.o:
 # Linux-compatible ext3 root partition.  ROOT_FS=dufs builds sda as DUFS
 # instead.
 ifeq ($(ROOT_FS),dufs)
-disk.fs: $(USER_BINS) $(USER_GCC_TOOLS) user/lib/libc.a user/lib/tcc_crt0.o tools/hello.txt tools/readme.txt tools/mkfs.py .disk-sectors-flag
+disk.fs: $(USER_BINS) tools/hello.txt tools/readme.txt tools/mkfs.py .disk-sectors-flag
 	$(PYTHON) tools/mkfs.py $@ $(FS_SECTORS) $(DISK_FILES)
 $(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
 	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0xDA
 else
-disk.fs: $(USER_BINS) $(USER_GCC_TOOLS) user/lib/libc.a user/lib/tcc_crt0.o tools/hello.txt tools/readme.txt tools/mkext3.py .disk-sectors-flag
+disk.fs: $(USER_BINS) tools/hello.txt tools/readme.txt tools/mkext3.py .disk-sectors-flag
 	$(PYTHON) tools/mkext3.py $@ $(FS_SECTORS) $(DISK_FILES)
 $(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
 	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0x83
@@ -510,7 +497,10 @@ clean:
 	$(RM) build/arm64init.o build/crt0_arm64.o build/syscall_arm64.o build/arm64init.elf build/arm64-root.fs build/arm64-rootfs-empty
 	$(RM) $(RUN_LOGS) $(TEST_LOGS) build/ext3-host.txt
 	rm -rf build/busybox
+	rm -rf build/tcc
+	rm -rf build/binutils
 	rm -rf build/nano
+	rm -rf build/gcc
 	$(RM) docs/diagrams/*.png
 	$(MAKE) -C user clean
 
@@ -519,7 +509,7 @@ clean:
         disk.img dufs.img \
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
-        test test-fresh test-headless test-halt test-busybox-compat test-linux-abi test-threadtest test-tcc test-nano test-ext3-linux-compat test-ext3-host-write-interop test-all \
+        test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all \
         check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity check-arm64-vga-console \
         validate-ext3-linux \
         pdf epub docs \
@@ -559,11 +549,13 @@ disk:
 
 fresh: run
 
-check: kernel-arm64.elf | $(LOG_DIR)
-	rm -f $(ARM_SERIAL_LOG)
-	sh -c '$(QEMU_ARM) -display none -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf -serial null -serial file:$(ARM_SERIAL_LOG) -monitor none -no-reboot >/dev/null 2>&1 & pid=$$!; for i in $$(seq 1 10); do grep -q "drunix> " $(ARM_SERIAL_LOG) 2>/dev/null && break; sleep 1; done; kill $$pid >/dev/null 2>&1 || true; wait $$pid >/dev/null 2>&1 || true'
-	grep -q "Drunix ARM64 console" $(ARM_SERIAL_LOG)
-	grep -q "drunix> " $(ARM_SERIAL_LOG)
+check: check-shell-prompt check-user-programs
+
+check-shell-prompt:
+	python3 tools/test_shell_prompt.py --arch arm64
+
+check-user-programs:
+	python3 tools/test_user_programs.py --arch arm64
 
 check-phase6:
 	python3 tools/test_kernel_arch_boundary_phase6.py
@@ -586,11 +578,11 @@ check-arm64-vga-console:
 	python3 tools/test_arm64_vga_console.py
 
 run: kernel-arm64.elf | $(LOG_DIR)
-	$(QEMU_ARM) -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf -serial null -serial stdio -monitor none -no-reboot
+	$(QEMU_ARM) -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf -serial null -serial stdio -device usb-kbd -monitor none -no-reboot
 
 run-fresh: run
 
-all: run
+all: run-fresh
 
 rebuild:
 	$(MAKE) clean ARCH=$(ARCH)
@@ -603,11 +595,14 @@ clean:
 	$(RM) build/arm64init.o build/crt0_arm64.o build/syscall_arm64.o build/arm64init.elf build/arm64-root.fs build/arm64-rootfs-empty
 	$(RM) $(RUN_LOGS) $(TEST_LOGS) build/ext3-host.txt
 	rm -rf build/busybox
+	rm -rf build/tcc
+	rm -rf build/binutils
 	rm -rf build/nano
+	rm -rf build/gcc
 	$(RM) docs/diagrams/*.png
 	$(MAKE) -C user clean
 
-.PHONY: all build kernel iso images disk fresh check \
+.PHONY: all build kernel iso images disk fresh check check-shell-prompt check-user-programs \
         run run-fresh \
         check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity check-arm64-vga-console \
         pdf epub docs \

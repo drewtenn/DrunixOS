@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
+import re
 import socket
 import subprocess
 import time
@@ -24,8 +25,26 @@ BOOT_TIMEOUT = 20.0
 REQUIRED_MARKERS = (
     "ARM64 framebuffer console enabled",
     "Drunix ARM64 console",
-    "drunix> ",
+    "drunix shell --",
 )
+KEYBOARD_MARKER = "armkbdok"
+KEYBOARD_KEYS = (
+    "e",
+    "c",
+    "h",
+    "o",
+    "spc",
+    "a",
+    "r",
+    "m",
+    "k",
+    "b",
+    "d",
+    "o",
+    "k",
+    "ret",
+)
+ANSI_LEAK_MARKERS = ("[0m", "[31m", "[32m", "[33m", "[36m")
 
 
 def refresh_arm64_boot_image() -> None:
@@ -80,7 +99,24 @@ def wait_for_markers(proc: subprocess.Popen[bytes]) -> None:
     )
 
 
-def read_ppm_pixels(path: Path) -> bytes:
+def wait_for_serial_text(proc: subprocess.Popen[bytes], marker: str, timeout: float) -> None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if marker in read_serial_log():
+            return
+        exit_code = proc.poll()
+        if exit_code is not None:
+            raise SystemExit(
+                f"QEMU exited before serial marker {marker!r} appeared"
+            )
+        time.sleep(0.2)
+    raise SystemExit(
+        f"timed out waiting for serial marker {marker!r}\n"
+        + read_serial_log()[-2000:]
+    )
+
+
+def read_ppm(path: Path) -> tuple[int, int, bytes]:
     data = path.read_bytes()
     tokens: list[bytes] = []
     i = 0
@@ -102,7 +138,53 @@ def read_ppm_pixels(path: Path) -> bytes:
         raise SystemExit(f"screendump is not a binary PPM: {path}")
     if i < length and data[i] in b" \t\r\n":
         i += 1
-    return data[i:]
+    return int(tokens[1]), int(tokens[2]), data[i:]
+
+
+def read_ppm_pixels(path: Path) -> bytes:
+    _, _, pixels = read_ppm(path)
+    return pixels
+
+
+def load_font() -> dict[tuple[int, ...], str]:
+    source = (ROOT / "kernel" / "gui" / "font8x16.c").read_text()
+    start = source.index("static const uint8_t font8x16_basic")
+    table = source[start:source.index("};", start)]
+    rows = re.findall(r"\{([^{}]+)\}", table)
+    font: dict[tuple[int, ...], str] = {}
+    for index, row in enumerate(rows[:96]):
+        values = tuple(int(token, 0) for token in re.findall(r"0x[0-9A-Fa-f]+|\d+", row))
+        if len(values) == 16 and values not in font:
+            font[values] = chr(32 + index)
+    return font
+
+
+def ocr_framebuffer_text(path: Path, max_rows: int = 32) -> str:
+    width, height, pixels = read_ppm(path)
+    font = load_font()
+    cell_cols = width // 8
+    cell_rows = min(height // 16, max_rows)
+    lines: list[str] = []
+
+    for row in range(cell_rows):
+        chars: list[str] = []
+        for col in range(cell_cols):
+            glyph_rows: list[int] = []
+            for gy in range(16):
+                bits = 0
+                y = row * 16 + gy
+                for gx in range(8):
+                    x = col * 8 + gx
+                    offset = (y * width + x) * 3
+                    r = pixels[offset]
+                    g = pixels[offset + 1]
+                    b = pixels[offset + 2]
+                    if r + g + b > 384:
+                        bits |= 1 << gx
+                glyph_rows.append(bits)
+            chars.append(font.get(tuple(glyph_rows), "?"))
+        lines.append("".join(chars).rstrip())
+    return "\n".join(lines)
 
 
 def verify_screendump() -> None:
@@ -118,6 +200,17 @@ def verify_screendump() -> None:
         raise SystemExit(f"screendump has no pixel data: {SCREENSHOT}")
     if not any(byte != 0 for byte in pixels):
         raise SystemExit(f"screendump contains only black pixels: {SCREENSHOT}")
+
+    text = ocr_framebuffer_text(SCREENSHOT)
+    if "drunix shell --" not in text or "drunix:" not in text:
+        raise SystemExit(
+            "framebuffer screendump does not show the shell prompt:\n" + text
+        )
+    for marker in ANSI_LEAK_MARKERS:
+        if marker in text:
+            raise SystemExit(
+                f"framebuffer screendump leaked ANSI marker {marker!r}:\n{text}"
+            )
 
 
 def monitor_command(command: str) -> None:
@@ -142,6 +235,13 @@ def monitor_command(command: str) -> None:
             last_error = exc
             time.sleep(0.1)
     raise SystemExit(f"failed to send QEMU monitor command {command!r}: {last_error}")
+
+
+def send_keyboard_command(proc: subprocess.Popen[bytes]) -> None:
+    for key in KEYBOARD_KEYS:
+        monitor_command(f"sendkey {key}")
+        time.sleep(0.05)
+    wait_for_serial_text(proc, KEYBOARD_MARKER, 10.0)
 
 
 def stop_qemu(proc: subprocess.Popen[bytes]) -> None:
@@ -181,6 +281,8 @@ def main() -> int:
                 "null",
                 "-serial",
                 f"file:{SERIAL_LOG}",
+                "-device",
+                "usb-kbd",
                 "-monitor",
                 f"unix:{MONITOR_SOCKET},server,nowait",
                 "-no-reboot",
@@ -190,6 +292,8 @@ def main() -> int:
             stderr=qemu_stderr,
         )
         wait_for_markers(proc)
+        send_keyboard_command(proc)
+        time.sleep(0.5)
         monitor_command(f"screendump {SCREENSHOT}")
         verify_screendump()
         print("arm64 vga console check passed")

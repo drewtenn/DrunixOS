@@ -149,24 +149,26 @@ static int snapshot_user_string_vector(process_t *proc,
 	}
 
 	for (uint32_t i = 0; i < max_count; i++) {
-		uint32_t us = 0;
+		uintptr_t us = 0;
 		uint32_t remaining;
 
 		if (uaccess_copy_from_user(
-		        proc, &us, uvec + i * sizeof(uint32_t), sizeof(uint32_t)) != 0)
+		        proc, &us, uvec + i * sizeof(us), sizeof(us)) != 0)
 			return -1;
 		if (us == 0) {
 			out_vec[i] = 0;
 			*out_count = (int)i;
 			return 0;
 		}
+		if (us > UINT32_MAX)
+			return -1;
 
 		if (used >= max_bytes)
 			return -1;
 		remaining = max_bytes - used;
 		out_vec[i] = &out_strs[used];
 		if (uaccess_copy_string_from_user(
-		        proc, &out_strs[used], remaining, us) != 0)
+		        proc, &out_strs[used], remaining, (uint32_t)us) != 0)
 			return -1;
 		used += k_strlen(&out_strs[used]) + 1;
 	}

@@ -1,6 +1,10 @@
 ARM_CC ?= aarch64-elf-gcc
+ARM_CXX ?= aarch64-elf-g++
 ARM_LD ?= aarch64-elf-ld
+ARM_AR ?= aarch64-elf-ar
 ARM_OBJCOPY ?= aarch64-elf-objcopy
+
+include user/programs.mk
 
 ARM_CFLAGS ?= -ffreestanding -fno-stack-protector -fno-pic -fno-pie \
               -mcpu=cortex-a53 -mgeneral-regs-only -mstrict-align \
@@ -27,6 +31,7 @@ ARM_KOBJS := kernel/arch/arm64/boot.o \
              kernel/mm/pmm_core.arm64.o \
              kernel/arch/arm64/timer.o \
              kernel/arch/arm64/uart.o \
+             kernel/arch/arm64/usb_keyboard.o \
              kernel/arch/arm64/rootfs.o \
              kernel/arch/arm64/rootfs_blob.o \
              kernel/arch/arm64/start_kernel.o \
@@ -84,6 +89,33 @@ ARM_SHARED_KOBJS += kernel/proc/syscall/fd.arm64.o \
                     kernel/proc/syscall/signal.arm64.o
 
 ARM_COMPILE_ONLY_OBJS :=
+
+ARM_USER_BUILD_DIR := build/arm64-user
+ARM_USER_CFLAGS ?= -ffreestanding -nostdlib -fno-pic -fno-pie \
+                   -fno-stack-protector -fno-omit-frame-pointer \
+                   -mcpu=cortex-a53 -mgeneral-regs-only -mstrict-align -g -Og -Wall \
+                   -fdebug-prefix-map=$(abspath .)=.
+ARM_USER_CXXFLAGS ?= $(ARM_USER_CFLAGS) -fno-exceptions -fno-rtti \
+                     -fno-use-cxa-atexit -fno-threadsafe-statics
+ARM_USER_CXXLIBS := $(shell $(ARM_CXX) -print-libgcc-file-name 2>/dev/null)
+ARM_USER_C_RUNTIME_OBJS := $(ARM_USER_BUILD_DIR)/lib/crt0.o \
+                           $(ARM_USER_BUILD_DIR)/lib/cxx_init.o \
+                           $(ARM_USER_BUILD_DIR)/lib/syscall.o \
+                           $(ARM_USER_BUILD_DIR)/lib/malloc.o \
+                           $(ARM_USER_BUILD_DIR)/lib/string.o \
+                           $(ARM_USER_BUILD_DIR)/lib/ctype.o \
+                           $(ARM_USER_BUILD_DIR)/lib/stdlib.o \
+                           $(ARM_USER_BUILD_DIR)/lib/stdio.o \
+                           $(ARM_USER_BUILD_DIR)/lib/unistd.o \
+                           $(ARM_USER_BUILD_DIR)/lib/time.o
+ARM_USER_C_RUNTIME_LIB_OBJS := $(filter-out $(ARM_USER_BUILD_DIR)/lib/crt0.o,$(ARM_USER_C_RUNTIME_OBJS))
+ARM_USER_CXX_RUNTIME_OBJS := $(ARM_USER_BUILD_DIR)/lib/cxxrt.o \
+                             $(ARM_USER_BUILD_DIR)/lib/cxxabi.o
+ARM_USER_C_BINS := $(addprefix $(ARM_USER_BUILD_DIR)/,$(C_PROGS))
+ARM_USER_CXX_BINS := $(addprefix $(ARM_USER_BUILD_DIR)/,$(CXX_PROGS))
+ARM_USER_NATIVE_BINS := $(ARM_USER_C_BINS) $(ARM_USER_CXX_BINS)
+ARM_USER_ROOTFS_FILES := $(foreach prog,$(C_PROGS) $(CXX_PROGS),$(ARM_USER_BUILD_DIR)/$(prog) bin/$(prog)) \
+                         build/arm64init.elf bin/arm64init
 
 kernel/mm/%.arm64.o: kernel/mm/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
@@ -146,16 +178,50 @@ build/syscall_arm64.o: user/lib/syscall_arm64.c user/lib/syscall_arm64.h
 	@mkdir -p $(dir $@)
 	$(ARM_CC) $(ARM_CFLAGS) -I user/lib -c $< -o $@
 
-build/arm64init.elf: build/crt0_arm64.o build/syscall_arm64.o build/arm64init.o kernel/arch/arm64/arch.mk
-	$(ARM_LD) -nostdlib -e _start -Ttext 0x02000000 -o $@ build/crt0_arm64.o build/syscall_arm64.o build/arm64init.o
+$(ARM_USER_BUILD_DIR)/lib/crt0.o: user/lib/crt0_arm64.S
+	@mkdir -p $(dir $@)
+	$(ARM_CC) $(ARM_USER_CFLAGS) -c $< -o $@
+
+$(ARM_USER_BUILD_DIR)/lib/syscall.o: user/lib/syscall_arm64_compat.c user/lib/syscall.h
+	@mkdir -p $(dir $@)
+	$(ARM_CC) $(ARM_USER_CFLAGS) -I user -I user/lib -c $< -o $@
+
+$(ARM_USER_BUILD_DIR)/lib/%.o: user/lib/%.c
+	@mkdir -p $(dir $@)
+	$(ARM_CC) $(ARM_USER_CFLAGS) -I user -I user/lib -c $< -o $@
+
+$(ARM_USER_BUILD_DIR)/lib/%.o: user/lib/%.cpp
+	@mkdir -p $(dir $@)
+	$(ARM_CXX) $(ARM_USER_CXXFLAGS) -I user -I user/lib -c $< -o $@
+
+$(ARM_USER_BUILD_DIR)/%.o: user/%.c
+	@mkdir -p $(dir $@)
+	$(ARM_CC) $(ARM_USER_CFLAGS) -I user -I user/lib -c $< -o $@
+
+$(ARM_USER_BUILD_DIR)/%.o: user/%.cpp
+	@mkdir -p $(dir $@)
+	$(ARM_CXX) $(ARM_USER_CXXFLAGS) -I user -I user/lib -c $< -o $@
+
+$(ARM_USER_BUILD_DIR)/lib/libc.a: $(ARM_USER_C_RUNTIME_LIB_OBJS)
+	@mkdir -p $(dir $@)
+	$(ARM_AR) rcs $@ $(ARM_USER_C_RUNTIME_LIB_OBJS)
+
+$(ARM_USER_C_BINS): $(ARM_USER_BUILD_DIR)/%: $(ARM_USER_BUILD_DIR)/%.o $(ARM_USER_C_RUNTIME_OBJS) user/user_arm64.ld
+	$(ARM_LD) -nostdlib -T user/user_arm64.ld -o $@ $(ARM_USER_C_RUNTIME_OBJS) $(ARM_USER_BUILD_DIR)/$*.o
+
+$(ARM_USER_CXX_BINS): $(ARM_USER_BUILD_DIR)/%: $(ARM_USER_BUILD_DIR)/%.o $(ARM_USER_C_RUNTIME_OBJS) $(ARM_USER_CXX_RUNTIME_OBJS) user/user_arm64.ld
+	$(ARM_LD) -nostdlib -T user/user_arm64.ld -o $@ $(ARM_USER_C_RUNTIME_OBJS) $(ARM_USER_CXX_RUNTIME_OBJS) $(ARM_USER_BUILD_DIR)/$*.o $(ARM_USER_CXXLIBS)
+
+build/arm64init.elf: build/crt0_arm64.o build/syscall_arm64.o build/arm64init.o $(ARM_USER_BUILD_DIR)/lib/syscall.o $(ARM_USER_BUILD_DIR)/lib/cxx_init.o kernel/arch/arm64/arch.mk
+	$(ARM_LD) -nostdlib -e _start -T user/user_arm64.ld -o $@ build/crt0_arm64.o $(ARM_USER_BUILD_DIR)/lib/syscall.o build/syscall_arm64.o $(ARM_USER_BUILD_DIR)/lib/cxx_init.o build/arm64init.o
 
 build/arm64-rootfs-empty:
 	@mkdir -p $(dir $@)
 	: > $@
 
-build/arm64-root.fs: build/arm64init.elf build/arm64-rootfs-empty tools/mkfs.py kernel/arch/arm64/arch.mk
+build/arm64-root.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf build/arm64-rootfs-empty tools/mkfs.py kernel/arch/arm64/arch.mk
 	$(PYTHON) tools/mkfs.py $@ 32768 \
-		build/arm64init.elf bin/arm64init \
+		$(ARM_USER_ROOTFS_FILES) \
 		build/arm64-rootfs-empty dev/.keep \
 		build/arm64-rootfs-empty proc/.keep \
 		build/arm64-rootfs-empty sys/.keep

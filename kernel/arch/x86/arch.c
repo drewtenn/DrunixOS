@@ -66,6 +66,10 @@ void arch_debug_write(const char *buf, uint32_t len)
 #endif
 }
 
+void arch_poll_input(void)
+{
+}
+
 void arch_irq_init(void)
 {
 	irq_dispatch_init();
@@ -134,6 +138,14 @@ void arch_aspace_switch(arch_aspace_t aspace)
 void arch_aspace_destroy(arch_aspace_t aspace)
 {
 	paging_destroy_user_space((uint32_t)aspace);
+}
+
+void arch_user_sync_from_active(void)
+{
+}
+
+void arch_user_sync_to_active(void)
+{
 }
 
 int arch_mm_map(arch_aspace_t aspace, uintptr_t virt, uint64_t phys, uint32_t flags)

@@ -197,6 +197,8 @@ int tty_read(int tty_idx, char *buf, uint32_t count)
 		if (cur->sig_pending)
 			return -1;
 
+		arch_poll_input();
+
 		if (tty->termios.c_lflag & ICANON) {
 			if (tty->canon_ready) {
 				/* Copy up to count bytes from the line buffer */

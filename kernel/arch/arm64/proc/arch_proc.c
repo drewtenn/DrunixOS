@@ -97,7 +97,6 @@ int arch_process_build_user_stack(arch_aspace_t aspace,
 	uint32_t frame_off;
 	uint32_t pad;
 	uint8_t *page;
-	uint8_t *page_end;
 	uint8_t *strbase_k;
 	uintptr_t strbase_u;
 	uint64_t uargv_ptrs[PROCESS_ARGV_MAX_COUNT];
@@ -152,22 +151,37 @@ int arch_process_build_user_stack(arch_aspace_t aspace,
 	if (frame_off > PAGE_SIZE)
 		return -1;
 
-	(void)aspace;
-	pmm_mark_used(ARM64_INIT_STACK_BASE,
-	              ARM64_INIT_STACK_TOP - ARM64_INIT_STACK_BASE);
 	for (uintptr_t addr = ARM64_INIT_STACK_BASE; addr < ARM64_INIT_STACK_TOP;
 	     addr += PAGE_SIZE) {
+		uint32_t phys = pmm_alloc_page();
+		void *stack_page;
+
+		if (!phys)
+			return -1;
 		if (arch_mm_map(aspace,
 		                addr,
-		                addr,
+		                phys,
 		                ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ |
-		                    ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER) != 0)
+		                    ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER) != 0) {
+			pmm_free_page(phys);
+			return -1;
+		}
+		stack_page = arch_page_temp_map(phys);
+		if (!stack_page)
+			return -1;
+		k_memset(stack_page, 0, PAGE_SIZE);
+		arch_page_temp_unmap(stack_page);
+	}
+	{
+		arch_mm_mapping_t mapping;
+
+		if (arch_mm_query(aspace, ARM64_INIT_STACK_TOP - PAGE_SIZE, &mapping) != 0)
+			return -1;
+		page = (uint8_t *)arch_page_temp_map(mapping.phys_addr);
+		if (!page)
 			return -1;
 	}
-	page = (uint8_t *)ARM64_INIT_STACK_BASE;
-	k_memset(page, 0, ARM64_INIT_STACK_TOP - ARM64_INIT_STACK_BASE);
-	page_end = (uint8_t *)ARM64_INIT_STACK_TOP;
-	strbase_k = page_end - strings_off;
+	strbase_k = page + PAGE_SIZE - strings_off;
 	strbase_u = ARM64_INIT_STACK_TOP - strings_off;
 
 	for (int i = 0; i < argc; i++) {
@@ -195,7 +209,7 @@ int arch_process_build_user_stack(arch_aspace_t aspace,
 		write_cursor += j + 1u;
 	}
 
-	tail_k = (uint64_t *)(page_end - frame_off);
+	tail_k = (uint64_t *)(page + PAGE_SIZE - frame_off);
 	tail_k[idx++] = (uint64_t)(uint32_t)argc;
 	for (int i = 0; i < argc; i++)
 		tail_k[idx++] = uargv_ptrs[i];
@@ -213,6 +227,7 @@ int arch_process_build_user_stack(arch_aspace_t aspace,
 	goto out_unmap;
 
 out_unmap:
+	arch_page_temp_unmap(page);
 	return rc;
 }
 
@@ -306,13 +321,18 @@ void arch_context_switch(arch_context_t *old_ctx,
                          arch_context_t new_ctx,
                          arch_aspace_t new_aspace)
 {
+	if (old_ctx)
+		arch_user_sync_from_active();
 	arch_aspace_switch(new_aspace);
+	arch_user_sync_to_active();
 	arm64_switch_context(old_ctx, new_ctx);
 }
 
 void arch_idle_wait(void)
 {
+	arch_poll_input();
 	__asm__ volatile("wfi");
+	arch_poll_input();
 }
 
 uintptr_t arch_current_irq_frame(void)

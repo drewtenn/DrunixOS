@@ -96,16 +96,18 @@ int arch_elf_load_user_image(vfs_file_ref_t file_ref,
 				max_vend = vend;
 			loaded_segment = 1;
 
-			seg_flags = arm64_elf_segment_flags(phdr.p_flags);
-			for (uint64_t p = 0; p < npages; p++) {
-				uintptr_t vpage = (uintptr_t)(vaddr + p * 0x1000ULL);
-				uint32_t phys = (uint32_t)vpage;
-				void *page;
+				seg_flags = arm64_elf_segment_flags(phdr.p_flags);
+				for (uint64_t p = 0; p < npages; p++) {
+					uintptr_t vpage = (uintptr_t)(vaddr + p * 0x1000ULL);
+					uint32_t phys = pmm_alloc_page();
+					void *page;
 
-				pmm_mark_used(phys, PAGE_SIZE);
-				if (arch_mm_map(aspace, vpage, phys, seg_flags) != 0) {
-					return -8;
-				}
+					if (!phys)
+						return -8;
+					if (arch_mm_map(aspace, vpage, phys, seg_flags) != 0) {
+						pmm_free_page(phys);
+						return -8;
+					}
 
 				page = arch_page_temp_map(phys);
 				if (!page) {

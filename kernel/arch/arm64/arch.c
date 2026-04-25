@@ -4,11 +4,14 @@
  */
 
 #include "../arch.h"
+#include "../../drivers/tty.h"
 #include "irq.h"
 #include "mm/mmu.h"
 #include "mm/pmm.h"
+#include "proc/init_layout.h"
 #include "timer.h"
 #include "uart.h"
+#include "usb_keyboard.h"
 #include "video.h"
 
 extern char _kernel_start[];
@@ -44,6 +47,15 @@ void arch_console_write(const char *buf, uint32_t len)
 void arch_debug_write(const char *buf, uint32_t len)
 {
 	arch_console_write(buf, len);
+}
+
+void arch_poll_input(void)
+{
+	char ch;
+
+	while (uart_try_getc(&ch))
+		tty_input_char(0, ch);
+	arm64_usb_keyboard_poll();
 }
 
 void arch_irq_init(void)
@@ -91,12 +103,16 @@ void arch_mm_init(void)
 
 	pmm_init();
 	kernel_start = (uintptr_t)_kernel_start & ~(uintptr_t)(PAGE_SIZE - 1u);
-	kernel_end =
-	    ((uintptr_t)_kernel_end + PAGE_SIZE - 1u) & ~(uintptr_t)(PAGE_SIZE - 1u);
+	kernel_end = ((uintptr_t)_kernel_end + PAGE_SIZE - 1u) &
+	             ~(uintptr_t)(PAGE_SIZE - 1u);
 	if (kernel_end > kernel_start) {
 		pmm_mark_used((uint32_t)kernel_start,
 		              (uint32_t)(kernel_end - kernel_start));
 	}
+	pmm_mark_used((uint32_t)ARM64_INIT_IMAGE_BASE,
+	              (uint32_t)(ARM64_INIT_IMAGE_LIMIT - ARM64_INIT_IMAGE_BASE));
+	pmm_mark_used((uint32_t)ARM64_INIT_STACK_BASE,
+	              (uint32_t)(ARM64_INIT_STACK_TOP - ARM64_INIT_STACK_BASE));
 
 	arm64_mmu_init();
 	g_arm64_mm_ready = 1;
@@ -127,7 +143,20 @@ void arch_aspace_destroy(arch_aspace_t aspace)
 	arm64_mmu_aspace_destroy(aspace);
 }
 
-int arch_mm_map(arch_aspace_t aspace, uintptr_t virt, uint64_t phys, uint32_t flags)
+void arch_user_sync_from_active(void)
+{
+	arm64_mmu_sync_current_from_identity();
+}
+
+void arch_user_sync_to_active(void)
+{
+	arm64_mmu_sync_current_to_identity();
+}
+
+int arch_mm_map(arch_aspace_t aspace,
+                uintptr_t virt,
+                uint64_t phys,
+                uint32_t flags)
 {
 	return arm64_mmu_map(aspace, virt, phys, flags);
 }
