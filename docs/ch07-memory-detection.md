@@ -2,23 +2,27 @@
 
 ## Chapter 7 — Detecting Memory
 
-### Why We Cannot Assume Anything About RAM
+### The Kernel Must Learn What Memory Exists
 
-Before we hand out any memory, the kernel must discover which regions of the physical address space are actually RAM and which are reserved for hardware. On a real PC, this is not obvious — and we must find out before we leave real mode.
+Chapter 6 left both architectures able to run FP/SIMD code without faulting. Before we can build an allocator, the kernel faces a more fundamental problem: it has to learn what physical memory exists before it can hand any of it out.
 
-Chapter 6 left us with SSE enabled and a clean FPU template in hand. Before we can build an allocator, we face a more fundamental problem: the kernel needs to know two things about physical memory before it can hand any of it out — how much there is, and which regions are safe to use. Neither answer can be guessed. The physical address space of a PC is not a clean contiguous block of RAM — it is a patchwork of usable memory, hardware-mapped regions (the VGA buffer, firmware ROM), and legacy holes left over from decades of backward compatibility. Writing to the wrong address can corrupt firmware data, silently fail, or, worst of all, appear to work and then break something unrelated minutes later.
+That information does not live inside the CPU. It comes from outside — from the firmware or boot platform that owns the machine before the kernel runs. And how it arrives differs by architecture. On x86, a BIOS query called E820 hands the answer to GRUB, which packages it into a structure the kernel receives at entry. On the Raspberry Pi 3 bring-up, there is no firmware negotiation at all: the hardware has a known, fixed layout, and the kernel simply trusts a hard-coded description of what is usable and what is not. The concept is the same either way — the kernel must not assume; it must be told — but the mechanism for being told is entirely arch-specific.
+
+### On x86: the Multiboot memory map
+
+The physical address space of a PC is not a clean contiguous block of RAM. It is a patchwork of usable memory, hardware-mapped regions (the VGA buffer, firmware ROM), and legacy holes left over from decades of backward compatibility. Writing to the wrong address can corrupt firmware data, silently fail, or, worst of all, appear to work and then break something unrelated minutes later.
 
 The authoritative source of this information on x86 is a BIOS interface called **E820**, named after the `INT 0x15` function number (`AX = 0xE820`) that retrieves it. E820 returns a list of memory regions, each tagged with a base address, a length, and a type code that identifies whether the region is usable RAM, reserved for hardware, or some other special category.
 
 E820 can only be called from **real mode** — the 16-bit compatibility mode the CPU starts in. Once the CPU has been switched to protected mode (which GRUB does before it hands control to the kernel), the BIOS is gone and E820 can no longer be called. This creates a timing problem: we need E820 data, but we run in protected mode and cannot ask for it.
 
-### How GRUB Solves the Timing Problem
+#### How GRUB Solves the Timing Problem
 
 GRUB handles this by calling E820 itself, while it is still in real mode, and embedding the result in the **Multiboot info structure** it passes to the kernel. When GRUB jumps to the kernel's entry point, the `EBX` register holds a pointer to this structure, and one of its fields is a pointer to the memory map that E820 produced.
 
 We receive the Multiboot info pointer as the second argument to `start_kernel` (see Chapter 1) and pass it to the physical memory manager's initialisation function, `pmm_init`. The memory map inside the structure is the foundation the physical memory manager builds its free-page bitmap on top of.
 
-### The Shape of a Multiboot Memory Map
+#### The Shape of a Multiboot Memory Map
 
 The Multiboot info structure contains two relevant fields for memory detection: `mmap_length` (the byte length of the memory map) and `mmap_addr` (the physical address of the first entry). A flag bit in the `flags` field indicates whether the memory map is actually present — on the rare BIOS that does not support E820, GRUB falls back to a simpler interface and does not produce an mmap.
 
@@ -47,7 +51,7 @@ The `type` field uses the same codes ACPI defines for E820 entries:
 
 For our purposes, only type 1 is treated as free memory. Everything else is left marked as used, which is the safe choice: even ACPI reclaimable memory holds valid data until we have finished reading the ACPI tables.
 
-### How the Physical Memory Manager Uses the Map
+#### How the Physical Memory Manager Uses the Map
 
 The physical memory manager starts with a conservative default: every page in the bitmap is marked as used. This guarantees that if the memory map is missing or corrupted, we will not accidentally hand out a page that is actually hardware or firmware.
 
@@ -73,7 +77,7 @@ This is an easy place to introduce a bug. Writing `sizeof(entry)` looks reasonab
 
 If the Multiboot flag for "mmap is present" is clear — meaning GRUB could not produce a memory map — `pmm_init` falls back to assuming that the region from 1 MB to 128 MB is usable RAM. This is the same assumption QEMU's default memory configuration satisfies, so the fallback is enough to boot on any emulator.
 
-### A Realistic Memory Map
+#### A Realistic Memory Map
 
 On a QEMU machine configured with 128 MB of RAM, the memory map typically looks like this:
 
@@ -87,6 +91,20 @@ On a QEMU machine configured with 128 MB of RAM, the memory map typically looks 
 
 The gap between `0x9FC00` and `0x100000` — the roughly 384 KB region containing the BIOS data area, the VGA text buffer, and the ROM shadow — is a legacy hole in the PC address map that cannot be used as general RAM no matter how much physical memory the machine has. We rely on the memory map to know where these holes are, rather than hard-coding assumptions about the PC layout.
 
+### On AArch64: a fixed BCM2837 layout
+
+The Raspberry Pi 3 carries a **BCM2837** (Broadcom BCM2837, the SoC — System on a Chip — at the heart of the Raspberry Pi 3 that integrates the four Cortex-A53 CPU cores, the GPU, and the peripheral bus on a single piece of silicon). There is no BIOS, no GRUB, and no E820 query. QEMU's `raspi3b` machine model loads the kernel image at `0x80000` and starts execution immediately. No firmware hands us a memory map.
+
+What we do have is a well-known, fixed hardware layout. The BCM2837 in the `raspi3b` model presents 1 GB of RAM from physical address `0x00000000` to `0x3FFFFFFF`. The top 16 MB of that space — from `0x3F000000` to `0x40000000` — is not usable RAM. That region is the **peripheral bus**: memory-mapped registers for the mini-UART, the GPIO controller, and other on-chip devices that Chapter 31 uses to produce output. Writing to those addresses does not write to memory; it programs hardware. Treating them as free pages would be catastrophic.
+
+Because the layout is fixed and documented, the bring-up code does not need to query anything. It simply records the usable range — `0x00000000` to `0x3EFFFFFF` — and marks the peripheral region as reserved. The kernel starts with that ground truth and builds its free-page bitmap from it directly.
+
+A more complete approach would read a **DTB** (Device Tree Blob, a serialised data structure that describes the hardware topology — CPU cores, memory ranges, device addresses, interrupt wiring — in a portable format so the kernel does not have to hard-code machine-specific layouts) that QEMU can supply at boot time. A DTB would give the kernel a firmware-provided memory map analogous to the E820 list on x86, eliminating the hard-coded range entirely. That path is tracked as a future enhancement in `docs/arm64-port-plan.md`.
+
+*On AArch64 (planned, milestone 3): once the MMU bring-up lands, this hard-coded layout is what the PMM consumes via the new arch-supplied usable-RAM hook.*
+
 ### Where the Machine Is by the End of Chapter 7
 
-After `pmm_init` returns, we have a reliable, hardware-provided map of which pages of physical memory are usable. That map is the foundation the rest of the memory management stack in Chapter 8 is built on: the page allocator, the paging system, and the heap all depend on knowing which physical pages are real RAM and which are reserved for something else. With the map in hand, Chapter 8 can turn it into a bitmap of free pages, switch the CPU into paged virtual memory, and layer a heap on top — all of which need the reliable ground truth we have just established.
+After memory detection completes, we have a reliable description of which regions of the physical address space are usable RAM and which must be left alone. On x86, that description came from E820 via GRUB's Multiboot info structure — a live firmware query turned into a structured list of typed address ranges. On AArch64, it came from the known fixed layout of the BCM2837 SoC, with usable RAM from `0x00000000` to `0x3EFFFFFF` and the peripheral bus region reserved above it.
+
+Either way, the result is the same: the physical memory manager now knows which pages it is allowed to hand out. That map is the foundation the rest of the memory management stack in Chapter 8 is built on — the page allocator, the paging system, and the heap all depend on knowing which physical pages are real RAM and which are reserved for something else.
