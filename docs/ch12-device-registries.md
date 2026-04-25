@@ -105,7 +105,7 @@ Our keyboard driver publishes the same character source under two names:
 - `"stdin"` — used by `SYS_READ` when the calling process reads from file descriptor 0.
 - `"tty0"` — the conventional name for the first terminal device, available for any future code that wants to write to or read from the system console.
 
-When the syscall dispatcher handles `SYS_READ` on file descriptor 0, it resolves the `"stdin"` ops-table and polls `read_char()` in a tight loop until it returns a non-zero byte. Each iteration emits a `pause` instruction — an x86 hint that marks this as a deliberate spin-wait, reducing power consumption and avoiding a false memory-ordering hazard on hyperthreaded designs. A future improvement would transition the process to a blocking sleep state so the CPU is freed entirely while waiting; the current implementation is correct but wastes cycles during the wait.
+When the syscall dispatcher handles `SYS_READ` on file descriptor 0, it resolves the `"stdin"` ops-table and polls `read_char()` in a tight loop until it returns a non-zero byte. Each iteration emits an architecture-specific spin-wait hint — on x86 this is the `pause` instruction, which reduces power consumption and avoids a false memory-ordering hazard on hyperthreaded designs. A future improvement would transition the process to a blocking sleep state so the CPU is freed entirely while waiting; the current implementation is correct but wastes cycles during the wait.
 
 ### Why Function Pointers Instead of Compile-Time Includes
 
