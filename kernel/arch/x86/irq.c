@@ -6,6 +6,7 @@
 #include "irq.h"
 #include "io.h"
 #include "klog.h"
+#include "irq_table.h"
 
 #define PIC_MASTER_CMD 0x20
 #define PIC_SLAVE_CMD 0xA0
@@ -13,7 +14,7 @@
 #define PIC_SLAVE_DATA 0xA1
 #define PIC_EOI 0x20
 
-static irq_handler_fn irq_table[IRQ_COUNT];
+static irq_handler_generic_fn irq_table[IRQ_COUNT];
 static uint8_t g_master_pic_mask = 0xFC;
 static uint8_t g_slave_pic_mask = 0xFF;
 
@@ -25,8 +26,7 @@ static void irq_pic_write_masks(void)
 
 void irq_dispatch_init(void)
 {
-	for (int i = 0; i < IRQ_COUNT; i++)
-		irq_table[i] = 0;
+	irq_table_clear(irq_table, IRQ_COUNT);
 }
 
 void irq_set_pic_masks(uint8_t master_mask, uint8_t slave_mask)
@@ -68,8 +68,7 @@ void irq_mask(uint8_t irq_num)
 
 void irq_register(uint8_t irq_num, irq_handler_fn fn)
 {
-	if (irq_num < IRQ_COUNT)
-		irq_table[irq_num] = fn;
+	irq_table_set(irq_table, IRQ_COUNT, irq_num, (irq_handler_generic_fn)fn);
 }
 
 void irq_dispatch(uint32_t vector, uint32_t error_code)
@@ -77,8 +76,9 @@ void irq_dispatch(uint32_t vector, uint32_t error_code)
 	(void)error_code;
 
 	uint8_t irq_num = (uint8_t)(vector - 32);
-	if (irq_num < IRQ_COUNT && irq_table[irq_num])
-		irq_table[irq_num]();
+	irq_handler_generic_fn fn = irq_table_get(irq_table, IRQ_COUNT, irq_num);
+	if (fn)
+		fn();
 
 	/* Send EOI to master PIC; also send to slave for IRQ lines 8–15. */
 	if (irq_num >= 8)

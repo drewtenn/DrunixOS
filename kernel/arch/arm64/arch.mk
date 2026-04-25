@@ -129,39 +129,20 @@ ARM_USER_ROOTFS_FILES := $(foreach prog,$(C_PROGS) $(CXX_PROGS),$(ARM_USER_BUILD
                          $(ARM_BUSYBOX_ROOTFS_FILES) \
                          $(ARM_EXTRA_ROOTFS_FILES)
 
-kernel/mm/%.arm64.o: kernel/mm/%.c
-	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
+# Per-subdir compile rule: mechanical for each shared kernel subtree.
+# Use a single template instantiated for each subdir.
+define ARM_C_SUBDIR_RULE
+kernel/$(1)/%.arm64.o: kernel/$(1)/%.c
+	$$(ARM_CC) $$(ARM_CFLAGS) $$(DEPFLAGS) $$(ARM_INC) -c $$< -o $$@
+endef
 
-kernel/console/%.arm64.o: kernel/console/%.c
-	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
+ARM_C_SUBDIRS := mm console gui blk drivers test fs fs/vfs \
+                 proc proc/syscall proc/syscall/vfs
 
-kernel/gui/%.arm64.o: kernel/gui/%.c
-	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
+$(foreach d,$(ARM_C_SUBDIRS),$(eval $(call ARM_C_SUBDIR_RULE,$(d))))
 
-kernel/blk/%.arm64.o: kernel/blk/%.c
-	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
-
-kernel/drivers/%.arm64.o: kernel/drivers/%.c
-	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
-
-kernel/test/%.arm64.o: kernel/test/%.c
-	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
-
-kernel/fs/%.arm64.o: kernel/fs/%.c
-	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
-
-kernel/fs/vfs/%.arm64.o: kernel/fs/vfs/%.c
-	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
-
-kernel/proc/%.arm64.o: kernel/proc/%.c
-	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
-
-kernel/proc/syscall/%.arm64.o: kernel/proc/syscall/%.c
-	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
-
-kernel/proc/syscall/vfs/%.arm64.o: kernel/proc/syscall/vfs/%.c
-	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
-
+# arch/arm64/proc has both .arm64.o (elf64) and plain .o (smoke,
+# arch_proc) targets, plus .S sources.
 kernel/arch/arm64/proc/%.arm64.o: kernel/arch/arm64/proc/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
 
@@ -181,7 +162,12 @@ build/arm64-smoke-user.elf: build/arm64-smoke-user.o
 kernel/arch/arm64/proc/smoke_blob.o: kernel/arch/arm64/proc/smoke_blob.S build/arm64-smoke-user.elf
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
 
-build/arm64init.o: user/arm64init.c user/lib/syscall_arm64.h
+ARM64_SYSCALL_HEADERS := user/lib/syscall_arm64.h \
+                         user/lib/syscall_arm64_asm.h \
+                         user/lib/syscall_arm64_nr.h \
+                         user/lib/ustrlen.h
+
+build/arm64init.o: user/arm64init.c $(ARM64_SYSCALL_HEADERS)
 	@mkdir -p $(dir $@)
 	$(ARM_CC) $(ARM_CFLAGS) -I user/lib -c $< -o $@
 
@@ -189,7 +175,7 @@ build/crt0_arm64.o: user/lib/crt0_arm64.S
 	@mkdir -p $(dir $@)
 	$(ARM_CC) $(ARM_CFLAGS) -c $< -o $@
 
-build/syscall_arm64.o: user/lib/syscall_arm64.c user/lib/syscall_arm64.h
+build/syscall_arm64.o: user/lib/syscall_arm64.c $(ARM64_SYSCALL_HEADERS)
 	@mkdir -p $(dir $@)
 	$(ARM_CC) $(ARM_CFLAGS) -I user/lib -c $< -o $@
 
@@ -197,7 +183,7 @@ $(ARM_USER_BUILD_DIR)/lib/crt0.o: user/lib/crt0_arm64.S
 	@mkdir -p $(dir $@)
 	$(ARM_CC) $(ARM_USER_CFLAGS) -c $< -o $@
 
-$(ARM_USER_BUILD_DIR)/lib/syscall.o: user/lib/syscall_arm64_compat.c user/lib/syscall.h
+$(ARM_USER_BUILD_DIR)/lib/syscall.o: user/lib/syscall_arm64_compat.c user/lib/syscall.h $(ARM64_SYSCALL_HEADERS)
 	@mkdir -p $(dir $@)
 	$(ARM_CC) $(ARM_USER_CFLAGS) -I user -I user/lib -c $< -o $@
 

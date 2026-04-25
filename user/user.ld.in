@@ -1,22 +1,24 @@
 /*
- * ARM64 user program linker script.
+ * user.ld.in — linker script template for ring-3 user programs.
  *
- * The ARM64 loader currently accepts executable segments in the
- * 0x02000000-0x02800000 user image window.
+ * The two arches differ only in load address; this template is rendered
+ * to user/user.ld (x86, 0x400000) and user/user_arm64.ld (ARM64,
+ * 0x02000000) by the top-level Makefile.  Edit the template, not the
+ * generated files.
  */
 
 ENTRY(_start)
 
 PHDRS
 {
-    text   PT_LOAD FLAGS(0x5);
-    rodata PT_LOAD FLAGS(0x4);
-    data   PT_LOAD FLAGS(0x6);
+    text   PT_LOAD FLAGS(0x5); /* R + X */
+    rodata PT_LOAD FLAGS(0x4); /* R */
+    data   PT_LOAD FLAGS(0x6); /* R + W */
 }
 
 SECTIONS
 {
-    . = 0x02000000;
+    . = @USER_LOAD_ADDR@;
 
     .text : {
         *(.text)

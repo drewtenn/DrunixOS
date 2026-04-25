@@ -6,21 +6,22 @@ Boot the ARM64 kernel in QEMU and require the VGA-style framebuffer console.
 from __future__ import annotations
 
 from pathlib import Path
-import os
 import re
 import socket
 import subprocess
 import time
 
+import arm64_qemu_harness as harness
 
-ROOT = Path(__file__).resolve().parents[1]
+
+ROOT = harness.ROOT
 LOG_DIR = ROOT / "logs"
 SERIAL_LOG = LOG_DIR / "serial-arm64-vga.log"
 MONITOR_SOCKET = LOG_DIR / "qemu-arm64-vga.monitor"
 SCREENSHOT = LOG_DIR / "arm64-vga.ppm"
 QEMU_LOG = LOG_DIR / "qemu-arm64-vga.stderr"
-QEMU = os.environ.get("QEMU_ARM", "qemu-system-aarch64")
-QEMU_MACHINE = os.environ.get("QEMU_ARM_MACHINE", "raspi3b")
+QEMU = harness.qemu_binary()
+QEMU_MACHINE = harness.qemu_machine()
 BOOT_TIMEOUT = 20.0
 REQUIRED_MARKERS = (
     "ARM64 framebuffer console enabled",
@@ -47,28 +48,9 @@ KEYBOARD_KEYS = (
 ANSI_LEAK_MARKERS = ("[0m", "[31m", "[32m", "[33m", "[36m")
 
 
-def refresh_arm64_boot_image() -> None:
-    for path in (
-        ROOT / "kernel/arch/arm64/start_kernel.o",
-        ROOT / "kernel-arm64.elf",
-        ROOT / "kernel8.img",
-    ):
-        path.unlink(missing_ok=True)
-
-
 def build_arm64_vga() -> None:
-    refresh_arm64_boot_image()
-    build = subprocess.run(
-        ["make", "ARCH=arm64", "build"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
-    if build.returncode != 0:
-        raise SystemExit(
-            "arm64 vga build failed:\n"
-            + (build.stderr.strip() or build.stdout.strip() or "no build output")
-        )
+    harness.refresh_boot_image()
+    harness.build()
 
 
 def read_serial_log() -> str:

@@ -17,6 +17,7 @@
  */
 
 #include "syscall.h"
+#include "ustrlen.h"
 
 char **environ = 0;
 
@@ -28,15 +29,6 @@ typedef struct {
 	unsigned int fd;
 	unsigned int offset;
 } old_mmap_args_t;
-
-/* Local strlen — avoids pulling in libc for a single helper. */
-static int ustrlen(const char *s)
-{
-	int n = 0;
-	while (s[n])
-		n++;
-	return n;
-}
 
 void sys_exit(int code)
 {

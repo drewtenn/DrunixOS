@@ -54,8 +54,12 @@ REQUIRED = {
         r"\bkernel/proc/sched\.arm64\.o\b",
         r"\bkernel/proc/syscall\.arm64\.o\b",
         r"\bkernel/proc/syscall/task\.arm64\.o\b",
-        r"\bkernel/proc/%.arm64\.o:\s+kernel/proc/%.c\b",
-        r"\bkernel/proc/syscall/%.arm64\.o:\s+kernel/proc/syscall/%.c\b",
+        # The per-subdir compile rule used to be repeated literally for
+        # every kernel subtree.  It now lives in ARM_C_SUBDIR_RULE,
+        # iterated over ARM_C_SUBDIRS — guard the expanded inputs.
+        r"\bdefine\s+ARM_C_SUBDIR_RULE\b",
+        r"\bARM_C_SUBDIRS\b[\s\S]*?\bproc\b",
+        r"\bARM_C_SUBDIRS\b[\s\S]*?\bproc/syscall\b",
     ],
 }
 

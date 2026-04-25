@@ -89,3 +89,5 @@ venv/
 .x86-serial-console-flag
 logs/*.stderr
 .include-busybox-flag
+/user/user.ld
+/user/user_arm64.ld

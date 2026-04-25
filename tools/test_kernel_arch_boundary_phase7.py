@@ -83,6 +83,12 @@ TASK5_REQUIRED = {
     ],
     ROOT / "user/lib/syscall_arm64.c": [
         r"\barm64_sys_write\s*\(",
+        # The svc trampolines used to live here; they now live in
+        # user/lib/syscall_arm64_asm.h and are static-inline so each
+        # caller still emits the same code in-place.
+        r'#include\s+"syscall_arm64_asm\.h"',
+    ],
+    ROOT / "user/lib/syscall_arm64_asm.h": [
         r"\bregister\s+long\s+x8\b",
         r"\bsvc\s+#0\b",
     ],
