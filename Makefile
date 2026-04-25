@@ -598,6 +598,15 @@ test-headless:
 test-all:
 	$(MAKE) ARCH=$(ARCH) check
 
+compile-commands format-check cppcheck sparse-check clang-tidy-include-check scan:
+	$(MAKE) ARCH=x86 $@
+
+run-grub-menu run-stdio: run
+
+debug debug-user debug-fresh test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop validate-ext3-linux:
+	@echo "make ARCH=arm64 $@ is not implemented yet"
+	@exit 2
+
 check-shell-prompt:
 	python3 tools/test_shell_prompt.py --arch arm64
 
@@ -668,9 +677,14 @@ clean:
 	$(MAKE) -C user clean
 
 .PHONY: all build kernel iso images disk fresh check \
-        test test-fresh test-headless test-all check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
-        run run-fresh \
+        compile-commands format-check cppcheck sparse-check clang-tidy-include-check scan \
+        disk.img dufs.img \
+        run run-stdio run-grub-menu run-fresh \
+        debug debug-user debug-fresh \
+        test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all \
+        check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
         check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-syscall-parity check-arch-boundary-reuse check-shared-shell-tests check-targets-generic check-test-wiring \
+        validate-ext3-linux \
         pdf epub docs \
         rebuild clean
 endif

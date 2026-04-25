@@ -31,10 +31,6 @@ def phony_targets(arch: str) -> set[str]:
     return targets
 
 
-def check_targets(targets: set[str]) -> set[str]:
-    return {target for target in targets if target.startswith("check")}
-
-
 def main() -> int:
     targets_by_arch = {arch: phony_targets(arch) for arch in ARCHES}
     failures: list[str] = []
@@ -46,21 +42,20 @@ def main() -> int:
             if target.startswith(FORBIDDEN_PUBLIC_TARGET_PREFIXES):
                 failures.append(f"{arch} exposes architecture-prefixed target {target}")
 
-    check_sets = {arch: check_targets(targets) for arch, targets in targets_by_arch.items()}
-    if check_sets["x86"] != check_sets["arm64"]:
+    if targets_by_arch["x86"] != targets_by_arch["arm64"]:
         failures.append(
-            "check target sets differ: "
-            f"x86-only={sorted(check_sets['x86'] - check_sets['arm64'])} "
-            f"arm64-only={sorted(check_sets['arm64'] - check_sets['x86'])}"
+            "phony target sets differ: "
+            f"x86-only={sorted(targets_by_arch['x86'] - targets_by_arch['arm64'])} "
+            f"arm64-only={sorted(targets_by_arch['arm64'] - targets_by_arch['x86'])}"
         )
 
     if failures:
-        print("public check targets must be architecture-neutral:")
+        print("public phony targets must be architecture-neutral:")
         for failure in failures:
             print(f"  {failure}")
         return 1
 
-    print("public check targets are architecture-neutral")
+    print("public phony targets are architecture-neutral")
     return 0
 
 
