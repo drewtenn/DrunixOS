@@ -8,6 +8,10 @@ Chapter 27 left us with a global pointer position, motion-coalesced IRQ dispatch
 
 The compositor has to run on two very different displays. On bare **VGA text mode** — 80 columns by 25 rows of character cells, where each cell is a one-byte ASCII code plus a one-byte attribute — the desktop degrades into a text-mode imitation with cell-level chrome and no cursor sprite. On a **VESA framebuffer mode** — a linear region of raw pixel data along with width, height, pitch, and channel layout — it is a real composited UI with a back buffer, a cursor sprite, and per-pixel draw primitives. The same compositor code path supports both; only the bottom-most "present" step knows the difference.
 
+The compositor and rendering pipeline are portable concepts — the cell-grid abstraction, back-buffer strategy, event router, and mini-apps do not care which CPU they run on. What changes across platforms is how the framebuffer surface is presented to the display hardware and which input device feeds pointer events into the pipeline.
+
+*On AArch64 (planned, milestone 6): the same compositor and rendering reused once the framebuffer presentation path and an arm64 input device land.*
+
 ### Two Display Modes
 
 A multiboot-compliant bootloader hands us a description of the video state the firmware left the machine in. If that description contains a linear VESA framebuffer — a contiguous physical region of raw pixel data, along with its width, height, pixel pitch (bytes per scanline) and colour-channel layout — and the firmware chose a mode whose dimensions fit our reserved back-buffer region, we use it. Otherwise we fall back to the legacy VGA text buffer at physical address `0xb8000`, where each 16-bit cell holds an ASCII byte and an attribute byte.
