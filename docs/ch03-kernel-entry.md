@@ -51,8 +51,8 @@ Both subsections below walk through the hardware details. The goal in both cases
 ### On x86: VGA text buffer
 
 *This buffer and its attribute model are PC hardware; the AArch64 path reaches
-a comparable cell-grid console through a framebuffer text console (see the
-AArch64 platform notes in ch31).*
+a comparable cell-grid console through a framebuffer text console driven by the
+VideoCore mailbox interface (see the platform notes appendix, ch31).*
 
 Early boot still relies on the **VGA** (Video Graphics Array) text buffer because it is simple, fixed, and available before any dynamic display setup. The VGA text buffer is the one display mechanism available immediately after boot, before any graphics drivers exist. It is simple enough to use from assembly and is our first output path. Later in `start_kernel`, after memory management and the filesystem are ready, the kernel switches the user-facing shell into a desktop surface. If GRUB supplied a usable 32-bit RGB linear framebuffer, that desktop is presented as pixels; otherwise it falls back to the VGA text buffer.
 

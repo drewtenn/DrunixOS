@@ -1,97 +1,66 @@
 \newpage
 
-## Chapter 31 — AArch64 Bring-Up
+## Chapter 31 — AArch64 Platform Notes
 
-### A Second Boot Path
+This appendix is a peripheral-reference companion for AArch64 readers. It does not re-narrate the bring-up flow: that material lives in ch01 (boot handoff and EL2→EL1 demotion), ch03 (BCM2835 mini-UART as the first console), ch04 (exception vector table at `VBAR_EL1`), and ch05 (ARM Generic Timer plus BCM2836 core-local interrupt routing). What this chapter collects is the platform-specific address and register detail for the Raspberry Pi 3 (BCM2837 SoC) and its QEMU `raspi3b` model — the same role that ch10 and ch11 play for the PC keyboard and ATA disk peripherals, and that ch27 plays for the PS/2 mouse.
 
-The first thirty chapters built a kernel around one machine model: 32-bit x86, GRUB, Multiboot1, the 8259 PIC, the PIT, and `int 0x80`. That path still matters, and it remains the mainline Drunix boot for everything we have built so far. But a kernel that cannot survive outside one narrow boot environment has not really separated its operating-system logic from its machine-specific glue.
+### BCM2835 Mini-UART
 
-This chapter starts that separation with a deliberately tiny target: boot the kernel as a 64-bit AArch64 image under `qemu-system-aarch64 -M raspi3b`, print a banner over the Raspberry Pi mini-UART, take timer interrupts from the ARM Generic Timer, and count five heartbeat ticks. Nothing more. No paging, no user processes, no filesystems, and no desktop. The goal is not to "port Drunix" in one jump. The goal is to prove that Drunix can stand up on a second architecture without dragging the whole x86 machine model along with it.
+The BCM2835 auxiliary block — which contains the mini-UART and two SPI controllers — is memory-mapped at physical base address **`0x3F215000`** on the Raspberry Pi 3. The bring-up sequence in ch03 writes to registers at the following offsets from that base:
 
-### Why The First Slice Is So Small
+| Offset | Register | Purpose |
+|--------|----------|---------|
+| `0x04` | `AUX_ENB` | Enable bit for auxiliary peripherals; bit 0 enables the mini-UART |
+| `0x60` | `AUX_MU_IO` | Data register: write a byte here to transmit, read to receive |
+| `0x64` | `AUX_MU_IER` | Interrupt enable; zeroed during bring-up |
+| `0x68` | `AUX_MU_IIR` | Interrupt identify and FIFO control; FIFO reset here |
+| `0x6C` | `AUX_MU_LCR` | Line control; bit 1 set selects 8-bit mode |
+| `0x70` | `AUX_MU_MCR` | Modem control; zero during bring-up |
+| `0x74` | `AUX_MU_LSR` | Line status; bit 5 is the transmitter-empty flag |
+| `0x7C` | `AUX_MU_CNTL` | Control register; bits 0–1 enable TX and RX |
+| `0x80` | `AUX_MU_BAUD` | Baud rate divisor |
 
-Porting an operating system tempts us to chase the most visible end state: a shell prompt, a mounted filesystem, maybe even the desktop. That is exactly how a port turns into a pile of half-debugged subsystems. The safe move is to ask a smaller question first: can the new CPU start executing our code, reach a known exception level, talk to one output device, and survive periodic interrupts?
+The baud divisor formula is `(system_clock_hz / (8 × baud_rate)) − 1`. On the `raspi3b` QEMU model the system clock runs at 250 MHz, giving a divisor of `270` for 115200 baud. On real Pi 3 hardware the system clock is typically 400 MHz, giving `433`.
 
-Those pieces form the narrow waist of the port:
+GPIO14 and GPIO15 must be switched to **alternate function 5** (the BCM2835 routing for the mini-UART TX and RX lines) before the mini-UART can communicate with the outside world. Function selection is written through the GPIO function-select registers in the main peripheral block at `0x3F200000`.
 
-- the boot entry point
-- exception-vector installation
-- one console device
-- one timer interrupt source
+### BCM2836 Core-Local Interrupt Block
 
-If any of those are wrong, every later subsystem is harder to inspect. If they are right, the rest of the port has a dependable serial trace and a known-good interrupt heartbeat to build on.
+The BCM2836 core-local interrupt block is a Pi 3-specific peripheral at physical base address **`0x40000000`**. Each of the four CPU cores has a 4-byte register at `0x40000040 + (4 × core_number)` that controls which interrupt sources that core will receive. Writing `0x02` to core 0's register (`0x40000040`) enables the non-secure EL1 physical timer interrupt on core 0 — the step that connects the ARM Generic Timer's countdown expiry to core 0's IRQ slot in the exception vector table.
 
-### Booting Without GRUB
+The same block exposes a per-core interrupt source register at `0x40000060 + (4 × core_number)`. The IRQ handler reads core 0's source register (`0x40000060`) on every interrupt to confirm that the pending source is the timer (bit 1) before reloading `CNTP_TVAL_EL0` and returning.
 
-The x86 path enters through GRUB with a Multiboot info structure in hand. The Raspberry Pi bring-up path does not get that luxury. QEMU's `raspi3b` machine loads the kernel image at physical address `0x80000` and starts all four cores in AArch64 state, usually at **EL2** (Exception Level 2, a privileged mode intended for hypervisors). That means the bring-up code has to perform a few chores the x86 kernel inherited from firmware:
+### VideoCore Mailbox Property Interface
 
-- identify the primary core and park the others
-- inspect the current exception level
-- drop from EL2 to **EL1** (Exception Level 1, the standard privileged mode for ordinary operating system kernels)
-- establish a stack pointer
-- zero `.bss`
+The VideoCore GPU embedded in the BCM2837 controls the HDMI display and the framebuffer. The kernel communicates with the GPU through the **VideoCore mailbox** at physical address **`0x3F00B880`**. The mailbox provides a property channel (channel 8) through which the kernel sends a tagged property message asking the GPU to allocate and configure a framebuffer — base address, dimensions, bits-per-pixel, and pitch — and the GPU responds with the physical address and size of the allocated buffer.
 
-The EL2 to EL1 transition matters because the rest of the kernel is written as an ordinary EL1 kernel, not as a hypervisor. The boot stub programs `HCR_EL2` so EL1 executes AArch64 instructions, seeds `SCTLR_EL1` with the architecturally required reset bits, points `ELR_EL2` at the EL1 continuation label, and returns with `eret`.
+The framebuffer bring-up sequence using this interface is planned as part of milestone 6. The mailbox address and channel protocol are documented here as a reference point for that future work.
 
-### Exception Vectors Replace The IDT
+### Pi 3 Fixed Memory Layout
 
-On x86, Chapter 4 introduced the IDT: a table of gate descriptors that the CPU consults when an interrupt or fault arrives. AArch64 uses a different shape but solves the same problem. The kernel writes the base address of a 2 KB vector table to `VBAR_EL1`. That table contains sixteen fixed slots covering:
+The Raspberry Pi 3 (BCM2837 SoC) presents a fixed address map in the `raspi3b` QEMU model. Chapter 7 derives the usable RAM range from this layout; it is collected here for quick reference.
 
-- synchronous exceptions
-- IRQs
-- FIQs
-- system errors
+| Region | Start | End | Notes |
+|--------|-------|-----|-------|
+| Usable RAM | `0x00000000` | `0x3EFFFFFF` | 1 GB minus the device window |
+| Device window | `0x3F000000` | `0x40000000` | Peripheral bus and VideoCore mailbox |
+| Core-local block | `0x40000000` | `0x40000100` | BCM2836 per-core interrupt registers |
+| Kernel image | `0x00080000` | — | Load address placed by QEMU `raspi3b` loader |
 
-for four contexts:
+The device window boundary at `0x3F000000` is the reason ch07 records that exact address as the top of usable RAM on AArch64. Any physical allocator that treats the device window as free pages would corrupt hardware-mapped registers on the first access.
 
-- current EL using `SP_EL0`
-- current EL using `SP_ELx`
-- lower EL in AArch64 state
-- lower EL in AArch32 state
+### Boot Entry Contract
 
-Milestone 1 keeps the handlers intentionally blunt. The synchronous path prints register state and halts. The IRQ path recognises only one source, the non-secure EL1 physical timer interrupt, and dispatches it to the timer code. That is enough for a heartbeat kernel and no more.
+The QEMU `raspi3b` loader places the kernel flat binary at physical address `0x80000` and transfers control to that address on all four cores simultaneously. Chapter 1 covers the full boot handoff, including how the stub selects core 0 as primary and parks the others. The short list below summarises the machine state at the first instruction:
 
-### The Mini-UART As The First Console
+- All four cores are in AArch64 state at **EL2** (the hypervisor privilege level).
+- The program counter holds `0x80000`.
+- No Multiboot structure, no device tree pointer in any register — boot parameters come from the fixed hardware layout.
+- Caches and the MMU are off.
+- No stack pointer has been established.
 
-The x86 kernel grew up around VGA text mode, framebuffer output, and the QEMU debug console. None of those exists as a natural first step on the Raspberry Pi. The simplest always-on output path in the `raspi3b` model is the BCM2835 auxiliary mini-UART.
+The bring-up stub in ch01 reads `MPIDR_EL1` to identify core 0, parks cores 1–3, programs `HCR_EL2`, `SCTLR_EL1`, and `ELR_EL2`, and issues `eret` to drop to EL1 before establishing a stack and zeroing `.bss`.
 
-Bringing it up is mostly register programming:
+### Where the Machine Is
 
-1. enable the auxiliary block
-2. disable TX and RX during configuration
-3. select 8-bit mode
-4. set the baud divisor
-5. switch GPIO14 and GPIO15 to alternate function 5
-6. enable TX and RX again
-
-Once that is done, serial output becomes a plain busy-wait loop on the transmitter-empty bit. That is exactly what early bring-up needs: one reliable way to print progress without depending on interrupts, memory management, or a framebuffer.
-
-### The First Interrupt Source
-
-The x86 kernel's periodic heartbeat came from the PIT routed through the PIC. On the Raspberry Pi 3 bring-up path, that role is split between two ARM-specific pieces:
-
-- the ARM Generic Timer, which counts at `CNTFRQ_EL0`
-- the BCM2836 core-local interrupt block, which routes the timer interrupt to core 0
-
-The timer setup is refreshingly small. The kernel reads `CNTFRQ_EL0`, divides it by the desired frequency, writes the interval to `CNTP_TVAL_EL0`, enables the timer via `CNTP_CTL_EL0`, and asks the core-local interrupt controller to deliver the non-secure EL1 physical timer interrupt as an IRQ. Every IRQ rewrites the timer interval and increments a tick counter.
-
-We pick one interrupt per second: slow enough to see distinct ticks on the console, fast enough to prove the interrupt path works reliably.
-
-That tick counter drives the visible proof of life:
-
-```text
-Drunix AArch64 v0 - hello from EL1
-CurrentEL=0x4 (EL1)
-CNTFRQ_EL0=62500000Hz
-tick 1
-tick 2
-tick 3
-tick 4
-tick 5
-```
-
-### What This Milestone Deliberately Does Not Solve
-
-This bring-up path runs with the MMU disabled and caches off. It does not attempt to reuse the physical allocator, paging code, ELF loader, scheduler, or VFS. That restraint is the point. Those subsystems all depend on architecture contracts that still belong to x86 in the current tree. Milestone 1 is valuable precisely because it avoids pretending those contracts are already portable.
-
-The result is small but honest: Drunix now has a second boot path that proves the CPU, exception, UART, and timer foundations can exist outside the original x86 environment. The next milestones can build a proper architecture boundary on top of that proof instead of trying to invent one in the dark.
+This appendix is background reference: the physical addresses, register maps, and entry-state facts that anchor the narrative in ch01/ch03/ch04/ch05. No new machine state is established here — by the time a reader reaches ch31, all of those paths are already live.
