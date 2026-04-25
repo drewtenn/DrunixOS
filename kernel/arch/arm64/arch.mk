@@ -40,6 +40,7 @@ ARM_KOBJS := kernel/arch/arm64/boot.o \
 
 ARM_SHARED_KOBJS := kernel/lib/klog.arm64.o \
                     kernel/console/runtime.arm64.o \
+                    kernel/mm/fault.arm64.o \
                     kernel/mm/vma.arm64.o \
                     kernel/mm/kheap.arm64.o \
                     kernel/mm/slab.arm64.o \
@@ -123,6 +124,8 @@ ARM_BUSYBOX_ROOTFS_DEPS := $(BUSYBOX_ARM64_BIN)
 endif
 ARM_USER_ROOTFS_FILES := $(foreach prog,$(C_PROGS) $(CXX_PROGS),$(ARM_USER_BUILD_DIR)/$(prog) bin/$(prog)) \
                          build/arm64init.elf bin/arm64init \
+                         tools/hello.txt hello.txt \
+                         tools/readme.txt readme.txt \
                          $(ARM_BUSYBOX_ROOTFS_FILES) \
                          $(ARM_EXTRA_ROOTFS_FILES)
 
@@ -231,7 +234,7 @@ build/arm64-rootfs-empty:
 	@mkdir -p $(dir $@)
 	: > $@
 
-build/arm64-root.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf $(ARM_BUSYBOX_ROOTFS_DEPS) build/arm64-rootfs-empty tools/mkfs.py kernel/arch/arm64/arch.mk
+build/arm64-root.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf $(ARM_BUSYBOX_ROOTFS_DEPS) build/arm64-rootfs-empty tools/hello.txt tools/readme.txt tools/mkfs.py kernel/arch/arm64/arch.mk
 	$(PYTHON) tools/mkfs.py $@ 32768 \
 		$(ARM_USER_ROOTFS_FILES) \
 		build/arm64-rootfs-empty dev/.keep \

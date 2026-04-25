@@ -6,6 +6,7 @@
 #include "irq.h"
 #include "uart.h"
 #include "../arch.h"
+#include "fault.h"
 #include "../../proc/sched.h"
 #include "../../proc/syscall.h"
 #include "kprintf.h"
@@ -50,6 +51,29 @@ static void arm64_report_kernel_sync_exception(const arch_trap_frame_t *frame)
 	arm64_halt_forever();
 }
 
+static int arm64_try_handle_user_fault(arch_trap_frame_t *frame)
+{
+	process_t *cur;
+	uint64_t fault_addr;
+
+	if (!frame || arch_trap_frame_fault_vector(frame) != 14u)
+		return -1;
+
+	fault_addr = arch_trap_frame_fault_addr(frame);
+	if ((fault_addr >> 32) != 0)
+		return -1;
+
+	cur = sched_current();
+	if (!cur)
+		return -1;
+
+	return paging_handle_fault(cur->pd_phys,
+	                           (uint32_t)fault_addr,
+	                           arch_trap_frame_fault_error_code(frame),
+	                           arch_trap_frame_stack_pointer(frame),
+	                           cur);
+}
+
 void arm64_sync_handler(arch_trap_frame_t *frame)
 {
 	if (frame && arch_irq_frame_is_user((uintptr_t)frame)) {
@@ -62,10 +86,13 @@ void arm64_sync_handler(arch_trap_frame_t *frame)
 			return;
 		}
 
-			if (!sched_record_user_fault || !sched_mark_signaled || !schedule)
-				arm64_report_kernel_sync_exception(frame);
-			sched_record_user_fault(
-			    frame, arch_trap_frame_fault_addr(frame), SIGSEGV);
+		if (arm64_try_handle_user_fault(frame) == 0)
+			return;
+
+		if (!sched_record_user_fault || !sched_mark_signaled || !schedule)
+			arm64_report_kernel_sync_exception(frame);
+		sched_record_user_fault(
+		    frame, arch_trap_frame_fault_addr(frame), SIGSEGV);
 		sched_mark_signaled(SIGSEGV, 0);
 		schedule();
 		arm64_halt_forever();

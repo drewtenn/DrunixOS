@@ -30,6 +30,8 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unknown(uint32_t eax)
 #define ARM64_LINUX_SYS_FTRUNCATE 46u
 #define ARM64_LINUX_SYS_MKDIRAT 34u
 #define ARM64_LINUX_SYS_UNLINKAT 35u
+#define ARM64_LINUX_SYS_STATFS 43u
+#define ARM64_LINUX_SYS_FSTATFS 44u
 #define ARM64_LINUX_SYS_FACCESSAT 48u
 #define ARM64_LINUX_SYS_CHDIR 49u
 #define ARM64_LINUX_SYS_FCHMODAT 53u
@@ -40,6 +42,9 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unknown(uint32_t eax)
 #define ARM64_LINUX_SYS_GETDENTS64 61u
 #define ARM64_LINUX_SYS_LSEEK 62u
 #define ARM64_LINUX_SYS_READ 63u
+#define ARM64_LINUX_SYS_READV 65u
+#define ARM64_LINUX_SYS_WRITEV 66u
+#define ARM64_LINUX_SYS_RENAMEAT 38u
 #define ARM64_LINUX_SYS_READLINKAT 78u
 #define ARM64_LINUX_SYS_NEWFSTATAT 79u
 #define ARM64_LINUX_SYS_FSTAT 80u
@@ -48,7 +53,9 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unknown(uint32_t eax)
 #define ARM64_LINUX_SYS_EXIT 93u
 #define ARM64_LINUX_SYS_EXIT_GROUP 94u
 #define ARM64_LINUX_SYS_SET_TID_ADDRESS 96u
+#define ARM64_LINUX_SYS_NANOSLEEP 101u
 #define ARM64_LINUX_SYS_CLOCK_GETTIME 113u
+#define ARM64_LINUX_SYS_CLOCK_NANOSLEEP 115u
 #define ARM64_LINUX_SYS_SCHED_GETAFFINITY 123u
 #define ARM64_LINUX_SYS_SCHED_YIELD 124u
 #define ARM64_LINUX_SYS_KILL 129u
@@ -80,6 +87,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unknown(uint32_t eax)
 #define ARM64_LINUX_SYS_MPROTECT 226u
 #define ARM64_LINUX_SYS_WAIT4 260u
 #define ARM64_LINUX_SYS_PRLIMIT64 261u
+#define ARM64_LINUX_SYS_RENAMEAT2 276u
 #define ARM64_LINUX_SYS_STATX 291u
 #define ARM64_LINUX_SYS_GETCWD 17u
 
@@ -190,6 +198,13 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		    (uint32_t)arch_syscall_arg1(frame),
 		    0));
 		break;
+	case ARM64_LINUX_SYS_RENAMEAT:
+		ret = arm64_syscall_ret32(syscall_case_renameat(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame),
+		    (uint32_t)arch_syscall_arg3(frame)));
+		break;
 	case ARM64_LINUX_SYS_OPENAT:
 		ret = arm64_syscall_ret32(syscall_case_openat(
 		    (uint32_t)arch_syscall_arg0(frame),
@@ -228,6 +243,16 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		    (uint32_t)arch_syscall_arg1(frame),
 		    (uint32_t)arch_syscall_arg2(frame)));
 		break;
+	case ARM64_LINUX_SYS_STATFS:
+		ret = arm64_syscall_ret32(syscall_case_statfs_arm64(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame)));
+		break;
+	case ARM64_LINUX_SYS_FSTATFS:
+		ret = arm64_syscall_ret32(syscall_case_fstatfs_arm64(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame)));
+		break;
 	case ARM64_LINUX_SYS_CLOSE:
 		ret = arm64_syscall_ret32(
 		    syscall_case_close((uint32_t)arch_syscall_arg0(frame)));
@@ -260,6 +285,12 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		    (uint32_t)arch_syscall_arg1(frame),
 		    (uint32_t)arch_syscall_arg2(frame)));
 		break;
+	case ARM64_LINUX_SYS_READV:
+		ret = arm64_syscall_ret32(syscall_case_readv64(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame)));
+		break;
 	case ARM64_LINUX_SYS_READLINKAT:
 		ret = arm64_syscall_ret32(syscall_case_readlinkat(
 		    (uint32_t)arch_syscall_arg0(frame),
@@ -268,14 +299,14 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		    (uint32_t)arch_syscall_arg3(frame)));
 		break;
 	case ARM64_LINUX_SYS_NEWFSTATAT:
-		ret = arm64_syscall_ret32(syscall_case_fstatat64(
+		ret = arm64_syscall_ret32(syscall_case_fstatat_arm64(
 		    (uint32_t)arch_syscall_arg0(frame),
 		    (uint32_t)arch_syscall_arg1(frame),
 		    (uint32_t)arch_syscall_arg2(frame),
 		    (uint32_t)arch_syscall_arg3(frame)));
 		break;
 	case ARM64_LINUX_SYS_FSTAT:
-		ret = arm64_syscall_ret32(syscall_case_fstat64(
+		ret = arm64_syscall_ret32(syscall_case_fstat_arm64(
 		    (uint32_t)arch_syscall_arg0(frame),
 		    (uint32_t)arch_syscall_arg1(frame)));
 		break;
@@ -291,6 +322,12 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 	case ARM64_LINUX_SYS_WRITE:
 		ret = arm64_syscall_write(frame);
 		break;
+	case ARM64_LINUX_SYS_WRITEV:
+		ret = arm64_syscall_ret32(syscall_case_writev64(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame)));
+		break;
 	case ARM64_LINUX_SYS_EXIT:
 		ret = arm64_syscall_exit(frame, 0u);
 		break;
@@ -302,6 +339,11 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		break;
 	case ARM64_LINUX_SYS_SET_TID_ADDRESS:
 		ret = arm64_syscall_ret32(syscall_case_set_tid_address());
+		break;
+	case ARM64_LINUX_SYS_NANOSLEEP:
+		ret = arm64_syscall_ret32(syscall_case_nanosleep64(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame)));
 		break;
 	case ARM64_LINUX_SYS_SCHED_GETAFFINITY:
 		ret = arm64_syscall_ret32(syscall_case_sched_getaffinity(
@@ -353,6 +395,13 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		ret = arm64_syscall_ret32(syscall_case_clock_gettime(
 		    (uint32_t)arch_syscall_arg0(frame),
 		    (uint32_t)arch_syscall_arg1(frame)));
+		break;
+	case ARM64_LINUX_SYS_CLOCK_NANOSLEEP:
+		ret = arm64_syscall_ret32(syscall_case_clock_nanosleep64(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame),
+		    (uint32_t)arch_syscall_arg3(frame)));
 		break;
 	case ARM64_LINUX_SYS_UNAME:
 		ret = arm64_syscall_ret32(
@@ -444,6 +493,17 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		    (uint32_t)arch_syscall_arg2(frame),
 		    (uint32_t)arch_syscall_arg3(frame)));
 		break;
+	case ARM64_LINUX_SYS_RENAMEAT2:
+		if ((uint32_t)arch_syscall_arg4(frame) != 0) {
+			ret = (uint64_t)(int64_t)-LINUX_EINVAL;
+			break;
+		}
+		ret = arm64_syscall_ret32(syscall_case_renameat(
+		    (uint32_t)arch_syscall_arg0(frame),
+		    (uint32_t)arch_syscall_arg1(frame),
+		    (uint32_t)arch_syscall_arg2(frame),
+		    (uint32_t)arch_syscall_arg3(frame)));
+		break;
 	case SYS_NANOSLEEP:
 		ret = arm64_syscall_ret32(syscall_case_nanosleep(
 		    (uint32_t)arch_syscall_arg0(frame),
@@ -451,11 +511,6 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		break;
 	case SYS_FORK:
 		ret = arm64_syscall_ret32(syscall_case_fork_vfork());
-		break;
-	case SYS_RENAME:
-		ret = arm64_syscall_ret32(syscall_case_rename(
-		    (uint32_t)arch_syscall_arg0(frame),
-		    (uint32_t)arch_syscall_arg1(frame)));
 		break;
 	case SYS_STAT:
 		ret = arm64_syscall_ret32(syscall_case_stat(

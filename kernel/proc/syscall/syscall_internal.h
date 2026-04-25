@@ -32,6 +32,11 @@ typedef struct {
 } syscall_path_spec_t;
 
 uint32_t syscall_case_nanosleep(uint32_t ebx, uint32_t ecx);
+uint32_t syscall_case_nanosleep64(uint32_t ebx, uint32_t ecx);
+uint32_t syscall_case_clock_nanosleep64(uint32_t ebx,
+                                        uint32_t ecx,
+                                        uint32_t edx,
+                                        uint32_t esi);
 uint32_t syscall_case_clock_gettime(uint32_t ebx, uint32_t ecx);
 uint32_t syscall_case_clock_gettime64(uint32_t ebx, uint32_t ecx);
 uint32_t syscall_case_gettimeofday(uint32_t ebx, uint32_t ecx);
@@ -94,7 +99,9 @@ int syscall_write_console_bytes(process_t *cur, const char *buf, uint32_t len);
 
 uint32_t syscall_case_write(uint32_t ebx, uint32_t ecx, uint32_t edx);
 uint32_t syscall_case_writev(uint32_t ebx, uint32_t ecx, uint32_t edx);
+uint32_t syscall_case_writev64(uint32_t ebx, uint32_t ecx, uint32_t edx);
 uint32_t syscall_case_readv(uint32_t ebx, uint32_t ecx, uint32_t edx);
+uint32_t syscall_case_readv64(uint32_t ebx, uint32_t ecx, uint32_t edx);
 uint32_t syscall_case_read(uint32_t ebx, uint32_t ecx, uint32_t edx);
 uint32_t
 syscall_case_sendfile64(uint32_t ebx, uint32_t ecx, uint32_t edx, uint32_t esi);
@@ -149,10 +156,18 @@ syscall_case_stat64_lstat64(uint32_t nofollow, uint32_t ebx, uint32_t ecx);
 uint32_t
 syscall_case_fstatat64(uint32_t ebx, uint32_t ecx, uint32_t edx, uint32_t esi);
 uint32_t syscall_case_fstat64(uint32_t ebx, uint32_t ecx);
+uint32_t
+syscall_case_fstatat_arm64(uint32_t ebx,
+                           uint32_t ecx,
+                           uint32_t edx,
+                           uint32_t esi);
+uint32_t syscall_case_fstat_arm64(uint32_t ebx, uint32_t ecx);
 uint32_t syscall_case_statx(
     uint32_t ebx, uint32_t ecx, uint32_t edx, uint32_t esi, uint32_t edi);
 uint32_t syscall_case_statfs64(uint32_t ebx, uint32_t ecx, uint32_t edx);
 uint32_t syscall_case_fstatfs64(uint32_t ebx, uint32_t ecx, uint32_t edx);
+uint32_t syscall_case_statfs_arm64(uint32_t ebx, uint32_t ecx);
+uint32_t syscall_case_fstatfs_arm64(uint32_t ebx, uint32_t ecx);
 uint32_t syscall_case_set_thread_area(uint32_t ebx);
 uint32_t syscall_case_set_tid_address(void);
 uint32_t syscall_case_drunix_modload(uint32_t ebx);

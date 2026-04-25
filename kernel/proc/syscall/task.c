@@ -342,8 +342,8 @@ uint32_t SYSCALL_NOINLINE syscall_case_execve(uint32_t ebx,
 #define CLONE_EXIT_SIGNAL_MASK 0xFFu
 #define CLONE_SUPPORTED_FLAGS                                                  \
 	(CLONE_EXIT_SIGNAL_MASK | CLONE_VM | CLONE_FS | CLONE_FILES |              \
-	 CLONE_SIGHAND | CLONE_THREAD | CLONE_SETTLS | CLONE_PARENT_SETTID |       \
-	 CLONE_CHILD_CLEARTID | CLONE_CHILD_SETTID)
+	 CLONE_SIGHAND | CLONE_VFORK | CLONE_THREAD | CLONE_SETTLS |              \
+	 CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID | CLONE_CHILD_SETTID)
 
 static int syscall_clone_validate_flags(uint32_t flags)
 {

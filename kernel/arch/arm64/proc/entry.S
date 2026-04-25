@@ -72,6 +72,15 @@ arm64_process_first_resume:
     mov x0, x19
     b arm64_enter_user_frame
 
+.global arm64_process_exec_resume
+.extern process_exec_cleanup
+arm64_process_exec_resume:
+    mov x0, x20
+    mov x1, x21
+    bl process_exec_cleanup
+    mov x0, x19
+    b arm64_enter_user_frame
+
 .global arm64_enter_user_frame
 arm64_enter_user_frame:
     ldr x1, [x0, #248]

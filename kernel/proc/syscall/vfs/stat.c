@@ -46,6 +46,28 @@ static void linux_fill_stat64(uint8_t *st,
 	linux_put_u64(st, 128u, mtime); /* st_ctim.tv_sec */
 }
 
+static void linux_fill_stat_arm64(uint8_t *st, const linux_fd_stat_t *meta)
+{
+	uint32_t blocks;
+
+	k_memset(st, 0, 128u);
+	blocks = (meta->size + 511u) / 512u;
+
+	linux_put_u64(st, 0u, 1u); /* st_dev */
+	linux_put_u64(st, 8u, meta->ino);
+	linux_put_u32(st, 16u, meta->mode);
+	linux_put_u32(st, 20u, meta->nlink);
+	linux_put_u32(st, 24u, 0u); /* st_uid */
+	linux_put_u32(st, 28u, 0u); /* st_gid */
+	linux_put_u64(st, 32u, linux_encode_dev(meta->rdev_major, meta->rdev_minor));
+	linux_put_u64(st, 48u, meta->size);
+	linux_put_u32(st, 56u, 4096u); /* st_blksize */
+	linux_put_u64(st, 64u, blocks);
+	linux_put_u64(st, 72u, meta->mtime);  /* st_atim.tv_sec */
+	linux_put_u64(st, 88u, meta->mtime);  /* st_mtim.tv_sec */
+	linux_put_u64(st, 104u, meta->mtime); /* st_ctim.tv_sec */
+}
+
 static void linux_fill_statx_timestamp(uint8_t *stx, uint32_t off, uint32_t sec)
 {
 	linux_put_u64(stx, off, sec);      /* tv_sec */
@@ -367,6 +389,26 @@ linux_copy_statfs64(process_t *cur, uint32_t user_buf, uint32_t user_size)
 	return uaccess_copy_to_user(cur, user_buf, st, copy_size) == 0 ? 0 : -1;
 }
 
+static int linux_copy_statfs_arm64(process_t *cur, uint32_t user_buf)
+{
+	uint8_t st[120];
+
+	if (!cur || user_buf == 0)
+		return -22;
+
+	k_memset(st, 0, sizeof(st));
+	linux_put_u64(st, 0u, 0x4452554Eu); /* f_type: "DRUN" */
+	linux_put_u64(st, 8u, 4096u);       /* f_bsize */
+	linux_put_u64(st, 16u, 12800u);     /* f_blocks */
+	linux_put_u64(st, 24u, 6400u);      /* f_bfree */
+	linux_put_u64(st, 32u, 6400u);      /* f_bavail */
+	linux_put_u64(st, 40u, 4096u);      /* f_files */
+	linux_put_u64(st, 48u, 2048u);      /* f_ffree */
+	linux_put_u64(st, 64u, 255u);       /* f_namelen */
+	linux_put_u64(st, 72u, 4096u);      /* f_frsize */
+	return uaccess_copy_to_user(cur, user_buf, st, sizeof(st)) == 0 ? 0 : -1;
+}
+
 static uint32_t syscall_stat64_path_common(uint32_t user_path,
                                            uint32_t user_stat,
                                            uint32_t nofollow)
@@ -583,6 +625,59 @@ uint32_t SYSCALL_NOINLINE syscall_case_fstat64(uint32_t ebx, uint32_t ecx)
 	return syscall_fstat64(ebx, ecx);
 }
 
+uint32_t SYSCALL_NOINLINE syscall_case_fstatat_arm64(uint32_t ebx,
+                                                     uint32_t ecx,
+                                                     uint32_t edx,
+                                                     uint32_t esi)
+{
+	process_t *cur = sched_current();
+	uint8_t st[128];
+	linux_fd_stat_t meta;
+	char first;
+
+	if (!cur || ecx == 0 || edx == 0)
+		return (uint32_t)-1;
+	if ((esi & ~(LINUX_AT_SYMLINK_NOFOLLOW | LINUX_AT_NO_AUTOMOUNT |
+	             LINUX_AT_EMPTY_PATH)) != 0)
+		return (uint32_t)-LINUX_EINVAL;
+	if (uaccess_copy_from_user(cur, &first, ecx, sizeof(first)) != 0)
+		return (uint32_t)-1;
+	if (first == '\0') {
+		if ((esi & LINUX_AT_EMPTY_PATH) == 0)
+			return (uint32_t)-LINUX_ENOENT;
+		if (linux_fd_stat_metadata(cur, ebx, &meta) != 0)
+			return (uint32_t)-1;
+	} else {
+		if (linux_path_stat_metadata_at_flags(
+		        cur,
+		        ebx,
+		        ecx,
+		        &meta,
+		        (esi & LINUX_AT_SYMLINK_NOFOLLOW) != 0) != 0)
+			return (uint32_t)-LINUX_ENOENT;
+	}
+
+	linux_fill_stat_arm64(st, &meta);
+	if (uaccess_copy_to_user(cur, edx, st, sizeof(st)) != 0)
+		return (uint32_t)-1;
+	return 0;
+}
+
+uint32_t SYSCALL_NOINLINE syscall_case_fstat_arm64(uint32_t ebx, uint32_t ecx)
+{
+	process_t *cur = sched_current();
+	uint8_t st[128];
+	linux_fd_stat_t meta;
+
+	if (!cur || ecx == 0 || linux_fd_stat_metadata(cur, ebx, &meta) != 0)
+		return (uint32_t)-1;
+
+	linux_fill_stat_arm64(st, &meta);
+	if (uaccess_copy_to_user(cur, ecx, st, sizeof(st)) != 0)
+		return (uint32_t)-1;
+	return 0;
+}
+
 uint32_t SYSCALL_NOINLINE syscall_case_statx(
     uint32_t ebx, uint32_t ecx, uint32_t edx, uint32_t esi, uint32_t edi)
 {
@@ -625,4 +720,26 @@ uint32_t SYSCALL_NOINLINE syscall_case_fstatfs64(uint32_t ebx,
 		rc = linux_copy_statfs64(cur, edx, ecx);
 		return rc == 0 ? 0 : (uint32_t)rc;
 	}
+}
+
+uint32_t SYSCALL_NOINLINE syscall_case_statfs_arm64(uint32_t ebx, uint32_t ecx)
+{
+	process_t *cur = sched_current();
+	int rc = linux_path_exists(cur, ebx);
+
+	if (rc != 0)
+		return (uint32_t)rc;
+	rc = linux_copy_statfs_arm64(cur, ecx);
+	return rc == 0 ? 0 : (uint32_t)rc;
+}
+
+uint32_t SYSCALL_NOINLINE syscall_case_fstatfs_arm64(uint32_t ebx, uint32_t ecx)
+{
+	process_t *cur = sched_current();
+	int rc;
+
+	if (!cur || ebx >= MAX_FDS || proc_fd_entries(cur)[ebx].type == FD_TYPE_NONE)
+		return (uint32_t)-LINUX_EBADF;
+	rc = linux_copy_statfs_arm64(cur, ecx);
+	return rc == 0 ? 0 : (uint32_t)rc;
 }

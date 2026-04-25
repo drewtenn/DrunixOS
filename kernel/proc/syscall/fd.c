@@ -562,6 +562,41 @@ static uint32_t syscall_iov_fd_op(uint32_t fd,
 	return total;
 }
 
+static uint32_t syscall_iov64_fd_op(uint32_t fd,
+                                    uint32_t user_iov,
+                                    uint32_t iovcnt,
+                                    syscall_fd_io_op_t op)
+{
+	process_t *cur = sched_current();
+	uint32_t total = 0;
+
+	if (!cur || !op || fd >= MAX_FDS || user_iov == 0 || iovcnt > 1024u)
+		return (uint32_t)-1;
+	if (proc_fd_entries(cur)[fd].type == FD_TYPE_NONE)
+		return (uint32_t)-1;
+
+	for (uint32_t i = 0; i < iovcnt; i++) {
+		uint64_t iov[2];
+		uint32_t n;
+
+		if (uaccess_copy_from_user(
+		        cur, iov, user_iov + i * sizeof(iov), sizeof(iov)) != 0)
+			return total ? total : (uint32_t)-1;
+		if (iov[0] > UINT32_MAX || iov[1] > UINT32_MAX)
+			return total ? total : (uint32_t)-1;
+		if (iov[1] == 0)
+			continue;
+
+		n = op(fd, (uint32_t)iov[0], (uint32_t)iov[1]);
+		if (n == (uint32_t)-1)
+			return total ? total : (uint32_t)-1;
+		total += n;
+		if (n < (uint32_t)iov[1])
+			break;
+	}
+	return total;
+}
+
 uint32_t SYSCALL_NOINLINE syscall_case_write(uint32_t ebx,
                                              uint32_t ecx,
                                              uint32_t edx)
@@ -595,6 +630,13 @@ uint32_t SYSCALL_NOINLINE syscall_case_writev(uint32_t ebx,
 	}
 }
 
+uint32_t SYSCALL_NOINLINE syscall_case_writev64(uint32_t ebx,
+                                                uint32_t ecx,
+                                                uint32_t edx)
+{
+	return syscall_iov64_fd_op(ebx, ecx, edx, syscall_write_fd);
+}
+
 uint32_t SYSCALL_NOINLINE syscall_case_readv(uint32_t ebx,
                                              uint32_t ecx,
                                              uint32_t edx)
@@ -606,6 +648,13 @@ uint32_t SYSCALL_NOINLINE syscall_case_readv(uint32_t ebx,
          */
 		return syscall_iov_fd_op(ebx, ecx, edx, syscall_read_fd);
 	}
+}
+
+uint32_t SYSCALL_NOINLINE syscall_case_readv64(uint32_t ebx,
+                                               uint32_t ecx,
+                                               uint32_t edx)
+{
+	return syscall_iov64_fd_op(ebx, ecx, edx, syscall_read_fd);
 }
 
 uint32_t SYSCALL_NOINLINE syscall_case_read(uint32_t ebx,

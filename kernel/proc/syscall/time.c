@@ -17,10 +17,12 @@
 #define LINUX_EFAULT 14
 #define LINUX_EINVAL 22
 
-static uint32_t syscall_nanosleep(uint32_t user_req, uint32_t user_rem)
+static uint32_t syscall_nanosleep_common(uint64_t sec,
+                                         uint64_t nsec,
+                                         uint32_t user_rem,
+                                         uint32_t rem_is_64)
 {
 	process_t *cur = sched_current();
-	uint32_t req[2];
 	uint32_t start;
 	uint32_t sec_ticks;
 	uint32_t tick_nsec;
@@ -28,23 +30,22 @@ static uint32_t syscall_nanosleep(uint32_t user_req, uint32_t user_rem)
 	uint32_t delta_ticks;
 	uint32_t deadline;
 	uint32_t now;
+	uint32_t nsec32;
 
 	if (!cur)
 		return (uint32_t)-1;
-	if (user_req == 0)
-		return (uint32_t)-LINUX_EFAULT;
-	if (uaccess_copy_from_user(cur, req, user_req, sizeof(req)) != 0)
-		return (uint32_t)-LINUX_EFAULT;
-	if (req[1] >= 1000000000u)
+	if (nsec >= 1000000000ull)
 		return (uint32_t)-LINUX_EINVAL;
-	if (req[0] == 0 && req[1] == 0)
+	if (sec == 0 && nsec == 0)
 		return 0;
 
+	nsec32 = (uint32_t)nsec;
 	start = sched_ticks();
 	sec_ticks =
-	    (req[0] > (0xFFFFFFFFu / SCHED_HZ)) ? 0xFFFFFFFFu : req[0] * SCHED_HZ;
+	    (sec > (0xFFFFFFFFu / SCHED_HZ)) ? 0xFFFFFFFFu
+	                                     : (uint32_t)sec * SCHED_HZ;
 	tick_nsec = 1000000000u / SCHED_HZ;
-	nsec_ticks = (req[1] == 0) ? 0 : (req[1] + tick_nsec - 1u) / tick_nsec;
+	nsec_ticks = (nsec32 == 0) ? 0 : (nsec32 + tick_nsec - 1u) / tick_nsec;
 	delta_ticks = (sec_ticks > 0xFFFFFFFFu - nsec_ticks)
 	                  ? 0xFFFFFFFFu
 	                  : sec_ticks + nsec_ticks;
@@ -56,15 +57,51 @@ static uint32_t syscall_nanosleep(uint32_t user_req, uint32_t user_rem)
 	if ((int32_t)(deadline - now) > 0) {
 		uint32_t remaining_ticks = deadline - now;
 		if (user_rem != 0) {
-			uint32_t rem[2];
-			rem[0] = remaining_ticks / SCHED_HZ;
-			rem[1] = (remaining_ticks % SCHED_HZ) * tick_nsec;
-			if (uaccess_copy_to_user(cur, user_rem, rem, sizeof(rem)) != 0)
-				return (uint32_t)-1;
+			if (rem_is_64) {
+				uint64_t rem[2];
+				rem[0] = remaining_ticks / SCHED_HZ;
+				rem[1] = (remaining_ticks % SCHED_HZ) * tick_nsec;
+				if (uaccess_copy_to_user(cur, user_rem, rem, sizeof(rem)) != 0)
+					return (uint32_t)-1;
+			} else {
+				uint32_t rem[2];
+				rem[0] = remaining_ticks / SCHED_HZ;
+				rem[1] = (remaining_ticks % SCHED_HZ) * tick_nsec;
+				if (uaccess_copy_to_user(cur, user_rem, rem, sizeof(rem)) != 0)
+					return (uint32_t)-1;
+			}
 		}
 		return (uint32_t)-1;
 	}
 	return 0;
+}
+
+static uint32_t syscall_nanosleep(uint32_t user_req, uint32_t user_rem)
+{
+	process_t *cur = sched_current();
+	uint32_t req[2];
+
+	if (!cur)
+		return (uint32_t)-1;
+	if (user_req == 0)
+		return (uint32_t)-LINUX_EFAULT;
+	if (uaccess_copy_from_user(cur, req, user_req, sizeof(req)) != 0)
+		return (uint32_t)-LINUX_EFAULT;
+	return syscall_nanosleep_common(req[0], req[1], user_rem, 0);
+}
+
+static uint32_t syscall_nanosleep64(uint32_t user_req, uint32_t user_rem)
+{
+	process_t *cur = sched_current();
+	uint64_t req[2];
+
+	if (!cur)
+		return (uint32_t)-1;
+	if (user_req == 0)
+		return (uint32_t)-LINUX_EFAULT;
+	if (uaccess_copy_from_user(cur, req, user_req, sizeof(req)) != 0)
+		return (uint32_t)-LINUX_EFAULT;
+	return syscall_nanosleep_common(req[0], req[1], user_rem, 1);
 }
 
 uint32_t SYSCALL_NOINLINE syscall_case_nanosleep(uint32_t ebx, uint32_t ecx)
@@ -78,6 +115,24 @@ uint32_t SYSCALL_NOINLINE syscall_case_nanosleep(uint32_t ebx, uint32_t ecx)
 	 * interrupted by a signal.
 	 */
 	return syscall_nanosleep(ebx, ecx);
+}
+
+uint32_t SYSCALL_NOINLINE syscall_case_nanosleep64(uint32_t ebx, uint32_t ecx)
+{
+	return syscall_nanosleep64(ebx, ecx);
+}
+
+uint32_t SYSCALL_NOINLINE
+syscall_case_clock_nanosleep64(uint32_t ebx,
+                               uint32_t ecx,
+                               uint32_t edx,
+                               uint32_t esi)
+{
+	if (ebx != 0 && ebx != 1)
+		return (uint32_t)-LINUX_EINVAL;
+	if (ecx != 0)
+		return (uint32_t)-LINUX_EINVAL;
+	return syscall_nanosleep64(edx, esi);
 }
 
 uint32_t SYSCALL_NOINLINE syscall_case_clock_gettime(uint32_t ebx, uint32_t ecx)

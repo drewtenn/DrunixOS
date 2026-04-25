@@ -35,6 +35,7 @@ arm64_switch_context(arch_context_t *old_ctx, arch_context_t new_ctx);
 extern void arm64_fpu_save_state(void *state);
 extern void arm64_fpu_restore_state(const void *state);
 extern void arm64_process_first_resume(void);
+extern void arm64_process_exec_resume(void);
 
 uintptr_t g_arm64_exception_frame;
 
@@ -242,9 +243,16 @@ void arch_process_build_exec_frame(process_t *proc,
                                    arch_aspace_t old_aspace,
                                    uintptr_t old_kstack_bottom)
 {
-	(void)old_aspace;
-	(void)old_kstack_bottom;
+	arm64_kernel_context_t *ctx;
+
 	arm64_build_launch_context(proc);
+	ctx = arm64_process_kernel_context(proc);
+	if (!ctx)
+		return;
+
+	ctx->x20 = (uint64_t)old_aspace;
+	ctx->x21 = (uint64_t)old_kstack_bottom;
+	ctx->x30 = (uint64_t)(uintptr_t)arm64_process_exec_resume;
 }
 
 int arch_process_clone_frame(process_t *child_out,
@@ -385,15 +393,41 @@ uint32_t arch_trap_frame_fault_vector(const arch_trap_frame_t *frame)
 	                                                                    : 0u;
 }
 
+static int arm64_abort_fsc_is_present_fault(uint32_t fsc)
+{
+	switch (fsc & 0x3Fu) {
+	case 0x09u:
+	case 0x0Au:
+	case 0x0Bu:
+	case 0x0Du:
+	case 0x0Eu:
+	case 0x0Fu:
+		return 1;
+	default:
+		return 0;
+	}
+}
+
 uint32_t arch_trap_frame_fault_error_code(const arch_trap_frame_t *frame)
 {
 	uint32_t err = 0u;
 	uint32_t ec;
+	uint32_t fsc;
 
 	if (!frame)
 		return 0u;
 
 	ec = (uint32_t)((frame->esr_el1 >> 26) & 0x3Fu);
+	if (ec != 0x20u && ec != 0x21u && ec != 0x24u && ec != 0x25u)
+		return 0u;
+
+	if (arch_irq_frame_is_user((uintptr_t)frame))
+		err |= 0x4u;
+
+	fsc = (uint32_t)(frame->esr_el1 & 0x3Fu);
+	if (arm64_abort_fsc_is_present_fault(fsc))
+		err |= 0x1u;
+
 	if (ec == 0x24u || ec == 0x25u) {
 		if ((frame->esr_el1 & (1ull << 6)) != 0)
 			err |= 0x2u;
