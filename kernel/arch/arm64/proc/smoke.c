@@ -38,7 +38,7 @@ static int arm64_smoke_copy_to_ram(uintptr_t dst,
 	return 0;
 }
 
-static int arm64_smoke_load_image(uintptr_t *entry_out)
+static int arm64_smoke_load_image(uintptr_t *entry_out, uintptr_t *image_end_out)
 {
 	const uint8_t *image = arm64_smoke_elf_start;
 	uint32_t image_size = (uint32_t)(arm64_smoke_elf_end - arm64_smoke_elf_start);
@@ -85,7 +85,7 @@ static int arm64_smoke_load_image(uintptr_t *entry_out)
 			high_water = seg_page_end;
 	}
 
-	if (!entry_out || high_water <= ARM64_SMOKE_LOAD_BASE ||
+	if (!entry_out || !image_end_out || high_water <= ARM64_SMOKE_LOAD_BASE ||
 	    ehdr->e_entry < ARM64_SMOKE_LOAD_BASE || ehdr->e_entry >= high_water)
 		return -1;
 	k_memset((void *)(uintptr_t)ARM64_SMOKE_STACK_BASE, 0, ARM64_SMOKE_STACK_SIZE);
@@ -93,6 +93,19 @@ static int arm64_smoke_load_image(uintptr_t *entry_out)
 	              (uint32_t)(high_water - ARM64_SMOKE_LOAD_BASE));
 	pmm_mark_used(ARM64_SMOKE_STACK_BASE, ARM64_SMOKE_STACK_SIZE);
 	*entry_out = (uintptr_t)ehdr->e_entry;
+	*image_end_out = (uintptr_t)high_water;
+	return 0;
+}
+
+static int arm64_smoke_map_range(arch_aspace_t aspace,
+                                 uintptr_t start,
+                                 uintptr_t end,
+                                 uint32_t flags)
+{
+	for (uintptr_t page = start; page < end; page += PAGE_SIZE) {
+		if (arch_mm_map(aspace, page, page, flags) != 0)
+			return -1;
+	}
 	return 0;
 }
 
@@ -161,13 +174,36 @@ uint64_t arm64_userspace_syscall_dispatch(arch_trap_frame_t *frame)
 int arm64_user_smoke_boot(void)
 {
 	uintptr_t entry = 0u;
+	uintptr_t image_end = 0u;
+	arch_aspace_t aspace;
 
 	k_memset(&g_arm64_smoke_proc, 0, sizeof(g_arm64_smoke_proc));
 	k_memset(g_arm64_smoke_kstack, 0, sizeof(g_arm64_smoke_kstack));
-	if (arm64_smoke_load_image(&entry) != 0)
+	if (arm64_smoke_load_image(&entry, &image_end) != 0)
 		return -1;
 
-	g_arm64_smoke_proc.pd_phys = (uint32_t)arch_aspace_kernel();
+	aspace = arch_aspace_create();
+	if (!aspace)
+		return -1;
+	if (arm64_smoke_map_range(aspace,
+	                          ARM64_SMOKE_LOAD_BASE,
+	                          image_end,
+	                          ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ |
+	                              ARCH_MM_MAP_WRITE | ARCH_MM_MAP_EXEC |
+	                              ARCH_MM_MAP_USER) != 0) {
+		arch_aspace_destroy(aspace);
+		return -1;
+	}
+	if (arm64_smoke_map_range(aspace,
+	                          ARM64_SMOKE_STACK_BASE,
+	                          ARM64_SMOKE_STACK_TOP,
+	                          ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ |
+	                              ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER) != 0) {
+		arch_aspace_destroy(aspace);
+		return -1;
+	}
+
+	g_arm64_smoke_proc.pd_phys = (uint32_t)aspace;
 	g_arm64_smoke_proc.entry = (uint32_t)entry;
 	g_arm64_smoke_proc.user_stack = ARM64_SMOKE_STACK_TOP;
 	g_arm64_smoke_proc.kstack_bottom = (uint32_t)(uintptr_t)g_arm64_smoke_kstack;

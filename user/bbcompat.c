@@ -4,6 +4,7 @@
  */
 
 #include "lib/stdio.h"
+#include "lib/stdlib.h"
 #include "lib/string.h"
 #include "lib/syscall.h"
 
@@ -1914,6 +1915,28 @@ static int wait_exit_code(int status)
 	return 255;
 }
 
+static int arm64_smoke_case(const bb_case_t *tc)
+{
+	return strcmp(tc->name, "true exits zero") == 0 ||
+	       strcmp(tc->name, "false exits one") == 0 ||
+	       strcmp(tc->name, "sleep zero returns") == 0 ||
+	       strcmp(tc->name, "clear emits terminal control") == 0;
+}
+
+static int case_enabled(const bb_case_t *tc, const char *mode)
+{
+	if (mode && strcmp(mode, "arm64-smoke") == 0)
+		return arm64_smoke_case(tc);
+	return 1;
+}
+
+static int busybox_available(void)
+{
+	dufs_stat_t st;
+
+	return sys_stat("/bin/busybox", &st) == 0 && st.type == 1;
+}
+
 static int run_case(const bb_case_t *tc, char *out, int out_cap)
 {
 	int out_pipe[2];
@@ -1991,15 +2014,37 @@ static int run_case(const bb_case_t *tc, char *out, int out_cap)
 int main(void)
 {
 	int passed = 0;
+	int selected = 0;
+	const char *mode = getenv("BBCOMPAT_MODE");
 
 	log_fd = sys_create("/dufs/bbcompat.log");
 	emit("BBCOMPAT BEGIN\n");
+	if (!busybox_available()) {
+		emit("BBCOMPAT ERROR missing /bin/busybox\n");
+		emit("BBCOMPAT HINT rebuild the image with INCLUDE_BUSYBOX=1 or run "
+		     "make test-busybox-compat\n");
+		emit("BBCOMPAT DONE\n");
+		if (log_fd >= 0)
+			sys_close(log_fd);
+		return 127;
+	}
+
+	for (int i = 0; i < BBCOMPAT_TOTAL; i++) {
+		if (case_enabled(&cases[i], mode))
+			selected++;
+	}
 
 	for (int i = 0; i < BBCOMPAT_TOTAL; i++) {
 		char out[BB_OUT_CAP];
-		int code = run_case(&cases[i], out, sizeof(out));
-		int ok = code == cases[i].expected_exit &&
-		         text_contains(out, cases[i].must_contain);
+		int code;
+		int ok;
+
+		if (!case_enabled(&cases[i], mode))
+			continue;
+
+		code = run_case(&cases[i], out, sizeof(out));
+		ok = code == cases[i].expected_exit &&
+		     text_contains(out, cases[i].must_contain);
 
 		if (ok) {
 			passed++;
@@ -2020,10 +2065,10 @@ int main(void)
 		}
 	}
 
-	emitf("BBCOMPAT SUMMARY %s %d/%d\n", "passed", passed, BBCOMPAT_TOTAL);
+	emitf("BBCOMPAT SUMMARY %s %d/%d\n", "passed", passed, selected);
 	emit("BBCOMPAT DONE\n");
 	if (log_fd >= 0)
 		sys_close(log_fd);
 
-	return passed == BBCOMPAT_TOTAL ? 0 : 1;
+	return passed == selected ? 0 : 1;
 }

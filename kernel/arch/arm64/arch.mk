@@ -114,8 +114,17 @@ ARM_USER_CXX_RUNTIME_OBJS := $(ARM_USER_BUILD_DIR)/lib/cxxrt.o \
 ARM_USER_C_BINS := $(addprefix $(ARM_USER_BUILD_DIR)/,$(C_PROGS))
 ARM_USER_CXX_BINS := $(addprefix $(ARM_USER_BUILD_DIR)/,$(CXX_PROGS))
 ARM_USER_NATIVE_BINS := $(ARM_USER_C_BINS) $(ARM_USER_CXX_BINS)
+ARM_EXTRA_ROOTFS_FILES ?=
+ARM_BUSYBOX_ROOTFS_FILES :=
+ARM_BUSYBOX_ROOTFS_DEPS :=
+ifeq ($(INCLUDE_BUSYBOX),1)
+ARM_BUSYBOX_ROOTFS_FILES := $(BUSYBOX_ARM64_BIN) bin/busybox
+ARM_BUSYBOX_ROOTFS_DEPS := $(BUSYBOX_ARM64_BIN)
+endif
 ARM_USER_ROOTFS_FILES := $(foreach prog,$(C_PROGS) $(CXX_PROGS),$(ARM_USER_BUILD_DIR)/$(prog) bin/$(prog)) \
-                         build/arm64init.elf bin/arm64init
+                         build/arm64init.elf bin/arm64init \
+                         $(ARM_BUSYBOX_ROOTFS_FILES) \
+                         $(ARM_EXTRA_ROOTFS_FILES)
 
 kernel/mm/%.arm64.o: kernel/mm/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
@@ -222,7 +231,7 @@ build/arm64-rootfs-empty:
 	@mkdir -p $(dir $@)
 	: > $@
 
-build/arm64-root.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf build/arm64-rootfs-empty tools/mkfs.py kernel/arch/arm64/arch.mk
+build/arm64-root.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf $(ARM_BUSYBOX_ROOTFS_DEPS) build/arm64-rootfs-empty tools/mkfs.py kernel/arch/arm64/arch.mk
 	$(PYTHON) tools/mkfs.py $@ 32768 \
 		$(ARM_USER_ROOTFS_FILES) \
 		build/arm64-rootfs-empty dev/.keep \

@@ -30,6 +30,7 @@ _start:
 .Lfrom_el2:
     mov x0, #(1 << 31)
     msr hcr_el2, x0
+    msr cptr_el2, xzr
 
     mov x0, #0x3
     msr cnthctl_el2, x0
@@ -46,6 +47,18 @@ _start:
     eret
 
 .Lin_el1:
+    mrs x0, sctlr_el1
+    bic x0, x0, #(1 << 1)
+    bic x0, x0, #(1 << 3)
+    bic x0, x0, #(1 << 4)
+    msr sctlr_el1, x0
+    isb
+
+    mrs x0, cpacr_el1
+    orr x0, x0, #(3 << 20)
+    msr cpacr_el1, x0
+    isb
+
     adr x0, _start
     mov sp, x0
 

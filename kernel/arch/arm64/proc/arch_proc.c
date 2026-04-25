@@ -32,6 +32,8 @@ typedef struct arm64_kernel_context {
 extern void arm64_enter_user_frame(arch_trap_frame_t *frame);
 extern void
 arm64_switch_context(arch_context_t *old_ctx, arch_context_t new_ctx);
+extern void arm64_fpu_save_state(void *state);
+extern void arm64_fpu_restore_state(const void *state);
 extern void arm64_process_first_resume(void);
 
 uintptr_t g_arm64_exception_frame;
@@ -302,7 +304,10 @@ void arch_process_launch(process_t *proc)
 
 void arch_context_prepare(process_t *proc)
 {
-	(void)proc;
+	if (!proc)
+		return;
+
+	arm64_fpu_restore_state(proc->arch_state.fpu_state);
 }
 
 void arch_fpu_init_state(process_t *proc)
@@ -314,7 +319,10 @@ void arch_fpu_init_state(process_t *proc)
 
 void arch_fpu_save(process_t *proc)
 {
-	(void)proc;
+	if (!proc)
+		return;
+
+	arm64_fpu_save_state(proc->arch_state.fpu_state);
 }
 
 void arch_context_switch(arch_context_t *old_ctx,

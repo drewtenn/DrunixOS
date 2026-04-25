@@ -62,10 +62,10 @@ void arm64_sync_handler(arch_trap_frame_t *frame)
 			return;
 		}
 
-		if (!sched_record_user_fault || !sched_mark_signaled || !schedule)
-			arm64_report_kernel_sync_exception(frame);
-		sched_record_user_fault(
-		    frame, arch_trap_frame_fault_addr(frame), SIGSEGV);
+			if (!sched_record_user_fault || !sched_mark_signaled || !schedule)
+				arm64_report_kernel_sync_exception(frame);
+			sched_record_user_fault(
+			    frame, arch_trap_frame_fault_addr(frame), SIGSEGV);
 		sched_mark_signaled(SIGSEGV, 0);
 		schedule();
 		arm64_halt_forever();

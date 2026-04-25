@@ -13,7 +13,15 @@ SPARSE ?= sparse
 SPARSEFLAGS ?= -Wno-non-pointer-null -nostdinc -I tools/sparse-include -I user/lib
 SCAN_FAIL ?= 1
 LINUX_I386_CC ?= i486-linux-musl-gcc
+LINUX_I386_CROSS_COMPILE ?= i486-linux-musl-
+LINUX_ARM64_CC ?= aarch64-linux-musl-gcc
+LINUX_ARM64_CROSS_COMPILE ?= aarch64-linux-musl-
 LINUX_CFLAGS ?= -static -Os -s
+INCLUDE_BUSYBOX ?= 0
+BUSYBOX_VERSION ?= 1.36.1
+BUSYBOX_X86_BIN := build/busybox/x86/busybox
+BUSYBOX_ARM64_BIN := build/busybox/arm64/busybox
+BUSYBOX_ARM64_LDFLAGS ?= -Wl,-Ttext-segment=0x02000000
 E2FSPROGS_SBIN ?= /opt/homebrew/opt/e2fsprogs/sbin
 E2FSCK  ?= $(if $(wildcard $(E2FSPROGS_SBIN)/e2fsck),$(E2FSPROGS_SBIN)/e2fsck,e2fsck)
 DUMPE2FS ?= $(if $(wildcard $(E2FSPROGS_SBIN)/dumpe2fs),$(E2FSPROGS_SBIN)/dumpe2fs,dumpe2fs)
@@ -149,11 +157,22 @@ CFLAGS += -DDRUNIX_DISK_SECTORS=$(DISK_SECTORS)
 PARTITION_START ?= 2048
 FS_SECTORS     := $(shell expr $(DISK_SECTORS) - $(PARTITION_START))
 include user/programs.mk
+EXTRA_DISK_FILES ?=
+BUSYBOX_DISK_FILES :=
+BUSYBOX_DISK_DEPS :=
+ifeq ($(INCLUDE_BUSYBOX),1)
+ifeq ($(ARCH),x86)
+BUSYBOX_DISK_FILES := $(BUSYBOX_X86_BIN) bin/busybox
+BUSYBOX_DISK_DEPS := $(BUSYBOX_X86_BIN)
+endif
+endif
 USER_PROGS    := $(PROGS)
 USER_BINS     := $(addprefix user/,$(USER_PROGS))
 DISK_FILES    := $(foreach prog,$(USER_PROGS),user/$(prog) bin/$(prog)) \
                  tools/hello.txt hello.txt \
-                 tools/readme.txt readme.txt
+                 tools/readme.txt readme.txt \
+                 $(BUSYBOX_DISK_FILES) \
+                 $(EXTRA_DISK_FILES)
 LOG_DIR       := logs
 IMG_DIR       := img
 ROOT_DISK_IMG := $(IMG_DIR)/disk.img
@@ -180,6 +199,14 @@ GDB_COMMON    := -ex "set pagination off" \
                  -ex "set confirm off" \
                  -ex "set tcp auto-retry on" \
                  -ex "file kernel.elf"
+
+$(BUSYBOX_X86_BIN): tools/build_linux_busybox.sh Makefile
+	env BUSYBOX_CC="$(LINUX_I386_CC)" BUSYBOX_CROSS_COMPILE="$(LINUX_I386_CROSS_COMPILE)" JOBS="$${JOBS:-4}" \
+		tools/build_linux_busybox.sh $@ $(BUSYBOX_VERSION) build/busybox/x86-src
+
+$(BUSYBOX_ARM64_BIN): tools/build_linux_busybox.sh Makefile
+	env BUSYBOX_CC="$(LINUX_ARM64_CC)" BUSYBOX_CROSS_COMPILE="$(LINUX_ARM64_CROSS_COMPILE)" BUSYBOX_LDFLAGS="$(BUSYBOX_ARM64_LDFLAGS)" JOBS="$${JOBS:-4}" \
+		tools/build_linux_busybox.sh $@ $(BUSYBOX_VERSION) build/busybox/arm64-src
 
 define qemu_run
 mkdir -p $(LOG_DIR)
@@ -264,12 +291,12 @@ user/lib/libc.a user/lib/tcc_crt0.o:
 # Linux-compatible ext3 root partition.  ROOT_FS=dufs builds sda as DUFS
 # instead.
 ifeq ($(ROOT_FS),dufs)
-disk.fs: $(USER_BINS) tools/hello.txt tools/readme.txt tools/mkfs.py .disk-sectors-flag
+disk.fs: $(USER_BINS) $(BUSYBOX_DISK_DEPS) tools/hello.txt tools/readme.txt tools/mkfs.py .disk-sectors-flag
 	$(PYTHON) tools/mkfs.py $@ $(FS_SECTORS) $(DISK_FILES)
 $(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
 	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0xDA
 else
-disk.fs: $(USER_BINS) tools/hello.txt tools/readme.txt tools/mkext3.py .disk-sectors-flag
+disk.fs: $(USER_BINS) $(BUSYBOX_DISK_DEPS) tools/hello.txt tools/readme.txt tools/mkext3.py .disk-sectors-flag
 	$(PYTHON) tools/mkext3.py $@ $(FS_SECTORS) $(DISK_FILES)
 $(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
 	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0x83
@@ -362,6 +389,11 @@ check-arch-boundary-reuse:
 
 check-shared-shell-tests:
 	python3 tools/test_shared_shell_tests_arch_neutral.py
+
+check-busybox-compat:
+	python3 tools/test_busybox_compat.py --arch x86
+
+test-busybox-compat: check-busybox-compat
 
 check-targets-generic:
 	python3 tools/test_make_targets_arch_neutral.py
@@ -551,9 +583,9 @@ clean:
         disk.img dufs.img \
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
-        test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all \
+        test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all test-busybox-compat \
         check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
-        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-arch-boundary-reuse check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
+        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean
@@ -650,6 +682,11 @@ check-ctrl-c:
 check-shell-history:
 	python3 tools/test_shell_history.py --arch arm64
 
+check-busybox-compat:
+	python3 tools/test_busybox_compat.py --arch arm64
+
+test-busybox-compat: check-busybox-compat
+
 check-arch-boundary-reuse:
 	python3 tools/test_arch_boundary_reuse.py
 
@@ -695,9 +732,9 @@ clean:
         disk.img dufs.img \
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
-        test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all \
+        test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all test-busybox-compat \
         check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
-        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-arch-boundary-reuse check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
+        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean

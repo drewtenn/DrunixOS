@@ -8,6 +8,7 @@
 #include "fs.h"
 #include "kheap.h"
 #include "kstring.h"
+#include "mem_forensics.h"
 #include "pmm.h"
 #include "process.h"
 #include "resources.h"
@@ -26,6 +27,36 @@ static void shared_init_vma_proc(process_t *proc)
 	proc->stack_low_limit =
 	    USER_STACK_TOP - (uint32_t)USER_STACK_PAGES * PAGE_SIZE;
 	vma_init(proc);
+	(void)vma_add(proc,
+	              proc->heap_start,
+	              proc->brk,
+	              VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_ANON |
+	                  VMA_FLAG_PRIVATE,
+	              VMA_KIND_HEAP);
+	(void)vma_add(proc,
+	              USER_STACK_TOP - (uint32_t)USER_STACK_MAX_PAGES * PAGE_SIZE,
+	              USER_STACK_TOP,
+	              VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_ANON |
+	                  VMA_FLAG_PRIVATE | VMA_FLAG_GROWSDOWN,
+	              VMA_KIND_STACK);
+}
+
+static void shared_init_fresh_process_layout_proc(process_t *proc)
+{
+	k_memset(proc, 0, sizeof(*proc));
+	proc->image_start = 0x00400000u;
+	proc->image_end = 0x00410000u;
+	proc->heap_start = proc->image_end;
+	proc->brk = proc->heap_start;
+	proc->stack_low_limit =
+	    USER_STACK_TOP - (uint32_t)USER_STACK_PAGES * PAGE_SIZE;
+	vma_init(proc);
+	(void)vma_add(proc,
+	              proc->image_start,
+	              proc->image_end,
+	              VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_EXEC |
+	                  VMA_FLAG_PRIVATE,
+	              VMA_KIND_IMAGE);
 	(void)vma_add(proc,
 	              proc->heap_start,
 	              proc->brk,
@@ -247,6 +278,114 @@ static void test_shared_vma_protect_range_splits_and_requires_full_coverage(
 	                      0x70001000u,
 	                      VMA_FLAG_READ | VMA_FLAG_ANON | VMA_FLAG_PRIVATE),
 	    (uint32_t)-1);
+}
+
+static void
+test_shared_mem_forensics_collects_basic_region_totals(ktest_case_t *tc)
+{
+	static process_t proc;
+	mem_forensics_report_t report;
+	uint32_t stack_reserved =
+	    (uint32_t)USER_STACK_MAX_PAGES * (uint32_t)PAGE_SIZE;
+
+	shared_init_vma_proc(&proc);
+	proc.image_start = 0x00400000u;
+	proc.image_end = 0x00410000u;
+	k_strncpy(proc.name, "shell", sizeof(proc.name) - 1u);
+
+	KTEST_ASSERT_EQ(tc, (uint32_t)mem_forensics_collect(&proc, &report), 0u);
+	KTEST_EXPECT_EQ(tc, report.region_count, 3u);
+	KTEST_EXPECT_EQ(tc, report.image_reserved_bytes, 0x00010000u);
+	KTEST_EXPECT_EQ(tc, report.heap_reserved_bytes, 0x00008000u);
+	KTEST_EXPECT_EQ(tc, report.stack_reserved_bytes, stack_reserved);
+}
+
+static void
+test_shared_mem_forensics_core_note_sizes_are_nonzero(ktest_case_t *tc)
+{
+	KTEST_EXPECT_TRUE(tc, mem_forensics_vmstat_note_size() > 0u);
+	KTEST_EXPECT_TRUE(tc, mem_forensics_fault_note_size() > 0u);
+}
+
+static void
+test_shared_mem_forensics_collects_fresh_process_layout(ktest_case_t *tc)
+{
+	static process_t proc;
+	mem_forensics_report_t report;
+	uint32_t stack_reserved =
+	    (uint32_t)USER_STACK_MAX_PAGES * (uint32_t)PAGE_SIZE;
+
+	shared_init_fresh_process_layout_proc(&proc);
+	k_strncpy(proc.name, "shell", sizeof(proc.name) - 1u);
+
+	KTEST_ASSERT_EQ(tc, (uint32_t)mem_forensics_collect(&proc, &report), 0u);
+	KTEST_EXPECT_EQ(tc, report.region_count, 3u);
+	KTEST_EXPECT_EQ(tc, report.regions[0].kind, MEM_FORENSICS_REGION_IMAGE);
+	KTEST_EXPECT_EQ(tc, report.regions[1].kind, MEM_FORENSICS_REGION_HEAP);
+	KTEST_EXPECT_EQ(tc, report.regions[2].kind, MEM_FORENSICS_REGION_STACK);
+	KTEST_EXPECT_EQ(tc, report.image_reserved_bytes, 0x00010000u);
+	KTEST_EXPECT_EQ(tc, report.heap_reserved_bytes, 0u);
+	KTEST_EXPECT_EQ(tc, report.stack_reserved_bytes, stack_reserved);
+	KTEST_EXPECT_EQ(tc, report.mmap_reserved_bytes, 0u);
+	KTEST_EXPECT_EQ(
+	    tc, report.total_reserved_bytes, 0x00010000u + stack_reserved);
+}
+
+static void
+test_shared_mem_forensics_collects_full_vma_table_with_fallback_image(
+    ktest_case_t *tc)
+{
+	static process_t proc;
+	mem_forensics_report_t report;
+	uint32_t expected_total = 0x00010000u;
+
+	k_memset(&proc, 0, sizeof(proc));
+	proc.image_start = 0x00400000u;
+	proc.image_end = 0x00410000u;
+	proc.brk = 0x00500000u;
+	vma_init(&proc);
+
+	for (uint32_t i = 0; i < PROCESS_MAX_VMAS; i++) {
+		uint32_t start = 0x01000000u + i * 0x2000u;
+		KTEST_ASSERT_EQ(tc,
+		                vma_add(&proc,
+		                        start,
+		                        start + PAGE_SIZE,
+		                        VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_ANON |
+		                            VMA_FLAG_PRIVATE,
+		                        VMA_KIND_GENERIC),
+		                0);
+		expected_total += PAGE_SIZE;
+	}
+
+	KTEST_ASSERT_EQ(tc, (uint32_t)mem_forensics_collect(&proc, &report), 0u);
+	KTEST_EXPECT_EQ(tc, report.region_count, PROCESS_MAX_VMAS + 1u);
+	KTEST_EXPECT_EQ(tc, report.regions[0].kind, MEM_FORENSICS_REGION_IMAGE);
+	KTEST_EXPECT_EQ(tc, report.image_reserved_bytes, 0x00010000u);
+	KTEST_EXPECT_EQ(tc,
+	                report.mmap_reserved_bytes,
+	                (uint32_t)PROCESS_MAX_VMAS * (uint32_t)PAGE_SIZE);
+	KTEST_EXPECT_EQ(tc, report.total_reserved_bytes, expected_total);
+}
+
+static void
+test_shared_mem_forensics_counts_present_heap_pages(ktest_case_t *tc)
+{
+	static process_t proc;
+	mem_forensics_report_t report;
+
+	KTEST_EXPECT_EQ(tc, shared_init_user_proc(&proc), 0);
+	if (tc->failed)
+		return;
+	KTEST_EXPECT_NOT_NULL(tc, shared_map_user_page(&proc, proc.heap_start, 0));
+	if (tc->failed)
+		goto out;
+
+	KTEST_EXPECT_EQ(tc, (uint32_t)mem_forensics_collect(&proc, &report), 0u);
+	KTEST_EXPECT_EQ(tc, report.heap_mapped_bytes, (uint32_t)PAGE_SIZE);
+
+out:
+	shared_destroy_user_proc(&proc);
 }
 
 static void
@@ -533,6 +672,12 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_shared_vma_map_anonymous_places_regions_below_stack),
     KTEST_CASE(test_shared_vma_unmap_range_rejects_heap_or_stack),
     KTEST_CASE(test_shared_vma_protect_range_splits_and_requires_full_coverage),
+    KTEST_CASE(test_shared_mem_forensics_collects_basic_region_totals),
+    KTEST_CASE(test_shared_mem_forensics_core_note_sizes_are_nonzero),
+    KTEST_CASE(test_shared_mem_forensics_collects_fresh_process_layout),
+    KTEST_CASE(
+        test_shared_mem_forensics_collects_full_vma_table_with_fallback_image),
+    KTEST_CASE(test_shared_mem_forensics_counts_present_heap_pages),
     KTEST_CASE(test_shared_proc_resource_put_exec_owner_releases_solo_owner),
     KTEST_CASE(test_shared_repeated_exec_owner_put_preserves_heap),
     KTEST_CASE(test_shared_copy_to_user_spans_pages),

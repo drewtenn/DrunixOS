@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 void arm64_mmu_init(void);
+int arm64_mmu_enabled(void);
 arch_aspace_t arm64_mmu_kernel_aspace(void);
 arch_aspace_t arm64_mmu_aspace_create(void);
 arch_aspace_t arm64_mmu_aspace_clone(arch_aspace_t src);

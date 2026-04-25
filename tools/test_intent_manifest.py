@@ -584,10 +584,23 @@ INTENTS: tuple[TestIntent, ...] = (
         target="test-headless",
         commands={
             "x86": ("KTEST=1 kernel disk",),
-            "arm64": ("python3 tools/test_arm64_userspace_smoke.py",),
+            "arm64": (
+                "python3 tools/test_arm64_ktest.py",
+                "python3 tools/test_arm64_userspace_smoke.py",
+            ),
         },
         sources={
             "arm64": (
+                SourceMarkers(
+                    "kernel/test/test_arch_shared.c",
+                    (
+                        "test_shared_mem_forensics_collects_basic_region_totals",
+                        "test_shared_mem_forensics_core_note_sizes_are_nonzero",
+                        "test_shared_mem_forensics_collects_fresh_process_layout",
+                        "test_shared_mem_forensics_collects_full_vma_table_with_fallback_image",
+                        "test_shared_mem_forensics_counts_present_heap_pages",
+                    ),
+                ),
                 SourceMarkers(
                     "tools/test_arm64_userspace_smoke.py",
                     ("ARM64 user smoke: pass",),
@@ -753,6 +766,40 @@ INTENTS: tuple[TestIntent, ...] = (
                         "test_linux_open_create_append_preserves_flags_and_data",
                         "test_linux_syscalls_install_tls_and_map_mmap2",
                     ),
+                ),
+            ),
+        },
+    ),
+    TestIntent(
+        name="busybox compatibility runtime",
+        target="test-busybox-compat",
+        commands={
+            "x86": ("python3 tools/test_busybox_compat.py --arch x86",),
+            "arm64": ("python3 tools/test_busybox_compat.py --arch arm64",),
+        },
+        sources={
+            "x86": (
+                SourceMarkers(
+                    "tools/test_busybox_compat.py",
+                    ("BBCOMPAT SUMMARY passed", "build/busybox/x86/busybox"),
+                ),
+                SourceMarkers(
+                    "user/bbcompat.c",
+                    ("BBCOMPAT SUMMARY", "sys_execve(\"/bin/busybox\""),
+                ),
+            ),
+            "arm64": (
+				SourceMarkers(
+					"tools/test_busybox_compat.py",
+					(
+						"BBCOMPAT SUMMARY passed",
+						"build/busybox/arm64/busybox",
+						"arm64-smoke",
+					),
+				),
+                SourceMarkers(
+                    "user/bbcompat.c",
+                    ("BBCOMPAT SUMMARY", "sys_execve(\"/bin/busybox\""),
                 ),
             ),
         },

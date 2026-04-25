@@ -115,6 +115,8 @@ void arch_mm_init(void)
 	              (uint32_t)(ARM64_INIT_STACK_TOP - ARM64_INIT_STACK_BASE));
 
 	arm64_mmu_init();
+	if (arm64_mmu_enabled())
+		uart_puts("ARM64 MMU enabled\n");
 	g_arm64_mm_ready = 1;
 }
 

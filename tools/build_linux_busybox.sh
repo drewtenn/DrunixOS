@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build a static Linux i386 BusyBox with the musl cross compiler.
+# Build a static Linux BusyBox with a musl cross compiler.
 
 set -eu
 
@@ -11,8 +11,9 @@ fi
 out=$1
 version=${2:-1.36.1}
 build_dir=${3:-build/busybox}
-cross_compile=${LINUX_I386_CROSS_COMPILE:-i486-linux-musl-}
-cc=${LINUX_I386_CC:-i486-linux-musl-gcc}
+cross_compile=${BUSYBOX_CROSS_COMPILE:-${LINUX_I386_CROSS_COMPILE:-i486-linux-musl-}}
+cc=${BUSYBOX_CC:-${LINUX_I386_CC:-i486-linux-musl-gcc}}
+ldflags=${BUSYBOX_LDFLAGS:-}
 jobs=${JOBS:-2}
 url=${BUSYBOX_URL:-https://busybox.net/downloads/busybox-${version}.tar.bz2}
 
@@ -45,7 +46,7 @@ if ! grep -q '^CONFIG_STATIC=y$' .config; then
     yes '' | make oldconfig >/dev/null
 fi
 
-make -j "$jobs" CROSS_COMPILE="$cross_compile" CC="$cc" busybox
+make -j "$jobs" CROSS_COMPILE="$cross_compile" CC="$cc" LDFLAGS="$ldflags" busybox
 
 cp busybox "${out}.tmp"
 mv "${out}.tmp" "$out"
