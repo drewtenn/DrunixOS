@@ -110,6 +110,20 @@ void ktest_run_suite_counts(ktest_suite_t *suite,
 
 /* ── Top-level runner ───────────────────────────────────────────────────── */
 
+extern ktest_suite_t *ktest_suite_console_terminal(void);
+extern ktest_suite_t *ktest_suite_pmm_core(void);
+extern ktest_suite_t *ktest_suite_kheap(void);
+extern ktest_suite_t *ktest_suite_vfs(void);
+extern ktest_suite_t *ktest_suite_sched(void);
+extern ktest_suite_t *ktest_suite_fs(void);
+extern ktest_suite_t *ktest_suite_blkdev(void);
+
+extern ktest_suite_t *ktest_suite_pmm(void) __attribute__((weak));
+extern ktest_suite_t *ktest_suite_process(void) __attribute__((weak));
+extern ktest_suite_t *ktest_suite_uaccess(void) __attribute__((weak));
+extern ktest_suite_t *ktest_suite_desktop(void) __attribute__((weak));
+extern ktest_suite_t *ktest_suite_arch_arm64(void) __attribute__((weak));
+
 static void
 run_and_tally(ktest_suite_t *suite, int *total_pass, int *total_fail)
 {
@@ -126,17 +140,23 @@ void ktest_run_all(void)
 
 	klog_silent("KTEST", "=== kernel unit tests begin ===");
 
-	run_and_tally(ktest_suite_pmm(), &total_pass, &total_fail);
+	if (ktest_suite_pmm)
+		run_and_tally(ktest_suite_pmm(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_console_terminal(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_pmm_core(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_kheap(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_vfs(), &total_pass, &total_fail);
-	run_and_tally(ktest_suite_process(), &total_pass, &total_fail);
+	if (ktest_suite_process)
+		run_and_tally(ktest_suite_process(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_sched(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_fs(), &total_pass, &total_fail);
-	run_and_tally(ktest_suite_uaccess(), &total_pass, &total_fail);
-	run_and_tally(ktest_suite_desktop(), &total_pass, &total_fail);
+	if (ktest_suite_uaccess)
+		run_and_tally(ktest_suite_uaccess(), &total_pass, &total_fail);
+	if (ktest_suite_desktop)
+		run_and_tally(ktest_suite_desktop(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_blkdev(), &total_pass, &total_fail);
+	if (ktest_suite_arch_arm64)
+		run_and_tally(ktest_suite_arch_arm64(), &total_pass, &total_fail);
 
 	klog_silent("KTEST", "=== kernel unit tests end ===");
 

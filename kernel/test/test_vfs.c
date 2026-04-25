@@ -8,7 +8,6 @@
 #include "blkdev.h"
 #include "procfs.h"
 #include "process.h"
-#include "paging.h"
 #include "pmm.h"
 #include "sched.h"
 #include "klog.h"
@@ -22,6 +21,9 @@
 #define CHILD_FILE_INO 22u
 #define CHILD_FILE_SIZE 7u
 #define TEST_PARTITION_START 2048u
+#ifndef DRUNIX_DISK_SECTORS
+#define DRUNIX_DISK_SECTORS 262144u
+#endif
 
 static int has_entry(const char *buf, int n, const char *want)
 {
@@ -372,7 +374,7 @@ static int map_procfs_test_page(process_t *proc, uint32_t virt, uint32_t flags)
 	if (phys == 0)
 		return -1;
 
-	if (paging_map_page(proc->pd_phys, virt, phys, flags) != 0) {
+	if (arch_mm_map((arch_aspace_t)proc->pd_phys, virt, phys, flags) != 0) {
 		pmm_free_page(phys);
 		return -1;
 	}
@@ -386,18 +388,22 @@ static int add_procfs_mapped_layout_process(int include_image_vma)
 
 	sched_init();
 	init_procfs_layout_process(&proc, include_image_vma);
-	proc.pd_phys = paging_create_user_space();
+	proc.pd_phys = (uint32_t)arch_aspace_create();
 	if (proc.pd_phys == 0)
 		return -1;
-	if (map_procfs_test_page(&proc, proc.image_start, PG_PRESENT | PG_USER) !=
-	    0)
+	if (map_procfs_test_page(&proc,
+	                         proc.image_start,
+	                         ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER) != 0)
 		return -1;
-	if (map_procfs_test_page(
-	        &proc, proc.heap_start, PG_PRESENT | PG_USER | PG_WRITABLE) != 0)
+	if (map_procfs_test_page(&proc,
+	                         proc.heap_start,
+	                         ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER |
+	                             ARCH_MM_MAP_WRITE) != 0)
 		return -1;
 	if (map_procfs_test_page(&proc,
 	                         USER_STACK_TOP - 0x1000u,
-	                         PG_PRESENT | PG_USER | PG_WRITABLE) != 0)
+	                         ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER |
+	                             ARCH_MM_MAP_WRITE) != 0)
 		return -1;
 
 	return sched_add(&proc);
@@ -831,6 +837,7 @@ test_proc_vmstat_reports_image_totals_and_region_count(ktest_case_t *tc)
 static void test_proc_maps_preserves_mapped_subranges(ktest_case_t *tc)
 {
 	char buf[512];
+	char expected_stack[64];
 	int n;
 
 	KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree_with_proc(), 0u);
@@ -840,7 +847,13 @@ static void test_proc_maps_preserves_mapped_subranges(ktest_case_t *tc)
 	KTEST_EXPECT_TRUE(tc, n > 0);
 	KTEST_EXPECT_TRUE(tc, k_strstr(buf, "00400000-00401000 r--p shell") != 0);
 	KTEST_EXPECT_TRUE(tc, k_strstr(buf, "00410000-00411000 rw-p [heap]") != 0);
-	KTEST_EXPECT_TRUE(tc, k_strstr(buf, "bffff000-c0000000 rw-p [stack]") != 0);
+	KTEST_ASSERT_TRUE(tc,
+	                  k_snprintf(expected_stack,
+	                             sizeof(expected_stack),
+	                             "%08x-%08x rw-p [stack]",
+	                             USER_STACK_TOP - 0x1000u,
+	                             USER_STACK_TOP) > 0);
+	KTEST_EXPECT_TRUE(tc, k_strstr(buf, expected_stack) != 0);
 	KTEST_EXPECT_TRUE(tc, k_strstr(buf, "00410000-00418000 rw-p [heap]") == 0);
 	KTEST_EXPECT_TRUE(tc, k_strstr(buf, "4096/32768") == 0);
 	teardown_procfs_test_process(1u);
@@ -980,9 +993,11 @@ static void test_proc_fault_reports_crash_context(ktest_case_t *tc)
 	proc->crash.valid = 1;
 	proc->crash.signum = SIGSEGV;
 	proc->crash.fault_addr = 0xDEADBEEFu;
+#if defined(__i386__)
 	proc->crash.frame.eip = 0x00401234u;
 	proc->crash.frame.vector = 14u;
 	proc->crash.frame.error_code = 0x6u;
+#endif
 
 	n = procfs_read_file(PROCFS_FILE_FAULT, 1u, 0u, 0u, buf, sizeof(buf) - 1u);
 	KTEST_EXPECT_TRUE(tc, n > 0);

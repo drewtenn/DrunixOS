@@ -132,6 +132,9 @@ kernel/blk/%.arm64.o: kernel/blk/%.c
 kernel/drivers/%.arm64.o: kernel/drivers/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
 
+kernel/test/%.arm64.o: kernel/test/%.c
+	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
+
 kernel/fs/%.arm64.o: kernel/fs/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
 

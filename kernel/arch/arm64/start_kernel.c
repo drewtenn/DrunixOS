@@ -19,6 +19,9 @@
 #include "usb_keyboard.h"
 #include "video.h"
 #include "kprintf.h"
+#ifdef KTEST_ENABLED
+#include "ktest.h"
+#endif
 #include <stdint.h>
 
 extern char vectors_el1[];
@@ -194,6 +197,13 @@ void arm64_start_kernel(void)
 	arch_timer_start(SCHED_HZ);
 	arch_interrupts_enable();
 	tty_init();
+#ifdef KTEST_ENABLED
+	sched_init();
+	arm64_mount_root_namespace();
+	ktest_run_all();
+	for (;;)
+		__asm__ volatile("wfi");
+#endif
 #if DRUNIX_ARM64_VGA
 	if (arm64_usb_keyboard_init() != 0)
 		uart_puts("ARM64 USB keyboard unavailable\n");

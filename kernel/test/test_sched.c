@@ -348,6 +348,7 @@ static void test_sched_mark_exit_wakes_child_state_waiters(ktest_case_t *tc)
 	KTEST_EXPECT_NULL(tc, running->state_waiters.tail);
 }
 
+#if defined(__i386__)
 static void test_sched_record_user_fault_preserves_full_fault_addr(ktest_case_t *tc)
 {
 	static process_t proc;
@@ -375,6 +376,7 @@ static void test_sched_record_user_fault_preserves_full_fault_addr(ktest_case_t 
 	KTEST_EXPECT_EQ(tc, running->crash.frame.eip, frame.eip);
 	KTEST_EXPECT_EQ(tc, running->crash.frame.vector, frame.vector);
 }
+#endif
 
 static void test_sched_mark_exit_closes_pipe_fds_before_reap(ktest_case_t *tc)
 {
@@ -474,7 +476,9 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_sched_send_signal_wakes_blocked_process_and_unqueues_it),
     KTEST_CASE(test_sched_tick_wakes_timed_blocked_process),
     KTEST_CASE(test_sched_mark_exit_wakes_child_state_waiters),
+#if defined(__i386__)
     KTEST_CASE(test_sched_record_user_fault_preserves_full_fault_addr),
+#endif
     KTEST_CASE(test_sched_mark_exit_closes_pipe_fds_before_reap),
     KTEST_CASE(test_thread_exit_keeps_group_alive_until_last_task),
     KTEST_CASE(test_exit_group_marks_all_group_tasks),

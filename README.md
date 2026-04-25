@@ -8,14 +8,12 @@ The normal x86 boot path asks GRUB for a 1024x768x32 linear framebuffer and star
 
 The AArch64 path now boots the Raspberry Pi 3 / `qemu-system-aarch64` target through EL1 setup, mini-UART, exception vectors, timer IRQs, MMU and heap setup, an initramfs-backed user program, and the same graphical-by-default workflow shape as x86. `make ARCH=arm64 run` opens the QEMU display and mirrors the ARM64 console into a framebuffer text terminal.
 
-<a href="docs/drunix-desktop.png">
-  <img src="docs/drunix-desktop.png" alt="Drunix desktop running in QEMU with Files, Processes, Help, and Shell windows open">
-</a>
+[![Drunix desktop running in QEMU with Files, Processes, Help, and Shell windows open](docs/drunix-desktop.png)](docs/drunix-desktop.png)
 
 ## Status
 
 - x86 remains the mainline Drunix target: desktop boot, ext3 and DUFS disk images, process and signal support, Linux ABI smoke coverage, copy-on-write fork, demand paging, and the freestanding C/C++ userland are all part of the regular workflow.
-- AArch64 is now in-tree as a smaller but usable second target: `ARCH=arm64` builds boot on the QEMU `raspi3b` machine, initialize the BCM2835 mini-UART and framebuffer console, bring up MMU-backed kernel services, load an initramfs user program, and run the console prompt. Keyboard input and the desktop are tracked as later ARM64 phases.
+- AArch64 is now in-tree as a smaller but usable second target: `ARCH=arm64` builds and boots on the QEMU `raspi3b` machine, initializes the BCM2835 mini-UART and framebuffer console, brings up MMU-backed kernel services, loads an initramfs user program, and runs the console prompt. Keyboard input and the desktop are tracked as later ARM64 phases.
 
 ## Dependencies
 
@@ -43,8 +41,8 @@ Optional:
 - `qemu-system-aarch64` for the AArch64 / Raspberry Pi 3 bring-up path
 - `pandoc` for `make epub`, `make pdf`, and `make docs`
 - `typst` for `make pdf` and `make docs`
-- `rsvg-convert` from `librsvg` for `make epub` and `make docs` — converts SVG diagrams to PNG
-- `zip`, `unzip`, and `perl` for `make epub` and `make docs` — used to repackage the EPUB after post-processing
+- `rsvg-convert` from `librsvg` for `make epub` and `make docs`; converts SVG diagrams to PNG
+- `zip`, `unzip`, and `perl` for `make epub` and `make docs`; used to repackage the EPUB after post-processing
 
 ## Install Dependencies
 
@@ -205,9 +203,11 @@ Common workflows:
 - `make fresh` / `make run-fresh` rebuild `disk.img` as needed, then launch QEMU
 - `make run` rebuilds the x86 kernel and ISO as needed, then launches QEMU without rebuilding `disk.img`
 - `make build` builds the x86 bootable ISO and both disk images without launching QEMU
-- `make check` runs the x86 headless in-kernel test suite
+- `make check` runs the selected architecture's headless test suite plus
+  static test-wiring and cross-architecture intent checks
 - `make ARCH=arm64 run` boots the AArch64 target with the VGA-style framebuffer console enabled
-- `make ARCH=arm64 check` boots the AArch64 target headlessly and waits for the console prompt
+- `make ARCH=arm64 check` runs the arm64 headless suite and the same shared
+  test-wiring policy checks
 - `make all` defaults to the fresh x86 boot workflow; under `ARCH=arm64` it aliases `run`
 - `make rebuild` wipes build outputs, rebuilds the selected architecture's outputs, and boots from scratch
 - `make clean` removes build outputs
@@ -253,10 +253,12 @@ In-kernel tests (KTEST):
   bugs while the suite also runs. Grep `logs/debugcon.log` for
   `KTEST: SUMMARY pass=N fail=M` to see the result.
 - `make test-fresh` same as `test` but rebuilds `img/disk.img` first
-- `make test-headless` builds with tests enabled, boots QEMU with
-  `-display none`, waits for the summary line in `logs/debugcon-ktest.log`, and
-  exits non-zero if any case failed. Use this in CI / scripted runs.
-- `make check` is a short alias for `make test-headless`
+- `make test-headless` runs the selected architecture's headless KTEST path and
+  related shared smoke checks. On x86 it builds with tests enabled, boots QEMU
+  with `-display none`, waits for the summary line in
+  `logs/debugcon-ktest.log`, and exits non-zero if any case failed.
+- `make check` runs `test-headless` plus static checks that public test targets
+  and intents stay architecture-neutral across x86 and arm64.
 - `make KTEST=1 run` equivalent to `make test`
 
 Halt-inducing and userland integration tests (all headless):
@@ -303,8 +305,9 @@ Contributor policy lives under `docs/contributing/`. Use
 `docs/contributing/c-style.md` for C formatting and cleanup rules,
 `docs/style.md` plus `docs/contributing/docs.md` for book prose and chapter
 workflow, and the other files in `docs/contributing/` for focused project
-rules such as syscall-table maintenance, commit messages, Linux references, and
-README updates.
+rules such as syscall-table maintenance, commit messages, Linux references,
+cross-architecture testing policy (`docs/contributing/testing.md`), and README
+updates.
 
 When adding a user program to the disk image, update `user/programs.mk` and add
 the build rule or source file in `user/Makefile` as needed. Native Drunix C
@@ -340,8 +343,8 @@ make MOUSE_SPEED=6 os.iso
 pointer motion remains unscaled, at one pixel per raw mouse unit before cell
 coordinates are derived.
 
-To compile out the desktop entirely — useful for text-console-only builds or
-to shave a few KB of `.text` — build with `NO_DESKTOP=1`:
+To compile out the desktop entirely, useful for text-console-only builds or
+to shave a few KB of `.text`, build with `NO_DESKTOP=1`:
 
 ```sh
 make NO_DESKTOP=1 run-fresh
@@ -401,8 +404,8 @@ Other useful debug flows:
 - `make test-halt` boots a special image that verifies the dedicated double-fault path
 
 For the AArch64 target, use `make ARCH=arm64 run` for the graphical
-framebuffer mirror, or
-`make ARCH=arm64 check` for the headless console-prompt check.
+framebuffer mirror, or `make ARCH=arm64 check` for the headless test suite and
+test-wiring policy checks.
 
 Runtime logs:
 
