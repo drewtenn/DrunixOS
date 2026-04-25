@@ -6,6 +6,7 @@
 #include "../arch.h"
 #include "../../blk/bcache.h"
 #include "../../console/terminal.h"
+#include "../../drivers/tty.h"
 #include "../../fs/fs.h"
 #include "../../fs/vfs.h"
 #include "../../mm/kheap.h"
@@ -15,6 +16,7 @@
 #include "mm/pmm.h"
 #include "timer.h"
 #include "uart.h"
+#include "usb_keyboard.h"
 #include "video.h"
 #include "kprintf.h"
 #include <stdint.h>
@@ -52,6 +54,8 @@ static void arm64_heartbeat_tick(void)
 
 static void arm64_timer_tick(void)
 {
+	if (sched_current())
+		arch_poll_input();
 	arm64_heartbeat_tick();
 	sched_tick();
 }
@@ -150,11 +154,11 @@ void arm64_start_kernel(void)
 {
 	char line[64];
 	console_terminal_host_t host = {
-		.write = arm64_terminal_write,
-		.read_ticks = arm64_terminal_ticks,
-		.read_uptime_seconds = arm64_terminal_uptime_seconds,
-		.read_free_pages = arm64_terminal_free_pages,
-		.ctx = 0,
+	    .write = arm64_terminal_write,
+	    .read_ticks = arm64_terminal_ticks,
+	    .read_uptime_seconds = arm64_terminal_uptime_seconds,
+	    .read_free_pages = arm64_terminal_free_pages,
+	    .ctx = 0,
 	};
 
 	uart_init();
@@ -189,6 +193,11 @@ void arm64_start_kernel(void)
 	arch_timer_set_periodic_handler(arm64_timer_tick);
 	arch_timer_start(10u);
 	arch_interrupts_enable();
+	tty_init();
+#if DRUNIX_ARM64_VGA
+	if (arm64_usb_keyboard_init() != 0)
+		uart_puts("ARM64 USB keyboard unavailable\n");
+#endif
 	console_terminal_init(&g_console_terminal, &host);
 	console_terminal_start(&g_console_terminal);
 	arm64_launch_init_or_fallback();

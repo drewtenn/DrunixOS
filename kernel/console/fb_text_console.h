@@ -15,6 +15,7 @@ typedef struct fb_text_console {
 	uint32_t cursor_row;
 	uint8_t attr;
 	int wrap_pending;
+	int ansi_state;
 	int ready;
 } fb_text_console_t;
 

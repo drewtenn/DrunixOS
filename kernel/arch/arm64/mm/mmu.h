@@ -12,6 +12,8 @@ arch_aspace_t arm64_mmu_aspace_create(void);
 arch_aspace_t arm64_mmu_aspace_clone(arch_aspace_t src);
 void arm64_mmu_aspace_switch(arch_aspace_t aspace);
 void arm64_mmu_aspace_destroy(arch_aspace_t aspace);
+void arm64_mmu_sync_current_from_identity(void);
+void arm64_mmu_sync_current_to_identity(void);
 int arm64_mmu_map(arch_aspace_t aspace,
                   uintptr_t virt,
                   uint64_t phys,

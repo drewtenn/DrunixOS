@@ -77,8 +77,9 @@ TASK5_REQUIRED = {
     ],
     ROOT / "user/lib/crt0_arm64.S": [
         r"\b_start\b",
-        r"\bmov\s+x8,\s*#93\b",
-        r"\bsvc\s+#0\b",
+        r"\b__drunix_run_constructors\b",
+        r"\b__drunix_run_destructors\b",
+        r"\bbl\s+sys_exit\b",
     ],
     ROOT / "user/lib/syscall_arm64.c": [
         r"\barm64_sys_write\s*\(",
@@ -118,8 +119,8 @@ TASK6_REQUIRED = {
     ROOT / "Makefile": [
         r"(?m)^ARM64_SMOKE_FALLBACK \?= 0$",
         r"-DDRUNIX_ARM64_SMOKE_FALLBACK=",
-        r"(?ms)^ifeq \(\$\(ARCH\),arm64\).*?^INIT_PROGRAM \?= bin/arm64init$",
-        r"(?ms)^ifeq \(\$\(ARCH\),arm64\).*?^INIT_ARG0 \?= arm64init$",
+        r"(?ms)^ifeq \(\$\(ARCH\),arm64\).*?^INIT_PROGRAM \?= bin/shell$",
+        r"(?ms)^ifeq \(\$\(ARCH\),arm64\).*?^INIT_ARG0 \?= shell$",
         r"(?ms)^ifeq \(\$\(ARCH\),arm64\).*?^ROOT_FS \?= dufs$",
         r"--wrap=syscall_case_exit_exit_group",
     ],

@@ -1,5 +1,5 @@
 include programs.mk
-CLEAN_PROGS = $(filter-out $(LINUX_BUSYBOX_PROGS) $(LINUX_TCC_PROGS) $(LINUX_BINUTILS_PROGS) $(LINUX_NANO_PROGS) $(LINUX_GCC_PROGS),$(PROGS))
+CLEAN_PROGS = $(PROGS)
 
 all: $(PROGS)
 
@@ -11,17 +11,6 @@ CXX    = x86_64-elf-g++
 LD     = x86_64-elf-ld
 AR     = x86_64-elf-ar
 NASM   = nasm
-LINUX_I386_CC ?= i486-linux-musl-gcc
-BUSYBOX_VERSION ?= 1.36.1
-BUSYBOX_BUILD_DIR ?= ../build/busybox
-TCC_VERSION ?= 0.9.27
-TCC_BUILD_DIR ?= ../build/tcc
-BINUTILS_VERSION ?= 2.42
-BINUTILS_BUILD_DIR ?= ../build/binutils
-NANO_VERSION ?= 9.0
-NANO_BUILD_DIR ?= ../build/nano
-GCC_TOOLCHAIN_VERSION ?= 11.2.1
-GCC_TOOLCHAIN_BUILD_DIR ?= ../build/gcc
 CFLAGS = -m32 -ffreestanding -nostdlib -fno-pie -no-pie \
          -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall \
          -fdebug-prefix-map=$(abspath ..)=.
@@ -29,7 +18,6 @@ CXXFLAGS = -m32 -ffreestanding -nostdlib -fno-pie -no-pie \
            -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall \
            -fno-exceptions -fno-rtti -fno-use-cxa-atexit \
            -fno-threadsafe-statics -fdebug-prefix-map=$(abspath ..)=.
-LINUX_CFLAGS = -static -Os -s
 CXXLIBS = $(shell $(CXX) -m32 -print-libgcc-file-name)
 
 C_RUNTIME_OBJS = lib/crt0.o lib/cxx_init.o lib/syscall.o lib/malloc.o \
@@ -95,36 +83,8 @@ $(C_PROGS): %: %.o $(C_LINK_OBJS) user.ld
 $(CXX_PROGS): %: %.o $(CXX_LINK_OBJS) user.ld
 	$(LD) -m elf_i386 -T user.ld -o $@ $(CXX_LINK_OBJS) $@.o $(CXXLIBS)
 
-$(LINUX_ASM_PROGS): %: %.o
-	$(LD) -m elf_i386 -nostdlib -e _start -Ttext 0x08048000 -o $@ $@.o
-
-$(LINUX_C_PROGS): %: %.c
-	$(LINUX_I386_CC) $(LINUX_CFLAGS) -o $@ $<
-
-$(LINUX_BUSYBOX_PROGS):
-	../tools/build_linux_busybox.sh $@ $(BUSYBOX_VERSION) $(BUSYBOX_BUILD_DIR)
-
-$(LINUX_TCC_PROGS):
-	../tools/build_linux_tcc.sh $@ $(TCC_VERSION) $(TCC_BUILD_DIR)
-
-$(LINUX_BINUTILS_PROGS):
-	../tools/build_linux_binutils.sh $@ $(BINUTILS_VERSION) $(BINUTILS_BUILD_DIR)
-
-$(LINUX_NANO_PROGS):
-	../tools/build_linux_nano.sh $@ $(NANO_VERSION) $(NANO_BUILD_DIR)
-
-$(LINUX_GCC_PROGS):
-	../tools/build_linux_gcc_tool.sh $@ gcc $(GCC_TOOLCHAIN_VERSION) $(GCC_TOOLCHAIN_BUILD_DIR)
-
-gcc-cc1:
-	../tools/build_linux_gcc_tool.sh $@ cc1 $(GCC_TOOLCHAIN_VERSION) $(GCC_TOOLCHAIN_BUILD_DIR)
-
-gcc-as:
-	../tools/build_linux_binutils.sh $@ $(BINUTILS_VERSION) $(BINUTILS_BUILD_DIR)
-
 clean:
 	find . -name '*.o' -delete
 	find . -name '*.elf' -delete
 	$(RM) lib/libc.a
 	$(RM) $(CLEAN_PROGS)
-	$(RM) $(LINUX_GCC_HELPER_PROGS)

@@ -9,6 +9,7 @@
 
 #include "mmu.h"
 #include "pmm.h"
+#include "../proc/init_layout.h"
 #include "kstring.h"
 
 #define ARM64_MMU_DIR_ENTRIES 1024u
@@ -102,6 +103,57 @@ static int arm64_mmu_table_has_user_page(const uint32_t *pt)
 	}
 
 	return 0;
+}
+
+static int arm64_mmu_user_window(uintptr_t virt)
+{
+	return virt >= ARM64_INIT_IMAGE_BASE && virt < ARM64_INIT_STACK_TOP;
+}
+
+static void arm64_mmu_copy_user_pages(arch_aspace_t aspace, int to_identity)
+{
+	uint32_t *pd;
+
+	if (!aspace || aspace == arm64_mmu_kernel_aspace())
+		return;
+
+	pd = arm64_mmu_page_dir(aspace);
+	for (uint32_t i = 0; i < ARM64_MMU_DIR_ENTRIES; i++) {
+		uint32_t *pt;
+
+		if ((pd[i] & (ARCH_MM_MAP_PRESENT | ARM64_MMU_ENTRY_TABLE)) !=
+		    (ARCH_MM_MAP_PRESENT | ARM64_MMU_ENTRY_TABLE))
+			continue;
+		if ((pd[i] & ARCH_MM_MAP_USER) == 0)
+			continue;
+
+		pt = arm64_mmu_page_table(pd[i]);
+		for (uint32_t j = 0; j < ARM64_MMU_TABLE_ENTRIES; j++) {
+			uintptr_t virt;
+			uint32_t phys;
+			void *backing;
+			void *identity;
+
+			if ((pt[j] & (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER)) !=
+			    (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER))
+				continue;
+
+			virt = (((uintptr_t)i) << 22) | (((uintptr_t)j) << 12);
+			if (!arm64_mmu_user_window(virt))
+				continue;
+
+			phys = arm64_mmu_entry_addr(pt[j]);
+			if (phys == (uint32_t)virt)
+				continue;
+
+			backing = (void *)(uintptr_t)phys;
+			identity = (void *)virt;
+			if (to_identity)
+				k_memcpy(identity, backing, PAGE_SIZE);
+			else
+				k_memcpy(backing, identity, PAGE_SIZE);
+		}
+	}
 }
 
 static int arm64_mmu_ensure_table(arch_aspace_t aspace,
@@ -256,26 +308,52 @@ arch_aspace_t arm64_mmu_aspace_clone(arch_aspace_t src)
 
 		src_pt = arm64_mmu_page_table(src_pd[i]);
 		new_pt = arm64_mmu_page_table(new_pd[i]);
-		for (uint32_t j = 0; j < ARM64_MMU_TABLE_ENTRIES; j++)
-			new_pt[j] = src_pt[j];
-
 		for (uint32_t j = 0; j < ARM64_MMU_TABLE_ENTRIES; j++) {
-			if ((src_pt[j] & (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER)) !=
-			    (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER))
-				continue;
+			uint32_t src_entry = src_pt[j];
+			uint32_t src_phys;
+			uint32_t new_phys;
+			void *src_page;
+			void *new_page;
 
-			/*
-			 * ARM64 still executes user code against identity-mapped RAM while
-			 * this software page-table model is being brought up.  Marking the
-			 * parent mapping COW would make later kernel copyout allocate a
-			 * non-identity backing page that user code cannot observe.
-			 */
-			new_pt[j] = src_pt[j];
-			pmm_incref(arm64_mmu_entry_addr(src_pt[j]));
+			if ((src_pt[j] & (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER)) !=
+			    (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER)) {
+				new_pt[j] = src_pt[j];
+				continue;
+			}
+
+			src_phys = arm64_mmu_entry_addr(src_entry);
+			new_phys = pmm_alloc_page();
+			if (!new_phys)
+				goto fail_clone_pages;
+
+			src_page = (void *)(uintptr_t)src_phys;
+			new_page = (void *)(uintptr_t)new_phys;
+			k_memcpy(new_page, src_page, PAGE_SIZE);
+			new_pt[j] =
+			    arm64_mmu_entry_build(new_phys, arm64_mmu_entry_flags(src_entry));
 		}
 	}
 
 	return (arch_aspace_t)new_pd_phys;
+
+fail_clone_pages:
+	for (uint32_t i = 0; i < ARM64_MMU_DIR_ENTRIES; i++) {
+		uint32_t *pt;
+
+		if ((new_pd[i] & ARCH_MM_MAP_PRESENT) == 0)
+			continue;
+		if (arm64_mmu_entry_addr(new_pd[i]) == arm64_mmu_entry_addr(src_pd[i]))
+			continue;
+		pt = arm64_mmu_page_table(new_pd[i]);
+		for (uint32_t j = 0; j < ARM64_MMU_TABLE_ENTRIES; j++) {
+			if ((pt[j] & (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER)) ==
+			    (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER))
+				pmm_free_page(arm64_mmu_entry_addr(pt[j]));
+		}
+		pmm_free_page(arm64_mmu_entry_addr(new_pd[i]));
+	}
+	pmm_free_page(new_pd_phys);
+	return 0;
 }
 
 void arm64_mmu_aspace_switch(arch_aspace_t aspace)
@@ -284,6 +362,16 @@ void arm64_mmu_aspace_switch(arch_aspace_t aspace)
 		aspace = arm64_mmu_kernel_aspace();
 
 	g_current_aspace = aspace;
+}
+
+void arm64_mmu_sync_current_from_identity(void)
+{
+	arm64_mmu_copy_user_pages(g_current_aspace, 0);
+}
+
+void arm64_mmu_sync_current_to_identity(void)
+{
+	arm64_mmu_copy_user_pages(g_current_aspace, 1);
 }
 
 void arm64_mmu_aspace_destroy(arch_aspace_t aspace)

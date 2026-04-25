@@ -230,6 +230,19 @@ void fb_text_console_write(fb_text_console_t *console,
 	for (uint32_t i = 0u; i < len; i++) {
 		unsigned char ch = (unsigned char)buf[i];
 
+		if (console->ansi_state == 1) {
+			console->ansi_state = (ch == '[') ? 2 : 0;
+			continue;
+		}
+		if (console->ansi_state == 2) {
+			if (ch >= 0x40u && ch <= 0x7eu)
+				console->ansi_state = 0;
+			continue;
+		}
+		if (ch == 0x1bu) {
+			console->ansi_state = 1;
+			continue;
+		}
 		if (ch == '\r') {
 			console->cursor_col = 0u;
 			console->wrap_pending = 0;
@@ -267,6 +280,7 @@ void fb_text_console_clear(fb_text_console_t *console)
 	console->cursor_col = 0u;
 	console->cursor_row = 0u;
 	console->wrap_pending = 0;
+	console->ansi_state = 0;
 	gui_display_set_cursor(&console->display, 0, 0, 1);
 	fb_text_console_present_all(console);
 }
