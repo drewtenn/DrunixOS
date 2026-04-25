@@ -28,9 +28,8 @@ extern uint32_t __real_syscall_case_exit_exit_group(uint32_t exit_group,
 static process_t g_arm64_smoke_proc;
 static uint8_t g_arm64_smoke_kstack[KSTACK_SIZE] __attribute__((aligned(16)));
 
-static int arm64_smoke_copy_to_ram(uintptr_t dst,
-                                   const uint8_t *src,
-                                   uint32_t len)
+static int
+arm64_smoke_copy_to_ram(uintptr_t dst, const uint8_t *src, uint32_t len)
 {
 	if (!src)
 		return -1;
@@ -38,10 +37,12 @@ static int arm64_smoke_copy_to_ram(uintptr_t dst,
 	return 0;
 }
 
-static int arm64_smoke_load_image(uintptr_t *entry_out, uintptr_t *image_end_out)
+static int arm64_smoke_load_image(uintptr_t *entry_out,
+                                  uintptr_t *image_end_out)
 {
 	const uint8_t *image = arm64_smoke_elf_start;
-	uint32_t image_size = (uint32_t)(arm64_smoke_elf_end - arm64_smoke_elf_start);
+	uint32_t image_size = (uint32_t)((uintptr_t)arm64_smoke_elf_end -
+	                                 (uintptr_t)arm64_smoke_elf_start);
 	const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)image;
 	uint64_t high_water = 0u;
 
@@ -88,7 +89,8 @@ static int arm64_smoke_load_image(uintptr_t *entry_out, uintptr_t *image_end_out
 	if (!entry_out || !image_end_out || high_water <= ARM64_SMOKE_LOAD_BASE ||
 	    ehdr->e_entry < ARM64_SMOKE_LOAD_BASE || ehdr->e_entry >= high_water)
 		return -1;
-	k_memset((void *)(uintptr_t)ARM64_SMOKE_STACK_BASE, 0, ARM64_SMOKE_STACK_SIZE);
+	k_memset(
+	    (void *)(uintptr_t)ARM64_SMOKE_STACK_BASE, 0, ARM64_SMOKE_STACK_SIZE);
 	pmm_mark_used(ARM64_SMOKE_LOAD_BASE,
 	              (uint32_t)(high_water - ARM64_SMOKE_LOAD_BASE));
 	pmm_mark_used(ARM64_SMOKE_STACK_BASE, ARM64_SMOKE_STACK_SIZE);
@@ -119,7 +121,8 @@ void arm64_report_init_exit(uint32_t status)
 {
 	char line[64];
 
-	k_snprintf(line, sizeof(line), "ARM64 init exited with status %u\n", status);
+	k_snprintf(
+	    line, sizeof(line), "ARM64 init exited with status %u\n", status);
 	arm64_smoke_write_bytes(line, (uint32_t)k_strlen(line));
 }
 
@@ -206,9 +209,11 @@ int arm64_user_smoke_boot(void)
 	g_arm64_smoke_proc.pd_phys = (uint32_t)aspace;
 	g_arm64_smoke_proc.entry = (uint32_t)entry;
 	g_arm64_smoke_proc.user_stack = ARM64_SMOKE_STACK_TOP;
-	g_arm64_smoke_proc.kstack_bottom = (uint32_t)(uintptr_t)g_arm64_smoke_kstack;
+	g_arm64_smoke_proc.kstack_bottom =
+	    (uint32_t)(uintptr_t)g_arm64_smoke_kstack;
 	g_arm64_smoke_proc.kstack_top =
-	    (uint32_t)(uintptr_t)(g_arm64_smoke_kstack + sizeof(g_arm64_smoke_kstack));
+	    (uint32_t)(uintptr_t)(g_arm64_smoke_kstack +
+	                          sizeof(g_arm64_smoke_kstack));
 	arch_fpu_init_state(&g_arm64_smoke_proc);
 	arch_process_build_initial_frame(&g_arm64_smoke_proc);
 	arch_process_launch(&g_arm64_smoke_proc);

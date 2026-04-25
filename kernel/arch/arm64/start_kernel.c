@@ -29,6 +29,10 @@ extern int arm64_user_smoke_boot(void);
 #define DRUNIX_ARM64_SMOKE_FALLBACK 0
 #endif
 
+#ifndef DRUNIX_ARM64_HALT_TEST
+#define DRUNIX_ARM64_HALT_TEST 0
+#endif
+
 static volatile uint64_t g_heartbeat_ticks;
 static console_terminal_t g_console_terminal;
 
@@ -165,6 +169,11 @@ void arm64_start_kernel(void)
 	platform_init();
 	__asm__ volatile("msr vbar_el1, %0" : : "r"(vectors_el1));
 	__asm__ volatile("isb");
+
+#if DRUNIX_ARM64_HALT_TEST
+	platform_uart_puts("ARM64 halt test: triggering sync exception\n");
+	__asm__ volatile(".inst 0x00000000");
+#endif
 
 	platform_uart_puts("Drunix AArch64 v0 - hello from EL1\n");
 	arch_mm_init();

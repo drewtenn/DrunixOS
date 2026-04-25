@@ -30,8 +30,8 @@ typedef struct arm64_kernel_context {
 } arm64_kernel_context_t;
 
 extern void arm64_enter_user_frame(arch_trap_frame_t *frame);
-extern void
-arm64_switch_context(arch_context_t *old_ctx, arch_context_t new_ctx);
+extern void arm64_switch_context(arch_context_t *old_ctx,
+                                 arch_context_t new_ctx);
 extern void arm64_fpu_save_state(void *state);
 extern void arm64_fpu_restore_state(const void *state);
 extern void arm64_process_first_resume(void);
@@ -146,8 +146,7 @@ int arch_process_build_user_stack(arch_aspace_t aspace,
 	}
 
 	strings_off = argv_strbytes + env_strbytes;
-	stack_qwords =
-	    1u + (uint32_t)argc + 1u + (uint32_t)envc + 1u + 4u;
+	stack_qwords = 1u + (uint32_t)argc + 1u + (uint32_t)envc + 1u + 4u;
 	frame_off = strings_off + stack_qwords * (uint32_t)sizeof(uint64_t);
 	pad = (16u - (frame_off & 15u)) & 15u;
 	frame_off += pad;
@@ -178,7 +177,8 @@ int arch_process_build_user_stack(arch_aspace_t aspace,
 	{
 		arch_mm_mapping_t mapping;
 
-		if (arch_mm_query(aspace, ARM64_INIT_STACK_TOP - PAGE_SIZE, &mapping) != 0)
+		if (arch_mm_query(aspace, ARM64_INIT_STACK_TOP - PAGE_SIZE, &mapping) !=
+		    0)
 			return -1;
 		page = (uint8_t *)arch_page_temp_map(mapping.phys_addr);
 		if (!page)
@@ -390,7 +390,7 @@ uint32_t arch_trap_frame_fault_vector(const arch_trap_frame_t *frame)
 
 	ec = (uint32_t)((frame->esr_el1 >> 26) & 0x3Fu);
 	return (ec == 0x20u || ec == 0x21u || ec == 0x24u || ec == 0x25u) ? 14u
-	                                                                    : 0u;
+	                                                                  : 0u;
 }
 
 static int arm64_abort_fsc_is_present_fault(uint32_t fsc)
@@ -497,7 +497,8 @@ uint64_t arch_trap_frame_fault_addr(const arch_trap_frame_t *frame)
 	return frame ? frame->far_el1 : 0u;
 }
 
-void arch_core_fill_prstatus_regs(uint32_t *gregs, const arch_trap_frame_t *frame)
+void arch_core_fill_prstatus_regs(uint32_t *gregs,
+                                  const arch_trap_frame_t *frame)
 {
 	(void)frame;
 	if (gregs)

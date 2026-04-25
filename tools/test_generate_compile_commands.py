@@ -36,6 +36,31 @@ class GenerateCompileCommandsTest(unittest.TestCase):
             self.assertIn("-I kernel/proc", commands[0]["command"])
             self.assertIn("-o kernel/proc/syscall.o", commands[0]["command"])
 
+    def test_arm64_suffixed_objects_become_c_sources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "kernel/proc").mkdir(parents=True)
+            (root / "kernel/proc/sched.c").write_text("int sched;\n")
+
+            commands = gccdb.build_commands(
+                root=root,
+                kernel_objs=["kernel/proc/sched.arm64.o"],
+                kernel_cc="aarch64-elf-gcc",
+                kernel_cflags="-mcpu=cortex-a53",
+                kernel_inc="-I kernel",
+                user_cc="aarch64-elf-gcc",
+                user_cflags="-nostdlib",
+                linux_cc="aarch64-linux-musl-gcc",
+                linux_cflags="-static",
+                user_c_runtime_objs=[],
+                user_c_progs=[],
+                linux_c_progs=[],
+            )
+
+            self.assertEqual(len(commands), 1)
+            self.assertEqual(commands[0]["file"], str(root / "kernel/proc/sched.c"))
+            self.assertIn("-o kernel/proc/sched.arm64.o", commands[0]["command"])
+
     def test_user_and_linux_c_programs_use_their_own_flags(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

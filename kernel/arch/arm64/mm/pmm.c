@@ -20,11 +20,11 @@ void pmm_mark_free(uint32_t base, uint32_t length)
 void pmm_init(void)
 {
 	static const pmm_range_t usable[] = {
-		{.base = 0x00080000u, .length = 0x07f80000u},
+	    {.base = 0x00080000u, .length = 0x07f80000u},
 	};
 	static const pmm_range_t reserved[] = {
-		{.base = 0x00000000u, .length = 0x00080000u},
-		{.base = 0x3f000000u, .length = 0x01000000u},
+	    {.base = 0x00000000u, .length = 0x00080000u},
+	    {.base = 0x3f000000u, .length = 0x01000000u},
 	};
 
 	pmm_core_init(&g_pmm, usable, 1u, reserved, 2u);

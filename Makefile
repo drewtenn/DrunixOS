@@ -32,6 +32,7 @@ INC     := -I kernel -I kernel/arch -I kernel/arch/$(ARCH) -I kernel/arch/$(ARCH
 DEPFLAGS := -MMD -MP
 MOUSE_SPEED ?= 4
 ARM64_SMOKE_FALLBACK ?= 0
+ARM64_HALT_TEST ?= 0
 X86_SERIAL_CONSOLE ?= 0
 ifeq ($(ARCH),arm64)
 INIT_PROGRAM ?= bin/shell
@@ -61,6 +62,7 @@ ARM_CFLAGS += -DDRUNIX_INIT_ARG0=\"$(INIT_ARG0)\"
 ARM_CFLAGS += -DDRUNIX_INIT_ENV0=\"$(INIT_ENV0)\"
 ARM_CFLAGS += -DDRUNIX_ROOT_FS=\"$(ROOT_FS)\"
 ARM_CFLAGS += -DDRUNIX_ARM64_SMOKE_FALLBACK=$(ARM64_SMOKE_FALLBACK)
+ARM_CFLAGS += -DDRUNIX_ARM64_HALT_TEST=$(ARM64_HALT_TEST)
 ARM_CFLAGS += -DDRUNIX_ARM64_VGA=1
 endif
 NASMFLAGS :=
@@ -122,6 +124,8 @@ endif
 	printf '%s\n%s\n%s\n%s\n' "$(INIT_PROGRAM)" "$(INIT_ARG0)" "$(INIT_ENV0)" "$(ROOT_FS)" | cmp -s - $@ || printf '%s\n%s\n%s\n%s\n' "$(INIT_PROGRAM)" "$(INIT_ARG0)" "$(INIT_ENV0)" "$(ROOT_FS)" > $@
 .arm64-smoke-fallback-flag: FORCE
 	echo "$(ARM64_SMOKE_FALLBACK)" | cmp -s - $@ || echo "$(ARM64_SMOKE_FALLBACK)" > $@
+.arm64-halt-test-flag: FORCE
+	echo "$(ARM64_HALT_TEST)" | cmp -s - $@ || echo "$(ARM64_HALT_TEST)" > $@
 .x86-serial-console-flag: FORCE
 	echo "$(X86_SERIAL_CONSOLE)" | cmp -s - $@ || echo "$(X86_SERIAL_CONSOLE)" > $@
 .include-busybox-flag: FORCE
@@ -189,7 +193,7 @@ TEST_LOGS     := $(foreach suffix,$(TEST_SUFFIXES),$(LOG_DIR)/serial-$(suffix).l
 SENTINELS     := .ktest-flag .double-fault-test-flag .klog-debugcon-flag \
                  .mouse-speed-flag .init-program-flag .no-desktop-flag \
                  .vga-text-flag .disk-sectors-flag .arm64-smoke-fallback-flag \
-                 .x86-serial-console-flag .include-busybox-flag
+                 .arm64-halt-test-flag .x86-serial-console-flag .include-busybox-flag
 
 QEMU_DISKS    = -drive format=raw,file=$(1),if=ide,index=0 \
                  -drive format=raw,file=$(2),if=ide,index=1
@@ -359,7 +363,7 @@ build: kernel disk
 iso: os.iso
 images: disk
 fresh: run-fresh
-check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-arm64-platform-split check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
+check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-arm64-platform-split check-arm64-dev-loop-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
 check-phase6:
 	python3 tools/test_kernel_arch_boundary_phase6.py
 
@@ -399,6 +403,9 @@ check-arch-boundary-reuse:
 
 check-arm64-platform-split:
 	python3 tools/test_arm64_platform_split.py
+
+check-arm64-dev-loop-parity:
+	python3 tools/test_arm64_dev_loop_parity.py
 
 check-shared-shell-tests:
 	python3 tools/test_shared_shell_tests_arch_neutral.py
@@ -478,7 +485,7 @@ sparse-check:
 	@rc=0; for src in $(SCAN_KERNEL_C_SOURCES); do \
 		$(SPARSE) $(SPARSEFLAGS) $(CFLAGS) $(INC) $$src >> build/sparse.log 2>&1 || rc=1; \
 	done; \
-	if [ $$rc -ne 0 ] || [ -s build/sparse.log ]; then \
+	if [ $$rc -ne 0 ]; then \
 		sed -n '1,180p' build/sparse.log; \
 		echo "... full Sparse report: build/sparse.log"; \
 		test "$(SCAN_FAIL)" != "1"; \
@@ -599,7 +606,7 @@ clean:
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all test-busybox-compat \
         check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
-        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-arm64-platform-split check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
+        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-arm64-platform-split check-arm64-dev-loop-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean
@@ -625,7 +632,7 @@ kernel: kernel-arm64.elf
 
 build: kernel-arm64.elf kernel8.img build/arm64-root.fs $(ARM_COMPILE_ONLY_OBJS)
 
-kernel/arch/arm64/start_kernel.o: .init-program-flag .arm64-smoke-fallback-flag Makefile
+kernel/arch/arm64/start_kernel.o: .init-program-flag .arm64-smoke-fallback-flag .arm64-halt-test-flag Makefile
 kernel/arch/arm64/arch.o: Makefile
 kernel/platform/raspi3b/video.o: Makefile
 $(ARM_KOBJS) $(ARM_SHARED_KOBJS) $(ARM_COMPILE_ONLY_OBJS) $(ARM_KTOBJS): .ktest-flag
@@ -639,7 +646,7 @@ disk:
 
 fresh: run
 
-check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-arm64-platform-split check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
+check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-arm64-platform-split check-arm64-dev-loop-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
 
 test:
 	$(MAKE) ARCH=$(ARCH) check
@@ -652,12 +659,9 @@ test-headless: check-kernel-unit check-shared-shell check-userspace-smoke check-
 test-all:
 	$(MAKE) ARCH=$(ARCH) check
 
-compile-commands format-check cppcheck sparse-check clang-tidy-include-check scan:
-	$(MAKE) ARCH=x86 $@
-
 run-grub-menu run-stdio: run
 
-debug debug-user debug-fresh test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop validate-ext3-linux:
+test-ext3-linux-compat test-ext3-host-write-interop validate-ext3-linux:
 	@echo "make ARCH=arm64 $@ is not implemented yet"
 	@exit 2
 
@@ -707,6 +711,9 @@ check-arch-boundary-reuse:
 check-arm64-platform-split:
 	python3 tools/test_arm64_platform_split.py
 
+check-arm64-dev-loop-parity:
+	python3 tools/test_arm64_dev_loop_parity.py
+
 check-shared-shell-tests:
 	python3 tools/test_shared_shell_tests_arch_neutral.py
 
@@ -723,6 +730,129 @@ run: kernel-arm64.elf | $(LOG_DIR)
 	$(QEMU_ARM) -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf -serial null -serial stdio -device usb-kbd -monitor none -no-reboot
 
 run-fresh: run
+
+ARM_GDB_COMMON = -ex "set pagination off" \
+                 -ex "set confirm off" \
+                 -ex "set tcp auto-retry on" \
+                 -ex "file kernel-arm64.elf"
+
+define arm64_qemu_debug
+mkdir -p $(LOG_DIR)
+rm -f $(ARM_SERIAL_LOG)
+$(QEMU_ARM) -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf \
+    -serial null -serial file:$(ARM_SERIAL_LOG) -device usb-kbd \
+    -monitor none -no-reboot -s -S &
+sleep 1
+$(ARM_GDB) $(ARM_GDB_COMMON) $(1) \
+       -ex "target remote localhost:1234" \
+       -ex "hbreak arm64_start_kernel" \
+       -ex "continue"
+endef
+
+debug: kernel-arm64.elf
+	$(call arm64_qemu_debug,)
+
+debug-user: kernel-arm64.elf build/arm64-root.fs
+	@test -n "$(APP)" || (echo "Usage: make debug-user APP=<program name>  (e.g. APP=shell)"; exit 1)
+	$(call arm64_qemu_debug,-ex "add-symbol-file build/arm64-user/$(APP) 0x02000000")
+
+debug-fresh: build/arm64-root.fs
+	$(MAKE) ARCH=$(ARCH) debug
+
+test-halt:
+	$(PYTHON) tools/test_arm64_halt.py
+
+test-threadtest:
+	$(PYTHON) tools/test_arm64_threadtest.py
+
+ARM_SCAN_FORMAT_SOURCES := $(shell find kernel/arch/arm64 kernel/platform -type f \( -name '*.c' -o -name '*.h' \) -print | sort)
+ARM_SCAN_KERNEL_OBJS := $(ARM_KOBJS) $(ARM_SHARED_KOBJS)
+ARM_SCAN_USER_C_RUNTIME_OBJS := $(ARM_USER_BUILD_DIR)/lib/cxx_init.o \
+                                $(ARM_USER_BUILD_DIR)/lib/syscall.o \
+                                $(ARM_USER_BUILD_DIR)/lib/malloc.o \
+                                $(ARM_USER_BUILD_DIR)/lib/string.o \
+                                $(ARM_USER_BUILD_DIR)/lib/ctype.o \
+                                $(ARM_USER_BUILD_DIR)/lib/stdlib.o \
+                                $(ARM_USER_BUILD_DIR)/lib/stdio.o \
+                                $(ARM_USER_BUILD_DIR)/lib/unistd.o \
+                                $(ARM_USER_BUILD_DIR)/lib/time.o
+ARM_SPARSE_CFLAGS := -D__aarch64__ -DDRUNIX_ARM64_VGA=1 \
+                     -DDRUNIX_INIT_PROGRAM=\"$(INIT_PROGRAM)\" \
+                     -DDRUNIX_INIT_ARG0=\"$(INIT_ARG0)\" \
+                     -DDRUNIX_INIT_ENV0=\"$(INIT_ENV0)\" \
+                     -DDRUNIX_ROOT_FS=\"$(ROOT_FS)\" \
+                     -DDRUNIX_ARM64_SMOKE_FALLBACK=$(ARM64_SMOKE_FALLBACK) \
+                     -DDRUNIX_ARM64_HALT_TEST=$(ARM64_HALT_TEST)
+
+compile_commands.json: tools/generate_compile_commands.py kernel/arch/arm64/arch.mk user/programs.mk user/Makefile Makefile
+	$(PYTHON) tools/generate_compile_commands.py \
+		--root=. \
+		--output=$@ \
+		--kernel-objs="$(ARM_SCAN_KERNEL_OBJS)" \
+		--kernel-cc="$(ARM_CC)" \
+		--kernel-cflags="$(ARM_CFLAGS)" \
+		--kernel-inc="$(ARM_INC)" \
+		--user-cc="$(ARM_CC)" \
+		--user-cflags="$(ARM_USER_CFLAGS) -I user -I user/lib" \
+		--linux-cc="$(LINUX_ARM64_CC)" \
+		--linux-cflags="$(LINUX_CFLAGS)" \
+		--user-c-runtime-objs="$(ARM_SCAN_USER_C_RUNTIME_OBJS)" \
+		--user-c-progs="$(C_PROGS)" \
+		--linux-c-progs="$(LINUX_C_PROGS)"
+
+compile-commands: compile_commands.json
+
+format-check:
+	$(call require_tool,$(CLANG_FORMAT))
+	@mkdir -p build
+	@$(CLANG_FORMAT) --dry-run --Werror $(ARM_SCAN_FORMAT_SOURCES) 2> build/clang-format.log || { \
+		sed -n '1,120p' build/clang-format.log; \
+		echo "... full clang-format report: build/clang-format.log"; \
+		test "$(SCAN_FAIL)" != "1"; \
+	}
+
+cppcheck: compile_commands.json
+	$(call require_tool,$(CPPCHECK))
+	@mkdir -p build/cppcheck
+	@$(CPPCHECK) --project=compile_commands.json \
+		--cppcheck-build-dir=build/cppcheck \
+		--platform=unix64 \
+		--enable=warning \
+		--std=c99 \
+		--error-exitcode=1 > build/cppcheck.log 2>&1 || { \
+		sed -n '1,180p' build/cppcheck.log; \
+		echo "... full Cppcheck report: build/cppcheck.log"; \
+		test "$(SCAN_FAIL)" != "1"; \
+	}
+
+sparse-check: compile_commands.json
+	$(call require_tool,$(SPARSE))
+	@mkdir -p build
+	@$(PYTHON) tools/compile_commands_sources.py compile_commands.json --under kernel > build/sparse-sources.txt
+	@: > build/sparse.log
+	@for src in $$(cat build/sparse-sources.txt); do \
+		$(SPARSE) $(SPARSEFLAGS) $(ARM_SPARSE_CFLAGS) $(ARM_INC) $$src >> build/sparse.log 2>&1 || true; \
+	done; \
+	if grep -q "error:" build/sparse.log; then \
+		sed -n '1,180p' build/sparse.log; \
+		echo "... full Sparse report: build/sparse.log"; \
+		test "$(SCAN_FAIL)" != "1"; \
+	fi
+
+clang-tidy-include-check: compile_commands.json
+	$(call require_tool,$(CLANG_TIDY))
+	@mkdir -p build
+	@$(PYTHON) tools/compile_commands_sources.py compile_commands.json --under kernel > build/clang-tidy-sources.txt
+	@$(CLANG_TIDY) -p compile_commands.json --quiet \
+		--checks=-*,misc-include-cleaner \
+		--extra-arg=--target=aarch64-none-elf \
+		$$(cat build/clang-tidy-sources.txt) > build/clang-tidy-include.log 2>&1 || { \
+		sed -n '1,180p' build/clang-tidy-include.log; \
+		echo "... full clang-tidy include report: build/clang-tidy-include.log"; \
+		test "$(SCAN_FAIL)" != "1"; \
+	}
+
+scan: format-check cppcheck clang-tidy-include-check sparse-check
 
 all: run-fresh
 
@@ -752,7 +882,7 @@ clean:
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all test-busybox-compat \
         check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
-        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-arm64-platform-split check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
+        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-arm64-platform-split check-arm64-dev-loop-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean

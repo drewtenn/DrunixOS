@@ -18,8 +18,8 @@ extern void sched_record_user_fault(const arch_trap_frame_t *frame,
                                     int signum) __attribute__((weak));
 extern void sched_mark_signaled(int sig, int dumped_core) __attribute__((weak));
 extern void schedule(void) __attribute__((weak));
-extern uint64_t
-    syscall_dispatch_from_frame(arch_trap_frame_t *frame) __attribute__((weak));
+extern uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
+    __attribute__((weak));
 extern uint64_t arm64_userspace_syscall_dispatch(arch_trap_frame_t *frame);
 
 static void arm64_halt_forever(void)

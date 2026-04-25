@@ -69,7 +69,8 @@ int arch_elf_load_user_image(vfs_file_ref_t file_ref,
 
 		if (phdr_off > UINT32_MAX)
 			return -6;
-		if (vfs_read(file_ref, (uint32_t)phdr_off, (uint8_t *)&phdr, sizeof(phdr)) !=
+		if (vfs_read(
+		        file_ref, (uint32_t)phdr_off, (uint8_t *)&phdr, sizeof(phdr)) !=
 		    (int)sizeof(phdr))
 			return -6;
 		if (phdr.p_type != PT_LOAD || phdr.p_memsz == 0)
@@ -77,8 +78,7 @@ int arch_elf_load_user_image(vfs_file_ref_t file_ref,
 		if (phdr.p_filesz > phdr.p_memsz)
 			return -6;
 		if (phdr.p_vaddr < ARM64_INIT_IMAGE_BASE ||
-		    phdr.p_vaddr >= ARM64_INIT_IMAGE_LIMIT ||
-		    phdr.p_memsz > UINT32_MAX)
+		    phdr.p_vaddr >= ARM64_INIT_IMAGE_LIMIT || phdr.p_memsz > UINT32_MAX)
 			return -4;
 		if (phdr.p_vaddr + phdr.p_memsz < phdr.p_vaddr ||
 		    phdr.p_vaddr + phdr.p_memsz > ARM64_INIT_IMAGE_LIMIT)
@@ -96,18 +96,18 @@ int arch_elf_load_user_image(vfs_file_ref_t file_ref,
 				max_vend = vend;
 			loaded_segment = 1;
 
-				seg_flags = arm64_elf_segment_flags(phdr.p_flags);
-				for (uint64_t p = 0; p < npages; p++) {
-					uintptr_t vpage = (uintptr_t)(vaddr + p * 0x1000ULL);
-					uint32_t phys = pmm_alloc_page();
-					void *page;
+			seg_flags = arm64_elf_segment_flags(phdr.p_flags);
+			for (uint64_t p = 0; p < npages; p++) {
+				uintptr_t vpage = (uintptr_t)(vaddr + p * 0x1000ULL);
+				uint32_t phys = pmm_alloc_page();
+				void *page;
 
-					if (!phys)
-						return -8;
-					if (arch_mm_map(aspace, vpage, phys, seg_flags) != 0) {
-						pmm_free_page(phys);
-						return -8;
-					}
+				if (!phys)
+					return -8;
+				if (arch_mm_map(aspace, vpage, phys, seg_flags) != 0) {
+					pmm_free_page(phys);
+					return -8;
+				}
 
 				page = arch_page_temp_map(phys);
 				if (!page) {

@@ -651,8 +651,10 @@ static char hid_usage_ascii(uint8_t usage, uint8_t modifiers)
 		return c;
 	}
 	if (usage >= 0x1Eu && usage <= 0x27u) {
-		char c = usage == 0x27u ? '0' : (char)('1' + usage - 0x1Eu);
-		return shift ? shifted_digits[c - '0'] : c;
+		uint8_t digit = usage == 0x27u ? 0u : usage - 0x1Du;
+		char c = (char)('0' + digit);
+
+		return shift ? shifted_digits[digit] : c;
 	}
 
 	switch (usage) {

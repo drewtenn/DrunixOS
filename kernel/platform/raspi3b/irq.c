@@ -23,7 +23,8 @@ void arm64_irq_init(void)
 
 void arm64_irq_register(uint32_t irq, arm64_irq_handler_fn fn)
 {
-	irq_table_set(g_irq_table, ARM64_IRQ_COUNT, irq, (irq_handler_generic_fn)fn);
+	irq_table_set(
+	    g_irq_table, ARM64_IRQ_COUNT, irq, (irq_handler_generic_fn)fn);
 }
 
 void arm64_irq_dispatch(uint32_t irq)

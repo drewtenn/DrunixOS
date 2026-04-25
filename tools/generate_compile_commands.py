@@ -17,6 +17,8 @@ def split_words(value):
 
 
 def object_to_source(obj):
+    if obj.endswith(".arm64.o"):
+        return obj[:-8] + ".c"
     return obj[:-2] + ".c" if obj.endswith(".o") else obj
 
 

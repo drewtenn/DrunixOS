@@ -17,7 +17,8 @@ extern const uint8_t arm64_rootfs_end[];
 
 static int arm64_rootfs_read_sector(uint32_t lba, uint8_t *buf)
 {
-	uint32_t size = (uint32_t)(arm64_rootfs_end - arm64_rootfs_start);
+	uint32_t size =
+	    (uint32_t)((uintptr_t)arm64_rootfs_end - (uintptr_t)arm64_rootfs_start);
 	uint32_t sectors = size / BLKDEV_SECTOR_SIZE;
 	uint32_t off;
 
@@ -33,7 +34,8 @@ static int arm64_rootfs_read_sector(uint32_t lba, uint8_t *buf)
 
 static int arm64_rootfs_write_sector(uint32_t lba, const uint8_t *buf)
 {
-	uint32_t size = (uint32_t)(arm64_rootfs_end - arm64_rootfs_start);
+	uint32_t size =
+	    (uint32_t)((uintptr_t)arm64_rootfs_end - (uintptr_t)arm64_rootfs_start);
 	uint32_t sectors = size / BLKDEV_SECTOR_SIZE;
 	uint32_t off;
 
@@ -59,25 +61,23 @@ int arm64_rootfs_register(void)
 	if (blkdev_register_disk("sda", 8, 0, DRUNIX_DISK_SECTORS, &ops) != 0)
 		return -1;
 	sda = blkdev_find_index("sda");
-	if (sda < 0 ||
-	    blkdev_register_part("sda1",
-	                         (uint32_t)sda,
-	                         1,
-	                         ARM64_ROOTFS_PARTITION_START,
-	                         DRUNIX_DISK_SECTORS -
-	                             ARM64_ROOTFS_PARTITION_START) != 0)
+	if (sda < 0 || blkdev_register_part("sda1",
+	                                    (uint32_t)sda,
+	                                    1,
+	                                    ARM64_ROOTFS_PARTITION_START,
+	                                    DRUNIX_DISK_SECTORS -
+	                                        ARM64_ROOTFS_PARTITION_START) != 0)
 		return -1;
 
 	if (blkdev_register_disk("sdb", 8, 16, DRUNIX_DISK_SECTORS, &ops) != 0)
 		return -1;
 	sdb = blkdev_find_index("sdb");
-	if (sdb < 0 ||
-	    blkdev_register_part("sdb1",
-	                         (uint32_t)sdb,
-	                         1,
-	                         ARM64_ROOTFS_PARTITION_START,
-	                         DRUNIX_DISK_SECTORS -
-	                             ARM64_ROOTFS_PARTITION_START) != 0)
+	if (sdb < 0 || blkdev_register_part("sdb1",
+	                                    (uint32_t)sdb,
+	                                    1,
+	                                    ARM64_ROOTFS_PARTITION_START,
+	                                    DRUNIX_DISK_SECTORS -
+	                                        ARM64_ROOTFS_PARTITION_START) != 0)
 		return -1;
 
 	return 0;

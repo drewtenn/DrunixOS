@@ -30,7 +30,7 @@
 #define ARM64_VIDEO_PIXEL_ORDER_RGB 1u
 #define ARM64_VIDEO_BUS_ADDRESS_MASK 0x3FFFFFFFu
 #define ARM64_VIDEO_BYTES_PER_PIXEL 4u
-#define ARM64_VIDEO_CONSOLE_CELLS \
+#define ARM64_VIDEO_CONSOLE_CELLS                                              \
 	((ARM64_VIDEO_WIDTH / GUI_FONT_W) * (ARM64_VIDEO_HEIGHT / GUI_FONT_H))
 
 enum arm64_video_request_index {
@@ -182,8 +182,8 @@ static int arm64_video_tag_ok(uint32_t request_code, uint32_t value_size)
 
 static int arm64_video_validate_mode_response(void)
 {
-	if (!arm64_video_tag_ok(g_arm64_video_request[ARM64_VIDEO_REQ_PHYSICAL_CODE],
-	                        8u) ||
+	if (!arm64_video_tag_ok(
+	        g_arm64_video_request[ARM64_VIDEO_REQ_PHYSICAL_CODE], 8u) ||
 	    !arm64_video_tag_ok(g_arm64_video_request[ARM64_VIDEO_REQ_VIRTUAL_CODE],
 	                        8u) ||
 	    !arm64_video_tag_ok(g_arm64_video_request[ARM64_VIDEO_REQ_DEPTH_CODE],
@@ -202,8 +202,7 @@ static int arm64_video_validate_mode_response(void)
 	    g_arm64_video_request[ARM64_VIDEO_REQ_VIRTUAL_HEIGHT] !=
 	        ARM64_VIDEO_HEIGHT)
 		return -1;
-	if (g_arm64_video_request[ARM64_VIDEO_REQ_DEPTH_VALUE] !=
-	    ARM64_VIDEO_DEPTH)
+	if (g_arm64_video_request[ARM64_VIDEO_REQ_DEPTH_VALUE] != ARM64_VIDEO_DEPTH)
 		return -1;
 	if (g_arm64_video_request[ARM64_VIDEO_REQ_PIXEL_ORDER] !=
 	    ARM64_VIDEO_PIXEL_ORDER_RGB)

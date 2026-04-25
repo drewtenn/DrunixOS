@@ -3,6 +3,7 @@ ARM_CXX ?= aarch64-elf-g++
 ARM_LD ?= aarch64-elf-ld
 ARM_AR ?= aarch64-elf-ar
 ARM_OBJCOPY ?= aarch64-elf-objcopy
+ARM_GDB ?= aarch64-elf-gdb
 
 include user/programs.mk
 

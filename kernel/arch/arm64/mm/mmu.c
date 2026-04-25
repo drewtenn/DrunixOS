@@ -36,8 +36,8 @@
 #define ARM64_MMU_ATTR_INDEX_MASK (7ull << 2)
 
 #define ARM64_MMU_MAIR_EL1 0x00000000000004FFull
-#define ARM64_MMU_TCR_EL1                                                   \
-	((uint64_t)ARM64_MMU_T0SZ | (1ull << 8) | (1ull << 10) | (3ull << 12) | \
+#define ARM64_MMU_TCR_EL1                                                      \
+	((uint64_t)ARM64_MMU_T0SZ | (1ull << 8) | (1ull << 10) | (3ull << 12) |    \
 	 (1ull << 23))
 
 typedef uint64_t arm64_mmu_desc_t;
@@ -147,17 +147,16 @@ arm64_mmu_kernel_leaf_desc(uint64_t phys, uint32_t level, int device)
 	return desc;
 }
 
-static arm64_mmu_desc_t
-arm64_mmu_page_desc_from_flags(uint64_t phys, uint32_t flags)
+static arm64_mmu_desc_t arm64_mmu_page_desc_from_flags(uint64_t phys,
+                                                       uint32_t flags)
 {
-	arm64_mmu_desc_t desc =
-	    (phys & ARM64_MMU_OUTPUT_ADDR_MASK) | ARM64_MMU_DESC_VALID |
-	    ARM64_MMU_DESC_TABLE | ARM64_MMU_DESC_AF |
-	    ARM64_MMU_DESC_ATTR_NORMAL | ARM64_MMU_DESC_SH_INNER;
+	arm64_mmu_desc_t desc = (phys & ARM64_MMU_OUTPUT_ADDR_MASK) |
+	                        ARM64_MMU_DESC_VALID | ARM64_MMU_DESC_TABLE |
+	                        ARM64_MMU_DESC_AF | ARM64_MMU_DESC_ATTR_NORMAL |
+	                        ARM64_MMU_DESC_SH_INNER;
 
 	if (flags & ARCH_MM_MAP_USER)
-		desc |= ARM64_MMU_DESC_AP_USER | ARM64_MMU_DESC_NG |
-		        ARM64_MMU_DESC_PXN;
+		desc |= ARM64_MMU_DESC_AP_USER | ARM64_MMU_DESC_NG | ARM64_MMU_DESC_PXN;
 
 	if ((flags & ARCH_MM_MAP_WRITE) == 0 || (flags & ARCH_MM_MAP_COW))
 		desc |= ARM64_MMU_DESC_AP_RO;
@@ -648,9 +647,8 @@ int arm64_mmu_update(arch_aspace_t aspace,
 		return -1;
 
 	unsupported = clear_flags | set_flags;
-	if (unsupported &
-	    (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ | ARCH_MM_MAP_EXEC |
-	     ARCH_MM_MAP_USER))
+	if (unsupported & (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ |
+	                   ARCH_MM_MAP_EXEC | ARCH_MM_MAP_USER))
 		return -1;
 
 	old_desc = *slot;
@@ -663,8 +661,8 @@ int arm64_mmu_update(arch_aspace_t aspace,
 		flags |= set_flags;
 	}
 
-	*slot = arm64_mmu_page_desc_from_flags(
-	    arm64_mmu_leaf_base(old_desc, 3), flags);
+	*slot =
+	    arm64_mmu_page_desc_from_flags(arm64_mmu_leaf_base(old_desc, 3), flags);
 	arm64_mmu_tlb_flush_all();
 	return 0;
 }
