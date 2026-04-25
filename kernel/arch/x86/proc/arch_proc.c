@@ -113,6 +113,33 @@ int arch_process_build_user_stack(arch_aspace_t aspace,
 	if ((uint32_t)envc > PROCESS_ENV_MAX_COUNT)
 		return -1;
 
+	for (int i = 0; i < USER_STACK_PAGES; i++) {
+		arch_mm_mapping_t existing;
+		uint32_t phys;
+		uint32_t vaddr;
+
+		vaddr = USER_STACK_TOP - (uint32_t)(i + 1) * PAGE_SIZE;
+		if (arch_mm_query(aspace, vaddr, &existing) == 0) {
+			if ((existing.flags &
+			     (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER)) ==
+			    (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER))
+				continue;
+			return -1;
+		}
+
+		phys = pmm_alloc_page();
+		if (!phys)
+			return -1;
+		if (arch_mm_map(aspace,
+		                vaddr,
+		                phys,
+		                ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ |
+		                    ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER) != 0) {
+			pmm_free_page(phys);
+			return -1;
+		}
+	}
+
 	for (int i = 0; i < argc; i++) {
 		const char *s = argv[i];
 		uint32_t n = 0;
@@ -478,6 +505,21 @@ void arch_kstack_unguard(uintptr_t addr)
 uint32_t arch_trap_frame_ip(const arch_trap_frame_t *frame)
 {
 	return frame ? frame->eip : 0u;
+}
+
+uint32_t arch_trap_frame_fault_vector(const arch_trap_frame_t *frame)
+{
+	return frame ? frame->vector : 0u;
+}
+
+uint32_t arch_trap_frame_fault_error_code(const arch_trap_frame_t *frame)
+{
+	return frame ? frame->error_code : 0u;
+}
+
+uint32_t arch_trap_frame_stack_pointer(const arch_trap_frame_t *frame)
+{
+	return frame ? frame->user_esp : 0u;
 }
 
 uint64_t arch_syscall_number(const arch_trap_frame_t *frame)

@@ -12,25 +12,19 @@
 #include <limits.h>
 #include <stdint.h>
 
-#ifdef __aarch64__
-void clear_screen(void)
+void __attribute__((weak)) clear_screen(void)
 {
 }
 
-void scroll_up(int n)
+void __attribute__((weak)) scroll_up(int n)
 {
 	(void)n;
 }
 
-void scroll_down(int n)
+void __attribute__((weak)) scroll_down(int n)
 {
 	(void)n;
 }
-#else
-extern void clear_screen(void);
-extern void scroll_up(int n);
-extern void scroll_down(int n);
-#endif
 
 static int syscall_scroll_count(uint32_t count)
 {

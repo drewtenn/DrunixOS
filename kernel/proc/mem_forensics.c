@@ -136,47 +136,17 @@ static const char *mem_forensics_fault_name(uint32_t classification)
 
 static uint32_t mem_forensics_fault_vector(const arch_trap_frame_t *frame)
 {
-#ifdef __aarch64__
-	uint32_t ec;
-
-	if (!frame)
-		return 0u;
-
-	ec = (uint32_t)((frame->esr_el1 >> 26) & 0x3Fu);
-	return (ec == 0x20u || ec == 0x21u || ec == 0x24u || ec == 0x25u) ? 14u
-	                                                                    : 0u;
-#else
-	return frame ? frame->vector : 0u;
-#endif
+	return arch_trap_frame_fault_vector(frame);
 }
 
 static uint32_t mem_forensics_fault_error_code(const arch_trap_frame_t *frame)
 {
-#ifdef __aarch64__
-	uint32_t err = 0u;
-	uint32_t ec;
-
-	if (!frame)
-		return 0u;
-
-	ec = (uint32_t)((frame->esr_el1 >> 26) & 0x3Fu);
-	if (ec == 0x24u || ec == 0x25u) {
-		if ((frame->esr_el1 & (1ull << 6)) != 0)
-			err |= PF_ERR_WRITE;
-	}
-	return err;
-#else
-	return frame ? frame->error_code : 0u;
-#endif
+	return arch_trap_frame_fault_error_code(frame);
 }
 
 static uint32_t mem_forensics_fault_stack_pointer(const arch_trap_frame_t *frame)
 {
-#ifdef __aarch64__
-	return frame ? (uint32_t)frame->sp_el0 : 0u;
-#else
-	return frame ? frame->user_esp : 0u;
-#endif
+	return arch_trap_frame_stack_pointer(frame);
 }
 
 static void mem_forensics_classify_fault(const struct process *proc,

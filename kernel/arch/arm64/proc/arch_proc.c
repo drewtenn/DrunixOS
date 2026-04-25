@@ -365,6 +365,39 @@ uint32_t arch_trap_frame_ip(const arch_trap_frame_t *frame)
 	return frame ? (uint32_t)frame->elr_el1 : 0u;
 }
 
+uint32_t arch_trap_frame_fault_vector(const arch_trap_frame_t *frame)
+{
+	uint32_t ec;
+
+	if (!frame)
+		return 0u;
+
+	ec = (uint32_t)((frame->esr_el1 >> 26) & 0x3Fu);
+	return (ec == 0x20u || ec == 0x21u || ec == 0x24u || ec == 0x25u) ? 14u
+	                                                                    : 0u;
+}
+
+uint32_t arch_trap_frame_fault_error_code(const arch_trap_frame_t *frame)
+{
+	uint32_t err = 0u;
+	uint32_t ec;
+
+	if (!frame)
+		return 0u;
+
+	ec = (uint32_t)((frame->esr_el1 >> 26) & 0x3Fu);
+	if (ec == 0x24u || ec == 0x25u) {
+		if ((frame->esr_el1 & (1ull << 6)) != 0)
+			err |= 0x2u;
+	}
+	return err;
+}
+
+uint32_t arch_trap_frame_stack_pointer(const arch_trap_frame_t *frame)
+{
+	return frame ? (uint32_t)frame->sp_el0 : 0u;
+}
+
 uint64_t arch_syscall_number(const arch_trap_frame_t *frame)
 {
 	return frame ? frame->x[8] : 0u;

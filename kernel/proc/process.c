@@ -14,19 +14,10 @@
 #include "klog.h"
 #include "kstring.h"
 #include "fs.h"
-#ifdef __aarch64__
-#include "proc/init_layout.h"
-#endif
 #include <stdint.h>
 
-#ifdef __aarch64__
-#define PROCESS_USER_STACK_TOP ARM64_INIT_STACK_TOP
-#define PROCESS_USER_STACK_LOW ARM64_INIT_STACK_BASE
-#else
 #define PROCESS_USER_STACK_TOP USER_STACK_TOP
-#define PROCESS_USER_STACK_LOW                                                  \
-	(USER_STACK_TOP - (uint32_t)USER_STACK_MAX_PAGES * PAGE_SIZE)
-#endif
+#define PROCESS_USER_STACK_LOW USER_STACK_BASE
 
 static void process_fork_rollback_child(process_t *child_out)
 {
@@ -228,34 +219,9 @@ int process_create_file(process_t *proc,
 		goto fail_user_space;
 	}
 
-#ifndef __aarch64__
-	/* Step 3: allocate and map the user stack */
-	for (int i = 0; i < USER_STACK_PAGES; i++) {
-		uint32_t phys = pmm_alloc_page();
-		if (!phys) {
-			rc = -3;
-			goto fail_user_space;
-		}
-
-		/* Map pages downward from USER_STACK_TOP */
-		uint32_t vaddr = USER_STACK_TOP - (uint32_t)(i + 1) * 0x1000;
-		if (arch_mm_map(aspace,
-		                vaddr,
-		                phys,
-		                ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ |
-		                    ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER) != 0) {
-			pmm_free_page(phys);
-			rc = -4;
-			goto fail_user_space;
-		}
-	}
-#endif
-
-	/* Step 4: ask the active architecture to populate the initial user stack.
-     * On architectures with hardware page tables this runs after step 3 maps
-     * stack pages; ARM64 owns its bootstrap stack placement in the arch hook.
-     * It must run before the process descriptor records the entry stack
-     * pointer. */
+	/* Step 3: ask the active architecture to map and populate the initial
+     * user stack. It must run before the process descriptor records the entry
+     * stack pointer. */
 	uintptr_t initial_stack = USER_STACK_TOP;
 	if (arch_process_build_user_stack(
 	        aspace, argv, argc, envp, envc, &initial_stack) != 0) {

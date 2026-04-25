@@ -20,20 +20,9 @@
 #include "vfs.h"
 #include <stdint.h>
 
-#ifdef __aarch64__
-uint32_t SYSCALL_NOINLINE syscall_case_exit_exit_group(uint32_t exit_group,
-                                                       uint32_t ebx)
-{
-	if (exit_group) {
-		sched_mark_group_exit(ebx);
-	} else {
-		sched_set_exit_status(ebx);
-		sched_mark_exit();
-	}
-	schedule();
-	__builtin_unreachable();
-}
-#endif
+extern int module_load_file(const char *module_name,
+                            vfs_file_ref_t file_ref,
+                            uint32_t size) __attribute__((weak));
 
 static int linux_wait_child_matches(const process_t *cur,
                                     const process_t *child,
@@ -545,51 +534,47 @@ uint32_t SYSCALL_NOINLINE syscall_case_set_tid_address(void)
 
 uint32_t SYSCALL_NOINLINE syscall_case_drunix_modload(uint32_t ebx)
 {
-#ifdef __aarch64__
-	(void)ebx;
-	return (uint32_t)-1;
-#else
-	{
-		/*
-         * ebx = pointer to null-terminated module filename in user space.
-         *
-         * Looks up the file via the VFS to get a mount-qualified file ref and
-         * size, then calls module_load_file() to read the ELF relocatable object
-         * from disk, resolve symbols against kernel_exports[], apply
-         * relocations, and call the module's module_init() function.
-         *
-         * Returns 0 on success, or a negative error code from module_load_file():
-         *   -1  invalid ELF
-         *   -2  relocation error (undefined symbol or unsupported reloc type)
-         *   -3  out of kernel heap memory
-         *   -4  module_init() returned non-zero
-         *   -5  module too large (> MODULE_MAX_SIZE)
-         */
-		process_t *cur = sched_current();
-		char *rpath = syscall_alloc_path_scratch();
-		if (!rpath)
-			return (uint32_t)-1;
-		if (!cur || resolve_user_path(cur, ebx, rpath, SYSCALL_PATH_MAX) != 0) {
-			kfree(rpath);
-			return (uint32_t)-1;
-		}
-		vfs_file_ref_t mod_ref;
-		uint32_t sz;
-		if (vfs_open_file(rpath, &mod_ref, &sz) != 0) {
-			klog("MODLOAD", "file not found");
-			kfree(rpath);
-			return (uint32_t)-1;
-		}
-		{
-			uint32_t ret = (uint32_t)module_load_file(rpath, mod_ref, sz);
-			kfree(rpath);
-			return ret;
-		}
+	/*
+     * ebx = pointer to null-terminated module filename in user space.
+     *
+     * Looks up the file via the VFS to get a mount-qualified file ref and
+     * size, then calls module_load_file() to read the ELF relocatable object
+     * from disk, resolve symbols against kernel_exports[], apply relocations,
+     * and call the module's module_init() function.
+     *
+     * Returns 0 on success, or a negative error code from module_load_file():
+     *   -1  invalid ELF / unavailable loader
+     *   -2  relocation error (undefined symbol or unsupported reloc type)
+     *   -3  out of kernel heap memory
+     *   -4  module_init() returned non-zero
+     *   -5  module too large (> MODULE_MAX_SIZE)
+     */
+	process_t *cur = sched_current();
+	char *rpath;
+	vfs_file_ref_t mod_ref;
+	uint32_t sz;
+	uint32_t ret;
+
+	if (!module_load_file)
+		return (uint32_t)-1;
+
+	rpath = syscall_alloc_path_scratch();
+	if (!rpath)
+		return (uint32_t)-1;
+	if (!cur || resolve_user_path(cur, ebx, rpath, SYSCALL_PATH_MAX) != 0) {
+		kfree(rpath);
+		return (uint32_t)-1;
 	}
-#endif
+	if (vfs_open_file(rpath, &mod_ref, &sz) != 0) {
+		klog("MODLOAD", "file not found");
+		kfree(rpath);
+		return (uint32_t)-1;
+	}
+	ret = (uint32_t)module_load_file(rpath, mod_ref, sz);
+	kfree(rpath);
+	return ret;
 }
 
-#ifndef __aarch64__
 uint32_t SYSCALL_NOINLINE syscall_case_exit_exit_group(uint32_t exit_group,
                                                        uint32_t ebx)
 {
@@ -608,7 +593,6 @@ uint32_t SYSCALL_NOINLINE syscall_case_exit_exit_group(uint32_t exit_group,
 	schedule();
 	__builtin_unreachable();
 }
-#endif
 
 uint32_t SYSCALL_NOINLINE syscall_case_waitpid(uint32_t ebx,
                                                uint32_t ecx,

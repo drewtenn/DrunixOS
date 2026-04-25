@@ -8,6 +8,7 @@
 
 #include "syscall_internal.h"
 #include "syscall_linux.h"
+#include "arch.h"
 #include "blkdev.h"
 #include "chardev.h"
 #include "console/runtime.h"
@@ -275,13 +276,8 @@ static uint32_t syscall_read_fd(uint32_t fd, uint32_t user_buf, uint32_t count)
 			return (uint32_t)-1;
 		if (uaccess_prepare(cur, user_buf, 1, 1) != 0)
 			return (uint32_t)-1;
-		while ((c = dev->read_char()) == 0) {
-#ifdef __aarch64__
-			__asm__ volatile("wfe");
-#else
-			__asm__ volatile("pause");
-#endif
-		}
+		while ((c = dev->read_char()) == 0)
+			arch_idle_wait();
 		if (uaccess_copy_to_user(cur, user_buf, &c, 1) != 0)
 			return (uint32_t)-1;
 		return 1;

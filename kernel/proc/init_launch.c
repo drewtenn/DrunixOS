@@ -10,37 +10,37 @@
 #include "sched.h"
 #include "vfs.h"
 
-#ifdef __aarch64__
-int desktop_is_active(void)
+int __attribute__((weak)) desktop_is_active(void)
 {
 	return 0;
 }
 
-desktop_state_t *desktop_global(void)
+desktop_state_t *__attribute__((weak)) desktop_global(void)
 {
 	return 0;
 }
 
-void desktop_attach_shell_pid(desktop_state_t *desktop, uint32_t pid)
+void __attribute__((weak)) desktop_attach_shell_pid(desktop_state_t *desktop,
+                                                   uint32_t pid)
 {
 	(void)desktop;
 	(void)pid;
 }
 
-void desktop_render(desktop_state_t *desktop)
+void __attribute__((weak)) desktop_render(desktop_state_t *desktop)
 {
 	(void)desktop;
 }
 
-uint32_t desktop_shell_pid(const desktop_state_t *desktop)
+uint32_t __attribute__((weak)) desktop_shell_pid(const desktop_state_t *desktop)
 {
 	(void)desktop;
 	return 0;
 }
 
-int desktop_process_owns_shell(desktop_state_t *desktop,
-                               uint32_t pid,
-                               uint32_t pgid)
+int __attribute__((weak)) desktop_process_owns_shell(desktop_state_t *desktop,
+                                                     uint32_t pid,
+                                                     uint32_t pgid)
 {
 	(void)desktop;
 	(void)pid;
@@ -48,9 +48,9 @@ int desktop_process_owns_shell(desktop_state_t *desktop,
 	return 0;
 }
 
-int desktop_write_console_output(desktop_state_t *desktop,
-                                 const char *buf,
-                                 uint32_t len)
+int __attribute__((weak)) desktop_write_console_output(desktop_state_t *desktop,
+                                                       const char *buf,
+                                                       uint32_t len)
 {
 	(void)desktop;
 	(void)buf;
@@ -58,34 +58,34 @@ int desktop_write_console_output(desktop_state_t *desktop,
 	return 0;
 }
 
-void desktop_begin_console_batch(desktop_state_t *desktop)
+void __attribute__((weak)) desktop_begin_console_batch(desktop_state_t *desktop)
 {
 	(void)desktop;
 }
 
-void desktop_end_console_batch(desktop_state_t *desktop)
+void __attribute__((weak)) desktop_end_console_batch(desktop_state_t *desktop)
 {
 	(void)desktop;
 }
 
-int desktop_clear_console(desktop_state_t *desktop)
+int __attribute__((weak)) desktop_clear_console(desktop_state_t *desktop)
 {
 	(void)desktop;
 	return 0;
 }
 
-int desktop_scroll_console(desktop_state_t *desktop, int rows)
+int __attribute__((weak)) desktop_scroll_console(desktop_state_t *desktop,
+                                                int rows)
 {
 	(void)desktop;
 	(void)rows;
 	return 0;
 }
 
-int desktop_console_mirror_enabled(void)
+int __attribute__((weak)) desktop_console_mirror_enabled(void)
 {
 	return 1;
 }
-#endif
 
 static process_t boot_init_proc;
 

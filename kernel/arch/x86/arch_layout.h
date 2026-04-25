@@ -1,0 +1,16 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+
+#ifndef KERNEL_ARCH_X86_ARCH_LAYOUT_H
+#define KERNEL_ARCH_X86_ARCH_LAYOUT_H
+
+#include <stdint.h>
+
+#define ARCH_HEAP_START 0x00032000u
+#define ARCH_HEAP_END 0x0009F000u
+
+#define ARCH_USER_STACK_TOP ((uintptr_t)0xC0000000u)
+#define ARCH_USER_STACK_BASE (ARCH_USER_STACK_TOP - 64u * 0x1000u)
+#define ARCH_USER_HEAP_MAX ARCH_USER_STACK_BASE
+#define ARCH_USER_MMAP_MIN 0x40000000u
+
+#endif

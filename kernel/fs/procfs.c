@@ -5,9 +5,7 @@
 
 #include "procfs.h"
 #include "sched.h"
-#ifndef __aarch64__
 #include "module.h"
-#endif
 #include "mem_forensics.h"
 #include "kheap.h"
 #include "kprintf.h"
@@ -17,6 +15,9 @@
 #include <stdint.h>
 
 #define PROCFS_RENDER_CAP 16384u
+
+extern int module_snapshot(module_info_t *out, uint32_t max)
+    __attribute__((weak));
 
 typedef struct {
 	char *buf;
@@ -428,11 +429,12 @@ procfs_render_fd(render_buf_t *rb, const process_t *proc, uint32_t fd)
 
 static void procfs_render_modules(render_buf_t *rb)
 {
-#ifdef __aarch64__
-	(void)rb;
-#else
 	module_info_t mods[MODULE_MAX_LOADED];
-	int n = module_snapshot(mods, MODULE_MAX_LOADED);
+	int n;
+
+	if (!module_snapshot)
+		return;
+	n = module_snapshot(mods, MODULE_MAX_LOADED);
 
 	for (int i = 0; i < n; i++) {
 		procfs_emitf(rb,
@@ -441,7 +443,6 @@ static void procfs_render_modules(render_buf_t *rb)
 		             mods[i].size,
 		             mods[i].base);
 	}
-#endif
 }
 
 static void procfs_render_mounts(render_buf_t *rb)

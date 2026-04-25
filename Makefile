@@ -310,7 +310,7 @@ build: kernel disk
 iso: os.iso
 images: disk
 fresh: run-fresh
-check: clang-tidy-include-check test-headless
+check: clang-tidy-include-check test-headless check-arch-boundary-reuse
 check-phase6:
 	python3 tools/test_kernel_arch_boundary_phase6.py
 
@@ -336,6 +336,9 @@ check-arm64-ctrl-c:
 
 check-arm64-shell-history:
 	python3 tools/test_arm64_shell_history.py
+
+check-arch-boundary-reuse:
+	python3 tools/test_arch_boundary_reuse.py
 
 check-arm64-vga-console:
 	python3 tools/test_arm64_vga_console.py
@@ -520,7 +523,7 @@ clean:
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all \
-        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity check-arm64-sleep check-arm64-ctrl-c check-arm64-shell-history check-arm64-vga-console \
+        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity check-arm64-sleep check-arm64-ctrl-c check-arm64-shell-history check-arch-boundary-reuse check-arm64-vga-console \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean
@@ -559,7 +562,7 @@ disk:
 
 fresh: run
 
-check: check-shell-prompt check-user-programs check-arm64-sleep check-arm64-ctrl-c check-arm64-shell-history
+check: check-shell-prompt check-user-programs check-arm64-sleep check-arm64-ctrl-c check-arm64-shell-history check-arch-boundary-reuse
 
 check-shell-prompt:
 	python3 tools/test_shell_prompt.py --arch arm64
@@ -593,6 +596,9 @@ check-arm64-ctrl-c:
 check-arm64-shell-history:
 	python3 tools/test_arm64_shell_history.py
 
+check-arch-boundary-reuse:
+	python3 tools/test_arch_boundary_reuse.py
+
 check-arm64-vga-console:
 	python3 tools/test_arm64_vga_console.py
 
@@ -623,7 +629,7 @@ clean:
 
 .PHONY: all build kernel iso images disk fresh check check-shell-prompt check-user-programs \
         run run-fresh \
-        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity check-arm64-sleep check-arm64-ctrl-c check-arm64-shell-history check-arm64-vga-console \
+        check-phase6 phase6-check check-phase7 check-arm64-userspace check-arm64-filesystem-init check-arm64-syscall-parity check-arm64-sleep check-arm64-ctrl-c check-arm64-shell-history check-arch-boundary-reuse check-arm64-vga-console \
         pdf epub docs \
         rebuild clean
 endif
