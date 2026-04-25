@@ -153,6 +153,7 @@ DIAGRAM_BUCKETS = {
     'ch01-diag01.svg': 'snapshot',
     'ch01-diag02.svg': 'layout',
     'ch01-diag03.svg': 'layout',
+    'ch01-diag04.svg': 'snapshot',
     # Chapter 2
     # Chapter 3
     'ch03-diag01.svg': 'grid_snapshot',
@@ -1599,6 +1600,8 @@ stack(Path('ch01-diag02.svg'),'Entry stack after _start pushes Multiboot values'
  ('Initial ESP','Stack pointer undefined on entry','blue'),('EBX','Multiboot info pointer, 2nd argument','blue'),('EAX','Multiboot magic number, 1st argument','blue')],h=290)
 stack(Path('ch01-diag03.svg'),'Kernel image layout','Sections grow upward from the load address, so the boot header sits at the lowest address.',[
  ('zeroed data','uninitialized globals, memory bitmap, kernel stack','gray'),('writable data','mutable global values','blue'),('read-only data','constant values','green'),('kernel code','executable instructions','amber'),('boot header','GRUB header, first 8 KB','blue')],h=310,top_note='higher addresses',bottom_note='lower addresses (kernel loaded at 0x100000)')
+flow(Path('ch01-diag04.svg'),'AArch64 entry state','Register and privilege state when the primary core reaches the EL1 continuation after eret.',[
+ ('Exception level','EL1 (dropped from EL2 via eret)','green'),('PC','kernel EL1 entry point (0x80000 + offset)','amber'),('SP_EL1','top of kernel stack region','blue'),('Secondary cores','parked in spin loop','gray')])
 # Chapter 2
 # Chapter 3
 grid_snapshot(
