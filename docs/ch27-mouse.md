@@ -18,6 +18,10 @@ The life of a single mouse event — a nudge on the desk, a click, a drag — ru
 
 Between steps 1 and 7 the rest of the system is passive. The mouse driver, like the keyboard driver, is one of the few places in the kernel where execution flows from hardware up into software rather than the other way around.
 
+Mouse input is a portable concept — every architecture needs a pointing device that delivers motion deltas and button events to the compositor — but the physical bus varies by platform. On a PC we route that traffic through the PS/2 auxiliary channel described below. Modern hardware instead delivers pointer input over **USB HID** (Universal Serial Bus Human Interface Device, the standard input-device protocol used by USB mice and keyboards).
+
+*On AArch64 (planned): USB HID in place of the PS/2 mouse.*
+
 ### The PS/2 Auxiliary Channel
 
 A PS/2 keyboard controller — the 8042 chip, named for the part number used in the original IBM PC/AT — has two device channels. The **primary channel** carries keyboard traffic and raises IRQ1, which Chapter 10's driver already owns. The **auxiliary channel** is the second input channel of the 8042 keyboard controller, physically separate but sharing the same I/O ports; it routes its traffic through a second output buffer and raises its own interrupt, IRQ12.
