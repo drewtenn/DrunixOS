@@ -6,17 +6,19 @@
 
 Chapter 7 left us with a reliable map of which 4 KB chunks of physical memory are real RAM and which are holes or hardware-mapped regions. Knowing is not enough — we need to *do* something with that information. Three separate problems remain, and this chapter builds three layered solutions, each on top of the one beneath it.
 
-The first problem is **tracking which physical pages are free and which are in use**. The solution is the **Physical Memory Manager** (PMM), which maintains a bitmap with one bit per page.
+The first problem is **tracking which physical pages are free and which are in use**. The solution is the **Physical Memory Manager** (PMM), which maintains a bitmap with one bit per page. This layer is portable C — the bitmap looks the same whether the CPU is an x86 or an AArch64.
 
-The second problem is **controlling how virtual addresses map to physical addresses**. The solution is **paging** — a hardware feature that translates every memory access through a two-level lookup table before it reaches the bus.
+The second problem is **controlling how virtual addresses map to physical addresses**. The solution is **paging** — a hardware feature that translates every memory access through a lookup table before it reaches the bus. This is where the two architectures diverge sharply: the shape of that table, and every register and instruction that touches it, is intimately tied to the CPU's MMU design.
 
-The third problem is **allocating arbitrary-sized chunks of memory for the kernel's own short-lived data structures**. The solution is the **kernel heap**, a simple allocator that provides `kmalloc` and `kfree` out of a reserved block of identity-mapped memory.
+The third problem is **allocating arbitrary-sized chunks of memory for the kernel's own short-lived data structures**. The solution is the **kernel heap**, a simple allocator that provides `kmalloc` and `kfree` out of a reserved block of identity-mapped memory. Like the PMM, this layer is portable C that sits above whatever paging mechanism the architecture supplies.
 
 Each of these three subsystems is covered below. All three must be initialised in a specific order — any other order fails because each layer depends on state the previous layer established.
 
 ### The Physical Memory Layout
 
 Before we could write the allocators, we had to decide where each piece of early-boot data lives in physical memory. These addresses must be chosen before paging is enabled, because once paging is on, every write goes through the page tables, and the page tables themselves have to already be in place.
+
+#### On x86: the PC low-memory map
 
 The physical address space the kernel inherits from the BIOS looks like a stack of regions, growing upward from address zero:
 
@@ -37,7 +39,13 @@ The same layout in tabular form, which is easier to scan when you need an exact 
 | `0x00100000` | kernel end | varies | Kernel image + BSS | Code, data, the PMM bitmap, and the 16 KB boot kernel stack (all in `.bss`) |
 | kernel end | `0x07FFFFFF` | rest | Extended RAM pool | Handed out page by page by the PMM |
 
-Everything below 1 MB is reserved or hardware-mapped. The kernel image itself starts at 1 MB, and the PMM bitmap lives inside the kernel's **BSS** (the section of an executable holding uninitialised data — it occupies no space in the file but is allocated and zeroed when the program is loaded), so it ends up just above the kernel's code and data.
+Everything below 1 MB is reserved or hardware-mapped — these are PC-platform reservations specific to the legacy BIOS memory map. The kernel image itself starts at 1 MB, and the PMM bitmap lives inside the kernel's **BSS** (the section of an executable holding uninitialised data — it occupies no space in the file but is allocated and zeroed when the program is loaded), so it ends up just above the kernel's code and data.
+
+#### On AArch64: the BCM2837 fixed map
+
+AArch64 has its own set of fixed reservations, independent of the PC layout. On the `raspi3b` machine that Drunix targets, the BCM2837 SoC presents 1 GB of RAM from `0x00000000` to `0x3FFFFFFF`. The top 16 MB of that space — from `0x3F000000` to `0x40000000` — is the peripheral bus, where memory-mapped device registers live. Writing there programs hardware, not memory, so it must be marked reserved from the start.
+
+The kernel image loads at `0x80000`. The PMM bitmap, boot stack, and page-table pool all live in the BSS just above the image, exactly as they do on x86. The device window (`0x3F000000`–`0x40000000`) takes the place of the VGA and ROM holes in the low-memory map — a platform-specific island that the PMM must fence off before handing any frames to callers.
 
 ### Layer 1: The Physical Memory Manager
 
@@ -61,13 +69,13 @@ Visually, the bitmap is a flat array where each bit owns a single page of physic
 
 A `1` means "in use", a `0` means "free". Finding a free page is the same as finding the first byte that is not `0xFF`, then the first zero bit inside that byte — the physical address follows from `(byte_index × 8 + bit_index) × 4096`.
 
-The bitmap is a static 4 096-byte array, which places it in the kernel's BSS section and therefore at `0x100000+` alongside the rest of the kernel image. A second static array now sits beside it: one byte of reference count per physical page. The bitmap still answers "is this page allocatable right now?", but the refcount answers "how many live mappings still point at it?" — important once processes can share physical frames. This is the same broad placement strategy Linux uses with `mem_map` — page-tracking metadata sits just above the kernel image, safely above the low-memory region where the bootloader leaves its own data.
+The bitmap is a static 4 096-byte array, which places it in the kernel's BSS section and therefore at `0x100000+` alongside the rest of the kernel image on x86, or just above `0x80000` on AArch64. A second static array now sits beside it: one byte of reference count per physical page. The bitmap still answers "is this page allocatable right now?", but the refcount answers "how many live mappings still point at it?" — important once processes can share physical frames. This is the same broad placement strategy Linux uses with `mem_map` — page-tracking metadata sits just above the kernel image, safely above the low-memory region where the bootloader leaves its own data.
 
 #### Initialisation Order
 
-The physical memory manager initializes with a conservative strategy: first mark every page as reserved, then walk the firmware memory map and open up every region the hardware reports as usable, then re-protect the regions the kernel itself occupies — the kernel image (which contains the bitmap and the boot kernel stack in its `.bss`), the page tables, the heap, and the VGA/ROM hole.
+The physical memory manager initializes with a conservative strategy: first mark every page as reserved, then walk the firmware memory map and open up every region the hardware reports as usable, then re-protect the regions the kernel itself occupies — the kernel image (which contains the bitmap and the boot kernel stack in its `.bss`), the page tables, the heap, and any platform-specific reserved regions such as the VGA/ROM hole on x86 or the peripheral bus window on AArch64.
 
-The "start safe, then free, then re-reserve" sequence is deliberate. If the memory map is missing, everything stays marked as used and the allocator refuses to hand out anything until the fallback region (1 MB–128 MB) is explicitly freed. This prevents the kernel from ever accidentally handing out a page that is already occupied by hardware, firmware, or itself.
+The "start safe, then free, then re-reserve" sequence is deliberate. If the memory map is missing, everything stays marked as used and the allocator refuses to hand out anything until the fallback region is explicitly freed. This prevents the kernel from ever accidentally handing out a page that is already occupied by hardware, firmware, or itself.
 
 #### Allocation
 
@@ -83,11 +91,13 @@ With just a physical memory manager, we can allocate pages, but the CPU still ha
 
 This enables three critical capabilities:
 
-- **Memory isolation between processes.** Each process has its own lookup table (its own page directory), so process A's pointer to `0x400000` resolves to a different physical page than process B's pointer to `0x400000`. Neither process can reach the other's memory.
+- **Memory isolation between processes.** Each process has its own lookup table, so process A's pointer to `0x400000` resolves to a different physical page than process B's pointer to `0x400000`. Neither process can reach the other's memory.
 - **Read-only regions.** The lookup-table entries include permission bits. The kernel's code can be mapped read-only so that a stray write cannot modify it.
 - **On-demand mapping.** A page can be marked "not present", and the CPU will fault when it is touched. The fault handler can allocate a physical page, update the table, and retry the instruction.
 
-#### The x86 Paging Structure
+Both architectures provide paging, but they implement it differently. The subsections below cover each in turn.
+
+### On x86: IA-32 two-level page tables
 
 On 32-bit x86, the paging lookup is a two-level table walk. A 32-bit virtual address is sliced into three fields, each of which indexes a different level of the walk:
 
@@ -144,13 +154,45 @@ Creating a fresh address space for a new process is straightforward: allocate a 
 
 The clone therefore duplicates the paging structures in two layers. For every present PDE that contains user mappings, it allocates a fresh child page table and copies the parent's entries into it. For each present user PTE inside that table, rather than allocating a new frame immediately, it marks the page as copy-on-write: the write bit is cleared, a software-defined COW flag is set, and the physical frame's reference count is incremented so the same physical memory is shared between parent and child. A write fault later forces the real per-process copy. The important structural point here is that paging is no longer only a static map built at process-creation time — the same page-table entries are part of a live fault-and-retry protocol.
 
+### On AArch64: 4 KB granule, 4-level translation
+
+AArch64 replaces the two-level x86 walk with a four-level translation scheme that can address a much larger virtual address space. Several new concepts appear here for the first time.
+
+A **granule** is the unit page size — on AArch64 the hardware supports 4 KB, 16 KB, or 64 KB granules; Drunix uses 4 KB, matching x86's page size and keeping the PMM bitmap arithmetic identical across architectures.
+
+A **translation regime** is an architecturally distinct view of the address space. At EL1 — the exception level where the kernel runs — there are two separate translation regimes operating simultaneously, each rooted at its own base register.
+
+**`TTBR0_EL1`** (Translation Table Base Register 0 at EL1) is the register that holds the root of the user/low-half translation tree. Any virtual address whose top bit is zero is translated through the table pointed to by `TTBR0_EL1`.
+
+**`TTBR1_EL1`** (Translation Table Base Register 1 at EL1) holds the root of the kernel/high-half translation tree. Virtual addresses with the top bit set — the upper half of the 64-bit space — are translated through the table rooted at `TTBR1_EL1`. This clean split means user and kernel mappings live in disjoint halves of the address space without any explicit per-entry privilege check on the split itself.
+
+When 4 KB granules are used with 48-bit virtual addresses (the configuration Drunix uses), a virtual address is split into five fields:
+
+| Bits | Width | Meaning |
+|------|-------|---------|
+| 47-39 | 9 b | L0 index — selects an entry in the L0 table |
+| 38-30 | 9 b | L1 index — selects an entry in the L1 table |
+| 29-21 | 9 b | L2 index — selects an entry in the L2 table |
+| 20-12 | 9 b | L3 index — selects an entry in the L3 table |
+| 11-0 | 12 b | Page offset — byte within the final 4 KB page |
+
+The MMU starts from the appropriate TTBR and follows four levels of tables, one index per level, until it reaches the L3 entry that points at the physical frame. The page offset then selects the final byte:
+
+![](diagrams/ch08-diag08.svg)
+
+Each level holds 512 entries (2⁹ = 512, matching the 9-bit index width). An L0 table covers 2⁴⁸ bytes of address space; each L0 entry covers 2³⁹ bytes; each L1 entry 2³⁰ bytes (1 GB); each L2 entry 2²¹ bytes (2 MB); and each L3 entry covers one 4 KB page.
+
+To flush a translation from the TLB after updating a page-table entry, AArch64 provides the **`TLBI`** instruction class (TLB Invalidate). `TLBI` flushes one or more entries from the translation lookaside buffer — the hardware cache of recent virtual-to-physical translations — and is the direct analogue of x86's `invlpg` instruction. AArch64's `TLBI` instruction accepts a suffix that controls which entries are flushed and at which exception level, making it more expressive than `invlpg` for multi-core invalidation; Drunix currently uses `TLBI VMALLE1IS` to invalidate all EL1 entries on the current inner-shareable domain.
+
+*On AArch64 (planned, milestone 3): the kernel installs identity-style mappings for kernel RAM, a high-half `TTBR1_EL1` mapping, and a device window for `0x3F000000`–`0x40000000`; TLB shootdown is single-core in the current bring-up since cores 1–3 stay parked.*
+
 ### Layer 3: The Kernel Heap
 
 #### Why a Heap is Needed
 
 The PMM can hand out whole pages, which is fine for page directories, page tables, and large buffers. But many kernel data structures are smaller than a page — a keyboard ring buffer slot, an eight-byte scheduler list node, a fifty-byte path string. Allocating a full 4 KB page for each would waste almost all of the memory. We therefore have our own **heap**: a reserved block of identity-mapped memory inside which `kmalloc` hands out arbitrary byte-sized ranges.
 
-The heap occupies the physical range `0x32000`–`0x8FFFF`, about 376 KB, inside the first megabyte of RAM. It is fully identity-mapped by paging, so we can reach any byte in it with a normal C pointer.
+On x86, the heap occupies the physical range `0x32000`–`0x8FFFF`, about 376 KB, inside the first megabyte of RAM. On AArch64 it occupies an equivalent region just above the kernel image and PMM bitmap. In both cases it is fully identity-mapped by paging, so any byte in it is reachable through a normal C pointer.
 
 Inside that region, the heap is structured as a linked list of variable-sized blocks. Immediately after `kheap_init`, there is exactly one block covering the whole heap:
 
@@ -260,12 +302,12 @@ The maximum object size the slab handles is `PAGE_SIZE - sizeof(slab_hdr_t)` = 4
 
 The four memory subsystems must be initialised in a specific order:
 
-1. **Physical page tracking** walks the firmware memory map and builds the allocation bitmap. This runs before paging is on, so it writes directly into kernel BSS.
-2. **Paging** fills in the page directory and page tables and switches the CPU into virtual-address mode. From the next instruction onward, every memory access goes through the translation hardware.
+1. **Physical page tracking** walks the firmware memory map (or the fixed hardware layout on AArch64) and builds the allocation bitmap. This runs before paging is on, so it writes directly into kernel BSS.
+2. **Paging** fills in the translation tables and switches the CPU into virtual-address mode. On x86, this loads a two-level page directory into CR3. On AArch64, this installs L0–L3 tables and loads the base addresses into `TTBR0_EL1` and `TTBR1_EL1`. From the next instruction onward, every memory access goes through the translation hardware.
 3. **The heap allocator** installs its initial free list over the heap region. Paging is already on at this point, but because the heap is identity-mapped the addresses still resolve correctly.
 4. **Object caches** (created on demand after the heap is up) each allocate a small descriptor from the heap and grow lazily — the first physical page for a cache is claimed only when the first object is actually allocated from it.
 
-Trying to do any of these steps out of order is impossible. The heap depends on paging being on. Paging depends on the PMM. The PMM depends on the Multiboot memory map. The slab depends on both the heap (for the descriptor) and the PMM (for slab pages).
+Trying to do any of these steps out of order is impossible. The heap depends on paging being on. Paging depends on the PMM. The PMM depends on the memory map. The slab depends on both the heap (for the descriptor) and the PMM (for slab pages).
 
 ### Where the Machine Is by the End of Chapter 8
 
@@ -274,8 +316,8 @@ By the end of this chapter we have four memory capabilities:
 | Capability | Provided by | How the kernel calls it |
 |------------|-------------|-------------------------|
 | Track free physical pages | PMM | `pmm_alloc_page` / `pmm_free_page` |
-| Translate virtual to physical addresses | Paging | Transparent — the CPU does it |
+| Translate virtual to physical addresses | Paging (x86: two-level PD/PT; AArch64: four-level L0–L3) | Transparent — the CPU does it |
 | Allocate and free arbitrary byte ranges | Heap | `kmalloc` / `kfree` |
 | Allocate and free fixed-size objects efficiently | Slab | `kmem_cache_create` / `kmem_cache_alloc` / `kmem_cache_free` |
 
-Together, these four layers are the foundation for every feature in the chapters that follow. Loading programs, creating processes, managing files, buffering keystrokes — every one of those requires dynamic memory. The heap handles one-off and variably-sized allocations; the slab handles the high-frequency, fixed-size objects that dominate kernel hot paths. With memory under control, Chapter 9 can introduce the first subsystem built on top of it: the kernel log, a shared voice every later driver uses as it comes up.
+Together, these four layers are the foundation for every feature in the chapters that follow. The PMM and the heap are the same portable C on both architectures; only the paging layer differs in shape — a two-level walk on x86 versus a four-level walk on AArch64. Loading programs, creating processes, managing files, buffering keystrokes — every one of those requires dynamic memory. The heap handles one-off and variably-sized allocations; the slab handles the high-frequency, fixed-size objects that dominate kernel hot paths. With memory under control, Chapter 9 can introduce the first subsystem built on top of it: the kernel log, a shared voice every later driver uses as it comes up.

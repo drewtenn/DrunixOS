@@ -172,6 +172,7 @@ DIAGRAM_BUCKETS = {
     'ch08-diag05.svg': 'comparison',
     'ch08-diag06.svg': 'layout',
     'ch08-diag07.svg': 'walk',
+    'ch08-diag08.svg': 'walk',
     # Chapter 9
     'ch09-diag01.svg': 'tagged_transcript',
     'ch09-diag02.svg': 'tagged_transcript',
@@ -1667,6 +1668,7 @@ compare_segments(Path('ch08-diag04.svg'),'Heap split on allocation','Allocation 
 compare_segments(Path('ch08-diag05.svg'),'Heap coalescing','Coalescing is another before/after change: adjacent free neighbours become one larger reusable block.', 'Before', [('Free block A', '64 B', 'green', 2), ('Free block B', '32 B', 'green', 1), ('Free block C', '128 B', 'green', 4)], 'After', [('Merged block', '256 B plus absorbed headers', 'amber', 7)], h=332)
 stack(Path('ch08-diag06.svg'),'Slab page layout','Each slab page starts with metadata, then packs fixed-size object slots.',[('page header','next pointer, free count, free-list head','blue'),('object slot 0','','green'),('object slot 1','','green'),('more object slots','','green'),('unused padding','space smaller than one full object','gray')],h=320)
 flow(Path('ch08-diag07.svg'),'Slab free list','Each free slot points at the next one, starting from the free-list head.',[('free-list head','','amber'),('free slot 0','','green'),('free slot 1','','green'),('last free slot','','green'),('end of list','','gray')],h=245)
+flow(Path('ch08-diag08.svg'),'AArch64 4-level translation walk','A 48-bit virtual address is split into five fields; the MMU follows four levels of page tables to reach the final 4 KB frame.',[('L0 table (TTBR1)','VA bits 47-39, 9-bit index','blue'),('L1 table','VA bits 38-30, 9-bit index','green'),('L2 table','VA bits 29-21, 9-bit index','amber'),('L3 table','VA bits 20-12, 9-bit index','blue'),('4 KB page + offset','VA bits 11-0, 12-bit byte offset','green')],h=420)
 # Chapter 9
 tagged_transcript(Path('ch09-diag01.svg'), 'Kernel log format', 'Each log line starts with a subsystem tag, then the human-readable message.',
                   [('MEM', 'free pages: 31500'), ('DISK', 'drive ready'), ('FILES', 'filesystem mounted'), ('FAULT', 'page-fault exception')], h=258)
