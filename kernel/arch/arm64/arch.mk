@@ -234,7 +234,7 @@ build/arm64-rootfs-empty:
 	@mkdir -p $(dir $@)
 	: > $@
 
-build/arm64-root.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf $(ARM_BUSYBOX_ROOTFS_DEPS) build/arm64-rootfs-empty tools/hello.txt tools/readme.txt tools/mkfs.py kernel/arch/arm64/arch.mk
+build/arm64-root.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf $(ARM_BUSYBOX_ROOTFS_DEPS) build/arm64-rootfs-empty tools/hello.txt tools/readme.txt tools/mkfs.py kernel/arch/arm64/arch.mk .include-busybox-flag
 	$(PYTHON) tools/mkfs.py $@ 32768 \
 		$(ARM_USER_ROOTFS_FILES) \
 		build/arm64-rootfs-empty dev/.keep \

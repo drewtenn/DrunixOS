@@ -51,8 +51,19 @@ def main() -> int:
     require(r"include\s+user/programs\.mk", makefile, "top-level Makefile must include user/programs.mk")
     require(r"USER_PROGS\s*:=", makefile, "top-level Makefile must derive disk programs from PROGS")
     require(r"INCLUDE_BUSYBOX\s*\?=\s*0", makefile, "Makefile must expose opt-in BusyBox image payloads")
+    require(r"\.include-busybox-flag", makefile, "Makefile must track INCLUDE_BUSYBOX changes")
     require(r"BUSYBOX_DISK_FILES", makefile, "x86 disk image must support adding /bin/busybox")
     require(r"ARM_BUSYBOX_ROOTFS_FILES", arm_arch_mk, "arm64 rootfs image must support adding /bin/busybox")
+    require(
+        r"disk\.fs:[^\n]*\.include-busybox-flag",
+        makefile,
+        "x86 disk image must rebuild when INCLUDE_BUSYBOX changes",
+    )
+    require(
+        r"build/arm64-root\.fs:[^\n]*\.include-busybox-flag",
+        arm_arch_mk,
+        "arm64 rootfs image must rebuild when INCLUDE_BUSYBOX changes",
+    )
     require(
         r"DISK_FILES\s*:=[^\n]*\$\(foreach\s+prog,\$\(USER_PROGS\)",
         makefile,

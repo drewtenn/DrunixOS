@@ -124,6 +124,8 @@ endif
 	echo "$(ARM64_SMOKE_FALLBACK)" | cmp -s - $@ || echo "$(ARM64_SMOKE_FALLBACK)" > $@
 .x86-serial-console-flag: FORCE
 	echo "$(X86_SERIAL_CONSOLE)" | cmp -s - $@ || echo "$(X86_SERIAL_CONSOLE)" > $@
+.include-busybox-flag: FORCE
+	echo "$(INCLUDE_BUSYBOX)" | cmp -s - $@ || echo "$(INCLUDE_BUSYBOX)" > $@
 .no-desktop-flag: FORCE
 	echo "$(NO_DESKTOP)" | cmp -s - $@ || echo "$(NO_DESKTOP)" > $@
 .vga-text-flag: FORCE
@@ -187,7 +189,7 @@ TEST_LOGS     := $(foreach suffix,$(TEST_SUFFIXES),$(LOG_DIR)/serial-$(suffix).l
 SENTINELS     := .ktest-flag .double-fault-test-flag .klog-debugcon-flag \
                  .mouse-speed-flag .init-program-flag .no-desktop-flag \
                  .vga-text-flag .disk-sectors-flag .arm64-smoke-fallback-flag \
-                 .x86-serial-console-flag
+                 .x86-serial-console-flag .include-busybox-flag
 
 QEMU_DISKS    = -drive format=raw,file=$(1),if=ide,index=0 \
                  -drive format=raw,file=$(2),if=ide,index=1
@@ -291,12 +293,12 @@ user/lib/libc.a user/lib/tcc_crt0.o:
 # Linux-compatible ext3 root partition.  ROOT_FS=dufs builds sda as DUFS
 # instead.
 ifeq ($(ROOT_FS),dufs)
-disk.fs: $(USER_BINS) $(BUSYBOX_DISK_DEPS) tools/hello.txt tools/readme.txt tools/mkfs.py .disk-sectors-flag
+disk.fs: $(USER_BINS) $(BUSYBOX_DISK_DEPS) tools/hello.txt tools/readme.txt tools/mkfs.py .disk-sectors-flag .include-busybox-flag
 	$(PYTHON) tools/mkfs.py $@ $(FS_SECTORS) $(DISK_FILES)
 $(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
 	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0xDA
 else
-disk.fs: $(USER_BINS) $(BUSYBOX_DISK_DEPS) tools/hello.txt tools/readme.txt tools/mkext3.py .disk-sectors-flag
+disk.fs: $(USER_BINS) $(BUSYBOX_DISK_DEPS) tools/hello.txt tools/readme.txt tools/mkext3.py .disk-sectors-flag .include-busybox-flag
 	$(PYTHON) tools/mkext3.py $@ $(FS_SECTORS) $(DISK_FILES)
 $(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
 	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0x83
