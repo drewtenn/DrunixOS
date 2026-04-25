@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="534.5" height="1030" viewBox="0 0 534.5 1030" role="img" aria-labelledby="title desc">
+  <title id="title">AArch64 initial user stack</title>
+  <desc id="desc">SP points to argc; argv and envp pointer arrays follow, then auxv entries, then the raw string data.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 2 2 L 10 6 L 2 10" fill="none" stroke="#0f172a" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      .bg { fill: #ffffff; }
+      .panel { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+      .blue { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.5; }
+      .green { fill: #ecfdf5; stroke: #059669; stroke-width: 1.5; }
+      .amber { fill: #fef3c7; stroke: #d97706; stroke-width: 1.5; }
+      .gray { fill: #f1f5f9; stroke: #64748b; stroke-width: 1.3; }
+      .chip { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.5; }
+      .vector { fill: #ecfdf5; stroke: #059669; stroke-width: 1.5; }
+      .tag { fill: #dbeafe; stroke: #2563eb; stroke-width: 1.25; }
+      .cell { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.4; }
+      .attr { fill: #e0f2fe; stroke: #0284c7; stroke-width: 1.4; }
+      .row { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.2; }
+      .gap { fill: #f1f5f9; stroke: #cbd5e1; stroke-width: 1.2; }
+      .table-shell { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.2; }
+      .table-headband { fill: #f8fafc; }
+      .table-rule { stroke: #cbd5e1; stroke-width: 1; }
+      .edge-label-bg { fill: #ffffff; fill-opacity: 0.94; }
+      .title { fill: #0f172a; font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label { fill: #0f172a; font: 600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-tight { fill: #0f172a; font: 600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-mini { fill: #0f172a; font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-micro { fill: #0f172a; font: 600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .colhead { fill: #334155; font: 700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .small { fill: #334155; font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .muted { fill: #64748b; font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .mono { fill: #0f172a; font: 12px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+      .byte { fill: #0f172a; font: 600 12px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; text-anchor: middle; dominant-baseline: middle; }
+      .arrow { stroke: #0f172a; stroke-width: 2.2; stroke-linecap: round; marker-end: url(#arrow); }
+      .line { stroke: #334155; stroke-width: 1.6; stroke-linecap: round; }
+    </style>
+  </defs>
+  <rect class="bg" x="0" y="0" width="534.5" height="1030" rx="12"/>
+  <text class="title" x="44" y="42">AArch64 initial user stack</text>
+  <text class="muted" x="44" y="68">SP points to argc; argv and envp pointer arrays follow, then auxv</text>
+  <text class="muted" x="44" y="84">entries, then the raw string data.</text>
+  <rect class="panel" x="34" y="114" width="466.5" height="868" rx="10"/>
+  <text class="muted" x="267.25" y="154" text-anchor="middle">lower addresses — initial SP points here (argc)</text>
+  <rect class="blue" x="68.0" y="162" width="398.5" height="68" rx="7"/>
+  <text class="label" x="267.2" y="188.0" text-anchor="middle" dominant-baseline="middle">argc</text>
+  <text class="muted" x="267.2" y="204.0" text-anchor="middle" dominant-baseline="middle">argument count (64-bit word)</text>
+  <rect class="green" x="68.0" y="248" width="398.5" height="68" rx="7"/>
+  <text class="label" x="267.2" y="274.0" text-anchor="middle" dominant-baseline="middle">argv[0]</text>
+  <text class="muted" x="267.2" y="290.0" text-anchor="middle" dominant-baseline="middle">pointer to program-name string</text>
+  <rect class="green" x="68.0" y="334" width="398.5" height="68" rx="7"/>
+  <text class="label" x="267.2" y="360.0" text-anchor="middle" dominant-baseline="middle">argv[1] … argv[argc-1]</text>
+  <text class="muted" x="267.2" y="376.0" text-anchor="middle" dominant-baseline="middle">pointers to remaining argument strings</text>
+  <rect class="gray" x="68.0" y="420" width="398.5" height="68" rx="7"/>
+  <text class="label" x="267.2" y="446.0" text-anchor="middle" dominant-baseline="middle">argv NULL terminator</text>
+  <text class="muted" x="267.2" y="462.0" text-anchor="middle" dominant-baseline="middle">NULL marks end of argv array</text>
+  <rect class="amber" x="68.0" y="506" width="398.5" height="68" rx="7"/>
+  <text class="label" x="267.2" y="532.0" text-anchor="middle" dominant-baseline="middle">envp[0] … envp[n-1]</text>
+  <text class="muted" x="267.2" y="548.0" text-anchor="middle" dominant-baseline="middle">pointers to environment strings</text>
+  <rect class="gray" x="68.0" y="592" width="398.5" height="68" rx="7"/>
+  <text class="label" x="267.2" y="618.0" text-anchor="middle" dominant-baseline="middle">envp NULL terminator</text>
+  <text class="muted" x="267.2" y="634.0" text-anchor="middle" dominant-baseline="middle">NULL marks end of envp array</text>
+  <rect class="blue" x="68.0" y="678" width="398.5" height="84" rx="7"/>
+  <text class="label" x="267.2" y="704.0" text-anchor="middle" dominant-baseline="middle">AT_PHDR … auxv entries</text>
+  <text class="muted" x="267.2" y="720.0" text-anchor="middle" dominant-baseline="middle">key–value pairs: page size, capabilities, vDSO</text>
+  <text class="muted" x="267.2" y="736.0" text-anchor="middle" dominant-baseline="middle">address, …</text>
+  <rect class="gray" x="68.0" y="780" width="398.5" height="68" rx="7"/>
+  <text class="label" x="267.2" y="806.0" text-anchor="middle" dominant-baseline="middle">AT_NULL terminator</text>
+  <text class="muted" x="267.2" y="822.0" text-anchor="middle" dominant-baseline="middle">type 0 marks end of auxv</text>
+  <rect class="green" x="68.0" y="866" width="398.5" height="68" rx="7"/>
+  <text class="label" x="267.2" y="892.0" text-anchor="middle" dominant-baseline="middle">string data</text>
+  <text class="muted" x="267.2" y="908.0" text-anchor="middle" dominant-baseline="middle">argument and environment strings, raw bytes</text>
+  <text class="muted" x="267.25" y="950" text-anchor="middle">higher addresses</text>
+  <text class="muted" x="500.5" y="1012.0" text-anchor="end">Chapter 20, Figure 2</text>
+</svg>

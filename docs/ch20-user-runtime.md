@@ -2,9 +2,11 @@
 
 ## Chapter 20 — User-Space Runtime Library
 
-### What a Runtime Library Is, and Why User Programs Need One
+### What the Kernel Sets Up Before the First User Instruction
 
-Chapter 19 left us with a complete signal subsystem and a process that can handle asynchronous notifications. Until now, every user program we wrote has been responsible for its own `_start` entry point and its own inline-assembly wrappers for `int 0x80`. That boilerplate has to be copied into every new program, and the programs themselves cannot be written as plain C with a `main` function.
+Chapter 19 left us with a complete signal subsystem and a process that can handle asynchronous notifications. Before any user instruction executes, however, the kernel has already done substantial work: it has laid out a precise initial stack frame that carries the program's argument count, its argument strings, its environment variables, and a table of auxiliary values the dynamic linker and C runtime rely on. The CPU register that points to this frame is the very first thing user code sees. What exactly the kernel places there — and how `_start` turns it into a C function call — is what this chapter covers.
+
+Until now, every user program we wrote has been responsible for its own `_start` entry point and its own inline-assembly wrappers for `int 0x80`. That boilerplate has to be copied into every new program, and the programs themselves cannot be written as plain C with a `main` function.
 
 On Linux, a user program written in C looks like this: you write `main`, you call `printf`, you return 0, and the compiler does the rest. What the compiler actually does is invisible to the programmer, but a lot is happening behind the scenes. A small startup object called **crt1.o** (the "C runtime, version 1") is linked into every executable. That object defines `_start`, the real entry point the kernel jumps to, which calls `main` and then passes `main`'s return value to `exit`. **libc** (the C standard library) provides `printf`, `write`, `read`, and every other standard C function, and each of those eventually issues a system call to ask the kernel to do the actual work.
 
@@ -14,15 +16,27 @@ We build with `-nostdlib -ffreestanding`, two compiler flags that explicitly tur
 
 The **ELF** entry point `_start` is declared in the user linker script and read by the ELF loader from the file's header. Defining `_start` in a shared startup assembly file means every user program gets it for free.
 
-By the time `_start` begins executing, the kernel's `process_create` has already laid a full argument and environment frame at the top of the user stack in **SysV i386 ABI** (System V Application Binary Interface for 32-bit x86, the calling-convention standard that defines how arguments are passed, registers are used, and stacks are managed) order. The word at the lowest stack address is `argc`, the word above it is a `char **argv` pointer, and the word above that is a `char **envp` pointer. The pointer arrays and raw strings live at higher addresses.
-
-The bridge from the kernel's `iret` to user `main` looks like this:
+By the time `_start` begins executing, the kernel's `process_create` has already laid a full argument and environment frame at the top of the user stack. The bridge from the kernel's `iret` to user `main` looks like this:
 
 ![](diagrams/ch20-diag01.svg)
+
+#### On x86: i386 initial user stack
+
+On x86, the frame follows the **SysV i386 ABI** (System V Application Binary Interface for 32-bit x86, the calling-convention standard that defines how arguments are passed, registers are used, and stacks are managed) order. The word at the lowest stack address is `argc`, the word above it is a `char **argv` pointer, and the word above that is a `char **envp` pointer. The pointer arrays and raw strings live at higher addresses.
 
 `_start` pops all three words, stores the `envp` pointer into the global `environ` variable (so that library functions like `getenv` can find it without being passed it explicitly), then pushes all three back in cdecl order before calling `main`. After `main` returns, `_start` discards the three argument slots, pushes the return value as the argument to `sys_exit`, and calls `sys_exit`. An unreachable infinite loop follows in case something goes wrong.
 
 Because the kernel always writes `argc`, `argv`, and `envp` — even for processes launched with no arguments, where it emits `argc = 0` and NULL-terminated empty arrays — `_start` can pop all three unconditionally. A user program declaring `int main(int argc, char **argv)` still works correctly: the third stack word is never read by the C code, and the cdecl calling convention makes `_start` responsible for cleaning up the extra slot.
+
+#### On AArch64: AArch64 initial user stack
+
+*On AArch64 (planned, milestone 4): the initial stack contract follows the **AAPCS64** (Arm Architecture Procedure Call Standard 64-bit, the calling-convention specification used by AArch64 user code; the process-startup section of AAPCS64 defines the initial stack layout) process startup convention — `argc` followed by the `argv` pointer array, `envp` array, and `auxv` entries. The initial `SP` points to `argc` at the lowest address; above it sit the null-terminated `argv` pointer array, the null-terminated `envp` pointer array, a list of `auxv` key–value pairs terminated by an `AT_NULL` entry, and finally the raw string data.*
+
+The layout is:
+
+![](diagrams/ch20-diag02.svg)
+
+`_start` on AArch64 reads `argc` from the memory location `SP` points to, derives `argv` from `SP + 8`, and walks past the null-terminated `argv` array to locate `envp`. The **auxv** (auxiliary vector — a sequence of type–value pairs the kernel appends after the environment array that supplies runtime facts such as the page size, hardware capabilities, and the address of the vDSO) follows `envp` after its own null terminator.
 
 ### The Syscall Library
 
@@ -74,6 +88,8 @@ The build system compiles the runtime library once and links it into every user 
 
 At this point the user-space boundary is clean and self-contained. Every `int 0x80` instruction in user programs has been moved into the syscall library; all user programs are plain C files with a `main` function. Adding a new user program requires only writing a C file — no boilerplate assembly to copy, no entry-point glue to write.
 
-The `_start` stub receives `argc`, `argv`, and `envp` from the kernel-built stack frame, stores `envp` into the global `environ` pointer so library functions can find it, and forwards all three to `main`. After `main` returns, `_start` passes the return value to `sys_exit`, which transfers control back to the kernel and never returns.
+On x86, `_start` receives `argc`, `argv`, and `envp` from the kernel-built SysV i386 ABI stack frame, stores `envp` into the global `environ` pointer so library functions can find it, and forwards all three to `main`. After `main` returns, `_start` passes the return value to `sys_exit`, which transfers control back to the kernel and never returns.
+
+On AArch64 (planned, milestone 4), the kernel builds the same conceptual frame but in AAPCS64 process startup layout: `argc` at the top of the stack, followed by the `argv` pointer array, `envp` pointer array, and the `auxv` entries that communicate page size and hardware capabilities to the runtime. `_start` on AArch64 reads `argc` directly from memory at `SP`, walks the pointer arrays to find `envp`, and makes the same `main` call, with the same `sys_exit` on return.
 
 User programs also have access to `malloc`, `free`, `realloc`, and `sbrk`, backed by `SYS_BRK` heap-growth. The heap starts empty; `sbrk` reserves more virtual space as the allocator exhausts its current region, and the CPU's page-fault path commits physical pages lazily on first touch.

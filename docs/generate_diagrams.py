@@ -208,6 +208,7 @@ DIAGRAM_BUCKETS = {
     'ch19-diag02.svg': 'layout',
     # Chapter 20
     'ch20-diag01.svg': 'handoff_path',
+    'ch20-diag02.svg': 'layout',
     # Chapter 21
     'ch21-diag01.svg': 'layer_stack',
     # Chapter 22
@@ -1810,6 +1811,7 @@ flow(Path('ch19-diag01.svg'),'Signal lifecycle','Signals are marked pending, the
 stack(Path('ch19-diag02.svg'),'Signal frame','The kernel saves user context, then builds a small frame to enter the signal handler.',[('return helper','where the handler returns','amber'),('signal number','argument passed to the handler','blue'),('saved user context','state restored after the handler finishes','green'),('resume helper','tiny code that asks the kernel to continue','gray')],h=310)
 # Chapter 20
 timeline(Path('ch20-diag01.svg'),'User runtime entry','The kernel prepares the initial stack, `_start` turns that frame into a C call to `main`, and the return value flows to `exit`.',[('initial user stack','kernel writes argc, argv, and envp','blue'),('`_start`','store `environ`, then call `main`','green'),('`main(argc, argv, envp)`','run user code','amber'),('`sys_exit(ret)`',"return `main`'s value to the kernel",'blue')], preferred_w=140, gap=16, h=332)
+stack(Path('ch20-diag02.svg'),'AArch64 initial user stack','SP points to argc; argv and envp pointer arrays follow, then auxv entries, then the raw string data.',[('argc','argument count (64-bit word)','blue'),('argv[0]','pointer to program-name string','green'),('argv[1] … argv[argc-1]','pointers to remaining argument strings','green'),('argv NULL terminator','NULL marks end of argv array','gray'),('envp[0] … envp[n-1]','pointers to environment strings','amber'),('envp NULL terminator','NULL marks end of envp array','gray'),('AT_PHDR … auxv entries','key–value pairs: page size, capabilities, vDSO address, …','blue'),('AT_NULL terminator','type 0 marks end of auxv','gray'),('string data','argument and environment strings, raw bytes','green')],top_note='lower addresses — initial SP points here (argc)',bottom_note='higher addresses')
 # Chapter 21
 stack(Path('ch21-diag01.svg'),'C library layers','Higher library pieces are built on top of simpler helper layers.',[('stream I/O layer','formatted input and output helpers','blue'),('utility layer','general helpers built on strings and kernel calls','green'),('character helpers','tests and transforms single characters','gray'),('string helpers','copy, compare, and scan strings','gray'),('kernel-call wrapper','thin layer over the kernel ABI','amber')],h=300)
 # Chapter 22
