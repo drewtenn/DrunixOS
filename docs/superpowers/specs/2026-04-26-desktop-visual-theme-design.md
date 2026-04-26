@@ -33,7 +33,8 @@ cooler blue desktop with dark glass-like panels and brighter blue accents.
 The theme change applies to the framebuffer desktop path in
 `kernel/gui/desktop.c` and supporting tests in `kernel/test/test_desktop.c`.
 The minimize feature also updates the desktop window state in
-`kernel/gui/desktop.h`.
+`kernel/gui/desktop.h` and adds explicit minimize/restore window-manager
+helpers.
 
 The text/VGA fallback keeps its existing character-cell style unless a small
 constant update is required to preserve current behavior.
@@ -83,6 +84,11 @@ rendering and desktop hit testing. Closing a minimized window is still possible
 through the existing `desktop_close_window` API but is not exposed as a
 separate new UI in this change.
 
+The window manager exposes a real restore path through a helper such as
+`desktop_restore_window(desktop, window_id)`. Restoring clears the minimized
+state, raises the window, focuses it, refreshes app state as normal, and
+re-renders the affected regions.
+
 Clicking the minimize button hides that window and transfers focus to the
 topmost non-minimized window. If no non-minimized window remains, focus returns
 to the taskbar focus state until the user restores a taskbar entry or opens
@@ -114,6 +120,11 @@ Clicking a visible window's taskbar entry keeps the current focus behavior. The
 taskbar may visually distinguish minimized entries with a dimmer label or icon,
 but the entry remains present so the user has a restore target.
 
+Opening an app that already has a minimized window also restores and focuses the
+existing window instead of creating a duplicate or leaving it hidden. This keeps
+the launcher and taskbar as two valid mechanisms for bringing back minimized
+windows.
+
 ### Launcher
 
 Keep Escape and taskbar launcher behavior. Restyle the launcher as a dark
@@ -133,6 +144,9 @@ Rendering changes stay inside the compositor drawing path:
 Pointer routing gains one new title-bar control target: minimize. Close-button
 behavior remains unchanged. Taskbar routing gains restore behavior when the
 target window is minimized.
+
+Launcher routing also checks for an existing minimized app window and restores
+it through the same restore helper.
 
 The shell terminal continues to receive process output through the existing
 desktop terminal path.
@@ -158,6 +172,8 @@ tests that verify:
 - the minimize button hides a window, keeps it open in the taskbar, skips it
   for hit testing, and moves focus to the next visible window;
 - taskbar clicking a minimized window restores and focuses it;
+- launching an app with an existing minimized window restores that window
+  instead of opening a duplicate;
 - minimizing a shell window preserves shell process ownership and terminal
   state;
 - launcher item row mapping still opens the same real apps after the visual
