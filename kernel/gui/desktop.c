@@ -400,19 +400,19 @@ static gui_pixel_theme_t desktop_pixel_theme(const framebuffer_info_t *fb)
 	gui_pixel_theme_t theme;
 
 	k_memset(&theme, 0, sizeof(theme));
-	theme.desktop_bg = framebuffer_pack_rgb(fb, 0x24, 0x3a, 0x3f);
-	theme.taskbar_bg = framebuffer_pack_rgb(fb, 0xd9, 0xde, 0xd5);
-	theme.taskbar_fg = framebuffer_pack_rgb(fb, 0x11, 0x18, 0x1c);
-	theme.window_bg = framebuffer_pack_rgb(fb, 0x2f, 0x49, 0x50);
-	theme.window_border = framebuffer_pack_rgb(fb, 0xf2, 0xc9, 0x4c);
-	theme.title_bg = framebuffer_pack_rgb(fb, 0x9a, 0x35, 0x4f);
-	theme.title_fg = framebuffer_pack_rgb(fb, 0xff, 0xf7, 0xe8);
-	theme.terminal_bg = framebuffer_pack_rgb(fb, 0x08, 0x10, 0x18);
-	theme.terminal_fg = framebuffer_pack_rgb(fb, 0xf6, 0xf1, 0xde);
-	theme.terminal_dim = framebuffer_pack_rgb(fb, 0x84, 0x93, 0x9a);
-	theme.terminal_cursor = framebuffer_pack_rgb(fb, 0x67, 0xc5, 0x8f);
-	theme.scrollbar_track = framebuffer_pack_rgb(fb, 0x18, 0x26, 0x2c);
-	theme.scrollbar_thumb = framebuffer_pack_rgb(fb, 0x6f, 0xd6, 0xd2);
+	theme.desktop_bg = framebuffer_pack_rgb(fb, 0x07, 0x1c, 0x3a);
+	theme.taskbar_bg = framebuffer_pack_rgb(fb, 0x06, 0x11, 0x1f);
+	theme.taskbar_fg = framebuffer_pack_rgb(fb, 0xe8, 0xf1, 0xf7);
+	theme.window_bg = framebuffer_pack_rgb(fb, 0x17, 0x28, 0x3a);
+	theme.window_border = framebuffer_pack_rgb(fb, 0x3b, 0xaf, 0xda);
+	theme.title_bg = framebuffer_pack_rgb(fb, 0x22, 0x36, 0x4b);
+	theme.title_fg = framebuffer_pack_rgb(fb, 0xee, 0xf6, 0xff);
+	theme.terminal_bg = framebuffer_pack_rgb(fb, 0x09, 0x11, 0x1d);
+	theme.terminal_fg = framebuffer_pack_rgb(fb, 0xe8, 0xf1, 0xf7);
+	theme.terminal_dim = framebuffer_pack_rgb(fb, 0x7f, 0x9b, 0xad);
+	theme.terminal_cursor = framebuffer_pack_rgb(fb, 0x55, 0xc7, 0xf2);
+	theme.scrollbar_track = framebuffer_pack_rgb(fb, 0x0d, 0x1b, 0x2c);
+	theme.scrollbar_thumb = framebuffer_pack_rgb(fb, 0x4f, 0xc3, 0xf7);
 	return theme;
 }
 
@@ -1288,6 +1288,13 @@ static void desktop_render_framebuffer_window(desktop_state_t *desktop,
 	                        win->rect.w,
 	                        DESKTOP_WINDOW_CHROME_H,
 	                        theme->title_bg);
+	desktop_pixel_fill_rect(fb,
+	                        clip,
+	                        win->rect.x,
+	                        win->rect.y + DESKTOP_WINDOW_CHROME_H - 1,
+	                        win->rect.w,
+	                        1,
+	                        framebuffer_pack_rgb(fb, 0x35, 0x5d, 0x7c));
 	framebuffer_draw_text_clipped(fb,
 	                              clip,
 	                              win->rect.x + 16,
@@ -1333,6 +1340,46 @@ static void desktop_render_framebuffer_window(desktop_state_t *desktop,
 	                           theme->window_border);
 }
 
+static void desktop_render_framebuffer_wallpaper(const framebuffer_info_t *fb,
+                                                 const gui_pixel_rect_t *clip,
+                                                 const gui_pixel_theme_t *theme)
+{
+	uint32_t band_a;
+	uint32_t band_b;
+	int x0;
+	int y0;
+	int x1;
+	int y1;
+
+	if (!fb || !clip || !theme)
+		return;
+	desktop_pixel_fill_rect(
+	    fb, clip, 0, 0, (int)fb->width, (int)fb->height, theme->desktop_bg);
+
+	band_a = framebuffer_pack_rgb(fb, 0x0d, 0x6e, 0x9f);
+	band_b = framebuffer_pack_rgb(fb, 0x11, 0x8d, 0x8d);
+	x0 = clip->x < 0 ? 0 : clip->x;
+	y0 = clip->y < 0 ? 0 : clip->y;
+	x1 = clip->x + clip->w;
+	y1 = clip->y + clip->h;
+	if (x1 > (int)fb->width)
+		x1 = (int)fb->width;
+	if (y1 > (int)fb->height)
+		y1 = (int)fb->height;
+
+	for (int y = y0; y < y1; y++) {
+		for (int x = x0; x < x1; x++) {
+			int diagonal = x - y;
+
+			if (diagonal > 40 && diagonal < 70 &&
+			    y > (int)fb->height / 3)
+				framebuffer_fill_rect(fb, x, y, 1, 1, band_b);
+			else if (diagonal > 130 && diagonal < 165)
+				framebuffer_fill_rect(fb, x, y, 1, 1, band_a);
+		}
+	}
+}
+
 static void desktop_render_framebuffer_region(desktop_state_t *desktop,
                                               const gui_pixel_rect_t *clip)
 {
@@ -1355,8 +1402,7 @@ static void desktop_render_framebuffer_region(desktop_state_t *desktop,
      * for occluded clips removes most of the per-drag pixel churn.
      */
 	if (!desktop_clip_fully_covered_by_window(desktop, clip))
-		desktop_pixel_fill_rect(
-		    fb, clip, 0, 0, (int)fb->width, (int)fb->height, theme.desktop_bg);
+		desktop_render_framebuffer_wallpaper(fb, clip, &theme);
 	desktop_pixel_fill_rect(fb,
 	                        clip,
 	                        desktop->taskbar_pixel_rect.x,
@@ -1364,6 +1410,13 @@ static void desktop_render_framebuffer_region(desktop_state_t *desktop,
 	                        desktop->taskbar_pixel_rect.w,
 	                        desktop->taskbar_pixel_rect.h,
 	                        theme.taskbar_bg);
+	desktop_pixel_fill_rect(fb,
+	                        clip,
+	                        desktop->taskbar_pixel_rect.x,
+	                        desktop->taskbar_pixel_rect.y,
+	                        desktop->taskbar_pixel_rect.w,
+	                        1,
+	                        framebuffer_pack_rgb(fb, 0x24, 0x52, 0x72));
 	framebuffer_draw_text_clipped(fb,
 	                              clip,
 	                              desktop->taskbar_pixel_rect.x + 16,
