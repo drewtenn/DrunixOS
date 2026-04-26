@@ -4,11 +4,11 @@
 
 Drunix is a hobby operating system with a feature-rich 32-bit x86 mainline and a newer AArch64 bring-up path. The mainline x86 kernel boots through GRUB2 with the Multiboot1 protocol and provides protected-mode interrupt handling, paging, a physical and heap allocator, ATA disk I/O, a DUFS filesystem, a mount-tree VFS with synthetic `/dev`, `/proc`, and `/sys` namespaces, preemptive scheduling built around generic wait queues, Linux-style `clone` user threads, ref-counted process resources for address spaces, file descriptors, filesystem state, and signal actions, a TTY subsystem with job control, an ELF user-program loader, and per-process virtual-memory bookkeeping for demand-paged heaps, grow-down stacks, copy-on-write fork, and anonymous `mmap` regions. User programs can be written in C or in a small freestanding C++ subset backed by the repo-owned user runtime.
 
-The normal x86 boot path asks GRUB for a 1024x768x32 linear framebuffer and starts a simple GUI desktop. The boot shell is opened as the main desktop app inside that GUI shell, with keyboard input, PS/2 mouse pointer support, taskbar/menu launching, framebuffer text rendering, double-buffered flicker-free compositing with an overlay mouse cursor, and a VGA text-mode fallback when a suitable framebuffer is unavailable. The disk image includes a small mixed-language userland: the shell and `chello` exercise the C runtime path, while the utility programs exercise the C++ runtime path.
+The x86 desktop build asks GRUB for a 1024x768x32 linear framebuffer and starts a simple GUI desktop. The boot shell is opened as the main desktop app inside that GUI shell, with keyboard input, PS/2 mouse pointer support, a dark wallpapered desktop, icon-only dock, clock, taskbar/menu launching, framebuffer text rendering, anti-aliased rounded windows, double-buffered flicker-free compositing with an overlay mouse cursor, and a VGA text-mode fallback when a suitable framebuffer is unavailable. The disk image includes a small mixed-language userland: the shell and `chello` exercise the C runtime path, while the utility programs exercise the C++ runtime path.
 
 The AArch64 path now boots the Raspberry Pi 3 / `qemu-system-aarch64` target through EL1 setup, mini-UART, exception vectors, timer IRQs, MMU and heap setup, an initramfs-backed user program, and the same graphical-by-default workflow shape as x86. `make ARCH=arm64 run` opens the QEMU display and mirrors the ARM64 console into a framebuffer text terminal.
 
-[![Drunix desktop running in QEMU with Files, Processes, Help, and Shell windows open](docs/drunix-desktop.png)](docs/drunix-desktop.png)
+[![Drunix desktop running in QEMU with the shell window, curved blue wallpaper, icon dock, and clock](docs/drunix-desktop.png)](docs/drunix-desktop.png)
 
 ## Status
 
@@ -168,13 +168,13 @@ If your distro installs `grub-mkrescue` but not `i686-elf-grub-mkrescue`, add a 
 
 ## Build And Run
 
-For a clean first x86 boot, build the kernel, ISO, disk image, and launch QEMU:
+For a clean first x86 desktop boot, build the kernel, ISO, disk image, and launch QEMU with the desktop enabled:
 
 ```sh
-make fresh
+make NO_DESKTOP=0 run-fresh
 ```
 
-`make run-fresh` is kept as the longer compatibility name.
+The shorter `make fresh` target is still available, but the default x86 build keeps the desktop disabled unless `NO_DESKTOP=0` is passed.
 
 For the AArch64 bring-up path, run the normal graphical console directly:
 

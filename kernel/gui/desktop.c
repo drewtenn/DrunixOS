@@ -26,6 +26,9 @@
 #define DESKTOP_TASKBAR_ICON_SIZE 24
 #define DESKTOP_TASKBAR_SLOT_W 48
 #define DESKTOP_TASKBAR_FIRST_WINDOW_X 64
+#define DESKTOP_AA_SAMPLES 4
+#define DESKTOP_AA_SUBPIXELS (DESKTOP_AA_SAMPLES * 2)
+#define DESKTOP_AA_COVERAGE (DESKTOP_AA_SAMPLES * DESKTOP_AA_SAMPLES)
 
 static desktop_state_t *g_desktop = 0;
 static int g_framebuffer_present_depth = 0;
@@ -298,24 +301,200 @@ static void desktop_pixel_draw_outline(const framebuffer_info_t *fb,
 	desktop_pixel_fill_rect(fb, clip, x + w - 1, y, 1, h, color);
 }
 
-static int desktop_rounded_inset(int rel_y, int h, int r)
+static uint32_t desktop_color_mask(uint8_t size)
 {
-	int edge;
+	if (size >= 32)
+		return UINT32_MAX;
+	return (1u << size) - 1u;
+}
 
-	if (r <= 0 || rel_y < 0 || rel_y >= h)
+static uint8_t
+desktop_color_component(uint32_t color, uint8_t pos, uint8_t size)
+{
+	uint32_t field;
+	uint32_t max;
+
+	if (size == 0)
 		return 0;
-	edge = rel_y;
-	if (h - 1 - rel_y < edge)
-		edge = h - 1 - rel_y;
-	if (edge >= r)
+	field = (color >> pos) & desktop_color_mask(size);
+	if (size == 8)
+		return (uint8_t)field;
+	if (size > 8)
+		return (uint8_t)(field >> (size - 8));
+	max = desktop_color_mask(size);
+	if (max == 0)
 		return 0;
-	if (edge == 0)
-		return r - 2;
-	if (edge == 1)
-		return r - 3;
-	if (edge == 2)
-		return r / 2;
-	return edge < r / 2 ? 2 : 1;
+	return (uint8_t)((field * 255u + max / 2u) / max);
+}
+
+static uint32_t desktop_pixel_blend_color(const framebuffer_info_t *fb,
+                                          uint32_t dst,
+                                          uint32_t src,
+                                          int alpha)
+{
+	uint8_t sr;
+	uint8_t sg;
+	uint8_t sb;
+	uint8_t dr;
+	uint8_t dg;
+	uint8_t db;
+	uint8_t r;
+	uint8_t g;
+	uint8_t b;
+
+	if (alpha <= 0)
+		return dst;
+	if (alpha >= 255)
+		return src;
+	sr = desktop_color_component(src, fb->red_pos, fb->red_size);
+	sg = desktop_color_component(src, fb->green_pos, fb->green_size);
+	sb = desktop_color_component(src, fb->blue_pos, fb->blue_size);
+	dr = desktop_color_component(dst, fb->red_pos, fb->red_size);
+	dg = desktop_color_component(dst, fb->green_pos, fb->green_size);
+	db = desktop_color_component(dst, fb->blue_pos, fb->blue_size);
+	r = (uint8_t)((sr * alpha + dr * (255 - alpha) + 127) / 255);
+	g = (uint8_t)((sg * alpha + dg * (255 - alpha) + 127) / 255);
+	b = (uint8_t)((sb * alpha + db * (255 - alpha) + 127) / 255);
+	return framebuffer_pack_rgb(fb, r, g, b);
+}
+
+static uint32_t *
+desktop_pixel_address(const framebuffer_info_t *fb, int x, int y)
+{
+	uintptr_t base;
+	uint32_t pitch;
+
+	if (!fb || x < 0 || y < 0 || x >= (int)fb->width || y >= (int)fb->height)
+		return 0;
+	base = framebuffer_draw_address(fb);
+	pitch = framebuffer_draw_pitch(fb);
+	if (base == 0 || pitch == 0)
+		return 0;
+	return (uint32_t *)(base + (uint32_t)y * pitch + (uint32_t)x * 4u);
+}
+
+static int desktop_pixel_in_clip(const gui_pixel_rect_t *clip, int x, int y)
+{
+	return clip && x >= clip->x && y >= clip->y && x < clip->x + clip->w &&
+	       y < clip->y + clip->h;
+}
+
+static void desktop_pixel_blend(const framebuffer_info_t *fb,
+                                const gui_pixel_rect_t *clip,
+                                int x,
+                                int y,
+                                uint32_t color,
+                                int alpha)
+{
+	uint32_t *pixel;
+
+	if (alpha <= 0 || !desktop_pixel_in_clip(clip, x, y))
+		return;
+	pixel = desktop_pixel_address(fb, x, y);
+	if (!pixel)
+		return;
+	if (alpha >= 255)
+		*pixel = color;
+	else
+		*pixel = desktop_pixel_blend_color(fb, *pixel, color, alpha);
+}
+
+static int desktop_rounded_rect_coverage(
+    int rel_x, int rel_y, int w, int h, int r, int round_top, int round_bottom)
+{
+	int left;
+	int right;
+	int top;
+	int bottom;
+	int rounded_corner;
+	int radius;
+	int cx;
+	int cy;
+	int covered = 0;
+
+	if (w <= 0 || h <= 0 || rel_x < 0 || rel_y < 0 || rel_x >= w || rel_y >= h)
+		return 0;
+	if (r <= 0)
+		return DESKTOP_AA_COVERAGE;
+	if (r * 2 > w)
+		r = w / 2;
+	if (r * 2 > h)
+		r = h / 2;
+	if (r <= 0)
+		return DESKTOP_AA_COVERAGE;
+	left = rel_x < r;
+	right = rel_x >= w - r;
+	top = rel_y < r;
+	bottom = rel_y >= h - r;
+	rounded_corner =
+	    (left || right) && ((top && round_top) || (bottom && round_bottom));
+	if (!rounded_corner)
+		return DESKTOP_AA_COVERAGE;
+
+	radius = r * DESKTOP_AA_SUBPIXELS;
+	cx = (left ? r : w - r) * DESKTOP_AA_SUBPIXELS;
+	cy = (top ? r : h - r) * DESKTOP_AA_SUBPIXELS;
+	for (int sy = 0; sy < DESKTOP_AA_SAMPLES; sy++) {
+		for (int sx = 0; sx < DESKTOP_AA_SAMPLES; sx++) {
+			int px = rel_x * DESKTOP_AA_SUBPIXELS + sx * 2 + 1;
+			int py = rel_y * DESKTOP_AA_SUBPIXELS + sy * 2 + 1;
+			int dx = px - cx;
+			int dy = py - cy;
+
+			if (dx * dx + dy * dy <= radius * radius)
+				covered++;
+		}
+	}
+	return covered;
+}
+
+static void desktop_pixel_fill_rounded_rect_impl(const framebuffer_info_t *fb,
+                                                 const gui_pixel_rect_t *clip,
+                                                 int x,
+                                                 int y,
+                                                 int w,
+                                                 int h,
+                                                 int r,
+                                                 int round_top,
+                                                 int round_bottom,
+                                                 uint32_t color)
+{
+	int x0;
+	int y0;
+	int x1;
+	int y1;
+
+	if (!fb || !clip || w <= 0 || h <= 0)
+		return;
+	x0 = x < clip->x ? clip->x : x;
+	y0 = y < clip->y ? clip->y : y;
+	x1 = x + w;
+	y1 = y + h;
+	if (x1 > clip->x + clip->w)
+		x1 = clip->x + clip->w;
+	if (y1 > clip->y + clip->h)
+		y1 = clip->y + clip->h;
+	if (x0 < 0)
+		x0 = 0;
+	if (y0 < 0)
+		y0 = 0;
+	if (x1 > (int)fb->width)
+		x1 = (int)fb->width;
+	if (y1 > (int)fb->height)
+		y1 = (int)fb->height;
+	if (x0 >= x1 || y0 >= y1)
+		return;
+
+	for (int py = y0; py < y1; py++) {
+		for (int px = x0; px < x1; px++) {
+			int coverage = desktop_rounded_rect_coverage(
+			    px - x, py - y, w, h, r, round_top, round_bottom);
+			int alpha = (coverage * 255 + DESKTOP_AA_COVERAGE / 2) /
+			            DESKTOP_AA_COVERAGE;
+
+			desktop_pixel_blend(fb, clip, px, py, color, alpha);
+		}
+	}
 }
 
 static void desktop_pixel_fill_rounded_rect(const framebuffer_info_t *fb,
@@ -327,12 +506,7 @@ static void desktop_pixel_fill_rounded_rect(const framebuffer_info_t *fb,
                                             int r,
                                             uint32_t color)
 {
-	for (int row = 0; row < h; row++) {
-		int inset = desktop_rounded_inset(row, h, r);
-
-		desktop_pixel_fill_rect(
-		    fb, clip, x + inset, y + row, w - inset * 2, 1, color);
-	}
+	desktop_pixel_fill_rounded_rect_impl(fb, clip, x, y, w, h, r, 1, 1, color);
 }
 
 static void desktop_pixel_fill_top_rounded_rect(const framebuffer_info_t *fb,
@@ -344,12 +518,7 @@ static void desktop_pixel_fill_top_rounded_rect(const framebuffer_info_t *fb,
                                                 int r,
                                                 uint32_t color)
 {
-	for (int row = 0; row < h; row++) {
-		int inset = row < r ? desktop_rounded_inset(row, r * 2, r) : 0;
-
-		desktop_pixel_fill_rect(
-		    fb, clip, x + inset, y + row, w - inset * 2, 1, color);
-	}
+	desktop_pixel_fill_rounded_rect_impl(fb, clip, x, y, w, h, r, 1, 0, color);
 }
 
 static void desktop_pixel_draw_rounded_outline(const framebuffer_info_t *fb,
@@ -361,20 +530,48 @@ static void desktop_pixel_draw_rounded_outline(const framebuffer_info_t *fb,
                                                int r,
                                                uint32_t color)
 {
+	int x0;
+	int y0;
+	int x1;
+	int y1;
+
 	if (!fb || !clip || w <= 0 || h <= 0)
 		return;
-	desktop_pixel_fill_rect(fb, clip, x + r, y, w - r * 2, 1, color);
-	desktop_pixel_fill_rect(fb, clip, x + r, y + h - 1, w - r * 2, 1, color);
-	desktop_pixel_fill_rect(fb, clip, x, y + r, 1, h - r * 2, color);
-	desktop_pixel_fill_rect(fb, clip, x + w - 1, y + r, 1, h - r * 2, color);
-	desktop_pixel_fill_rect(fb, clip, x + r / 2, y + 1, r / 2, 1, color);
-	desktop_pixel_fill_rect(fb, clip, x + w - r, y + 1, r / 2, 1, color);
-	desktop_pixel_fill_rect(fb, clip, x + 1, y + r / 2, 1, r / 2, color);
-	desktop_pixel_fill_rect(fb, clip, x + w - 2, y + r / 2, 1, r / 2, color);
-	desktop_pixel_fill_rect(fb, clip, x + r / 2, y + h - 2, r / 2, 1, color);
-	desktop_pixel_fill_rect(fb, clip, x + w - r, y + h - 2, r / 2, 1, color);
-	desktop_pixel_fill_rect(fb, clip, x + 1, y + h - r, 1, r / 2, color);
-	desktop_pixel_fill_rect(fb, clip, x + w - 2, y + h - r, 1, r / 2, color);
+	x0 = x < clip->x ? clip->x : x;
+	y0 = y < clip->y ? clip->y : y;
+	x1 = x + w;
+	y1 = y + h;
+	if (x1 > clip->x + clip->w)
+		x1 = clip->x + clip->w;
+	if (y1 > clip->y + clip->h)
+		y1 = clip->y + clip->h;
+	if (x0 < 0)
+		x0 = 0;
+	if (y0 < 0)
+		y0 = 0;
+	if (x1 > (int)fb->width)
+		x1 = (int)fb->width;
+	if (y1 > (int)fb->height)
+		y1 = (int)fb->height;
+	if (x0 >= x1 || y0 >= y1)
+		return;
+
+	for (int py = y0; py < y1; py++) {
+		for (int px = x0; px < x1; px++) {
+			int outer =
+			    desktop_rounded_rect_coverage(px - x, py - y, w, h, r, 1, 1);
+			int inner = desktop_rounded_rect_coverage(
+			    px - (x + 1), py - (y + 1), w - 2, h - 2, r - 1, 1, 1);
+			int coverage = outer - inner;
+			int alpha;
+
+			if (coverage <= 0)
+				continue;
+			alpha = (coverage * 255 + DESKTOP_AA_COVERAGE / 2) /
+			        DESKTOP_AA_COVERAGE;
+			desktop_pixel_blend(fb, clip, px, py, color, alpha);
+		}
+	}
 }
 
 static int

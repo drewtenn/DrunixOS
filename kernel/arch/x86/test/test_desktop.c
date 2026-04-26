@@ -438,8 +438,8 @@ test_desktop_framebuffer_window_corners_show_wallpaper(ktest_case_t *tc)
 	KTEST_ASSERT_TRUE(tc, files_id > 0);
 	win = desktop_window_for_test(&desktop, files_id);
 	KTEST_ASSERT_NOT_NULL(tc, win);
-	sample_x = win->rect.x + 2;
-	sample_y = win->rect.y + 2;
+	sample_x = win->rect.x + 1;
+	sample_y = win->rect.y + 1;
 
 	desktop_close_window(&desktop, files_id);
 	desktop_render(&desktop);
@@ -449,6 +449,73 @@ test_desktop_framebuffer_window_corners_show_wallpaper(ktest_case_t *tc)
 	desktop_render(&desktop);
 
 	KTEST_EXPECT_EQ(tc, pixels[sample_y * 480 + sample_x], wallpaper);
+
+	desktop_test_destroy(&desktop);
+}
+
+static void
+test_desktop_framebuffer_window_corners_use_antialiasing(ktest_case_t *tc)
+{
+	static uint32_t pixels[480 * 400];
+	gui_display_t display;
+	desktop_state_t desktop;
+	framebuffer_info_t fb;
+	const desktop_window_t *win;
+	gui_pixel_rect_t rect;
+	uint32_t baseline[8 * 8];
+	uint32_t window_bg;
+	uint32_t window_border;
+	int files_id;
+	int blended_pixels = 0;
+
+	k_memset(pixels, 0, sizeof(pixels));
+	k_memset(&fb, 0, sizeof(fb));
+	fb.address = (uintptr_t)pixels;
+	fb.pitch = 480u * sizeof(uint32_t);
+	fb.width = 480u;
+	fb.height = 400u;
+	fb.bpp = 32u;
+	fb.red_pos = 16u;
+	fb.red_size = 8u;
+	fb.green_pos = 8u;
+	fb.green_size = 8u;
+	fb.blue_pos = 0u;
+	fb.blue_size = 8u;
+
+	gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+	desktop_init(&desktop, &display);
+	desktop_set_framebuffer_target(&desktop, &fb);
+	files_id = desktop_open_app_window(&desktop, DESKTOP_APP_FILES);
+	KTEST_ASSERT_TRUE(tc, files_id > 0);
+	win = desktop_window_for_test(&desktop, files_id);
+	KTEST_ASSERT_NOT_NULL(tc, win);
+	rect = win->rect;
+	desktop_close_window(&desktop, files_id);
+	desktop_render(&desktop);
+	for (int y = 0; y < 8; y++) {
+		for (int x = 0; x < 8; x++)
+			baseline[y * 8 + x] =
+			    pixels[(rect.y + rect.h - 8 + y) * 480 + rect.x + x];
+	}
+	files_id = desktop_open_app_window(&desktop, DESKTOP_APP_FILES);
+	KTEST_ASSERT_TRUE(tc, files_id > 0);
+	win = desktop_window_for_test(&desktop, files_id);
+	KTEST_ASSERT_NOT_NULL(tc, win);
+	desktop_render(&desktop);
+
+	window_bg = framebuffer_pack_rgb(&fb, 0x17, 0x28, 0x3a);
+	window_border = framebuffer_pack_rgb(&fb, 0x3b, 0xaf, 0xda);
+	for (int y = rect.y + rect.h - 8; y < rect.y + rect.h; y++) {
+		for (int x = rect.x; x < rect.x + 8; x++) {
+			uint32_t px = pixels[y * 480 + x];
+			uint32_t old_px =
+			    baseline[(y - (rect.y + rect.h - 8)) * 8 + (x - rect.x)];
+
+			if (px != old_px && px != window_bg && px != window_border)
+				blended_pixels++;
+		}
+	}
+	KTEST_EXPECT_TRUE(tc, blended_pixels > 0);
 
 	desktop_test_destroy(&desktop);
 }
@@ -5008,6 +5075,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_framebuffer_uses_large_icon_only_dock),
     KTEST_CASE(test_desktop_framebuffer_draws_taskbar_clock),
     KTEST_CASE(test_desktop_framebuffer_window_corners_show_wallpaper),
+    KTEST_CASE(test_desktop_framebuffer_window_corners_use_antialiasing),
     KTEST_CASE(test_desktop_help_app_key_input_is_ignored_while_launcher_open),
     KTEST_CASE(test_desktop_open_invalid_app_kind_is_rejected),
     KTEST_CASE(test_desktop_processes_app_handles_empty_snapshot),
