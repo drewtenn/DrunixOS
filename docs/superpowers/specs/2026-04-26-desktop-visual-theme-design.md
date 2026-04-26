@@ -41,6 +41,7 @@ The framebuffer theme will use:
 - soft blue and teal diagonal wallpaper bands drawn directly into the
   framebuffer;
 - a dark bottom taskbar with subtle top highlight and blue active accents;
+- taskbar icons for the existing Drunix launcher and open apps;
 - dark window bodies with muted blue-gray title bars;
 - lighter title text and terminal text;
 - restrained blue outlines and focus indicators;
@@ -73,7 +74,20 @@ Keep the existing window model and hit testing. Restyle the framebuffer chrome:
 
 Keep the taskbar at the bottom and preserve taskbar app hit testing. Restyle it
 as a dark dock-like strip with a top highlight, launcher area, open-window
-labels, and focused-window accent.
+labels, icons, and focused-window accent.
+
+Taskbar icons are part of the real Drunix desktop model. The compositor will
+draw small pixel icons for existing app kinds only:
+
+- launcher/start: Drunix mark;
+- Shell: terminal prompt shape;
+- Files: folder shape;
+- Processes: activity graph shape;
+- Help: document or question-mark shape.
+
+Open-window taskbar entries keep the existing click-to-focus behavior. The icon
+is decorative and shares the same hit target as the existing taskbar slot, so
+adding icons does not create a second input model.
 
 ### Launcher
 
@@ -109,6 +123,8 @@ tests that verify:
 - representative framebuffer background pixels use the new blue theme;
 - taskbar pixels use the dark taskbar theme while taskbar hit testing still
   focuses open windows;
+- taskbar icon drawing changes pixels inside the launcher/open-window icon
+  areas without changing taskbar hit targets;
 - window chrome pixels use the new dark title/border colors while close-button
   tests still pass;
 - launcher item row mapping still opens the same real apps after the visual
@@ -120,6 +136,7 @@ Existing desktop and terminal tests must continue to pass.
 
 - Adding Browser, Notes, Clock, Settings, or system tray functionality.
 - Renaming existing apps to mimic missing apps.
+- Adding taskbar icons for unavailable apps.
 - Implementing real transparency, blur, or compositing effects.
 - Changing shell process ownership, terminal behavior, app semantics, or input
   routing.
