@@ -5,7 +5,7 @@
 
 #include "usb_hci.h"
 #include "../platform.h"
-#include "../../drivers/tty.h"
+#include "tty.h"
 #include "kstring.h"
 #include "uart.h"
 #include <stdint.h>

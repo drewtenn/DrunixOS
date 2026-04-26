@@ -12,13 +12,14 @@ from test_intent_manifest import ARCHES, INTENTS
 ROOT = Path(__file__).resolve().parents[1]
 REGEX_MARKERS = ("[", "]", "(", ")", ".*", "\\d", "\\s")
 X86_ONLY_KTEST_SOURCES = (
-    "kernel/test/test_pmm.c",
-    "kernel/test/test_process.c",
-    "kernel/test/test_uaccess.c",
-    "kernel/test/test_desktop.c",
+    "kernel/arch/x86/test/test_pmm.c",
+    "kernel/arch/x86/test/test_arch_x86.c",
+    "kernel/arch/x86/test/test_process.c",
+    "kernel/arch/x86/test/test_uaccess.c",
+    "kernel/arch/x86/test/test_desktop.c",
 )
 ARCH_KTEST_SOURCES = {
-    "arm64": ("kernel/test/test_arch_arm64.c",),
+    "arm64": ("kernel/arch/arm64/test/test_arch_arm64.c",),
 }
 
 
@@ -49,7 +50,7 @@ def source_marker_is_covered(source_path: str, marker: str) -> bool:
     if not path.exists():
         return False
     text = path.read_text(errors="ignore")
-    if source_path.startswith("kernel/test/"):
+    if "/test/" in source_path:
         return re.search(rf"\bKTEST_CASE\(\s*{re.escape(marker)}\s*\)", text) is not None
     return marker in text
 

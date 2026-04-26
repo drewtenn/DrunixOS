@@ -16,10 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 ARCH_TOKENS = ("__aarch64__", "DRUNIX_ARM64", "ARM64_")
 
-ALLOWED_GENERIC_FILES = {
-    Path("kernel/proc/core.c"): "ELF core format is still x86-only",
-    Path("kernel/proc/syscall.c"): "Linux syscall ABI number map differs by arch",
-}
+ALLOWED_GENERIC_FILES = {}
 
 
 def main() -> int:

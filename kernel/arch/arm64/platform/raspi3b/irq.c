@@ -5,7 +5,7 @@
 
 #include "../platform.h"
 #include "irq.h"
-#include "../../arch/arm64/timer.h"
+#include "timer.h"
 #include "irq_table.h"
 #include <stdint.h>
 

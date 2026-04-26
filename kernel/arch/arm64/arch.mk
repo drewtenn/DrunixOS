@@ -13,9 +13,10 @@ ARM_CFLAGS ?= -ffreestanding -fno-stack-protector -fno-pic -fno-pie \
               -nostdlib -Wall -Wextra -g -O2
 ARM_LDFLAGS ?= -nostdlib -T kernel/arch/arm64/linker.ld
 ARM_INC := -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 \
-           -I kernel/arch/arm64/mm -I kernel/mm -I kernel/proc -I kernel/fs \
-           -I kernel/drivers -I kernel/blk -I kernel/platform \
-           -I kernel/platform/raspi3b -I kernel/platform/pc -I kernel/gui
+           -I kernel/arch/arm64/mm -I kernel/arch/arm64/proc \
+           -I kernel/mm -I kernel/proc -I kernel/fs \
+           -I kernel/drivers -I kernel/blk -I kernel/arch/arm64/platform \
+           -I kernel/arch/arm64/platform/raspi3b -I kernel/gui -I kernel/console
 
 ARM_KOBJS := kernel/arch/arm64/boot.o \
              kernel/arch/arm64/arch.o \
@@ -31,11 +32,11 @@ ARM_KOBJS := kernel/arch/arm64/boot.o \
              kernel/arch/arm64/mm/temp_map.o \
              kernel/mm/pmm_core.arm64.o \
              kernel/arch/arm64/timer.o \
-             kernel/platform/raspi3b/uart.o \
-             kernel/platform/raspi3b/irq.o \
-             kernel/platform/raspi3b/video.o \
-             kernel/platform/raspi3b/usb_hci.o \
-             kernel/platform/raspi3b/emmc.o \
+             kernel/arch/arm64/platform/raspi3b/uart.o \
+             kernel/arch/arm64/platform/raspi3b/irq.o \
+             kernel/arch/arm64/platform/raspi3b/video.o \
+             kernel/arch/arm64/platform/raspi3b/usb_hci.o \
+             kernel/arch/arm64/platform/raspi3b/emmc.o \
              kernel/arch/arm64/start_kernel.o \
              kernel/lib/kprintf.arm64.o \
              kernel/lib/kstring.arm64.o
@@ -68,12 +69,12 @@ ARM_SHARED_KOBJS := kernel/lib/klog.arm64.o \
                     kernel/proc/task_group.arm64.o \
                     kernel/proc/sched.arm64.o \
                     kernel/proc/uaccess.arm64.o \
-                    kernel/proc/syscall.arm64.o \
+                    kernel/arch/arm64/proc/syscall.arm64.o \
                     kernel/proc/syscall/helpers.arm64.o \
                     kernel/proc/syscall/console.arm64.o \
                     kernel/proc/syscall/task.arm64.o \
                     kernel/proc/syscall/tty.arm64.o \
-                    kernel/proc/core.arm64.o \
+                    kernel/arch/arm64/proc/core.arm64.o \
                     kernel/proc/mem_forensics.arm64.o \
                     kernel/proc/pipe.arm64.o \
                     kernel/proc/init_launch.arm64.o \
@@ -161,6 +162,9 @@ $(foreach d,$(ARM_C_SUBDIRS),$(eval $(call ARM_C_SUBDIR_RULE,$(d))))
 # arch/arm64/proc has both .arm64.o (elf64) and plain .o (smoke,
 # arch_proc) targets, plus .S sources.
 kernel/arch/arm64/proc/%.arm64.o: kernel/arch/arm64/proc/%.c
+	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
+
+kernel/arch/arm64/test/%.arm64.o: kernel/arch/arm64/test/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
 
 kernel/arch/arm64/proc/smoke.o: kernel/arch/arm64/proc/smoke.c

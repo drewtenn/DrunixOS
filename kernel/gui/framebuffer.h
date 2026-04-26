@@ -1,8 +1,6 @@
 #ifndef GUI_FRAMEBUFFER_H
 #define GUI_FRAMEBUFFER_H
 
-typedef struct multiboot_info multiboot_info_t;
-
 #include "pixel.h"
 #include <stdint.h>
 
@@ -57,8 +55,6 @@ typedef struct framebuffer_info {
 	framebuffer_cursor_t cursor;
 } framebuffer_info_t;
 
-int framebuffer_info_from_multiboot(const multiboot_info_t *mbi,
-                                    framebuffer_info_t *out);
 int framebuffer_info_from_rgb(uintptr_t address,
                               uint32_t pitch,
                               uint32_t width,

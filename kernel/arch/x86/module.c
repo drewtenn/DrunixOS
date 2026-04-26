@@ -10,6 +10,11 @@
 #include "kstring.h"
 #include <stdint.h>
 
+#define R_386_32 1
+#define R_386_PC32 2
+#define ELF32_R_SYM(i) ((i) >> 8)
+#define ELF32_R_TYPE(i) ((uint8_t)(i))
+
 typedef struct {
 	uint32_t loaded;
 	char name[32];

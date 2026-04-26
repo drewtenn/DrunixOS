@@ -1,7 +1,7 @@
 #include "video.h"
 #include "../platform.h"
-#include "../../console/fb_text_console.h"
-#include "../../arch/arm64/mm/pmm.h"
+#include "fb_text_console.h"
+#include "pmm.h"
 
 #if DRUNIX_ARM64_VGA
 

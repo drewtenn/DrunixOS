@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 """
 Focused regression guard for the Phase 2 architecture boundary.
-
-This intentionally fails on the current tree: shared startup and the PC
-keyboard/mouse registration code still reach directly into x86 IRQ/PIT
-interfaces instead of the planned arch layer.
 """
 
 from pathlib import Path
@@ -13,17 +9,19 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
+X86_START = ROOT / "kernel/arch/x86/start_kernel.c"
+X86_PC_PLATFORM = ROOT / "kernel/arch/x86/platform/pc"
 
 FORBIDDEN_PATTERNS = {
-    ROOT / "kernel/kernel.c": [
+    X86_START: [
         r"\birq_dispatch_init\s*\(",
         r"\bpit_init\s*\(",
         r"\binterrupts_enable\s*\(",
     ],
-    ROOT / "kernel/platform/pc/keyboard.c": [
+    X86_PC_PLATFORM / "keyboard.c": [
         r"\birq_register\s*\(\s*1\s*,\s*keyboard_handler\s*\)",
     ],
-    ROOT / "kernel/platform/pc/mouse.c": [
+    X86_PC_PLATFORM / "mouse.c": [
         r"\birq_register\s*\(\s*12\s*,\s*mouse_handler\s*\)",
         r"\birq_unmask\s*\(\s*2\s*\)",
         r"\birq_unmask\s*\(\s*12\s*\)",
@@ -33,16 +31,16 @@ FORBIDDEN_PATTERNS = {
 REQUIRED_PATTERNS = {
     # Target the concrete Phase 2 call sites from the approved plan rather
     # than inferring architecture ownership from the rest of the tree.
-    ROOT / "kernel/kernel.c": [
+    X86_START: [
         r"\barch_irq_init\s*\(",
         r"\barch_timer_set_periodic_handler\s*\(\s*sched_tick\s*\)",
         r"\barch_timer_start\s*\(\s*SCHED_HZ\s*\)",
         r"\barch_interrupts_enable\s*\(",
     ],
-    ROOT / "kernel/platform/pc/keyboard.c": [
+    X86_PC_PLATFORM / "keyboard.c": [
         r"\barch_irq_register\s*\(\s*1\s*,\s*keyboard_handler\s*\)",
     ],
-    ROOT / "kernel/platform/pc/mouse.c": [
+    X86_PC_PLATFORM / "mouse.c": [
         r"\barch_irq_register\s*\(\s*12\s*,\s*mouse_handler\s*\)",
         r"\barch_irq_unmask\s*\(\s*2\s*\)",
         r"\barch_irq_unmask\s*\(\s*12\s*\)",
@@ -55,7 +53,7 @@ REQUIRED_PATTERNS = {
     ROOT / "kernel/arch/arm64/start_kernel.c": [
         r"\barch_irq_init\s*\(",
         r"\barch_timer_set_periodic_handler\s*\(",
-        r"\barch_timer_start\s*\(\s*10u\s*\)",
+        r"\barch_timer_start\s*\(\s*SCHED_HZ\s*\)",
         r"\barch_interrupts_enable\s*\(",
     ],
 }
@@ -261,26 +259,26 @@ def strip_if0_regions(text: str) -> str:
 
 def main() -> None:
     include_forbidden = {
-        ROOT / "kernel/kernel.c": [
+        X86_START: [
             r'#include "irq\.h"',
             r'#include "pit\.h"',
         ],
-        ROOT / "kernel/platform/pc/keyboard.c": [
+        X86_PC_PLATFORM / "keyboard.c": [
             r'#include "irq\.h"',
         ],
-        ROOT / "kernel/platform/pc/mouse.c": [
+        X86_PC_PLATFORM / "mouse.c": [
             r'#include "irq\.h"',
         ],
     }
 
     include_required = {
-        ROOT / "kernel/kernel.c": [
+        X86_START: [
             r'#include "arch\.h"',
         ],
-        ROOT / "kernel/platform/pc/keyboard.c": [
+        X86_PC_PLATFORM / "keyboard.c": [
             r'#include "arch\.h"',
         ],
-        ROOT / "kernel/platform/pc/mouse.c": [
+        X86_PC_PLATFORM / "mouse.c": [
             r'#include "arch\.h"',
         ],
     }

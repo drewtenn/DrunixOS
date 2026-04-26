@@ -9,12 +9,12 @@
 /*
  * Runtime loadable kernel modules.
  *
- * A module is an ELF32 relocatable object (ET_REL, produced by gcc -c) that
- * exports a symbol named "module_init".  module_load_file() reads the object from
- * disk, allocates kernel heap memory for its sections, applies R_386_32 and
- * R_386_PC32 relocations, resolves external symbols against the kernel export
- * table, and calls module_init().  The init function typically registers the
- * module's drivers with the blkdev, chardev, or VFS registries.
+ * A module is an architecture-defined relocatable object that exports a symbol
+ * named "module_init".  module_load_file() reads the object from disk,
+ * allocates kernel heap memory for its sections, applies architecture
+ * relocations, resolves external symbols against the kernel export table, and
+ * calls module_init().  The init function typically registers the module's
+ * drivers with the blkdev, chardev, or VFS registries.
  *
  * Modules run in ring 0 with full kernel privilege.  There is no sandboxing.
  *
@@ -34,7 +34,7 @@ typedef int (*module_init_fn)(void);
 
 /*
  * ksym_t: one entry in the kernel's compile-time symbol export table.
- * The table is defined in kernel/module_exports.c.
+ * The table is defined by the architecture module implementation.
  */
 typedef struct {
 	const char *name;
@@ -52,8 +52,8 @@ extern const ksym_t kernel_exports[];
 extern const uint32_t kernel_exports_count;
 
 /*
- * module_load_file: load an ELF32 relocatable object from a VFS file
- * and execute its module_init function.
+ * module_load_file: load an architecture relocatable object from a VFS file and
+ * execute its module_init function.
  *
  * file_ref:   mounted-file reference for the module binary.
  * size:       total size of the module binary in bytes.

@@ -41,7 +41,7 @@ def main() -> int:
         failures.append("make ARCH=arm64 disk still builds a DUFS root image")
     if "if=sd" not in run_output or "img/disk.img" not in run_output:
         failures.append("make ARCH=arm64 run does not attach img/disk.img as SD media")
-    if "kernel/platform/raspi3b/emmc.o" not in build_output:
+    if "kernel/arch/arm64/platform/raspi3b/emmc.o" not in build_output:
         failures.append("arm64 kernel build does not include the raspi3b EMMC driver")
     if "rootfs_blob" in build_output:
         failures.append("default arm64 ext3 build still embeds the DUFS rootfs blob")
@@ -56,9 +56,9 @@ def main() -> int:
     if "ext3_register()" not in start_kernel:
         failures.append("arm64 boot does not register ext3")
 
-    emmc = ROOT / "kernel/platform/raspi3b/emmc.c"
+    emmc = ROOT / "kernel/arch/arm64/platform/raspi3b/emmc.c"
     if not emmc.exists():
-        failures.append("kernel/platform/raspi3b/emmc.c is missing")
+        failures.append("kernel/arch/arm64/platform/raspi3b/emmc.c is missing")
 
     if failures:
         print("arm64 ext3-root parity check failed:")

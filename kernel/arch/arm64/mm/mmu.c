@@ -5,7 +5,7 @@
 
 #include "mmu.h"
 #include "pmm.h"
-#include "../../../platform/platform.h"
+#include "platform/platform.h"
 #include "kstring.h"
 #include <stdint.h>
 

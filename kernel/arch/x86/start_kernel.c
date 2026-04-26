@@ -1,6 +1,6 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
- * kernel.c — top-level kernel bootstrap plus low-level console and port I/O helpers.
+ * start_kernel.c - x86 kernel bootstrap plus low-level console helpers.
  */
 
 #include "pmm.h" /* x86 PMM API plus multiboot_info_t */
@@ -21,6 +21,7 @@
 #include "vfs.h"
 #include "desktop.h"
 #include "framebuffer.h"
+#include "framebuffer_multiboot.h"
 #include "keyboard.h"
 #include "init_launch.h"
 #include "klog.h"

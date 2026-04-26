@@ -3,7 +3,7 @@
 #ifndef KERNEL_PLATFORM_PLATFORM_H
 #define KERNEL_PLATFORM_PLATFORM_H
 
-#include "../gui/framebuffer.h"
+#include "framebuffer.h"
 #include <stdint.h>
 
 #include "raspi3b/platform.h"

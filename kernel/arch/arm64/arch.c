@@ -5,7 +5,7 @@
 
 #include "../arch.h"
 #include "../../drivers/tty.h"
-#include "../../platform/platform.h"
+#include "platform/platform.h"
 #include "mm/mmu.h"
 #include "mm/pmm.h"
 #include "proc/init_layout.h"

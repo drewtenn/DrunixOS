@@ -54,14 +54,6 @@ typedef enum {
 /* Special section index: undefined external symbol */
 #define SHN_UNDEF 0
 
-/* i386 relocation types (r_info low byte) */
-#define R_386_32 1   /* S + A */
-#define R_386_PC32 2 /* S + A - P */
-
-/* Helpers to extract symbol index and relocation type from r_info */
-#define ELF32_R_SYM(i) ((i) >> 8)
-#define ELF32_R_TYPE(i) ((uint8_t)(i))
-
 /* Symbol binding (high nibble of st_info) */
 #define STB_LOCAL 0
 #define STB_GLOBAL 1
@@ -151,8 +143,7 @@ typedef struct {
 typedef struct {
 	uint32_t
 	    r_offset;    /* section-relative byte offset of the location to patch */
-	uint32_t r_info; /* ELF32_R_SYM(r_info): symbol table index
-                         * ELF32_R_TYPE(r_info): R_386_* relocation type */
+	uint32_t r_info; /* symbol table index and relocation type */
 } __attribute__((packed)) Elf32_Rel;
 
 int arch_elf_machine_supported(elf_class_t elf_class, uint16_t machine);

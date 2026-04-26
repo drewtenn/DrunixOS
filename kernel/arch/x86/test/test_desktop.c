@@ -4,6 +4,7 @@
 #include "desktop_apps.h"
 #include "font8x16.h"
 #include "framebuffer.h"
+#include "framebuffer_multiboot.h"
 #include "kheap.h"
 #include "terminal.h"
 #include "kstring.h"

@@ -48,7 +48,7 @@ def main() -> int:
         reject_x86_delegate(target, output, failures)
 
     compile_output = make_dry_run("compile-commands")
-    if "kernel/platform/raspi3b/uart.o" not in compile_output:
+    if "kernel/arch/arm64/platform/raspi3b/uart.o" not in compile_output:
         failures.append("compile-commands does not include arm64 platform objects")
     if "--kernel-cc=\"aarch64" not in compile_output:
         failures.append("compile-commands does not use the arm64 kernel compiler")

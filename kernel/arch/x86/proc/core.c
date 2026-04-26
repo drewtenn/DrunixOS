@@ -5,16 +5,6 @@
 
 #include "core.h"
 
-#ifdef __aarch64__
-
-int core_dump_process(process_t *proc, int signum)
-{
-	(void)proc;
-	(void)signum;
-	return -1;
-}
-
-#else
 
 #include "arch.h"
 #include "elf.h"
@@ -620,5 +610,3 @@ cleanup:
 		kfree(vmstat_note);
 	return rc;
 }
-
-#endif

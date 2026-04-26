@@ -32,7 +32,11 @@ REQUIRED = {
     ROOT / "kernel/proc/elf.c": [
         r"\belf_load_file\b[\s\S]*?\barch_elf_load_user_image\s*\(",
     ],
-    ROOT / "kernel/proc/syscall.c": [
+    ROOT / "kernel/arch/x86/proc/syscall.c": [
+        r"\bsyscall_dispatch_from_frame\b[\s\S]*?\barch_syscall_[A-Za-z0-9_]*\s*\(",
+        r"\bsyscall_dispatch_from_frame\b[\s\S]*?\barch_syscall_set_result\b",
+    ],
+    ROOT / "kernel/arch/arm64/proc/syscall.c": [
         r"\bsyscall_dispatch_from_frame\b[\s\S]*?\barch_syscall_[A-Za-z0-9_]*\s*\(",
         r"\bsyscall_dispatch_from_frame\b[\s\S]*?\barch_syscall_set_result\b",
     ],
@@ -52,7 +56,7 @@ REQUIRED = {
         r"\bARM_INC\s*:=",
         r"\bkernel/proc/process\.arm64\.o\b",
         r"\bkernel/proc/sched\.arm64\.o\b",
-        r"\bkernel/proc/syscall\.arm64\.o\b",
+        r"\bkernel/arch/arm64/proc/syscall\.arm64\.o\b",
         r"\bkernel/proc/syscall/task\.arm64\.o\b",
         # The per-subdir compile rule used to be repeated literally for
         # every kernel subtree.  It now lives in ARM_C_SUBDIR_RULE,

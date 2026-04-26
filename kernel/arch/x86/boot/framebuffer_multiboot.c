@@ -1,5 +1,4 @@
-#include "framebuffer.h"
-#include "pmm.h"
+#include "framebuffer_multiboot.h"
 #include <limits.h>
 
 int framebuffer_info_from_multiboot(const multiboot_info_t *mbi,

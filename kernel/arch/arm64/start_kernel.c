@@ -12,7 +12,7 @@
 #include "../../fs/fs.h"
 #include "../../fs/vfs.h"
 #include "../../mm/kheap.h"
-#include "../../platform/platform.h"
+#include "platform/platform.h"
 #include "../../proc/init_launch.h"
 #include "../../proc/sched.h"
 #include "mm/pmm.h"

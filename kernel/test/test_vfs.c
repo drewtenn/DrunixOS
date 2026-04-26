@@ -993,11 +993,6 @@ static void test_proc_fault_reports_crash_context(ktest_case_t *tc)
 	proc->crash.valid = 1;
 	proc->crash.signum = SIGSEGV;
 	proc->crash.fault_addr = 0xDEADBEEFu;
-#if defined(__i386__)
-	proc->crash.frame.eip = 0x00401234u;
-	proc->crash.frame.vector = 14u;
-	proc->crash.frame.error_code = 0x6u;
-#endif
 
 	n = procfs_read_file(PROCFS_FILE_FAULT, 1u, 0u, 0u, buf, sizeof(buf) - 1u);
 	KTEST_EXPECT_TRUE(tc, n > 0);

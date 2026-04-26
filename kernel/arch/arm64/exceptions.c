@@ -4,7 +4,7 @@
  */
 
 #include "../arch.h"
-#include "../../platform/platform.h"
+#include "platform/platform.h"
 #include "fault.h"
 #include "../../proc/sched.h"
 #include "../../proc/syscall.h"

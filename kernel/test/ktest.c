@@ -120,6 +120,7 @@ extern ktest_suite_t *ktest_suite_fs(void);
 extern ktest_suite_t *ktest_suite_blkdev(void);
 
 extern ktest_suite_t *ktest_suite_pmm(void) __attribute__((weak));
+extern ktest_suite_t *ktest_suite_arch_x86(void) __attribute__((weak));
 extern ktest_suite_t *ktest_suite_process(void) __attribute__((weak));
 extern ktest_suite_t *ktest_suite_uaccess(void) __attribute__((weak));
 extern ktest_suite_t *ktest_suite_desktop(void) __attribute__((weak));
@@ -143,6 +144,8 @@ void ktest_run_all(void)
 
 	if (ktest_suite_pmm)
 		run_and_tally(ktest_suite_pmm(), &total_pass, &total_fail);
+	if (ktest_suite_arch_x86)
+		run_and_tally(ktest_suite_arch_x86(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_arch_shared(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_console_terminal(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_pmm_core(), &total_pass, &total_fail);

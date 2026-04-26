@@ -255,6 +255,10 @@ X86_DESKTOP_KTESTS = (
     "test_k_memset32_fills_words",
 )
 
+X86_ARCH_KTESTS = (
+    "test_sched_record_user_fault_preserves_full_fault_addr",
+)
+
 
 INTENTS: tuple[TestIntent, ...] = (
     TestIntent(
@@ -401,7 +405,7 @@ INTENTS: tuple[TestIntent, ...] = (
         sources={
             "x86": (
                 SourceMarkers(
-                    "kernel/test/test_pmm.c",
+                    "kernel/arch/x86/test/test_pmm.c",
                     (
                         "test_alloc_returns_nonzero",
                         "test_free_restores_allocability",
@@ -434,7 +438,7 @@ INTENTS: tuple[TestIntent, ...] = (
                     ),
                 ),
                 SourceMarkers(
-                    "kernel/test/test_arch_arm64.c",
+                    "kernel/arch/arm64/test/test_arch_arm64.c",
                     (
                         "test_arm64_pmm_alloc_free_reuses_pages",
                         "test_arm64_pmm_multiple_allocations_are_distinct",
@@ -454,7 +458,7 @@ INTENTS: tuple[TestIntent, ...] = (
         sources={
             "x86": (
                 SourceMarkers(
-                    "kernel/test/test_pmm.c",
+                    "kernel/arch/x86/test/test_pmm.c",
                     (
                         "test_reserved_pages_are_pinned",
                         "test_multiboot_framebuffer_reservation_covers_visible_rows",
@@ -505,7 +509,7 @@ INTENTS: tuple[TestIntent, ...] = (
             ),
             "x86": (
                 SourceMarkers(
-                    "kernel/test/test_process.c",
+                    "kernel/arch/x86/test/test_process.c",
                     (
                         "test_process_build_initial_frame_layout",
                         "test_process_build_exec_frame_layout",
@@ -527,7 +531,7 @@ INTENTS: tuple[TestIntent, ...] = (
         sources={
             "x86": (
                 SourceMarkers(
-                    "kernel/test/test_process.c",
+                    "kernel/arch/x86/test/test_process.c",
                     (
                         "test_vma_add_keeps_regions_sorted_and_findable",
                         "test_vma_add_rejects_overlapping_regions",
@@ -559,7 +563,7 @@ INTENTS: tuple[TestIntent, ...] = (
         sources={
             "x86": (
                 SourceMarkers(
-                    "kernel/test/test_process.c",
+                    "kernel/arch/x86/test/test_process.c",
                     (
                         "test_process_resources_start_with_single_refs",
                         "test_process_resource_get_put_tracks_refs",
@@ -608,7 +612,7 @@ INTENTS: tuple[TestIntent, ...] = (
             ),
             "x86": (
                 SourceMarkers(
-                    "kernel/test/test_process.c",
+                    "kernel/arch/x86/test/test_process.c",
                     (
                         "test_mem_forensics_collects_basic_region_totals",
                         "test_mem_forensics_classifies_unmapped_fault",
@@ -656,7 +660,7 @@ INTENTS: tuple[TestIntent, ...] = (
             ),
             "x86": (
                 SourceMarkers(
-                    "kernel/test/test_uaccess.c",
+                    "kernel/arch/x86/test/test_uaccess.c",
                     (
                         "test_copy_from_user_reads_mapped_bytes",
                         "test_copy_to_user_spans_pages",
@@ -698,7 +702,7 @@ INTENTS: tuple[TestIntent, ...] = (
             ),
             "x86": (
                 SourceMarkers(
-                    "kernel/test/test_uaccess.c",
+                    "kernel/arch/x86/test/test_uaccess.c",
                     (
                         "test_process_fork_child_stack_growth_is_private",
                         "test_process_fork_child_gets_fresh_task_group_slot",
@@ -707,7 +711,7 @@ INTENTS: tuple[TestIntent, ...] = (
                     ),
                 ),
                 SourceMarkers(
-                    "kernel/test/test_process.c",
+                    "kernel/arch/x86/test/test_process.c",
                     (
                         "test_clone_rejects_sighand_without_vm",
                         "test_clone_thread_shares_group_and_selected_resources",
@@ -755,7 +759,7 @@ INTENTS: tuple[TestIntent, ...] = (
             ),
             "x86": (
                 SourceMarkers(
-                    "kernel/test/test_process.c",
+                    "kernel/arch/x86/test/test_process.c",
                     (
                         "test_syscall_fstat_reads_resource_fd_table",
                         "test_syscall_getcwd_reads_resource_fs_state",
@@ -836,7 +840,7 @@ INTENTS: tuple[TestIntent, ...] = (
             ),
             "x86": (
                 SourceMarkers(
-                    "kernel/test/test_desktop.c",
+                    "kernel/arch/x86/test/test_desktop.c",
                     (
                         "test_terminal_write_wraps_and_retains_history",
                         "test_syscall_console_write_routes_session_output_to_desktop",
@@ -860,7 +864,7 @@ INTENTS: tuple[TestIntent, ...] = (
         sources={
             "x86": (
                 SourceMarkers(
-                    "kernel/test/test_desktop.c",
+                    "kernel/arch/x86/test/test_desktop.c",
                     (
                         "test_gui_display_presents_cells_to_framebuffer",
                         "test_desktop_files_app_lists_root_entries",
@@ -901,14 +905,15 @@ INTENTS: tuple[TestIntent, ...] = (
         },
         sources={
             "x86": (
-                SourceMarkers("kernel/test/test_pmm.c", X86_PMM_KTESTS),
-                SourceMarkers("kernel/test/test_process.c", X86_PROCESS_KTESTS),
-                SourceMarkers("kernel/test/test_uaccess.c", X86_UACCESS_KTESTS),
-                SourceMarkers("kernel/test/test_desktop.c", X86_DESKTOP_KTESTS),
+                SourceMarkers("kernel/arch/x86/test/test_pmm.c", X86_PMM_KTESTS),
+                SourceMarkers("kernel/arch/x86/test/test_arch_x86.c", X86_ARCH_KTESTS),
+                SourceMarkers("kernel/arch/x86/test/test_process.c", X86_PROCESS_KTESTS),
+                SourceMarkers("kernel/arch/x86/test/test_uaccess.c", X86_UACCESS_KTESTS),
+                SourceMarkers("kernel/arch/x86/test/test_desktop.c", X86_DESKTOP_KTESTS),
             ),
             "arm64": (
                 SourceMarkers(
-                    "kernel/test/test_arch_arm64.c",
+                    "kernel/arch/arm64/test/test_arch_arm64.c",
                     (
                         "test_arm64_pmm_alloc_free_reuses_pages",
                         "test_arm64_pmm_multiple_allocations_are_distinct",

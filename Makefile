@@ -28,7 +28,7 @@ DUMPE2FS ?= $(if $(wildcard $(E2FSPROGS_SBIN)/dumpe2fs),$(E2FSPROGS_SBIN)/dumpe2
 DEBUGFS ?= $(if $(wildcard $(E2FSPROGS_SBIN)/debugfs),$(E2FSPROGS_SBIN)/debugfs,debugfs)
 -include kernel/arch/$(ARCH)/arch.mk
 CFLAGS  := -m32 -g -ffreestanding -mno-sse -mno-sse2 -mno-mmx -msoft-float -Wstack-usage=1024
-INC     := -I kernel -I kernel/arch -I kernel/arch/$(ARCH) -I kernel/arch/$(ARCH)/mm -I kernel/platform/pc -I kernel/mm -I kernel/drivers -I kernel/blk -I kernel/proc -I kernel/fs -I kernel/lib -I kernel/gui
+INC     := -I kernel -I kernel/arch -I kernel/arch/$(ARCH) -I kernel/arch/$(ARCH)/boot -I kernel/arch/$(ARCH)/mm -I kernel/arch/$(ARCH)/proc -I kernel/arch/x86/platform/pc -I kernel/mm -I kernel/drivers -I kernel/blk -I kernel/proc -I kernel/fs -I kernel/lib -I kernel/gui
 DEPFLAGS := -MMD -MP
 MOUSE_SPEED ?= 4
 ARM64_SMOKE_FALLBACK ?= 0
@@ -93,9 +93,9 @@ KTEST ?= 0
 ifeq ($(KTEST),1)
 KLOG_TO_DEBUGCON ?= 1
 CFLAGS += -DKTEST_ENABLED
-INC    += -I kernel/test
+INC    += -I kernel/test -I kernel/arch/$(ARCH)/test
 ARM_CFLAGS += -DKTEST_ENABLED
-ARM_INC    += -I kernel/test
+ARM_INC    += -I kernel/test -I kernel/arch/arm64/test
 include kernel/tests.mk
 ARM_KTOBJS = $(KTOBJS:%.o=%.arm64.o)
 else
@@ -111,7 +111,7 @@ ifeq ($(KLOG_TO_DEBUGCON),1)
 CFLAGS += -DKLOG_TO_DEBUGCON
 endif
 
-#Sentinel : recompile kernel.c whenever KTEST flips between 0 and 1.
+#Sentinel : recompile startup code whenever KTEST flips between 0 and 1.
 .ktest-flag: FORCE
 	echo "$(KTEST)" | cmp -s - $@ || echo "$(KTEST)" > $@
 .double-fault-test-flag: FORCE
@@ -142,17 +142,17 @@ endif
 GRUB_TIMEOUT ?= 0
 FORCE:
 
-kernel/kernel.o: .ktest-flag FORCE
-kernel/kernel.o: .double-fault-test-flag
-kernel/kernel.o: .init-program-flag
-kernel/kernel.o: .no-desktop-flag
-kernel/kernel.o: .vga-text-flag
+kernel/arch/x86/start_kernel.o: .ktest-flag FORCE
+kernel/arch/x86/start_kernel.o: .double-fault-test-flag
+kernel/arch/x86/start_kernel.o: .init-program-flag
+kernel/arch/x86/start_kernel.o: .no-desktop-flag
+kernel/arch/x86/start_kernel.o: .vga-text-flag
 kernel/arch/x86/boot/kernel-entry.o: .vga-text-flag FORCE
 kernel/lib/klog.o: .klog-debugcon-flag
-kernel/platform/pc/mouse.o: .mouse-speed-flag
-kernel/platform/pc/ata.o: .disk-sectors-flag
+kernel/arch/x86/platform/pc/mouse.o: .mouse-speed-flag
+kernel/arch/x86/platform/pc/ata.o: .disk-sectors-flag
 kernel/arch/x86/arch.o: .x86-serial-console-flag
-kernel/test/test_desktop.o: .mouse-speed-flag
+kernel/arch/x86/test/test_desktop.o: .mouse-speed-flag
 
 #GRUB2 mkrescue(provided by : brew install i686 - elf - grub xorriso)
 GRUB_MKRESCUE := i686-elf-grub-mkrescue
@@ -271,6 +271,7 @@ include kernel/objects.mk
 # ─── Kernel link ─────────────────────────────────────────────────────────────
 $(KOBJS): .ktest-flag
 kernel/test/%.o: CFLAGS += -Wno-stack-usage
+kernel/arch/x86/test/%.o: CFLAGS += -Wno-stack-usage
 
 kernel.elf: $(KOBJS) $(KTOBJS)
 	$(LD) -m elf_i386 -o $@ -T kernel/arch/x86/linker.ld $(KOBJS) $(KTOBJS)
@@ -378,7 +379,7 @@ build: kernel disk
 iso: os.iso
 images: disk
 fresh: run-fresh
-check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
+check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
 check-phase6:
 	python3 tools/test_kernel_arch_boundary_phase6.py
 
@@ -415,6 +416,9 @@ check-syscall-parity:
 
 check-arch-boundary-reuse:
 	python3 tools/test_arch_boundary_reuse.py
+
+check-start-boundary:
+	python3 tools/test_target_specific_sources_arch_local.py
 
 check-platform-split:
 	python3 tools/test_arm64_platform_split.py
@@ -624,7 +628,7 @@ clean:
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all test-busybox-compat \
         check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
-        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
+        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean
@@ -652,7 +656,7 @@ build: kernel-arm64.elf kernel8.img $(ROOT_DISK_IMG) $(ARM_BUILD_EXTRA) $(ARM_CO
 
 kernel/arch/arm64/start_kernel.o: .init-program-flag .arm64-smoke-fallback-flag .arm64-halt-test-flag Makefile
 kernel/arch/arm64/arch.o: Makefile
-kernel/platform/raspi3b/video.o: Makefile
+kernel/arch/arm64/platform/raspi3b/video.o: Makefile
 $(ARM_KOBJS) $(ARM_SHARED_KOBJS) $(ARM_COMPILE_ONLY_OBJS) $(ARM_KTOBJS): .ktest-flag
 
 iso: kernel8.img
@@ -663,7 +667,7 @@ disk: $(ROOT_DISK_IMG)
 
 fresh: run
 
-check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
+check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
 
 test:
 	$(MAKE) ARCH=$(ARCH) check
@@ -724,6 +728,9 @@ test-busybox-compat: check-busybox-compat
 
 check-arch-boundary-reuse:
 	python3 tools/test_arch_boundary_reuse.py
+
+check-start-boundary:
+	python3 tools/test_target_specific_sources_arch_local.py
 
 check-platform-split:
 	python3 tools/test_arm64_platform_split.py
@@ -786,7 +793,7 @@ test-halt:
 test-threadtest:
 	$(PYTHON) tools/test_arm64_threadtest.py
 
-ARM_SCAN_FORMAT_SOURCES := $(shell find kernel/arch/arm64 kernel/platform -type f \( -name '*.c' -o -name '*.h' \) -print | sort)
+ARM_SCAN_FORMAT_SOURCES := $(shell find kernel/arch/arm64 -type f \( -name '*.c' -o -name '*.h' \) -print | sort)
 ARM_SCAN_KERNEL_OBJS := $(ARM_KOBJS) $(ARM_SHARED_KOBJS)
 ARM_SCAN_USER_C_RUNTIME_OBJS := $(ARM_USER_BUILD_DIR)/lib/cxx_init.o \
                                 $(ARM_USER_BUILD_DIR)/lib/syscall.o \
@@ -903,7 +910,7 @@ clean:
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all test-busybox-compat \
         check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
-        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
+        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean

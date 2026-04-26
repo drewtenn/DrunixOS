@@ -4,9 +4,10 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+X86_START = ROOT / "kernel/arch/x86/start_kernel.c"
 
 FORBIDDEN = {
-    ROOT / "kernel/kernel.c": [
+    X86_START: [
         r"\bvfs_open_file\s*\(\s*DRUNIX_INIT_PROGRAM",
         r"\bprocess_create_file\s*\(",
         r"\bdesktop_attach_shell_pid\s*\(",
@@ -21,7 +22,7 @@ FORBIDDEN = {
 }
 
 REQUIRED = {
-    ROOT / "kernel/kernel.c": [
+    X86_START: [
         r"\bboot_launch_init_process\s*\(",
         r"\bBOOT_LAUNCH_INIT_ATTACH_DESKTOP\b",
     ],
@@ -102,16 +103,17 @@ TASK5_REQUIRED = {
         r"\barm64-root\.fs\b",
     ],
     ROOT / "Makefile": [
-        r"(?m)^build:\s+kernel-arm64\.elf\s+kernel8\.img\s+build/arm64-root\.fs\s+\$\(ARM_COMPILE_ONLY_OBJS\)",
+        r"(?m)^build:\s+kernel-arm64\.elf\s+kernel8\.img\s+\$\(ROOT_DISK_IMG\)\s+\$\(ARM_BUILD_EXTRA\)\s+\$\(ARM_COMPILE_ONLY_OBJS\)",
     ],
 }
 
 TASK6_REQUIRED = {
     ROOT / "kernel/arch/arm64/start_kernel.c": [
-        r"\barm64_rootfs_register\s*\(",
+        r"\bplatform_block_register\s*\(",
         r"\bvfs_reset\s*\(",
         r"\bdufs_register\s*\(",
-        r'\bvfs_mount_with_source\s*\(\s*"/"\s*,\s*"dufs"\s*,\s*"/dev/sda1"\s*\)',
+        r"\bext3_register\s*\(",
+        r'\bvfs_mount_with_source\s*\(\s*"/"\s*,\s*DRUNIX_ROOT_FS\s*,\s*"/dev/sda1"\s*\)',
         r"\bboot_launch_init_process\s*\(",
         r"\bBOOT_LAUNCH_INIT_STANDALONE\b",
         r"\bDRUNIX_ARM64_SMOKE_FALLBACK\b",
@@ -127,13 +129,13 @@ TASK6_REQUIRED = {
         r"-DDRUNIX_ARM64_SMOKE_FALLBACK=",
         r"(?ms)^ifeq \(\$\(ARCH\),arm64\).*?^INIT_PROGRAM \?= bin/shell$",
         r"(?ms)^ifeq \(\$\(ARCH\),arm64\).*?^INIT_ARG0 \?= shell$",
-        r"(?ms)^ifeq \(\$\(ARCH\),arm64\).*?^ROOT_FS \?= dufs$",
+        r"(?ms)^ifeq \(\$\(ARCH\),arm64\).*?^ROOT_FS \?= ext3$",
         r"--wrap=syscall_case_exit_exit_group",
     ],
 }
 
 ARM64_SHARED_RUNTIME_OBJS = [
-    "kernel/proc/syscall.arm64.o",
+    "kernel/arch/arm64/proc/syscall.arm64.o",
     "kernel/proc/syscall/helpers.arm64.o",
     "kernel/proc/syscall/console.arm64.o",
     "kernel/proc/syscall/task.arm64.o",
@@ -349,7 +351,8 @@ def check_arm64_shared_runtime_linkage():
     make_text = read_source(makefile)
     if not re.search(
         r"(?m)^build:\s+kernel-arm64\.elf\s+kernel8\.img\s+"
-        r"(?:build/arm64-root\.fs\s+)?\$\(ARM_COMPILE_ONLY_OBJS\)",
+        r"\$\(ROOT_DISK_IMG\)\s+\$\(ARM_BUILD_EXTRA\)\s+"
+        r"\$\(ARM_COMPILE_ONLY_OBJS\)",
         make_text,
     ):
         print(

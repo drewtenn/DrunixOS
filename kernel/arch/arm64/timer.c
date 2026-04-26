@@ -3,7 +3,7 @@
  * timer.c — ARM Generic Timer support for Milestone 1 bring-up.
  */
 
-#include "../../platform/platform.h"
+#include "platform/platform.h"
 #include "timer.h"
 #include <stdint.h>
 
