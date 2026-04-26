@@ -19,6 +19,7 @@
 #define DESKTOP_WINDOW_CLOSE_BUTTON_W 12
 #define DESKTOP_WINDOW_CLOSE_BUTTON_H 12
 #define DESKTOP_WINDOW_CLOSE_BUTTON_MARGIN 4
+#define DESKTOP_WINDOW_BUTTON_GAP 4
 
 static desktop_state_t *g_desktop = 0;
 static int g_framebuffer_present_depth = 0;
@@ -376,6 +377,24 @@ desktop_point_in_close_button(const desktop_window_t *win, int x, int y)
 	return desktop_point_in_pixel_rect(x, y, &close_button);
 }
 
+static int
+desktop_point_in_minimize_button(const desktop_window_t *win, int x, int y)
+{
+	gui_pixel_rect_t minimize_button;
+
+	if (!win)
+		return 0;
+	minimize_button.x = win->rect.x + win->rect.w -
+	                    DESKTOP_WINDOW_CLOSE_BUTTON_W -
+	                    DESKTOP_WINDOW_CLOSE_BUTTON_MARGIN -
+	                    DESKTOP_WINDOW_BUTTON_GAP -
+	                    DESKTOP_WINDOW_CLOSE_BUTTON_W;
+	minimize_button.y = win->rect.y + DESKTOP_WINDOW_CLOSE_BUTTON_MARGIN;
+	minimize_button.w = DESKTOP_WINDOW_CLOSE_BUTTON_W;
+	minimize_button.h = DESKTOP_WINDOW_CLOSE_BUTTON_H;
+	return desktop_point_in_pixel_rect(x, y, &minimize_button);
+}
+
 static gui_pixel_theme_t desktop_pixel_theme(const framebuffer_info_t *fb)
 {
 	gui_pixel_theme_t theme;
@@ -524,24 +543,6 @@ static desktop_window_t *desktop_find_app_window(desktop_state_t *desktop,
 }
 
 static desktop_window_t *
-desktop_find_topmost_open_window(desktop_state_t *desktop)
-{
-	desktop_window_t *best = 0;
-
-	if (!desktop)
-		return 0;
-	for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
-		desktop_window_t *win = &desktop->windows[i];
-
-		if (!win->open)
-			continue;
-		if (!best || win->z > best->z)
-			best = win;
-	}
-	return best;
-}
-
-static desktop_window_t *
 desktop_find_topmost_visible_window(desktop_state_t *desktop)
 {
 	desktop_window_t *best = 0;
@@ -568,7 +569,7 @@ static desktop_window_t *desktop_next_window_by_z(desktop_state_t *desktop,
 		return 0;
 	for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
 		desktop_window_t *win = &desktop->windows[i];
-		if (!win->open || win->z <= min_z)
+		if (!win->open || win->minimized || win->z <= min_z)
 			continue;
 		if (!best || win->z < best->z)
 			best = win;
@@ -595,7 +596,8 @@ static int desktop_clip_fully_covered_by_window(const desktop_state_t *desktop,
 	for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
 		const desktop_window_t *win = &desktop->windows[i];
 
-		if (!win->open || win->rect.w <= 0 || win->rect.h <= 0)
+		if (!win->open || win->minimized || win->rect.w <= 0 ||
+		    win->rect.h <= 0)
 			continue;
 		if (win->rect.x <= clip->x && win->rect.y <= clip->y &&
 		    win->rect.x + win->rect.w >= clip_right &&
@@ -621,7 +623,8 @@ static int desktop_shell_content_has_overlap_above(desktop_state_t *desktop,
 		desktop_window_t *win = &desktop->windows[i];
 		gui_pixel_rect_t overlap;
 
-		if (!win->open || win->id == shell_win->id || win->z <= shell_win->z)
+		if (!win->open || win->minimized || win->id == shell_win->id ||
+		    win->z <= shell_win->z)
 			continue;
 		if (desktop_pixel_rect_intersect(win->rect, *rect, &overlap))
 			return 1;
@@ -639,7 +642,7 @@ desktop_top_window_at(desktop_state_t *desktop, int x, int y)
 	for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
 		desktop_window_t *win = &desktop->windows[i];
 
-		if (!win->open)
+		if (!win->open || win->minimized)
 			continue;
 		if (!desktop_point_in_pixel_rect(x, y, &win->rect))
 			continue;
@@ -1267,7 +1270,7 @@ static void desktop_render_framebuffer_window(desktop_state_t *desktop,
 	gui_pixel_surface_t surface;
 
 	if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer ||
-	    !clip || !theme || !win || !win->open)
+	    !clip || !theme || !win || !win->open || win->minimized)
 		return;
 
 	fb = desktop->framebuffer;
@@ -1292,6 +1295,16 @@ static void desktop_render_framebuffer_window(desktop_state_t *desktop,
 	                              desktop_app_title(win->app),
 	                              theme->title_fg,
 	                              theme->title_bg);
+	framebuffer_draw_text_clipped(
+	    fb,
+	    clip,
+	    win->rect.x + win->rect.w - DESKTOP_WINDOW_CLOSE_BUTTON_W -
+	        DESKTOP_WINDOW_CLOSE_BUTTON_MARGIN - DESKTOP_WINDOW_BUTTON_GAP -
+	        DESKTOP_WINDOW_CLOSE_BUTTON_W,
+	    win->rect.y + DESKTOP_WINDOW_CLOSE_BUTTON_MARGIN,
+	    "-",
+	    theme->title_fg,
+	    theme->title_bg);
 	framebuffer_draw_text_clipped(
 	    fb,
 	    clip,
@@ -1453,7 +1466,7 @@ static void desktop_render_framebuffer_terminal(desktop_state_t *desktop)
 		return;
 
 	shell_win = desktop_find_app_window(desktop, DESKTOP_APP_SHELL);
-	if (!shell_win || !shell_win->open)
+	if (!shell_win || !shell_win->open || shell_win->minimized)
 		return;
 
 	desktop_sync_shell_framebuffer_rect(desktop, shell_win);
@@ -2803,6 +2816,12 @@ void desktop_handle_pointer(desktop_state_t *desktop,
 			desktop_render(desktop);
 			return;
 		}
+		if (desktop_point_in_minimize_button(
+		        top, pointer_pixel_x, pointer_pixel_y)) {
+			desktop_minimize_window(desktop, top->id);
+			desktop_render(desktop);
+			return;
+		}
 		if (desktop_point_in_titlebar(top, pointer_pixel_x, pointer_pixel_y)) {
 			desktop->dragging_window_id = top->id;
 			desktop->drag_offset_x = pointer_pixel_x - top->rect.x;
@@ -2846,6 +2865,8 @@ void desktop_handle_pointer(desktop_state_t *desktop,
 
 void desktop_render(desktop_state_t *desktop)
 {
+	desktop_window_t *shell_win;
+	int shell_visible;
 	uint32_t flags;
 
 	if (!desktop || !desktop->display)
@@ -2857,6 +2878,10 @@ void desktop_render(desktop_state_t *desktop)
 		desktop_framebuffer_present_end(flags);
 		return;
 	}
+
+	shell_win = desktop_find_app_window(desktop, DESKTOP_APP_SHELL);
+	shell_visible = desktop->shell_window_open &&
+	                (!shell_win || !shell_win->minimized);
 
 	gui_display_fill_rect(desktop->display,
 	                      0,
@@ -2894,7 +2919,7 @@ void desktop_render(desktop_state_t *desktop)
 		}
 	}
 
-	if (desktop->shell_window_open) {
+	if (shell_visible) {
 		gui_display_draw_frame(desktop->display,
 		                       desktop->shell_rect.x,
 		                       desktop->shell_rect.y,
@@ -2912,6 +2937,12 @@ void desktop_render(desktop_state_t *desktop)
 		                      desktop->shell_rect.y,
 		                      1,
 		                      "x",
+		                      DESKTOP_ATTR_WINDOW);
+		gui_display_draw_text(desktop->display,
+		                      desktop->shell_rect.x + desktop->shell_rect.w - 5,
+		                      desktop->shell_rect.y,
+		                      1,
+		                      "-",
 		                      DESKTOP_ATTR_WINDOW);
 	}
 
@@ -2948,7 +2979,7 @@ void desktop_render(desktop_state_t *desktop)
 		                      DESKTOP_ATTR_LAUNCHER);
 	}
 
-	if (desktop->shell_window_open)
+	if (shell_visible)
 		desktop_shell_redraw(desktop);
 
 	if (desktop->video_address) {

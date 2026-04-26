@@ -1814,6 +1814,72 @@ test_desktop_shell_close_button_closes_visible_shell_window(ktest_case_t *tc)
 }
 
 static void
+test_desktop_minimize_button_minimizes_files_window(ktest_case_t *tc)
+{
+	desktop_state_t desktop;
+	gui_display_t display;
+	desktop_pointer_event_t ev;
+	int files_id;
+	const desktop_window_t *win;
+
+	gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+	desktop_init(&desktop, &display);
+	files_id = desktop_open_app_window(&desktop, DESKTOP_APP_FILES);
+	win = desktop_window_for_test(&desktop, files_id);
+	KTEST_ASSERT_NOT_NULL(tc, win);
+
+	k_memset(&ev, 0, sizeof(ev));
+	ev.left_down = 1;
+	ev.pixel_x = win->rect.x + win->rect.w - 28;
+	ev.pixel_y = win->rect.y + 8;
+	ev.x = ev.pixel_x / (int)GUI_FONT_W;
+	ev.y = ev.pixel_y / (int)GUI_FONT_H;
+	desktop_handle_pointer(&desktop, &ev);
+
+	win = desktop_window_for_test(&desktop, files_id);
+	KTEST_ASSERT_NOT_NULL(tc, win);
+	KTEST_EXPECT_TRUE(tc, win->minimized);
+	KTEST_EXPECT_EQ(tc, desktop_window_count_for_test(&desktop), 1);
+
+	desktop_test_destroy(&desktop);
+}
+
+static void
+test_desktop_minimized_top_window_does_not_receive_pointer_focus(
+    ktest_case_t *tc)
+{
+	desktop_state_t desktop;
+	gui_display_t display;
+	desktop_pointer_event_t ev;
+	int files_id;
+	int help_id;
+	const desktop_window_t *help;
+
+	gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+	desktop_init(&desktop, &display);
+	files_id = desktop_open_app_window(&desktop, DESKTOP_APP_FILES);
+	help_id = desktop_open_app_window(&desktop, DESKTOP_APP_HELP);
+	KTEST_ASSERT_TRUE(tc, files_id > 0);
+	KTEST_ASSERT_TRUE(tc, help_id > 0);
+	KTEST_ASSERT_EQ(tc, desktop_minimize_window(&desktop, help_id), 1);
+	help = desktop_window_for_test(&desktop, help_id);
+	KTEST_ASSERT_NOT_NULL(tc, help);
+
+	k_memset(&ev, 0, sizeof(ev));
+	ev.left_down = 1;
+	ev.pixel_x = help->rect.x + 20;
+	ev.pixel_y = help->rect.y + 30;
+	ev.x = ev.pixel_x / (int)GUI_FONT_W;
+	ev.y = ev.pixel_y / (int)GUI_FONT_H;
+	desktop_handle_pointer(&desktop, &ev);
+
+	KTEST_EXPECT_EQ(
+	    tc, desktop_focused_app_for_test(&desktop), DESKTOP_APP_FILES);
+
+	desktop_test_destroy(&desktop);
+}
+
+static void
 test_desktop_title_drag_moves_window_and_clamps_top_left(ktest_case_t *tc)
 {
 	desktop_state_t desktop;
@@ -4740,6 +4806,8 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_shell_output_still_routes_after_mini_apps_open),
     KTEST_CASE(test_desktop_close_button_closes_files_window),
     KTEST_CASE(test_desktop_shell_close_button_closes_visible_shell_window),
+    KTEST_CASE(test_desktop_minimize_button_minimizes_files_window),
+    KTEST_CASE(test_desktop_minimized_top_window_does_not_receive_pointer_focus),
     KTEST_CASE(test_desktop_title_drag_moves_window_and_clamps_top_left),
     KTEST_CASE(test_desktop_shell_drag_preserves_window_size),
     KTEST_CASE(
