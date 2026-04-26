@@ -229,8 +229,7 @@ test_desktop_help_app_render_is_visible_in_framebuffer(ktest_case_t *tc)
 }
 
 static void
-test_desktop_framebuffer_uses_dark_blue_wallpaper_and_taskbar(
-    ktest_case_t *tc)
+test_desktop_framebuffer_uses_dark_blue_wallpaper_and_taskbar(ktest_case_t *tc)
 {
 	static uint32_t pixels[480 * 400];
 	gui_display_t display;
@@ -1613,8 +1612,7 @@ static void test_desktop_taskbar_shell_refocus_forwards_keys(ktest_case_t *tc)
 	desktop_test_destroy(&desktop);
 }
 
-static void
-test_desktop_minimize_keeps_window_open_and_focuses_next_visible(
+static void test_desktop_minimize_keeps_window_open_and_focuses_next_visible(
     ktest_case_t *tc)
 {
 	desktop_state_t desktop;
@@ -1676,8 +1674,7 @@ test_desktop_taskbar_click_restores_minimized_window(ktest_case_t *tc)
 	desktop_test_destroy(&desktop);
 }
 
-static void
-test_desktop_open_existing_minimized_app_restores_without_duplicate(
+static void test_desktop_open_existing_minimized_app_restores_without_duplicate(
     ktest_case_t *tc)
 {
 	desktop_state_t desktop;
@@ -1728,9 +1725,8 @@ test_desktop_minimized_shell_preserves_process_output(ktest_case_t *tc)
 	shell = desktop_window_for_test(&desktop, shell_id);
 	KTEST_ASSERT_NOT_NULL(tc, shell);
 	KTEST_EXPECT_FALSE(tc, shell->minimized);
-	KTEST_EXPECT_EQ(tc,
-	                gui_terminal_cell_at(&desktop.shell_terminal, 0, 0).ch,
-	                'A');
+	KTEST_EXPECT_EQ(
+	    tc, gui_terminal_cell_at(&desktop.shell_terminal, 0, 0).ch, 'A');
 	KTEST_EXPECT_EQ(tc, desktop_handle_key(&desktop, 'b'), DESKTOP_KEY_FORWARD);
 
 	desktop_test_destroy(&desktop);
@@ -1923,8 +1919,7 @@ test_desktop_minimize_button_minimizes_files_window(ktest_case_t *tc)
 	desktop_test_destroy(&desktop);
 }
 
-static void
-test_desktop_minimized_top_window_does_not_receive_pointer_focus(
+static void test_desktop_minimized_top_window_does_not_receive_pointer_focus(
     ktest_case_t *tc)
 {
 	desktop_state_t desktop;
@@ -4877,7 +4872,8 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_text_launcher_keeps_bottom_border_visible),
     KTEST_CASE(test_desktop_taskbar_click_focuses_processes_window),
     KTEST_CASE(test_desktop_taskbar_shell_refocus_forwards_keys),
-    KTEST_CASE(test_desktop_minimize_keeps_window_open_and_focuses_next_visible),
+    KTEST_CASE(
+        test_desktop_minimize_keeps_window_open_and_focuses_next_visible),
     KTEST_CASE(test_desktop_taskbar_click_restores_minimized_window),
     KTEST_CASE(
         test_desktop_open_existing_minimized_app_restores_without_duplicate),
@@ -4888,7 +4884,8 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_close_button_closes_files_window),
     KTEST_CASE(test_desktop_shell_close_button_closes_visible_shell_window),
     KTEST_CASE(test_desktop_minimize_button_minimizes_files_window),
-    KTEST_CASE(test_desktop_minimized_top_window_does_not_receive_pointer_focus),
+    KTEST_CASE(
+        test_desktop_minimized_top_window_does_not_receive_pointer_focus),
     KTEST_CASE(test_desktop_title_drag_moves_window_and_clamps_top_left),
     KTEST_CASE(test_desktop_shell_drag_preserves_window_size),
     KTEST_CASE(

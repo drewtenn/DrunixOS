@@ -384,11 +384,10 @@ desktop_point_in_minimize_button(const desktop_window_t *win, int x, int y)
 
 	if (!win)
 		return 0;
-	minimize_button.x = win->rect.x + win->rect.w -
-	                    DESKTOP_WINDOW_CLOSE_BUTTON_W -
-	                    DESKTOP_WINDOW_CLOSE_BUTTON_MARGIN -
-	                    DESKTOP_WINDOW_BUTTON_GAP -
-	                    DESKTOP_WINDOW_CLOSE_BUTTON_W;
+	minimize_button.x =
+	    win->rect.x + win->rect.w - DESKTOP_WINDOW_CLOSE_BUTTON_W -
+	    DESKTOP_WINDOW_CLOSE_BUTTON_MARGIN - DESKTOP_WINDOW_BUTTON_GAP -
+	    DESKTOP_WINDOW_CLOSE_BUTTON_W;
 	minimize_button.y = win->rect.y + DESKTOP_WINDOW_CLOSE_BUTTON_MARGIN;
 	minimize_button.w = DESKTOP_WINDOW_CLOSE_BUTTON_W;
 	minimize_button.h = DESKTOP_WINDOW_CLOSE_BUTTON_H;
@@ -1371,8 +1370,7 @@ static void desktop_render_framebuffer_wallpaper(const framebuffer_info_t *fb,
 		for (int x = x0; x < x1; x++) {
 			int diagonal = x - y;
 
-			if (diagonal > 40 && diagonal < 70 &&
-			    y > (int)fb->height / 3)
+			if (diagonal > 40 && diagonal < 70 && y > (int)fb->height / 3)
 				framebuffer_fill_rect(fb, x, y, 1, 1, band_b);
 			else if (diagonal > 130 && diagonal < 165)
 				framebuffer_fill_rect(fb, x, y, 1, 1, band_a);
@@ -2999,8 +2997,8 @@ void desktop_render(desktop_state_t *desktop)
 	}
 
 	shell_win = desktop_find_app_window(desktop, DESKTOP_APP_SHELL);
-	shell_visible = desktop->shell_window_open &&
-	                (!shell_win || !shell_win->minimized);
+	shell_visible =
+	    desktop->shell_window_open && (!shell_win || !shell_win->minimized);
 
 	gui_display_fill_rect(desktop->display,
 	                      0,
