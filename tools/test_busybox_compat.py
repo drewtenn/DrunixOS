@@ -145,6 +145,8 @@ def refresh_arm64_outputs() -> None:
         ROOT / "kernel" / "arch" / "arm64" / "rootfs_blob.d",
         ROOT / "kernel-arm64.elf",
         ROOT / "kernel8.img",
+        ROOT / "disk.fs",
+        ROOT / "img" / "disk.img",
     ):
         path.unlink(missing_ok=True)
 
@@ -184,6 +186,8 @@ def run_arm64(busybox: Path, timeout: float, mode: str) -> None:
                 os.environ.get("QEMU_ARM_MACHINE", "raspi3b"),
                 "-kernel",
                 "kernel-arm64.elf",
+                "-drive",
+                "if=sd,format=raw,file=img/disk.img",
                 "-serial",
                 "null",
                 "-serial",

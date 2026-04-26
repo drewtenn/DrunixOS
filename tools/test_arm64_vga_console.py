@@ -259,6 +259,8 @@ def main() -> int:
                 QEMU_MACHINE,
                 "-kernel",
                 "kernel-arm64.elf",
+                "-drive",
+                "if=sd,format=raw,file=img/disk.img",
                 "-serial",
                 "null",
                 "-serial",

@@ -65,6 +65,7 @@ def qemu_command(serial_log: Path) -> list[str]:
         "-display", "none",
         "-M", qemu_machine(),
         "-kernel", "kernel-arm64.elf",
+        "-drive", "if=sd,format=raw,file=img/disk.img",
         "-serial", "null",
         "-serial", f"file:{serial_log}",
         "-monitor", "none",

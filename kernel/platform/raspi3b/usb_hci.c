@@ -781,8 +781,3 @@ void platform_usb_hci_poll(void)
 {
 	arm64_usb_keyboard_poll();
 }
-
-int platform_block_register(void)
-{
-	return 0;
-}

@@ -4,6 +4,7 @@ ARM_LD ?= aarch64-elf-ld
 ARM_AR ?= aarch64-elf-ar
 ARM_OBJCOPY ?= aarch64-elf-objcopy
 ARM_GDB ?= aarch64-elf-gdb
+ROOT_FS ?= ext3
 
 include user/programs.mk
 
@@ -34,11 +35,20 @@ ARM_KOBJS := kernel/arch/arm64/boot.o \
              kernel/platform/raspi3b/irq.o \
              kernel/platform/raspi3b/video.o \
              kernel/platform/raspi3b/usb_hci.o \
-             kernel/arch/arm64/rootfs.o \
-             kernel/arch/arm64/rootfs_blob.o \
+             kernel/platform/raspi3b/emmc.o \
              kernel/arch/arm64/start_kernel.o \
              kernel/lib/kprintf.arm64.o \
              kernel/lib/kstring.arm64.o
+
+ARM_BUILD_EXTRA :=
+ifeq ($(ROOT_FS),dufs)
+ARM_CFLAGS += -DDRUNIX_ARM64_EMBED_ROOTFS=1
+ARM_BUILD_EXTRA += build/arm64-root.fs
+ARM_KOBJS += kernel/arch/arm64/rootfs.o \
+              kernel/arch/arm64/rootfs_blob.o
+else
+ARM_CFLAGS += -DDRUNIX_ARM64_EMBED_ROOTFS=0
+endif
 
 ARM_SHARED_KOBJS := kernel/lib/klog.arm64.o \
                     kernel/console/runtime.arm64.o \
@@ -71,6 +81,11 @@ ARM_SHARED_KOBJS := kernel/lib/klog.arm64.o \
                     kernel/fs/vfs/core.arm64.o \
                     kernel/fs/vfs/lookup.arm64.o \
                     kernel/fs/vfs/mutation.arm64.o \
+                    kernel/fs/ext3/main.arm64.o \
+                    kernel/fs/ext3/blocks.arm64.o \
+                    kernel/fs/ext3/lookup.arm64.o \
+                    kernel/fs/ext3/mutation.arm64.o \
+                    kernel/fs/ext3/journal.arm64.o \
                     kernel/fs/procfs.arm64.o \
                     kernel/fs/sysfs.arm64.o \
                     kernel/gui/display.arm64.o \
@@ -138,7 +153,7 @@ kernel/$(1)/%.arm64.o: kernel/$(1)/%.c
 	$$(ARM_CC) $$(ARM_CFLAGS) $$(DEPFLAGS) $$(ARM_INC) -c $$< -o $$@
 endef
 
-ARM_C_SUBDIRS := mm console gui blk drivers test fs fs/vfs \
+ARM_C_SUBDIRS := mm console gui blk drivers test fs fs/vfs fs/ext3 \
                  proc proc/syscall proc/syscall/vfs
 
 $(foreach d,$(ARM_C_SUBDIRS),$(eval $(call ARM_C_SUBDIR_RULE,$(d))))

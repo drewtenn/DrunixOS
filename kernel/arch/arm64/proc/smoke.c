@@ -10,7 +10,7 @@
 #include "kstring.h"
 #include <stdint.h>
 
-#define ARM64_SMOKE_LOAD_BASE 0x00200000u
+#define ARM64_SMOKE_LOAD_BASE 0x001f0000u
 #define ARM64_SMOKE_STACK_BASE 0x002fc000u
 #define ARM64_SMOKE_STACK_TOP 0x00300000u
 #define ARM64_SMOKE_STACK_SIZE 0x4000u
@@ -117,6 +117,11 @@ static void arm64_smoke_write_bytes(const char *buf, uint32_t len)
 		arch_console_write(buf + i, 1u);
 }
 
+static void arm64_smoke_write_cstr(const char *buf)
+{
+	arm64_smoke_write_bytes(buf, (uint32_t)k_strlen(buf));
+}
+
 void arm64_report_init_exit(uint32_t status)
 {
 	char line[64];
@@ -182,18 +187,23 @@ int arm64_user_smoke_boot(void)
 
 	k_memset(&g_arm64_smoke_proc, 0, sizeof(g_arm64_smoke_proc));
 	k_memset(g_arm64_smoke_kstack, 0, sizeof(g_arm64_smoke_kstack));
-	if (arm64_smoke_load_image(&entry, &image_end) != 0)
+	if (arm64_smoke_load_image(&entry, &image_end) != 0) {
+		arm64_smoke_write_cstr("ARM64 user smoke: load image failed\n");
 		return -1;
+	}
 
 	aspace = arch_aspace_create();
-	if (!aspace)
+	if (!aspace) {
+		arm64_smoke_write_cstr("ARM64 user smoke: aspace create failed\n");
 		return -1;
+	}
 	if (arm64_smoke_map_range(aspace,
 	                          ARM64_SMOKE_LOAD_BASE,
 	                          image_end,
 	                          ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ |
 	                              ARCH_MM_MAP_WRITE | ARCH_MM_MAP_EXEC |
 	                              ARCH_MM_MAP_USER) != 0) {
+		arm64_smoke_write_cstr("ARM64 user smoke: image map failed\n");
 		arch_aspace_destroy(aspace);
 		return -1;
 	}
@@ -202,6 +212,7 @@ int arm64_user_smoke_boot(void)
 	                          ARM64_SMOKE_STACK_TOP,
 	                          ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ |
 	                              ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER) != 0) {
+		arm64_smoke_write_cstr("ARM64 user smoke: stack map failed\n");
 		arch_aspace_destroy(aspace);
 		return -1;
 	}

@@ -6,17 +6,21 @@
 #include "../arch.h"
 #include "../../blk/bcache.h"
 #include "../../console/terminal.h"
+#include "../../drivers/blkdev.h"
 #include "../../drivers/tty.h"
+#include "../../fs/ext3.h"
 #include "../../fs/fs.h"
 #include "../../fs/vfs.h"
 #include "../../mm/kheap.h"
 #include "../../platform/platform.h"
 #include "../../proc/init_launch.h"
 #include "../../proc/sched.h"
-#include "rootfs.h"
 #include "mm/pmm.h"
 #include "timer.h"
 #include "kprintf.h"
+#if DRUNIX_ARM64_EMBED_ROOTFS
+#include "rootfs.h"
+#endif
 #ifdef KTEST_ENABLED
 #include "ktest.h"
 #endif
@@ -102,16 +106,37 @@ void arm64_console_loop(void)
 
 static void arm64_mount_root_namespace(void)
 {
+	int sda_idx;
+	int sdb_idx;
+
+#if DRUNIX_ARM64_EMBED_ROOTFS
 	if (arm64_rootfs_register() != 0)
 		platform_uart_puts("ARM64 rootfs register failed\n");
+#else
+	if (platform_block_register() != 0)
+		platform_uart_puts("ARM64 block register failed\n");
+#endif
+	sda_idx = blkdev_find_index("sda");
+	sdb_idx = blkdev_find_index("sdb");
+	if (sda_idx >= 0)
+		blkdev_scan_mbr((uint32_t)sda_idx);
+	if (sdb_idx >= 0)
+		blkdev_scan_mbr((uint32_t)sdb_idx);
 	if (bcache_init() != 0)
 		platform_uart_puts("ARM64 block cache init failed\n");
 	vfs_reset();
 	dufs_register();
-	if (vfs_mount_with_source("/", "dufs", "/dev/sda1") != 0) {
+	ext3_register();
+	if (vfs_mount_with_source("/", DRUNIX_ROOT_FS, "/dev/sda1") != 0) {
 		platform_uart_puts("ARM64 root mount failed\n");
 		arm64_console_loop();
 	}
+	platform_uart_puts("ARM64 root mounted: ");
+	platform_uart_puts(DRUNIX_ROOT_FS);
+	platform_uart_puts("\n");
+	if (sdb_idx >= 0 &&
+	    vfs_mount_with_source("/dufs", "dufs", "/dev/sdb1") == 0)
+		platform_uart_puts("ARM64 dufs mounted at /dufs\n");
 }
 
 static void arm64_mount_synthetic_filesystems(void)

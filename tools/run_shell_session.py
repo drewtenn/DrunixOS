@@ -43,6 +43,8 @@ def arch_config(arch: str) -> ShellArchConfig:
                 os.environ.get("QEMU_ARM_MACHINE", "raspi3b"),
                 "-kernel",
                 "kernel-arm64.elf",
+                "-drive",
+                "if=sd,format=raw,file=img/disk.img",
                 "-serial",
                 "null",
                 "-serial",

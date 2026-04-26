@@ -38,7 +38,7 @@ ifeq ($(ARCH),arm64)
 INIT_PROGRAM ?= bin/shell
 INIT_ARG0 ?= shell
 INIT_ENV0 ?= PATH=/usr/bin:/i686-linux-musl/bin:/bin
-ROOT_FS ?= dufs
+ROOT_FS ?= ext3
 else
 INIT_PROGRAM ?= bin/shell
 INIT_ARG0 ?= shell
@@ -301,9 +301,23 @@ user/lib/libc.a user/lib/tcc_crt0.o:
 	$(MAKE) -C user $(@F:%=lib/%)
 
 # ─── Hard-disk images ────────────────────────────────────────────────────────
-# disk.img is the primary ATA master (sda).  By default it is a deterministic
-# Linux-compatible ext3 root partition.  ROOT_FS=dufs builds sda as DUFS
-# instead.
+# disk.img is the primary root disk.  On x86 it is the ATA master; on arm64 it
+# is attached to QEMU as SD media for the Pi EMMC controller. By default it is a
+# deterministic Linux-compatible ext3 root partition. ROOT_FS=dufs builds sda
+# as DUFS instead.
+ifeq ($(ARCH),arm64)
+ifeq ($(ROOT_FS),dufs)
+disk.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf $(ARM_BUSYBOX_ROOTFS_DEPS) tools/hello.txt tools/readme.txt tools/mkfs.py .disk-sectors-flag .include-busybox-flag
+	$(PYTHON) tools/mkfs.py $@ $(FS_SECTORS) $(ARM_USER_ROOTFS_FILES)
+$(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
+	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0xDA
+else
+disk.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf $(ARM_BUSYBOX_ROOTFS_DEPS) tools/hello.txt tools/readme.txt tools/mkext3.py .disk-sectors-flag .include-busybox-flag
+	$(PYTHON) tools/mkext3.py $@ $(FS_SECTORS) $(ARM_USER_ROOTFS_FILES)
+$(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
+	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0x83
+endif
+else
 ifeq ($(ROOT_FS),dufs)
 disk.fs: $(USER_BINS) $(BUSYBOX_DISK_DEPS) tools/hello.txt tools/readme.txt tools/mkfs.py .disk-sectors-flag .include-busybox-flag
 	$(PYTHON) tools/mkfs.py $@ $(FS_SECTORS) $(DISK_FILES)
@@ -314,6 +328,7 @@ disk.fs: $(USER_BINS) $(BUSYBOX_DISK_DEPS) tools/hello.txt tools/readme.txt tool
 	$(PYTHON) tools/mkext3.py $@ $(FS_SECTORS) $(DISK_FILES)
 $(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
 	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0x83
+endif
 endif
 
 # dufs.img is the primary ATA slave (sdb), mounted at /dufs during ext3-root
@@ -363,7 +378,7 @@ build: kernel disk
 iso: os.iso
 images: disk
 fresh: run-fresh
-check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-arm64-platform-split check-arm64-dev-loop-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
+check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
 check-phase6:
 	python3 tools/test_kernel_arch_boundary_phase6.py
 
@@ -401,11 +416,14 @@ check-syscall-parity:
 check-arch-boundary-reuse:
 	python3 tools/test_arch_boundary_reuse.py
 
-check-arm64-platform-split:
+check-platform-split:
 	python3 tools/test_arm64_platform_split.py
 
-check-arm64-dev-loop-parity:
+check-dev-loop-parity:
 	python3 tools/test_arm64_dev_loop_parity.py
+
+check-ext3-root-parity:
+	python3 tools/test_arm64_ext3_root_parity.py
 
 check-shared-shell-tests:
 	python3 tools/test_shared_shell_tests_arch_neutral.py
@@ -606,7 +624,7 @@ clean:
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all test-busybox-compat \
         check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
-        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-arm64-platform-split check-arm64-dev-loop-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
+        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean
@@ -630,7 +648,7 @@ kernel8.img: kernel-arm64.elf
 
 kernel: kernel-arm64.elf
 
-build: kernel-arm64.elf kernel8.img build/arm64-root.fs $(ARM_COMPILE_ONLY_OBJS)
+build: kernel-arm64.elf kernel8.img $(ROOT_DISK_IMG) $(ARM_BUILD_EXTRA) $(ARM_COMPILE_ONLY_OBJS)
 
 kernel/arch/arm64/start_kernel.o: .init-program-flag .arm64-smoke-fallback-flag .arm64-halt-test-flag Makefile
 kernel/arch/arm64/arch.o: Makefile
@@ -641,12 +659,11 @@ iso: kernel8.img
 
 images: kernel8.img
 
-disk:
-	@:
+disk: $(ROOT_DISK_IMG)
 
 fresh: run
 
-check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-arm64-platform-split check-arm64-dev-loop-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
+check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
 
 test:
 	$(MAKE) ARCH=$(ARCH) check
@@ -708,11 +725,14 @@ test-busybox-compat: check-busybox-compat
 check-arch-boundary-reuse:
 	python3 tools/test_arch_boundary_reuse.py
 
-check-arm64-platform-split:
+check-platform-split:
 	python3 tools/test_arm64_platform_split.py
 
-check-arm64-dev-loop-parity:
+check-dev-loop-parity:
 	python3 tools/test_arm64_dev_loop_parity.py
+
+check-ext3-root-parity:
+	python3 tools/test_arm64_ext3_root_parity.py
 
 check-shared-shell-tests:
 	python3 tools/test_shared_shell_tests_arch_neutral.py
@@ -726,8 +746,8 @@ check-test-wiring:
 check-test-intent-coverage:
 	python3 tools/check_test_intent_coverage.py
 
-run: kernel-arm64.elf | $(LOG_DIR)
-	$(QEMU_ARM) -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf -serial null -serial stdio -device usb-kbd -monitor none -no-reboot
+run: kernel-arm64.elf $(ROOT_DISK_IMG) | $(LOG_DIR)
+	$(QEMU_ARM) -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf -drive if=sd,format=raw,file=$(ROOT_DISK_IMG) -serial null -serial stdio -device usb-kbd -monitor none -no-reboot
 
 run-fresh: run
 
@@ -740,6 +760,7 @@ define arm64_qemu_debug
 mkdir -p $(LOG_DIR)
 rm -f $(ARM_SERIAL_LOG)
 $(QEMU_ARM) -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf \
+    -drive if=sd,format=raw,file=$(ROOT_DISK_IMG) \
     -serial null -serial file:$(ARM_SERIAL_LOG) -device usb-kbd \
     -monitor none -no-reboot -s -S &
 sleep 1
@@ -752,11 +773,11 @@ endef
 debug: kernel-arm64.elf
 	$(call arm64_qemu_debug,)
 
-debug-user: kernel-arm64.elf build/arm64-root.fs
+debug-user: kernel-arm64.elf $(ROOT_DISK_IMG)
 	@test -n "$(APP)" || (echo "Usage: make debug-user APP=<program name>  (e.g. APP=shell)"; exit 1)
 	$(call arm64_qemu_debug,-ex "add-symbol-file build/arm64-user/$(APP) 0x02000000")
 
-debug-fresh: build/arm64-root.fs
+debug-fresh: $(ROOT_DISK_IMG)
 	$(MAKE) ARCH=$(ARCH) debug
 
 test-halt:
@@ -882,7 +903,7 @@ clean:
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all test-busybox-compat \
         check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
-        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-arm64-platform-split check-arm64-dev-loop-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
+        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean
