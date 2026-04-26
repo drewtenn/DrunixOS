@@ -21,6 +21,7 @@ typedef struct {
 	int id;
 	int open;
 	int focused;
+	int minimized;
 	int z;
 	desktop_app_kind_t app;
 	char title[DESKTOP_WINDOW_TITLE_MAX];
@@ -102,6 +103,8 @@ void desktop_set_framebuffer_target(desktop_state_t *desktop,
 void desktop_open_shell_window(desktop_state_t *desktop);
 int desktop_open_app_window(desktop_state_t *desktop, desktop_app_kind_t app);
 int desktop_close_window(desktop_state_t *desktop, int window_id);
+int desktop_minimize_window(desktop_state_t *desktop, int window_id);
+int desktop_restore_window(desktop_state_t *desktop, int window_id);
 void desktop_focus_window(desktop_state_t *desktop, int window_id);
 void desktop_attach_shell_pid(desktop_state_t *desktop, uint32_t pid);
 void desktop_attach_shell_process(desktop_state_t *desktop,

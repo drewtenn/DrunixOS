@@ -541,6 +541,24 @@ desktop_find_topmost_open_window(desktop_state_t *desktop)
 	return best;
 }
 
+static desktop_window_t *
+desktop_find_topmost_visible_window(desktop_state_t *desktop)
+{
+	desktop_window_t *best = 0;
+
+	if (!desktop)
+		return 0;
+	for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+		desktop_window_t *win = &desktop->windows[i];
+
+		if (!win->open || win->minimized)
+			continue;
+		if (!best || win->z > best->z)
+			best = win;
+	}
+	return best;
+}
+
 static desktop_window_t *desktop_next_window_by_z(desktop_state_t *desktop,
                                                   int min_z)
 {
@@ -2566,6 +2584,7 @@ void desktop_focus_window(desktop_state_t *desktop, int window_id)
 	target = desktop_find_window(desktop, window_id);
 	if (!target)
 		return;
+	target->minimized = 0;
 	desktop->focused_window_id = window_id;
 	desktop->focus = target->app == DESKTOP_APP_SHELL ? DESKTOP_FOCUS_SHELL
 	                                                  : DESKTOP_FOCUS_WINDOW;
@@ -2591,7 +2610,7 @@ int desktop_open_app_window(desktop_state_t *desktop, desktop_app_kind_t app)
 			desktop_sync_shell_geometry(desktop, existing);
 			desktop->shell_window_open = 1;
 		}
-		desktop_focus_window(desktop, existing->id);
+		desktop_restore_window(desktop, existing->id);
 		return existing->id;
 	}
 	for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
@@ -2623,6 +2642,47 @@ int desktop_open_app_window(desktop_state_t *desktop, desktop_app_kind_t app)
 	return slot->id;
 }
 
+int desktop_restore_window(desktop_state_t *desktop, int window_id)
+{
+	desktop_window_t *win;
+
+	if (!desktop)
+		return 0;
+	win = desktop_find_window(desktop, window_id);
+	if (!win)
+		return 0;
+	win->minimized = 0;
+	desktop_focus_window(desktop, window_id);
+	return 1;
+}
+
+int desktop_minimize_window(desktop_state_t *desktop, int window_id)
+{
+	desktop_window_t *win;
+	desktop_window_t *next;
+
+	if (!desktop)
+		return 0;
+	win = desktop_find_window(desktop, window_id);
+	if (!win)
+		return 0;
+	if (desktop->dragging_window_id == window_id)
+		desktop->dragging_window_id = 0;
+	win->minimized = 1;
+	win->focused = 0;
+	if (desktop->focused_window_id != window_id)
+		return 1;
+
+	desktop->focused_window_id = 0;
+	next = desktop_find_topmost_visible_window(desktop);
+	if (next) {
+		desktop_focus_window(desktop, next->id);
+	} else {
+		desktop->focus = DESKTOP_FOCUS_TASKBAR;
+	}
+	return 1;
+}
+
 int desktop_close_window(desktop_state_t *desktop, int window_id)
 {
 	desktop_window_t *win = desktop_find_window(desktop, window_id);
@@ -2640,10 +2700,13 @@ int desktop_close_window(desktop_state_t *desktop, int window_id)
 
 	desktop->focused_window_id = 0;
 	next = 0;
-	if (desktop->shell_window_open)
+	if (desktop->shell_window_open) {
 		next = desktop_find_app_window(desktop, DESKTOP_APP_SHELL);
+		if (next && next->minimized)
+			next = 0;
+	}
 	if (!next)
-		next = desktop_find_topmost_open_window(desktop);
+		next = desktop_find_topmost_visible_window(desktop);
 	if (next) {
 		desktop->focused_window_id = next->id;
 		desktop->focus = next->app == DESKTOP_APP_SHELL ? DESKTOP_FOCUS_SHELL
@@ -2761,7 +2824,10 @@ void desktop_handle_pointer(desktop_state_t *desktop,
 		    desktop_taskbar_window_at(desktop, ev->x, ev->y);
 
 		if (task_win) {
-			desktop_focus_window(desktop, task_win->id);
+			if (task_win->minimized)
+				desktop_restore_window(desktop, task_win->id);
+			else
+				desktop_focus_window(desktop, task_win->id);
 			desktop_render(desktop);
 			return;
 		}

@@ -1535,6 +1535,129 @@ static void test_desktop_taskbar_shell_refocus_forwards_keys(ktest_case_t *tc)
 }
 
 static void
+test_desktop_minimize_keeps_window_open_and_focuses_next_visible(
+    ktest_case_t *tc)
+{
+	desktop_state_t desktop;
+	gui_display_t display;
+	int files_id;
+	int help_id;
+	const desktop_window_t *help;
+
+	gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+	desktop_init(&desktop, &display);
+	files_id = desktop_open_app_window(&desktop, DESKTOP_APP_FILES);
+	help_id = desktop_open_app_window(&desktop, DESKTOP_APP_HELP);
+	KTEST_ASSERT_TRUE(tc, files_id > 0);
+	KTEST_ASSERT_TRUE(tc, help_id > 0);
+
+	KTEST_EXPECT_EQ(tc, desktop_minimize_window(&desktop, help_id), 1);
+	help = desktop_window_for_test(&desktop, help_id);
+	KTEST_ASSERT_NOT_NULL(tc, help);
+	KTEST_EXPECT_TRUE(tc, help->minimized);
+	KTEST_EXPECT_EQ(tc, desktop_window_count_for_test(&desktop), 2);
+	KTEST_EXPECT_EQ(
+	    tc, desktop_focused_app_for_test(&desktop), DESKTOP_APP_FILES);
+
+	desktop_test_destroy(&desktop);
+}
+
+static void
+test_desktop_taskbar_click_restores_minimized_window(ktest_case_t *tc)
+{
+	desktop_state_t desktop;
+	gui_display_t display;
+	desktop_pointer_event_t ev;
+	int files_id;
+	int processes_id;
+	const desktop_window_t *processes;
+
+	gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+	desktop_init(&desktop, &display);
+	files_id = desktop_open_app_window(&desktop, DESKTOP_APP_FILES);
+	processes_id = desktop_open_app_window(&desktop, DESKTOP_APP_PROCESSES);
+	KTEST_ASSERT_TRUE(tc, files_id > 0);
+	KTEST_ASSERT_TRUE(tc, processes_id > 0);
+	KTEST_ASSERT_EQ(tc, desktop_minimize_window(&desktop, processes_id), 1);
+
+	k_memset(&ev, 0, sizeof(ev));
+	ev.left_down = 1;
+	ev.x = 18;
+	ev.y = desktop.taskbar.y;
+	ev.pixel_x = ev.x * (int)GUI_FONT_W;
+	ev.pixel_y = ev.y * (int)GUI_FONT_H;
+	desktop_handle_pointer(&desktop, &ev);
+
+	processes = desktop_window_for_test(&desktop, processes_id);
+	KTEST_ASSERT_NOT_NULL(tc, processes);
+	KTEST_EXPECT_FALSE(tc, processes->minimized);
+	KTEST_EXPECT_EQ(
+	    tc, desktop_focused_app_for_test(&desktop), DESKTOP_APP_PROCESSES);
+
+	desktop_test_destroy(&desktop);
+}
+
+static void
+test_desktop_open_existing_minimized_app_restores_without_duplicate(
+    ktest_case_t *tc)
+{
+	desktop_state_t desktop;
+	gui_display_t display;
+	int files_id;
+	int reopened_id;
+	const desktop_window_t *files;
+
+	gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+	desktop_init(&desktop, &display);
+	files_id = desktop_open_app_window(&desktop, DESKTOP_APP_FILES);
+	KTEST_ASSERT_TRUE(tc, files_id > 0);
+	KTEST_ASSERT_EQ(tc, desktop_minimize_window(&desktop, files_id), 1);
+
+	reopened_id = desktop_open_app_window(&desktop, DESKTOP_APP_FILES);
+
+	files = desktop_window_for_test(&desktop, files_id);
+	KTEST_ASSERT_NOT_NULL(tc, files);
+	KTEST_EXPECT_EQ(tc, reopened_id, files_id);
+	KTEST_EXPECT_FALSE(tc, files->minimized);
+	KTEST_EXPECT_EQ(tc, desktop_window_count_for_test(&desktop), 1);
+	KTEST_EXPECT_EQ(
+	    tc, desktop_focused_app_for_test(&desktop), DESKTOP_APP_FILES);
+
+	desktop_test_destroy(&desktop);
+}
+
+static void
+test_desktop_minimized_shell_preserves_process_output(ktest_case_t *tc)
+{
+	desktop_state_t desktop;
+	gui_display_t display;
+	int shell_id;
+	const desktop_window_t *shell;
+
+	gui_display_init(&display, desktop_cells, 80, 25, 0x0f);
+	desktop_init(&desktop, &display);
+	shell_id = desktop_open_app_window(&desktop, DESKTOP_APP_SHELL);
+	KTEST_ASSERT_TRUE(tc, shell_id > 0);
+	desktop_attach_shell_process(&desktop, 77, 77);
+
+	KTEST_ASSERT_EQ(tc, desktop_minimize_window(&desktop, shell_id), 1);
+	KTEST_EXPECT_TRUE(tc, desktop_process_owns_shell(&desktop, 77, 77));
+	KTEST_EXPECT_EQ(
+	    tc, desktop_write_process_output(&desktop, 77, 77, "A", 1), 1);
+	KTEST_ASSERT_EQ(tc, desktop_restore_window(&desktop, shell_id), 1);
+
+	shell = desktop_window_for_test(&desktop, shell_id);
+	KTEST_ASSERT_NOT_NULL(tc, shell);
+	KTEST_EXPECT_FALSE(tc, shell->minimized);
+	KTEST_EXPECT_EQ(tc,
+	                gui_terminal_cell_at(&desktop.shell_terminal, 0, 0).ch,
+	                'A');
+	KTEST_EXPECT_EQ(tc, desktop_handle_key(&desktop, 'b'), DESKTOP_KEY_FORWARD);
+
+	desktop_test_destroy(&desktop);
+}
+
+static void
 test_desktop_text_taskbar_renders_open_window_labels(ktest_case_t *tc)
 {
 	gui_display_t display;
@@ -4607,6 +4730,11 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_text_launcher_keeps_bottom_border_visible),
     KTEST_CASE(test_desktop_taskbar_click_focuses_processes_window),
     KTEST_CASE(test_desktop_taskbar_shell_refocus_forwards_keys),
+    KTEST_CASE(test_desktop_minimize_keeps_window_open_and_focuses_next_visible),
+    KTEST_CASE(test_desktop_taskbar_click_restores_minimized_window),
+    KTEST_CASE(
+        test_desktop_open_existing_minimized_app_restores_without_duplicate),
+    KTEST_CASE(test_desktop_minimized_shell_preserves_process_output),
     KTEST_CASE(test_desktop_text_taskbar_renders_open_window_labels),
     KTEST_CASE(test_desktop_shell_open_matches_rendered_window_rect),
     KTEST_CASE(test_desktop_shell_output_still_routes_after_mini_apps_open),
