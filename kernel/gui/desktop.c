@@ -20,6 +20,12 @@
 #define DESKTOP_WINDOW_CLOSE_BUTTON_H 12
 #define DESKTOP_WINDOW_CLOSE_BUTTON_MARGIN 4
 #define DESKTOP_WINDOW_BUTTON_GAP 4
+#define DESKTOP_WINDOW_CORNER_R 8
+#define DESKTOP_TASKBAR_PIXEL_H 40
+#define DESKTOP_TASKBAR_PIXEL_MARGIN 8
+#define DESKTOP_TASKBAR_ICON_SIZE 24
+#define DESKTOP_TASKBAR_SLOT_W 48
+#define DESKTOP_TASKBAR_FIRST_WINDOW_X 64
 
 static desktop_state_t *g_desktop = 0;
 static int g_framebuffer_present_depth = 0;
@@ -292,6 +298,85 @@ static void desktop_pixel_draw_outline(const framebuffer_info_t *fb,
 	desktop_pixel_fill_rect(fb, clip, x + w - 1, y, 1, h, color);
 }
 
+static int desktop_rounded_inset(int rel_y, int h, int r)
+{
+	int edge;
+
+	if (r <= 0 || rel_y < 0 || rel_y >= h)
+		return 0;
+	edge = rel_y;
+	if (h - 1 - rel_y < edge)
+		edge = h - 1 - rel_y;
+	if (edge >= r)
+		return 0;
+	if (edge == 0)
+		return r - 2;
+	if (edge == 1)
+		return r - 3;
+	if (edge == 2)
+		return r / 2;
+	return edge < r / 2 ? 2 : 1;
+}
+
+static void desktop_pixel_fill_rounded_rect(const framebuffer_info_t *fb,
+                                            const gui_pixel_rect_t *clip,
+                                            int x,
+                                            int y,
+                                            int w,
+                                            int h,
+                                            int r,
+                                            uint32_t color)
+{
+	for (int row = 0; row < h; row++) {
+		int inset = desktop_rounded_inset(row, h, r);
+
+		desktop_pixel_fill_rect(
+		    fb, clip, x + inset, y + row, w - inset * 2, 1, color);
+	}
+}
+
+static void desktop_pixel_fill_top_rounded_rect(const framebuffer_info_t *fb,
+                                                const gui_pixel_rect_t *clip,
+                                                int x,
+                                                int y,
+                                                int w,
+                                                int h,
+                                                int r,
+                                                uint32_t color)
+{
+	for (int row = 0; row < h; row++) {
+		int inset = row < r ? desktop_rounded_inset(row, r * 2, r) : 0;
+
+		desktop_pixel_fill_rect(
+		    fb, clip, x + inset, y + row, w - inset * 2, 1, color);
+	}
+}
+
+static void desktop_pixel_draw_rounded_outline(const framebuffer_info_t *fb,
+                                               const gui_pixel_rect_t *clip,
+                                               int x,
+                                               int y,
+                                               int w,
+                                               int h,
+                                               int r,
+                                               uint32_t color)
+{
+	if (!fb || !clip || w <= 0 || h <= 0)
+		return;
+	desktop_pixel_fill_rect(fb, clip, x + r, y, w - r * 2, 1, color);
+	desktop_pixel_fill_rect(fb, clip, x + r, y + h - 1, w - r * 2, 1, color);
+	desktop_pixel_fill_rect(fb, clip, x, y + r, 1, h - r * 2, color);
+	desktop_pixel_fill_rect(fb, clip, x + w - 1, y + r, 1, h - r * 2, color);
+	desktop_pixel_fill_rect(fb, clip, x + r / 2, y + 1, r / 2, 1, color);
+	desktop_pixel_fill_rect(fb, clip, x + w - r, y + 1, r / 2, 1, color);
+	desktop_pixel_fill_rect(fb, clip, x + 1, y + r / 2, 1, r / 2, color);
+	desktop_pixel_fill_rect(fb, clip, x + w - 2, y + r / 2, 1, r / 2, color);
+	desktop_pixel_fill_rect(fb, clip, x + r / 2, y + h - 2, r / 2, 1, color);
+	desktop_pixel_fill_rect(fb, clip, x + w - r, y + h - 2, r / 2, 1, color);
+	desktop_pixel_fill_rect(fb, clip, x + 1, y + h - r, 1, r / 2, color);
+	desktop_pixel_fill_rect(fb, clip, x + w - 2, y + h - r, 1, r / 2, color);
+}
+
 static int
 desktop_point_in_pixel_rect(int x, int y, const gui_pixel_rect_t *rect)
 {
@@ -450,10 +535,13 @@ static void desktop_layout(desktop_state_t *desktop)
 	desktop->shell_content.w = desktop->shell_rect.w - 2;
 	desktop->shell_content.h = desktop->shell_rect.h - 2;
 
-	desktop->taskbar_pixel_rect.x = 0;
-	desktop->taskbar_pixel_rect.y = desktop->taskbar.y * (int)GUI_FONT_H;
-	desktop->taskbar_pixel_rect.w = desktop->display->cols * (int)GUI_FONT_W;
-	desktop->taskbar_pixel_rect.h = (int)GUI_FONT_H;
+	desktop->taskbar_pixel_rect.x = DESKTOP_TASKBAR_PIXEL_MARGIN;
+	desktop->taskbar_pixel_rect.y = desktop->display->rows * (int)GUI_FONT_H -
+	                                DESKTOP_TASKBAR_PIXEL_H -
+	                                DESKTOP_TASKBAR_PIXEL_MARGIN;
+	desktop->taskbar_pixel_rect.w = desktop->display->cols * (int)GUI_FONT_W -
+	                                DESKTOP_TASKBAR_PIXEL_MARGIN * 2;
+	desktop->taskbar_pixel_rect.h = DESKTOP_TASKBAR_PIXEL_H;
 
 	desktop->launcher_pixel_rect.x = desktop->launcher_rect.x * (int)GUI_FONT_W;
 	desktop->launcher_pixel_rect.y = desktop->launcher_rect.y * (int)GUI_FONT_H;
@@ -670,6 +758,30 @@ desktop_taskbar_window_at(desktop_state_t *desktop, int cell_x, int cell_y)
 	return 0;
 }
 
+static desktop_window_t *desktop_framebuffer_taskbar_window_at(
+    desktop_state_t *desktop, int pixel_x, int pixel_y)
+{
+	int slot = 0;
+	int task_x;
+
+	if (!desktop || !desktop->framebuffer_enabled || !desktop->framebuffer)
+		return 0;
+	if (!desktop_point_in_pixel_rect(
+	        pixel_x, pixel_y, &desktop->taskbar_pixel_rect))
+		return 0;
+	task_x = desktop->taskbar_pixel_rect.x + DESKTOP_TASKBAR_FIRST_WINDOW_X;
+	for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+		if (!desktop->windows[i].open)
+			continue;
+		if (pixel_x >= task_x + slot * DESKTOP_TASKBAR_SLOT_W &&
+		    pixel_x < task_x + slot * DESKTOP_TASKBAR_SLOT_W +
+		                  DESKTOP_TASKBAR_ICON_SIZE)
+			return &desktop->windows[i];
+		slot++;
+	}
+	return 0;
+}
+
 static void desktop_default_window_rect(desktop_state_t *desktop,
                                         desktop_app_kind_t app,
                                         gui_pixel_rect_t *out)
@@ -684,6 +796,7 @@ static void desktop_default_window_rect(desktop_state_t *desktop,
 	if (desktop && desktop->framebuffer) {
 		desktop_w = (int)desktop->framebuffer->width;
 		desktop_h = (int)desktop->framebuffer->height;
+		taskbar_h = DESKTOP_TASKBAR_PIXEL_H + DESKTOP_TASKBAR_PIXEL_MARGIN * 2;
 	} else if (desktop && desktop->display) {
 		desktop_w = desktop->display->cols * (int)GUI_FONT_W;
 		desktop_h = desktop->display->rows * (int)GUI_FONT_H;
@@ -1273,20 +1386,22 @@ static void desktop_render_framebuffer_window(desktop_state_t *desktop,
 		return;
 
 	fb = desktop->framebuffer;
-	desktop_pixel_fill_rect(fb,
-	                        clip,
-	                        win->rect.x,
-	                        win->rect.y,
-	                        win->rect.w,
-	                        win->rect.h,
-	                        theme->window_bg);
-	desktop_pixel_fill_rect(fb,
-	                        clip,
-	                        win->rect.x,
-	                        win->rect.y,
-	                        win->rect.w,
-	                        DESKTOP_WINDOW_CHROME_H,
-	                        theme->title_bg);
+	desktop_pixel_fill_rounded_rect(fb,
+	                                clip,
+	                                win->rect.x,
+	                                win->rect.y,
+	                                win->rect.w,
+	                                win->rect.h,
+	                                DESKTOP_WINDOW_CORNER_R,
+	                                theme->window_bg);
+	desktop_pixel_fill_top_rounded_rect(fb,
+	                                    clip,
+	                                    win->rect.x,
+	                                    win->rect.y,
+	                                    win->rect.w,
+	                                    DESKTOP_WINDOW_CHROME_H,
+	                                    DESKTOP_WINDOW_CORNER_R,
+	                                    theme->title_bg);
 	desktop_pixel_fill_rect(fb,
 	                        clip,
 	                        win->rect.x,
@@ -1330,21 +1445,23 @@ static void desktop_render_framebuffer_window(desktop_state_t *desktop,
 		desktop_app_render(
 		    &desktop->app_state, win->app, &surface, theme, &win->content_rect);
 	}
-	desktop_pixel_draw_outline(fb,
-	                           clip,
-	                           win->rect.x,
-	                           win->rect.y,
-	                           win->rect.w,
-	                           win->rect.h,
-	                           theme->window_border);
+	desktop_pixel_draw_rounded_outline(fb,
+	                                   clip,
+	                                   win->rect.x,
+	                                   win->rect.y,
+	                                   win->rect.w,
+	                                   win->rect.h,
+	                                   DESKTOP_WINDOW_CORNER_R,
+	                                   theme->window_border);
 }
 
 static void desktop_render_framebuffer_wallpaper(const framebuffer_info_t *fb,
                                                  const gui_pixel_rect_t *clip,
                                                  const gui_pixel_theme_t *theme)
 {
-	uint32_t band_a;
-	uint32_t band_b;
+	uint32_t band_blue;
+	uint32_t band_teal;
+	uint32_t band_green;
 	int x0;
 	int y0;
 	int x1;
@@ -1355,8 +1472,9 @@ static void desktop_render_framebuffer_wallpaper(const framebuffer_info_t *fb,
 	desktop_pixel_fill_rect(
 	    fb, clip, 0, 0, (int)fb->width, (int)fb->height, theme->desktop_bg);
 
-	band_a = framebuffer_pack_rgb(fb, 0x0d, 0x6e, 0x9f);
-	band_b = framebuffer_pack_rgb(fb, 0x11, 0x8d, 0x8d);
+	band_blue = framebuffer_pack_rgb(fb, 0x0d, 0x74, 0xb4);
+	band_teal = framebuffer_pack_rgb(fb, 0x12, 0x98, 0x96);
+	band_green = framebuffer_pack_rgb(fb, 0x4d, 0xa8, 0x91);
 	x0 = clip->x < 0 ? 0 : clip->x;
 	y0 = clip->y < 0 ? 0 : clip->y;
 	x1 = clip->x + clip->w;
@@ -1368,12 +1486,27 @@ static void desktop_render_framebuffer_wallpaper(const framebuffer_info_t *fb,
 
 	for (int y = y0; y < y1; y++) {
 		for (int x = x0; x < x1; x++) {
-			int diagonal = x - y;
+			int w = (int)fb->width;
+			int h = (int)fb->height;
+			int curve_a = h * 62 / 100 - x / 4 + (x * x) / (w * 5);
+			int curve_b = h * 82 / 100 - x / 9 + (x * x) / (w * 9);
+			int curve_c = h * 34 / 100 + x / 5;
+			int da = y - curve_a;
+			int db = y - curve_b;
+			int dc = y - curve_c;
 
-			if (diagonal > 40 && diagonal < 70 && y > (int)fb->height / 3)
-				framebuffer_fill_rect(fb, x, y, 1, 1, band_b);
-			else if (diagonal > 130 && diagonal < 165)
-				framebuffer_fill_rect(fb, x, y, 1, 1, band_a);
+			if (da < 0)
+				da = -da;
+			if (db < 0)
+				db = -db;
+			if (dc < 0)
+				dc = -dc;
+			if (da < 14)
+				framebuffer_fill_rect(fb, x, y, 1, 1, band_teal);
+			else if (db < 10)
+				framebuffer_fill_rect(fb, x, y, 1, 1, band_green);
+			else if (dc < 8 && x > w / 3)
+				framebuffer_fill_rect(fb, x, y, 1, 1, band_blue);
 		}
 	}
 }
@@ -1390,45 +1523,144 @@ static void desktop_draw_taskbar_icon(const framebuffer_info_t *fb,
 	if (!fb || !clip)
 		return;
 
-	desktop_pixel_fill_rect(fb, clip, x, y, 14, 12, bg);
-	desktop_pixel_draw_outline(fb, clip, x, y, 14, 12, accent);
+	desktop_pixel_fill_rounded_rect(fb,
+	                                clip,
+	                                x,
+	                                y,
+	                                DESKTOP_TASKBAR_ICON_SIZE,
+	                                DESKTOP_TASKBAR_ICON_SIZE,
+	                                5,
+	                                bg);
+	desktop_pixel_draw_rounded_outline(fb,
+	                                   clip,
+	                                   x,
+	                                   y,
+	                                   DESKTOP_TASKBAR_ICON_SIZE,
+	                                   DESKTOP_TASKBAR_ICON_SIZE,
+	                                   5,
+	                                   accent);
 	switch (app) {
 	case DESKTOP_APP_SHELL:
-		desktop_pixel_fill_rect(fb, clip, x + 3, y + 3, 2, 2, fg);
-		desktop_pixel_fill_rect(fb, clip, x + 5, y + 5, 2, 2, fg);
-		desktop_pixel_fill_rect(fb, clip, x + 3, y + 7, 2, 2, fg);
-		desktop_pixel_fill_rect(fb, clip, x + 8, y + 8, 4, 1, accent);
+		desktop_pixel_fill_rect(fb, clip, x + 6, y + 6, 3, 3, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 9, y + 9, 3, 3, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 6, y + 12, 3, 3, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 13, y + 15, 6, 2, accent);
 		break;
 	case DESKTOP_APP_FILES:
-		desktop_pixel_fill_rect(fb, clip, x + 2, y + 4, 10, 6, fg);
-		desktop_pixel_fill_rect(fb, clip, x + 3, y + 2, 4, 2, fg);
-		desktop_pixel_fill_rect(fb, clip, x + 2, y + 5, 10, 1, accent);
+		desktop_pixel_fill_rect(fb, clip, x + 4, y + 9, 16, 9, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 5, y + 6, 7, 3, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 4, y + 10, 16, 2, accent);
 		break;
 	case DESKTOP_APP_PROCESSES:
-		desktop_pixel_fill_rect(fb, clip, x + 3, y + 7, 2, 3, fg);
-		desktop_pixel_fill_rect(fb, clip, x + 6, y + 4, 2, 6, fg);
-		desktop_pixel_fill_rect(fb, clip, x + 9, y + 6, 2, 4, fg);
-		desktop_pixel_fill_rect(fb, clip, x + 2, y + 3, 2, 1, accent);
-		desktop_pixel_fill_rect(fb, clip, x + 4, y + 4, 2, 1, accent);
-		desktop_pixel_fill_rect(fb, clip, x + 6, y + 3, 2, 1, accent);
-		desktop_pixel_fill_rect(fb, clip, x + 8, y + 4, 2, 1, accent);
+		desktop_pixel_fill_rect(fb, clip, x + 5, y + 13, 3, 6, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 10, y + 8, 3, 11, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 15, y + 11, 3, 8, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 4, y + 7, 4, 2, accent);
+		desktop_pixel_fill_rect(fb, clip, x + 8, y + 9, 4, 2, accent);
+		desktop_pixel_fill_rect(fb, clip, x + 12, y + 7, 4, 2, accent);
+		desktop_pixel_fill_rect(fb, clip, x + 16, y + 9, 4, 2, accent);
 		break;
 	case DESKTOP_APP_HELP:
-		desktop_pixel_fill_rect(fb, clip, x + 4, y + 2, 6, 8, fg);
-		desktop_pixel_fill_rect(fb, clip, x + 9, y + 3, 1, 2, accent);
-		desktop_pixel_fill_rect(fb, clip, x + 6, y + 4, 3, 1, bg);
-		desktop_pixel_fill_rect(fb, clip, x + 7, y + 6, 1, 2, bg);
-		desktop_pixel_fill_rect(fb, clip, x + 7, y + 9, 1, 1, bg);
+		desktop_pixel_fill_rect(fb, clip, x + 7, y + 5, 10, 15, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 16, y + 7, 2, 4, accent);
+		desktop_pixel_fill_rect(fb, clip, x + 10, y + 8, 5, 2, bg);
+		desktop_pixel_fill_rect(fb, clip, x + 12, y + 11, 2, 4, bg);
+		desktop_pixel_fill_rect(fb, clip, x + 12, y + 17, 2, 2, bg);
 		break;
 	case DESKTOP_APP_NONE:
 	default:
-		desktop_pixel_fill_rect(fb, clip, x + 3, y + 2, 2, 8, fg);
-		desktop_pixel_fill_rect(fb, clip, x + 5, y + 2, 4, 1, fg);
-		desktop_pixel_fill_rect(fb, clip, x + 9, y + 3, 2, 2, fg);
-		desktop_pixel_fill_rect(fb, clip, x + 9, y + 7, 2, 2, fg);
-		desktop_pixel_fill_rect(fb, clip, x + 5, y + 9, 4, 1, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 6, y + 5, 4, 15, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 10, y + 5, 6, 2, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 16, y + 8, 3, 4, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 16, y + 15, 3, 4, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 10, y + 18, 6, 2, fg);
 		break;
 	}
+}
+
+static void desktop_format_two_digits(char *out, uint32_t value)
+{
+	out[0] = (char)('0' + (value / 10u) % 10u);
+	out[1] = (char)('0' + value % 10u);
+}
+
+static int desktop_is_leap_year(uint32_t year)
+{
+	return ((year % 4u) == 0u && (year % 100u) != 0u) || ((year % 400u) == 0u);
+}
+
+static void desktop_format_clock(char time_out[6], char date_out[11])
+{
+	static const uint8_t month_days[] = {
+	    31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+	uint32_t seconds = arch_time_unix_seconds();
+	uint32_t day_seconds = seconds % 86400u;
+	uint32_t days = seconds / 86400u;
+	uint32_t year = 1970u;
+	uint32_t month = 1u;
+	uint32_t day;
+
+	desktop_format_two_digits(time_out, day_seconds / 3600u);
+	time_out[2] = ':';
+	desktop_format_two_digits(time_out + 3, (day_seconds / 60u) % 60u);
+	time_out[5] = '\0';
+
+	for (;;) {
+		uint32_t year_days = desktop_is_leap_year(year) ? 366u : 365u;
+
+		if (days < year_days)
+			break;
+		days -= year_days;
+		year++;
+	}
+	for (month = 1u; month <= 12u; month++) {
+		uint32_t mdays = month_days[month - 1u];
+
+		if (month == 2u && desktop_is_leap_year(year))
+			mdays++;
+		if (days < mdays)
+			break;
+		days -= mdays;
+	}
+	day = days + 1u;
+	desktop_format_two_digits(date_out, day);
+	date_out[2] = '/';
+	desktop_format_two_digits(date_out + 3, month);
+	date_out[5] = '/';
+	date_out[6] = (char)('0' + (year / 1000u) % 10u);
+	date_out[7] = (char)('0' + (year / 100u) % 10u);
+	date_out[8] = (char)('0' + (year / 10u) % 10u);
+	date_out[9] = (char)('0' + year % 10u);
+	date_out[10] = '\0';
+}
+
+static void desktop_draw_taskbar_clock(const framebuffer_info_t *fb,
+                                       const gui_pixel_rect_t *clip,
+                                       const gui_pixel_rect_t *taskbar,
+                                       const gui_pixel_theme_t *theme)
+{
+	char time_text[6];
+	char date_text[11];
+	int clock_x;
+
+	if (!fb || !clip || !taskbar || !theme)
+		return;
+	desktop_format_clock(time_text, date_text);
+	clock_x = taskbar->x + taskbar->w - 88;
+	framebuffer_draw_text_clipped(fb,
+	                              clip,
+	                              clock_x + 32,
+	                              taskbar->y + 6,
+	                              time_text,
+	                              theme->taskbar_fg,
+	                              theme->taskbar_bg);
+	framebuffer_draw_text_clipped(fb,
+	                              clip,
+	                              clock_x,
+	                              taskbar->y + 22,
+	                              date_text,
+	                              theme->terminal_dim,
+	                              theme->taskbar_bg);
 }
 
 static void desktop_render_framebuffer_region(desktop_state_t *desktop,
@@ -1452,32 +1684,33 @@ static void desktop_render_framebuffer_region(desktop_state_t *desktop,
      * This is the single largest fill in the region path, so dropping it
      * for occluded clips removes most of the per-drag pixel churn.
      */
-	if (!desktop_clip_fully_covered_by_window(desktop, clip))
-		desktop_render_framebuffer_wallpaper(fb, clip, &theme);
+	desktop_render_framebuffer_wallpaper(fb, clip, &theme);
+	desktop_pixel_fill_rounded_rect(fb,
+	                                clip,
+	                                desktop->taskbar_pixel_rect.x,
+	                                desktop->taskbar_pixel_rect.y,
+	                                desktop->taskbar_pixel_rect.w,
+	                                desktop->taskbar_pixel_rect.h,
+	                                8,
+	                                theme.taskbar_bg);
 	desktop_pixel_fill_rect(fb,
 	                        clip,
-	                        desktop->taskbar_pixel_rect.x,
+	                        desktop->taskbar_pixel_rect.x + 8,
 	                        desktop->taskbar_pixel_rect.y,
-	                        desktop->taskbar_pixel_rect.w,
-	                        desktop->taskbar_pixel_rect.h,
-	                        theme.taskbar_bg);
-	desktop_pixel_fill_rect(fb,
-	                        clip,
-	                        desktop->taskbar_pixel_rect.x,
-	                        desktop->taskbar_pixel_rect.y,
-	                        desktop->taskbar_pixel_rect.w,
+	                        desktop->taskbar_pixel_rect.w - 16,
 	                        1,
 	                        framebuffer_pack_rgb(fb, 0x24, 0x52, 0x72));
 	desktop_draw_taskbar_icon(fb,
 	                          clip,
 	                          DESKTOP_APP_NONE,
-	                          desktop->taskbar_pixel_rect.x + 16,
-	                          desktop->taskbar_pixel_rect.y + 2,
+	                          desktop->taskbar_pixel_rect.x + 8,
+	                          desktop->taskbar_pixel_rect.y + 8,
 	                          theme.taskbar_fg,
 	                          theme.window_border,
 	                          theme.taskbar_bg);
 	{
-		int task_x = desktop->taskbar_pixel_rect.x + 72;
+		int task_x =
+		    desktop->taskbar_pixel_rect.x + DESKTOP_TASKBAR_FIRST_WINDOW_X;
 
 		for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
 			uint32_t label_color;
@@ -1490,20 +1723,14 @@ static void desktop_render_framebuffer_region(desktop_state_t *desktop,
 			                          clip,
 			                          desktop->windows[i].app,
 			                          task_x,
-			                          desktop->taskbar_pixel_rect.y + 2,
+			                          desktop->taskbar_pixel_rect.y + 8,
 			                          label_color,
 			                          theme.window_border,
 			                          theme.taskbar_bg);
-			framebuffer_draw_text_clipped(fb,
-			                              clip,
-			                              task_x + 24,
-			                              desktop->taskbar_pixel_rect.y,
-			                              desktop->windows[i].title,
-			                              label_color,
-			                              theme.taskbar_bg);
-			task_x += 96;
+			task_x += DESKTOP_TASKBAR_SLOT_W;
 		}
 	}
+	desktop_draw_taskbar_clock(fb, clip, &desktop->taskbar_pixel_rect, &theme);
 
 	min_z = INT_MIN;
 	while ((win = desktop_next_window_by_z(desktop, min_z)) != 0) {
@@ -2948,16 +3175,30 @@ void desktop_handle_pointer(desktop_state_t *desktop,
 		}
 	}
 
-	if (ev->left_down && ev->x >= 1 && ev->x < 6 &&
-	    ev->y == desktop->taskbar.y) {
+	if (ev->left_down && desktop->framebuffer_enabled && desktop->framebuffer &&
+	    desktop_point_in_pixel_rect(
+	        pointer_pixel_x, pointer_pixel_y, &desktop->taskbar_pixel_rect) &&
+	    pointer_pixel_x >= desktop->taskbar_pixel_rect.x + 8 &&
+	    pointer_pixel_x <
+	        desktop->taskbar_pixel_rect.x + 8 + DESKTOP_TASKBAR_ICON_SIZE) {
+		desktop->launcher_open = !desktop->launcher_open;
+		desktop->focus = desktop->launcher_open ? DESKTOP_FOCUS_LAUNCHER
+		                                        : DESKTOP_FOCUS_SHELL;
+	} else if (ev->left_down && ev->x >= 1 && ev->x < 6 &&
+	           ev->y == desktop->taskbar.y) {
 		desktop->launcher_open = !desktop->launcher_open;
 		desktop->focus = desktop->launcher_open ? DESKTOP_FOCUS_LAUNCHER
 		                                        : DESKTOP_FOCUS_SHELL;
 	}
 
 	if (ev->left_down) {
-		desktop_window_t *task_win =
-		    desktop_taskbar_window_at(desktop, ev->x, ev->y);
+		desktop_window_t *task_win;
+
+		if (desktop->framebuffer_enabled && desktop->framebuffer)
+			task_win = desktop_framebuffer_taskbar_window_at(
+			    desktop, pointer_pixel_x, pointer_pixel_y);
+		else
+			task_win = desktop_taskbar_window_at(desktop, ev->x, ev->y);
 
 		if (task_win) {
 			if (task_win->minimized)
