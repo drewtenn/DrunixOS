@@ -25,7 +25,7 @@ static void test_kmalloc_4byte_aligned(ktest_case_t *tc)
 {
 	void *p = kmalloc(1);
 	KTEST_ASSERT_NOT_NULL(tc, p);
-	KTEST_EXPECT_EQ(tc, (uint32_t)p % 4u, 0u);
+	KTEST_EXPECT_EQ(tc, (uint32_t)(uintptr_t)p % 4u, 0u);
 	kfree(p);
 }
 
@@ -33,8 +33,8 @@ static void test_kmalloc_within_heap_bounds(ktest_case_t *tc)
 {
 	void *p = kmalloc(64);
 	KTEST_ASSERT_NOT_NULL(tc, p);
-	KTEST_EXPECT_GE(tc, (uint32_t)p, HEAP_START);
-	KTEST_EXPECT_LE(tc, (uint32_t)p, HEAP_END - 64u);
+	KTEST_EXPECT_GE(tc, (uint32_t)(uintptr_t)p, HEAP_START);
+	KTEST_EXPECT_LE(tc, (uint32_t)(uintptr_t)p, HEAP_END - 64u);
 	kfree(p);
 }
 
@@ -44,7 +44,8 @@ static void test_two_allocs_no_overlap(ktest_case_t *tc)
 	void *b = kmalloc(64);
 	KTEST_ASSERT_NOT_NULL(tc, a);
 	KTEST_ASSERT_NOT_NULL(tc, b);
-	uint32_t lo = (uint32_t)a, hi = (uint32_t)b;
+	uint32_t lo = (uint32_t)(uintptr_t)a;
+	uint32_t hi = (uint32_t)(uintptr_t)b;
 	if (lo > hi) {
 		uint32_t tmp = lo;
 		lo = hi;

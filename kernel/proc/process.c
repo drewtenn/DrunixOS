@@ -19,6 +19,21 @@
 #define PROCESS_USER_STACK_TOP USER_STACK_TOP
 #define PROCESS_USER_STACK_LOW USER_STACK_BASE
 
+static uintptr_t process_page_align_up(uintptr_t addr)
+{
+	return (addr + 0xFFFu) & ~(uintptr_t)0xFFFu;
+}
+
+static uint32_t process_kernel_ptr32(const void *ptr)
+{
+	return (uint32_t)(uintptr_t)ptr;
+}
+
+static void *process_kernel_addr32(uint32_t addr)
+{
+	return (void *)(uintptr_t)addr;
+}
+
 static void process_fork_rollback_child(process_t *child_out)
 {
 	if (!child_out)
@@ -163,10 +178,12 @@ static int process_clone_kernel_stack(process_t *child_out,
 		return -1;
 	}
 
-	uint8_t *kguard = (uint8_t *)(((uint32_t)kstack_raw + 0xFFFu) & ~0xFFFu);
+	uint8_t *kguard =
+	    (uint8_t *)process_page_align_up((uintptr_t)kstack_raw);
 	arch_kstack_guard((uintptr_t)kguard);
-	child_out->kstack_bottom = (uint32_t)kstack_raw;
-	child_out->kstack_top = (uint32_t)(kguard + 0x1000u + KSTACK_SIZE);
+	child_out->kstack_bottom = process_kernel_ptr32(kstack_raw);
+	child_out->kstack_top =
+	    process_kernel_ptr32(kguard + 0x1000u + KSTACK_SIZE);
 	return arch_process_clone_frame(child_out, parent, child_stack);
 }
 
@@ -254,7 +271,8 @@ int process_create_file(process_t *proc,
 		rc = -5;
 		goto fail_user_space;
 	}
-	uint8_t *kguard = (uint8_t *)(((uint32_t)kstack_raw + 0xFFFu) & ~0xFFFu);
+	uint8_t *kguard =
+	    (uint8_t *)process_page_align_up((uintptr_t)kstack_raw);
 	arch_kstack_guard((uintptr_t)kguard);
 
 	proc->pd_phys = pd_phys;
@@ -266,8 +284,8 @@ int process_create_file(process_t *proc,
 	    heap_start; /* empty heap: brk == heap_start, no pages committed */
 	proc->user_stack = (uint32_t)initial_stack;
 	proc->stack_low_limit = (uint32_t)PROCESS_USER_STACK_LOW;
-	proc->kstack_bottom = (uint32_t)kstack_raw;
-	proc->kstack_top = (uint32_t)(kguard + 0x1000u + KSTACK_SIZE);
+	proc->kstack_bottom = process_kernel_ptr32(kstack_raw);
+	proc->kstack_top = process_kernel_ptr32(kguard + 0x1000u + KSTACK_SIZE);
 	proc->arch_state.context = 0; /* scheduler builds the initial switch frame */
 	proc->pid = 0;             /* assigned by sched_add() */
 	proc->state = PROC_UNUSED; /* sched_add() sets to PROC_READY */
@@ -493,10 +511,12 @@ int process_fork(process_t *child_out, process_t *parent)
 		process_fork_rollback_child(child_out);
 		return -1;
 	}
-	uint8_t *kguard = (uint8_t *)(((uint32_t)kstack_raw + 0xFFFu) & ~0xFFFu);
+	uint8_t *kguard =
+	    (uint8_t *)process_page_align_up((uintptr_t)kstack_raw);
 	arch_kstack_guard((uintptr_t)kguard);
-	child_out->kstack_bottom = (uint32_t)kstack_raw;
-	child_out->kstack_top = (uint32_t)(kguard + 0x1000u + KSTACK_SIZE);
+	child_out->kstack_bottom = process_kernel_ptr32(kstack_raw);
+	child_out->kstack_top =
+	    process_kernel_ptr32(kguard + 0x1000u + KSTACK_SIZE);
 
 	return arch_process_clone_frame(child_out, parent, 0);
 }
@@ -585,7 +605,7 @@ void process_release_kstack(process_t *proc)
 	uint32_t guard = (raw + 0xFFFu) & ~0xFFFu;
 
 	arch_kstack_unguard(guard);
-	kfree((void *)raw);
+	kfree(process_kernel_addr32(raw));
 
 	proc->kstack_bottom = 0;
 	proc->kstack_top = 0;
@@ -601,6 +621,6 @@ void process_exec_cleanup(uint32_t old_pd_phys, uint32_t old_kstack_bottom)
 	if (old_kstack_bottom != 0) {
 		uint32_t guard = (old_kstack_bottom + 0xFFFu) & ~0xFFFu;
 		arch_kstack_unguard(guard);
-		kfree((void *)old_kstack_bottom);
+		kfree(process_kernel_addr32(old_kstack_bottom));
 	}
 }

@@ -940,22 +940,22 @@ static uint32_t sched_signal_handler(const process_t *proc, int signum)
 	return proc->sig_handlers[signum];
 }
 
-uint32_t sched_signal_check(uint32_t frame_esp)
+uintptr_t sched_signal_check(uintptr_t frame_ctx)
 {
-	arch_trap_frame_t *frame = (arch_trap_frame_t *)frame_esp;
+	arch_trap_frame_t *frame = (arch_trap_frame_t *)frame_ctx;
 
 	if (!g_current)
-		return frame_esp;
+		return frame_ctx;
 
 	arch_trap_frame_sanitize(g_current, frame);
 
-	if (!arch_irq_frame_is_user(frame_esp))
-		return frame_esp;
+	if (!arch_irq_frame_is_user(frame_ctx))
+		return frame_ctx;
 
 	if (g_current->group && g_current->group->group_exit) {
 		sched_mark_exit();
 		schedule();
-		return frame_esp;
+		return frame_ctx;
 	}
 
 	uint32_t deliverable = g_current->sig_pending & ~g_current->sig_blocked;
@@ -984,7 +984,7 @@ uint32_t sched_signal_check(uint32_t frame_esp)
 		}
 	}
 	if (signum < 0)
-		return frame_esp;
+		return frame_ctx;
 
 	/* Clear the pending bit before delivery. */
 	if (!group_signal)
@@ -1004,7 +1004,7 @@ uint32_t sched_signal_check(uint32_t frame_esp)
 		klog_uint("SIGNAL", "SIGSTOP pid", g_current->pid);
 		sched_mark_stopped(SIGSTOP);
 		schedule();
-		return frame_esp; /* resumes here after SIGCONT */
+		return frame_ctx; /* resumes here after SIGCONT */
 	}
 
 	/*
@@ -1016,7 +1016,7 @@ uint32_t sched_signal_check(uint32_t frame_esp)
 			klog_uint("SIGNAL", "SIGTSTP (default stop) pid", g_current->pid);
 			sched_mark_stopped(SIGTSTP);
 			schedule();
-			return frame_esp; /* resumes here after SIGCONT */
+			return frame_ctx; /* resumes here after SIGCONT */
 		}
 		/* SIG_IGN or user handler: fall through to generic handling below. */
 	}
@@ -1031,13 +1031,13 @@ uint32_t sched_signal_check(uint32_t frame_esp)
 			    0)
 				goto bad_signal_frame;
 		}
-		return frame_esp;
+		return frame_ctx;
 	}
 
 	if (handler == SIG_IGN) {
 		if (from_crash)
 			g_current->crash.valid = 0;
-		return frame_esp;
+		return frame_ctx;
 	} else if (handler == SIG_DFL) {
 		if (is_fatal_default(signum)) {
 			int dumped_core = 0;
@@ -1051,23 +1051,23 @@ uint32_t sched_signal_check(uint32_t frame_esp)
 			    "SIGNAL", "default-kill from_crash", (uint32_t)from_crash);
 			sched_mark_signaled(signum, dumped_core);
 			schedule();       /* zombie — switches away, never returns here */
-			return frame_esp; /* unreachable; keeps compiler happy */
+			return frame_ctx; /* unreachable; keeps compiler happy */
 		}
 		/* SIGCHLD with SIG_DFL: discarded (ignored by default). */
 		if (from_crash)
 			g_current->crash.valid = 0;
-		return frame_esp;
+		return frame_ctx;
 	} else {
 		if (from_crash)
 			g_current->crash.valid = 0;
 		if (arch_signal_setup_frame(g_current, frame, signum, handler) != 0)
 			goto bad_signal_frame;
-		return frame_esp;
+		return frame_ctx;
 	}
 
 bad_signal_frame:
 	klog_uint("SIGNAL", "bad handler frame pid", g_current->pid);
 	sched_mark_signaled(SIGSEGV, 0);
 	schedule();
-	return frame_esp;
+	return frame_ctx;
 }

@@ -285,16 +285,13 @@ void sched_record_user_fault(const arch_trap_frame_t *frame,
  * build a signal frame on the user stack and redirect the saved EIP to the
  * user handler address.
  *
- * `frame_esp` is the value of ESP at the gs slot of the saved register frame
- * (the base of the pusha/segment-register block on the kernel stack).
- * Called from isr.asm immediately before each iret — on both the syscall
- * and IRQ return paths.
+ * `frame_ctx` is the architecture-owned saved trap-frame context.  x86 passes
+ * the kernel-stack ESP used by isr.asm; ARM64 passes the trap-frame pointer.
  *
- * Returns the frame_esp to use after the call.  If the signal's default
+ * Returns the frame context to use after the call.  If the signal's default
  * action terminates the process, this function calls schedule() to switch
- * away (the zombie's frame is abandoned).  Otherwise it returns frame_esp
- * unchanged.
+ * away.  Otherwise it returns frame_ctx unchanged.
  */
-uint32_t sched_signal_check(uint32_t frame_esp);
+uintptr_t sched_signal_check(uintptr_t frame_ctx);
 
 #endif

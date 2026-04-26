@@ -76,11 +76,15 @@ void ktest_expect_ge(ktest_case_t *tc,
 
 /* ── EXPECT macros — non-fatal, always continue ─────────────────────────── */
 
+#define KTEST_VALUE_U32(v_) ((uint32_t)(uintptr_t)(v_))
+
 #define KTEST_EXPECT_EQ(tc, a, b)                                              \
-	ktest_expect_eq((tc), (uint32_t)(a), (uint32_t)(b), #a, #b, __LINE__)
+	ktest_expect_eq((tc), KTEST_VALUE_U32(a), KTEST_VALUE_U32(b), #a, #b,  \
+	                __LINE__)
 
 #define KTEST_EXPECT_NE(tc, a, b)                                              \
-	ktest_expect_ne((tc), (uint32_t)(a), (uint32_t)(b), #a, #b, __LINE__)
+	ktest_expect_ne((tc), KTEST_VALUE_U32(a), KTEST_VALUE_U32(b), #a, #b,  \
+	                __LINE__)
 
 #define KTEST_EXPECT_TRUE(tc, expr)                                            \
 	ktest_expect_true((tc), !!(expr), #expr, __LINE__)
@@ -95,10 +99,12 @@ void ktest_expect_ge(ktest_case_t *tc,
 	ktest_expect_true((tc), (ptr) == 0, #ptr " == NULL", __LINE__)
 
 #define KTEST_EXPECT_GE(tc, a, b)                                              \
-	ktest_expect_ge((tc), (uint32_t)(a), (uint32_t)(b), #a, #b, __LINE__)
+	ktest_expect_ge((tc), KTEST_VALUE_U32(a), KTEST_VALUE_U32(b), #a, #b,  \
+	                __LINE__)
 
 #define KTEST_EXPECT_LE(tc, a, b)                                              \
-	ktest_expect_ge((tc), (uint32_t)(b), (uint32_t)(a), #b, #a, __LINE__)
+	ktest_expect_ge((tc), KTEST_VALUE_U32(b), KTEST_VALUE_U32(a), #b, #a,  \
+	                __LINE__)
 
 /* ── ASSERT macros — fatal, abort the current test case on failure ───────── */
 

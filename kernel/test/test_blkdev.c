@@ -136,7 +136,9 @@ static void test_blkdev_lookup_by_name(ktest_case_t *tc)
 	    tc, (uint32_t)blkdev_register_disk("sda", 8u, 0u, 100u, &null_ops), 0u);
 
 	KTEST_EXPECT_EQ(tc, blkdev_find_index("sda"), 0u);
-	KTEST_EXPECT_EQ(tc, (uint32_t)blkdev_get("sda"), (uint32_t)&null_ops);
+	KTEST_EXPECT_EQ(tc,
+	                (uint32_t)(uintptr_t)blkdev_get("sda"),
+	                (uint32_t)(uintptr_t)&null_ops);
 }
 
 static void

@@ -748,8 +748,8 @@ void framebuffer_draw_scrollbar(const framebuffer_info_t *fb,
 	thumb_h = div_u64_by_u64((uint64_t)h * visible, total);
 	if (thumb_h < 8)
 		thumb_h = h < 8 ? h : 8;
-	if (thumb_h > h)
-		thumb_h = h;
+	if (thumb_h > (uint64_t)h)
+		thumb_h = (uint64_t)h;
 	travel = (uint64_t)h - thumb_h;
 	thumb_y = y;
 	if (max_top > 0)

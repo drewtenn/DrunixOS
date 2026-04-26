@@ -95,6 +95,17 @@ static void fmt_uint(outbuf_t *ob,
 	}
 }
 
+static void fmt_uintptr_hex(outbuf_t *ob, uintptr_t val)
+{
+	static const char digits[] = "0123456789abcdef";
+	int shift = (int)((sizeof(uintptr_t) * 8u) - 4u);
+
+	while (shift >= 0) {
+		ob_putc(ob, digits[(val >> shift) & 0xFu]);
+		shift -= 4;
+	}
+}
+
 static void fmt_int(outbuf_t *ob, int32_t val, int flags, int width)
 {
 	char sign;
@@ -222,7 +233,7 @@ int k_vsnprintf(char *buf, uint32_t size, const char *fmt, va_list ap)
 		case 'p':
 			ob_putc(&ob, '0');
 			ob_putc(&ob, 'x');
-			fmt_uint(&ob, (uint32_t)va_arg(ap, void *), 16, 0, F_ZERO, 8, '\0');
+			fmt_uintptr_hex(&ob, (uintptr_t)va_arg(ap, void *));
 			break;
 		case 's':
 			fmt_str(&ob, va_arg(ap, const char *), flags, width);

@@ -225,7 +225,7 @@ uint32_t SYSCALL_NOINLINE syscall_case_sigreturn(void)
 
 	if (!cur)
 		return (uint32_t)-1;
-	kframe = (uint32_t *)(cur->kstack_top - 76);
+	kframe = (uint32_t *)(uintptr_t)(cur->kstack_top - 76);
 	user_esp = kframe[17];
 	if (uaccess_copy_from_user(cur, sf, user_esp - 4, sizeof(sf)) != 0) {
 		sched_mark_signaled(SIGSEGV, 0);

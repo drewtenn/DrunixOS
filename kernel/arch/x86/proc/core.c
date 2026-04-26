@@ -204,6 +204,8 @@ static uint32_t count_user_segments(process_t *proc)
 
 static void fill_prstatus(core_prstatus_t *st, process_t *proc, int signum)
 {
+	elf_gregset_t regs;
+
 	k_memset(st, 0, sizeof(*st));
 
 	st->pr_info.si_signo = signum;
@@ -215,7 +217,8 @@ static void fill_prstatus(core_prstatus_t *st, process_t *proc, int signum)
 	st->pr_pgrp = (int32_t)proc->pgid;
 	st->pr_sid = (int32_t)proc->sid;
 
-	arch_core_fill_prstatus_regs(st->pr_reg, &proc->crash.frame);
+	arch_core_fill_prstatus_regs(regs, &proc->crash.frame);
+	k_memcpy(st->pr_reg, regs, sizeof(regs));
 }
 
 static uint32_t prstatus_note_size(void)

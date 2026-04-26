@@ -13,6 +13,16 @@
 
 /* ── Internal helpers ────────────────────────────────────────────────────── */
 
+static void *slab_phys_to_ptr(uint32_t phys_addr)
+{
+	return (void *)(uintptr_t)phys_addr;
+}
+
+static uint32_t slab_ptr_to_phys(const void *ptr)
+{
+	return (uint32_t)(uintptr_t)ptr;
+}
+
 /*
  * slab_format: initialise a fresh PMM page at `page_phys` as a slab for
  * `cache`.  Threads the embedded free list through every object slot in order,
@@ -27,11 +37,12 @@
  */
 static slab_hdr_t *slab_format(const kmem_cache_t *cache, uint32_t page_phys)
 {
-	slab_hdr_t *slab = (slab_hdr_t *)page_phys;
+	uint8_t *base;
+	slab_hdr_t *slab = (slab_hdr_t *)slab_phys_to_ptr(page_phys);
 	slab->next = (slab_hdr_t *)0;
 	slab->n_free = cache->objs_per_slab;
 
-	uint8_t *base = (uint8_t *)page_phys + SLAB_HDR_SZ;
+	base = (uint8_t *)slab_phys_to_ptr(page_phys) + SLAB_HDR_SZ;
 	for (uint32_t i = 0; i < cache->objs_per_slab; i++) {
 		void **slot = (void **)(base + i * cache->obj_size);
 		*slot = (i + 1 < cache->objs_per_slab)
@@ -134,7 +145,8 @@ void kmem_cache_free(kmem_cache_t *cache, void *obj)
      *     (enforced by kmem_cache_create: objs_per_slab >= 1 and
      *      SLAB_HDR_SZ + objs_per_slab * obj_size <= PAGE_SIZE).
      */
-	slab_hdr_t *slab = (slab_hdr_t *)((uint32_t)obj & ~(PAGE_SIZE - 1u));
+	slab_hdr_t *slab =
+	    (slab_hdr_t *)((uintptr_t)obj & ~(uintptr_t)(PAGE_SIZE - 1u));
 
 	int was_full = (slab->n_free == 0);
 
@@ -151,7 +163,7 @@ void kmem_cache_free(kmem_cache_t *cache, void *obj)
 	} else if (slab->n_free == cache->objs_per_slab) {
 		/* Slab is now completely empty: remove and return the page to PMM. */
 		list_remove(&cache->partial, slab);
-		pmm_free_page((uint32_t)slab);
+		pmm_free_page(slab_ptr_to_phys(slab));
 	}
 }
 
@@ -161,11 +173,11 @@ void kmem_cache_destroy(kmem_cache_t *cache)
 
 	for (s = cache->partial; s; s = next) {
 		next = s->next;
-		pmm_free_page((uint32_t)s);
+		pmm_free_page(slab_ptr_to_phys(s));
 	}
 	for (s = cache->full; s; s = next) {
 		next = s->next;
-		pmm_free_page((uint32_t)s);
+		pmm_free_page(slab_ptr_to_phys(s));
 	}
 	kfree(cache);
 }

@@ -27,7 +27,7 @@ E2FSCK  ?= $(if $(wildcard $(E2FSPROGS_SBIN)/e2fsck),$(E2FSPROGS_SBIN)/e2fsck,e2
 DUMPE2FS ?= $(if $(wildcard $(E2FSPROGS_SBIN)/dumpe2fs),$(E2FSPROGS_SBIN)/dumpe2fs,dumpe2fs)
 DEBUGFS ?= $(if $(wildcard $(E2FSPROGS_SBIN)/debugfs),$(E2FSPROGS_SBIN)/debugfs,debugfs)
 -include kernel/arch/$(ARCH)/arch.mk
-CFLAGS  := -m32 -g -ffreestanding -mno-sse -mno-sse2 -mno-mmx -msoft-float -Wstack-usage=1024
+CFLAGS  := -m32 -g -ffreestanding -mno-sse -mno-sse2 -mno-mmx -msoft-float -Wstack-usage=1024 -Werror
 INC     := -I kernel -I kernel/arch -I kernel/arch/$(ARCH) -I kernel/arch/$(ARCH)/boot -I kernel/arch/$(ARCH)/mm -I kernel/arch/$(ARCH)/proc -I kernel/arch/x86/platform/pc -I kernel/mm -I kernel/drivers -I kernel/blk -I kernel/proc -I kernel/fs -I kernel/lib -I kernel/gui
 DEPFLAGS := -MMD -MP
 MOUSE_SPEED ?= 4
@@ -65,7 +65,7 @@ ARM_CFLAGS += -DDRUNIX_ARM64_SMOKE_FALLBACK=$(ARM64_SMOKE_FALLBACK)
 ARM_CFLAGS += -DDRUNIX_ARM64_HALT_TEST=$(ARM64_HALT_TEST)
 ARM_CFLAGS += -DDRUNIX_ARM64_VGA=1
 endif
-NASMFLAGS :=
+NASMFLAGS := -Werror
 
 #Build with NO_DESKTOP = 1 to skip desktop init entirely and boot straight to
 #the legacy console.The runtime "nodesktop" cmdline flag(set via grub) is
@@ -277,7 +277,7 @@ kernel.elf: $(KOBJS) $(KTOBJS)
 	$(LD) -m elf_i386 -o $@ -T kernel/arch/x86/linker.ld $(KOBJS) $(KTOBJS)
 
 kernel/arch/x86/boot/kernel-entry-vga.o: kernel/arch/x86/boot/kernel-entry.asm
-	$(NASM) -DDRUNIX_VGA_TEXT $< -f elf -o $@
+	$(NASM) $(NASMFLAGS) -DDRUNIX_VGA_TEXT $< -f elf -o $@
 
 kernel-vga.elf: $(KOBJS_VGA) $(KTOBJS)
 	$(LD) -m elf_i386 -o $@ -T kernel/arch/x86/linker.ld $(KOBJS_VGA) $(KTOBJS)
@@ -379,7 +379,7 @@ build: kernel disk
 iso: os.iso
 images: disk
 fresh: run-fresh
-check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
+check: clang-tidy-include-check test-headless check-warning-policy check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
 check-phase6:
 	python3 tools/test_kernel_arch_boundary_phase6.py
 
@@ -440,6 +440,9 @@ test-busybox-compat: check-busybox-compat
 check-targets-generic:
 	python3 tools/test_make_targets_arch_neutral.py
 
+check-warning-policy:
+	python3 tools/test_warning_policy.py
+
 check-test-wiring:
 	python3 tools/test_check_wiring.py --arch x86
 
@@ -469,7 +472,7 @@ compile_commands.json: tools/generate_compile_commands.py kernel/objects.mk user
 		--kernel-cflags="$(CFLAGS)" \
 		--kernel-inc="$(INC)" \
 		--user-cc="$(CC)" \
-		--user-cflags="-m32 -ffreestanding -nostdlib -fno-pie -no-pie -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall" \
+		--user-cflags="-m32 -ffreestanding -nostdlib -fno-pie -no-pie -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall -Werror" \
 		--linux-cc="$(LINUX_I386_CC)" \
 		--linux-cflags="$(LINUX_CFLAGS)" \
 		--user-c-runtime-objs="$(SCAN_USER_C_RUNTIME_OBJS)" \
@@ -628,7 +631,7 @@ clean:
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all test-busybox-compat \
         check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
-        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
+        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-warning-policy check-test-wiring check-test-intent-coverage \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean
@@ -667,7 +670,7 @@ disk: $(ROOT_DISK_IMG)
 
 fresh: run
 
-check: clang-tidy-include-check test-headless check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
+check: clang-tidy-include-check test-headless check-warning-policy check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
 
 test:
 	$(MAKE) ARCH=$(ARCH) check
@@ -746,6 +749,9 @@ check-shared-shell-tests:
 
 check-targets-generic:
 	python3 tools/test_make_targets_arch_neutral.py
+
+check-warning-policy:
+	python3 tools/test_warning_policy.py
 
 check-test-wiring:
 	python3 tools/test_check_wiring.py --arch arm64
@@ -910,7 +916,7 @@ clean:
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all test-busybox-compat \
         check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
-        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage \
+        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-warning-policy check-test-wiring check-test-intent-coverage \
         validate-ext3-linux \
         pdf epub docs \
         rebuild clean

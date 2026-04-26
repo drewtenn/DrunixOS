@@ -78,7 +78,7 @@ void arm64_sync_handler(arch_trap_frame_t *frame)
 				(void)syscall_dispatch_from_frame(frame);
 			else
 				(void)arm64_userspace_syscall_dispatch(frame);
-			(void)sched_signal_check((uint32_t)(uintptr_t)frame);
+			(void)sched_signal_check((uintptr_t)frame);
 			return;
 		}
 
@@ -103,7 +103,7 @@ void arm64_irq_handler(arch_trap_frame_t *frame)
 
 	if (platform_irq_dispatch()) {
 		schedule_if_needed();
-		(void)sched_signal_check((uint32_t)(uintptr_t)frame);
+		(void)sched_signal_check((uintptr_t)frame);
 		return;
 	}
 

@@ -13,11 +13,12 @@ AR     = x86_64-elf-ar
 NASM   = nasm
 CFLAGS = -m32 -ffreestanding -nostdlib -fno-pie -no-pie \
          -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall \
-         -fdebug-prefix-map=$(abspath ..)=.
+         -Werror -fdebug-prefix-map=$(abspath ..)=.
 CXXFLAGS = -m32 -ffreestanding -nostdlib -fno-pie -no-pie \
            -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall \
-           -fno-exceptions -fno-rtti -fno-use-cxa-atexit \
+           -Werror -fno-exceptions -fno-rtti -fno-use-cxa-atexit \
            -fno-threadsafe-statics -fdebug-prefix-map=$(abspath ..)=.
+NASMFLAGS = -Werror
 CXXLIBS = $(shell $(CXX) -m32 -print-libgcc-file-name)
 
 C_RUNTIME_OBJS = lib/crt0.o lib/cxx_init.o lib/syscall.o lib/malloc.o \
@@ -29,7 +30,7 @@ C_LINK_OBJS = $(C_RUNTIME_OBJS)
 CXX_LINK_OBJS = $(C_RUNTIME_OBJS) $(CXX_RUNTIME_OBJS)
 
 lib/crt0.o: lib/crt0.asm
-	$(NASM) -f elf32 -o $@ $<
+	$(NASM) $(NASMFLAGS) -f elf32 -o $@ $<
 
 lib/cxx_init.o: lib/cxx_init.c
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -75,7 +76,7 @@ lib/cxxabi.o: lib/cxxabi.cpp lib/syscall.h
 	$(CXX) $(CXXFLAGS) -I . -c -o $@ $<
 
 %.o: %.asm
-	$(NASM) -f elf32 -o $@ $<
+	$(NASM) $(NASMFLAGS) -f elf32 -o $@ $<
 
 $(C_PROGS): %: %.o $(C_LINK_OBJS) user.ld
 	$(LD) -m elf_i386 -T user.ld -o $@ $(C_LINK_OBJS) $@.o

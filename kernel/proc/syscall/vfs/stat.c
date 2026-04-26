@@ -438,11 +438,6 @@ static uint32_t syscall_stat64_path_common(uint32_t user_path,
 	return 0;
 }
 
-static uint32_t syscall_stat64_path(uint32_t user_path, uint32_t user_stat)
-{
-	return syscall_stat64_path_common(user_path, user_stat, 0);
-}
-
 static uint32_t syscall_fstat64(uint32_t fd, uint32_t user_stat)
 {
 	process_t *cur = sched_current();

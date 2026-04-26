@@ -414,6 +414,12 @@ uint32_t SYSCALL_NOINLINE syscall_case_pipe2(uint32_t eax,
 	int fds[2];
 	uint32_t rc;
 
+	(void)eax;
+	(void)edx;
+	(void)esi;
+	(void)edi;
+	(void)ebp;
+
 	if ((ecx & ~supported) != 0)
 		return (uint32_t)-LINUX_EINVAL;
 	rc = syscall_case_pipe(ebx);

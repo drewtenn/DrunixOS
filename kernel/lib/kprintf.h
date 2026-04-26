@@ -20,7 +20,7 @@
  *   %x / %X  — unsigned hex, lower / upper case
  *   %s       — NUL-terminated string  (NULL → "(null)")
  *   %c       — single character
- *   %p       — pointer as 0x???????? (8 hex digits, zero-padded)
+ *   %p       — pointer as zero-padded hex, sized to the target pointer width
  *   %%       — literal percent
  *
  * Flag / width support:

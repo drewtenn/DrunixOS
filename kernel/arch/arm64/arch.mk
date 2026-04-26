@@ -10,7 +10,7 @@ include user/programs.mk
 
 ARM_CFLAGS ?= -ffreestanding -fno-stack-protector -fno-pic -fno-pie \
               -mcpu=cortex-a53 -mgeneral-regs-only -mstrict-align \
-              -nostdlib -Wall -Wextra -g -O2
+              -nostdlib -Wall -Wextra -Werror -g -O2
 ARM_LDFLAGS ?= -nostdlib -T kernel/arch/arm64/linker.ld
 ARM_INC := -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 \
            -I kernel/arch/arm64/mm -I kernel/arch/arm64/proc \
@@ -112,7 +112,7 @@ ARM_COMPILE_ONLY_OBJS :=
 ARM_USER_BUILD_DIR := build/arm64-user
 ARM_USER_CFLAGS ?= -ffreestanding -nostdlib -fno-pic -fno-pie \
                    -fno-stack-protector -fno-omit-frame-pointer \
-                   -mcpu=cortex-a53 -mgeneral-regs-only -mstrict-align -g -Og -Wall \
+                   -mcpu=cortex-a53 -mgeneral-regs-only -mstrict-align -g -Og -Wall -Werror \
                    -fdebug-prefix-map=$(abspath .)=.
 ARM_USER_CXXFLAGS ?= $(ARM_USER_CFLAGS) -fno-exceptions -fno-rtti \
                      -fno-use-cxa-atexit -fno-threadsafe-statics
