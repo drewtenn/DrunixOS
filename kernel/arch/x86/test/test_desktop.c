@@ -268,6 +268,45 @@ test_desktop_framebuffer_uses_dark_blue_wallpaper_and_taskbar(
 	desktop_test_destroy(&desktop);
 }
 
+static void test_desktop_framebuffer_draws_taskbar_icons(ktest_case_t *tc)
+{
+	static uint32_t pixels[480 * 400];
+	gui_display_t display;
+	desktop_state_t desktop;
+	framebuffer_info_t fb;
+	uint32_t accent;
+	int files_id;
+	int taskbar_icon_y;
+
+	k_memset(pixels, 0, sizeof(pixels));
+	k_memset(&fb, 0, sizeof(fb));
+	fb.address = (uintptr_t)pixels;
+	fb.pitch = 480u * sizeof(uint32_t);
+	fb.width = 480u;
+	fb.height = 400u;
+	fb.bpp = 32u;
+	fb.red_pos = 16u;
+	fb.red_size = 8u;
+	fb.green_pos = 8u;
+	fb.green_size = 8u;
+	fb.blue_pos = 0u;
+	fb.blue_size = 8u;
+
+	gui_display_init(&display, pointer_motion_cells, 60, 25, 0x0f);
+	desktop_init(&desktop, &display);
+	desktop_set_framebuffer_target(&desktop, &fb);
+	files_id = desktop_open_app_window(&desktop, DESKTOP_APP_FILES);
+	KTEST_ASSERT_TRUE(tc, files_id > 0);
+	desktop_render(&desktop);
+
+	accent = framebuffer_pack_rgb(&fb, 0x3b, 0xaf, 0xda);
+	taskbar_icon_y = desktop.taskbar_pixel_rect.y + 2;
+	KTEST_EXPECT_EQ(tc, pixels[taskbar_icon_y * 480 + 16], accent);
+	KTEST_EXPECT_EQ(tc, pixels[taskbar_icon_y * 480 + 72], accent);
+
+	desktop_test_destroy(&desktop);
+}
+
 static void
 test_desktop_help_app_key_input_is_ignored_while_launcher_open(ktest_case_t *tc)
 {
@@ -4823,6 +4862,7 @@ static ktest_case_t desktop_cases[] = {
     KTEST_CASE(test_desktop_app_render_clips_to_content_rect),
     KTEST_CASE(test_desktop_help_app_render_is_visible_in_framebuffer),
     KTEST_CASE(test_desktop_framebuffer_uses_dark_blue_wallpaper_and_taskbar),
+    KTEST_CASE(test_desktop_framebuffer_draws_taskbar_icons),
     KTEST_CASE(test_desktop_help_app_key_input_is_ignored_while_launcher_open),
     KTEST_CASE(test_desktop_open_invalid_app_kind_is_rejected),
     KTEST_CASE(test_desktop_processes_app_handles_empty_snapshot),

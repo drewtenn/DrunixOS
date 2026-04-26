@@ -1380,6 +1380,59 @@ static void desktop_render_framebuffer_wallpaper(const framebuffer_info_t *fb,
 	}
 }
 
+static void desktop_draw_taskbar_icon(const framebuffer_info_t *fb,
+                                      const gui_pixel_rect_t *clip,
+                                      desktop_app_kind_t app,
+                                      int x,
+                                      int y,
+                                      uint32_t fg,
+                                      uint32_t accent,
+                                      uint32_t bg)
+{
+	if (!fb || !clip)
+		return;
+
+	desktop_pixel_fill_rect(fb, clip, x, y, 14, 12, bg);
+	desktop_pixel_draw_outline(fb, clip, x, y, 14, 12, accent);
+	switch (app) {
+	case DESKTOP_APP_SHELL:
+		desktop_pixel_fill_rect(fb, clip, x + 3, y + 3, 2, 2, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 5, y + 5, 2, 2, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 3, y + 7, 2, 2, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 8, y + 8, 4, 1, accent);
+		break;
+	case DESKTOP_APP_FILES:
+		desktop_pixel_fill_rect(fb, clip, x + 2, y + 4, 10, 6, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 3, y + 2, 4, 2, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 2, y + 5, 10, 1, accent);
+		break;
+	case DESKTOP_APP_PROCESSES:
+		desktop_pixel_fill_rect(fb, clip, x + 3, y + 7, 2, 3, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 6, y + 4, 2, 6, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 9, y + 6, 2, 4, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 2, y + 3, 2, 1, accent);
+		desktop_pixel_fill_rect(fb, clip, x + 4, y + 4, 2, 1, accent);
+		desktop_pixel_fill_rect(fb, clip, x + 6, y + 3, 2, 1, accent);
+		desktop_pixel_fill_rect(fb, clip, x + 8, y + 4, 2, 1, accent);
+		break;
+	case DESKTOP_APP_HELP:
+		desktop_pixel_fill_rect(fb, clip, x + 4, y + 2, 6, 8, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 9, y + 3, 1, 2, accent);
+		desktop_pixel_fill_rect(fb, clip, x + 6, y + 4, 3, 1, bg);
+		desktop_pixel_fill_rect(fb, clip, x + 7, y + 6, 1, 2, bg);
+		desktop_pixel_fill_rect(fb, clip, x + 7, y + 9, 1, 1, bg);
+		break;
+	case DESKTOP_APP_NONE:
+	default:
+		desktop_pixel_fill_rect(fb, clip, x + 3, y + 2, 2, 8, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 5, y + 2, 4, 1, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 9, y + 3, 2, 2, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 9, y + 7, 2, 2, fg);
+		desktop_pixel_fill_rect(fb, clip, x + 5, y + 9, 4, 1, fg);
+		break;
+	}
+}
+
 static void desktop_render_framebuffer_region(desktop_state_t *desktop,
                                               const gui_pixel_rect_t *clip)
 {
@@ -1417,27 +1470,40 @@ static void desktop_render_framebuffer_region(desktop_state_t *desktop,
 	                        desktop->taskbar_pixel_rect.w,
 	                        1,
 	                        framebuffer_pack_rgb(fb, 0x24, 0x52, 0x72));
-	framebuffer_draw_text_clipped(fb,
-	                              clip,
-	                              desktop->taskbar_pixel_rect.x + 16,
-	                              desktop->taskbar_pixel_rect.y,
-	                              "Menu",
-	                              theme.taskbar_fg,
-	                              theme.taskbar_bg);
+	desktop_draw_taskbar_icon(fb,
+	                          clip,
+	                          DESKTOP_APP_NONE,
+	                          desktop->taskbar_pixel_rect.x + 16,
+	                          desktop->taskbar_pixel_rect.y + 2,
+	                          theme.taskbar_fg,
+	                          theme.window_border,
+	                          theme.taskbar_bg);
 	{
 		int task_x = desktop->taskbar_pixel_rect.x + 72;
 
 		for (int i = 0; i < DESKTOP_MAX_WINDOWS; i++) {
+			uint32_t label_color;
+
 			if (!desktop->windows[i].open)
 				continue;
+			label_color = desktop->windows[i].minimized ? theme.terminal_dim
+			                                            : theme.taskbar_fg;
+			desktop_draw_taskbar_icon(fb,
+			                          clip,
+			                          desktop->windows[i].app,
+			                          task_x,
+			                          desktop->taskbar_pixel_rect.y + 2,
+			                          label_color,
+			                          theme.window_border,
+			                          theme.taskbar_bg);
 			framebuffer_draw_text_clipped(fb,
 			                              clip,
-			                              task_x,
+			                              task_x + 24,
 			                              desktop->taskbar_pixel_rect.y,
 			                              desktop->windows[i].title,
-			                              theme.taskbar_fg,
+			                              label_color,
 			                              theme.taskbar_bg);
-			task_x += 80;
+			task_x += 96;
 		}
 	}
 
