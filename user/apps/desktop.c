@@ -31,6 +31,10 @@
 #include "syscall.h"
 #include "unistd.h"
 
+#ifndef DESKTOP_ENABLE_JPEG_WALLPAPER
+#define DESKTOP_ENABLE_JPEG_WALLPAPER 0
+#endif
+
 typedef struct {
 	uint32_t width;
 	uint32_t height;
@@ -301,6 +305,7 @@ static void render_wallpaper_procedural(uint32_t *target)
 	}
 }
 
+#if DESKTOP_ENABLE_JPEG_WALLPAPER
 static int try_load_wallpaper_jpeg(const char *path, uint32_t *target)
 {
 	int fd;
@@ -396,11 +401,16 @@ out_free:
 	free(jpeg_buf);
 	return decoded;
 }
+#endif
 
 static void render_wallpaper(uint32_t *target)
 {
+#if DESKTOP_ENABLE_JPEG_WALLPAPER
 	if (!try_load_wallpaper_jpeg("/etc/wallpaper.jpg", target))
 		render_wallpaper_procedural(target);
+#else
+	render_wallpaper_procedural(target);
+#endif
 }
 
 static void term_clear(void)
