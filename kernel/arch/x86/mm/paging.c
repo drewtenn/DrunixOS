@@ -30,6 +30,7 @@ static uint32_t g_paging_present_saved_cr3;
 static uint32_t g_kernel_high_page_tables[ARCH_KERNEL_DIRECT_PHYS_MAX /
                                           0x400000u][1024]
     __attribute__((aligned(PAGE_SIZE)));
+extern char _kernel_end;
 
 #define X86_KERNEL_DIRECT_MAP_PDES \
 	((uint32_t)ARCH_KERNEL_DIRECT_MAP_END / 0x400000u)
@@ -310,6 +311,9 @@ int paging_identity_map_kernel_range(uint32_t phys_start,
 uint32_t paging_create_user_space(void)
 {
 	uint32_t pd_phys = pmm_alloc_page();
+	uint32_t low_kernel_pdes =
+	    (((uint32_t)(uintptr_t)&_kernel_end) + 0x3FFFFFu) >> 22;
+	uint32_t first_high_pde = (uint32_t)ARCH_KERNEL_VIRT_BASE >> 22;
 	if (!pd_phys)
 		return 0;
 
@@ -325,12 +329,13 @@ uint32_t paging_create_user_space(void)
 		new_pd[i] = 0;
 
 	/*
-     * Copy every supervisor-only kernel PDE, including device mappings added
-     * after paging_init(). These entries do NOT have PG_USER set, so ring-3
-     * code cannot read or write kernel memory even though supervisor code can
-     * still use the mappings while running on a process page directory.
+     * Copy the low PDEs still needed by the low-linked kernel image, plus the
+     * higher-half aliases. Do not inherit the rest of the low direct map:
+     * those addresses are now legal user space.
      */
-	for (int i = 0; i < 1024; i++) {
+	for (uint32_t i = 0; i < 1024; i++) {
+		if (i >= low_kernel_pdes && i < first_high_pde)
+			continue;
 		if ((kernel_pd[i] & (PG_PRESENT | PG_USER)) == PG_PRESENT)
 			new_pd[i] = kernel_pd[i];
 	}
@@ -429,6 +434,10 @@ int paging_map_page(uint32_t pd_phys,
 			pmm_free_page(pt_phys);
 			return -1;
 		}
+		if ((old_pt[pti] & PG_PRESENT) && !(old_pt[pti] & PG_USER)) {
+			pmm_free_page(pt_phys);
+			return -1;
+		}
 		for (int i = 0; i < 1024; i++)
 			pt[i] = old_pt[i];
 
@@ -437,6 +446,9 @@ int paging_map_page(uint32_t pd_phys,
 	} else {
 		pt = (uint32_t *)paging_phys_ptr(paging_entry_addr(pd[pdi]));
 		if (!pt)
+			return -1;
+		if ((flags & PG_USER) && (pt[pti] & PG_PRESENT) &&
+		    !(pt[pti] & PG_USER))
 			return -1;
 		if (flags & PG_USER)
 			pd[pdi] |= PG_USER;

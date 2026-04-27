@@ -91,7 +91,7 @@ With just a physical memory manager, we can allocate pages, but the CPU still ha
 
 This enables three critical capabilities:
 
-- **Memory isolation between processes.** Each process has its own lookup table, so process A's pointer to `0x08040000` resolves to a different physical page than process B's pointer to `0x08040000`. Neither process can reach the other's memory.
+- **Memory isolation between processes.** Each process has its own lookup table, so process A's pointer to `0x08048000` resolves to a different physical page than process B's pointer to `0x08048000`. Neither process can reach the other's memory.
 - **Read-only regions.** The lookup-table entries include permission bits. The kernel's code can be mapped read-only so that a stray write cannot modify it.
 - **On-demand mapping.** A page can be marked "not present", and the CPU will fault when it is touched. The fault handler can allocate a physical page, update the table, and retry the instruction.
 
@@ -130,23 +130,23 @@ Every PDE and PTE is a 32-bit word with the same general shape — the top twent
 
 The CPU is told where the currently active page directory lives by writing its physical address into **CR3**, a control register that holds the current root of the paging tree. Paging itself is enabled by setting bit 31 of **CR0**.
 
-#### Identity Mapping the First 128 MB
+#### Kernel Identity and Higher-Half Mappings
 
-The initial page tables set up in `paging_init` use **identity mapping**: virtual address `X` maps to physical address `X` for every address from zero through 128 MB. This is important because it means the kernel can keep running at the same addresses after paging is enabled — every pointer in every variable continues to refer to the same physical page it did before the switch.
+The initial page tables set up in `paging_init` still use **identity mapping** for the low kernel direct-map window: virtual address `X` maps to physical address `X`. This is important because it means the low-linked kernel can keep running at the same addresses after paging is enabled — every pointer in every variable continues to refer to the same physical page it did before the switch.
 
-The function fills in the page directory one entry at a time. For the first thirty-two PDEs (covering `0x00000000` through `0x08000000`, a 128 MB region), it allocates a page table, fills every one of that table's 1 024 PTEs with `virtual == physical` mappings, and points the PDE at the table. All remaining PDEs are left as zero — any access to a virtual address above 128 MB will page-fault.
+The function fills in the page directory one entry at a time. For the low direct-map PDEs, it allocates page tables, fills each PTE with `virtual == physical`, and points the PDEs at those tables. It also installs supervisor-only higher-half aliases for physical memory at `0xC0000000` and above. The kernel page directory owns the broad low identity map; later user page directories inherit only the low PDEs still needed by the low-linked kernel image plus the higher-half supervisor mappings.
 
-After every page table is filled in, the kernel loads the page directory's physical address into `CR3` and sets bit 31 of `CR0`. On the next instruction, the CPU is translating every memory access. Because everything is identity-mapped, nothing visibly changes.
+After the page tables are filled in, the kernel loads the page directory's physical address into `CR3` and sets bit 31 of `CR0`. On the next instruction, the CPU is translating every memory access. Because the low kernel image is still identity-mapped, the transition is invisible to the currently executing code.
 
 #### Private Page Tables for User Processes
 
-If processes shared a page table, writes from one would overwrite another — process A's mapping of `0x08040000` would replace process B's the moment A ran. Every process therefore needs its own page table for the regions it uses.
+If processes shared a page table, writes from one would overwrite another — process A's mapping of `0x08048000` would replace process B's the moment A ran. Every process therefore needs its own page table for the regions it uses.
 
-When an x86 user program is loaded at virtual address `0x08000000` (the first page above the low 128 MB identity map), it lands outside the virtual range the kernel still uses as a direct physical-memory map. The page tables covering the 0–128 MB identity mapping are **shared** among all processes: every process's page directory points to the same physical page tables for PDEs 0–31, and user mappings are rejected in that range so they cannot shadow kernel/direct-map addresses.
+When an x86 user program is loaded at virtual address `0x08048000`, it lands in the Linux-like low user range rather than above the old 128 MB direct-map window. User mappings are legal from `0x00010000` up to the 3 GB task limit. The kernel still keeps its low identity mappings in the kernel page directory for boot and low-linked kernel code, but fresh user page directories do not inherit most of that low direct map. They inherit the low PDEs still needed by the low-linked kernel image and the higher-half supervisor aliases, all without `PG_USER`.
 
-If the kernel simply wrote a new user PTE into one of those shared page tables, every later process would overwrite the previous process's mappings. When the earlier process resumed and `CR3` was reloaded (flushing the **TLB**, the CPU's cache of recent translations), it would execute the new process's physical pages instead of its own — a guaranteed crash.
+If the kernel simply wrote a new user PTE into a page table shared by every process, every later process would overwrite the previous process's mappings. When the earlier process resumed and `CR3` was reloaded (flushing the **TLB**, the CPU's cache of recent translations), it would execute the new process's physical pages instead of its own — a guaranteed crash.
 
-The fix is to detect when a user mapping lands in a 4 MB region still backed by a shared kernel page table. In that case, the kernel allocates a brand-new page table, copies the existing kernel entries into it so ring-0 code in this address space can still reach what it needs, installs that private table in the page directory, and only then writes the user PTE. After that, the process has its own page table for the region containing its user segments, and the shared kernel mapping is untouched.
+The fix is to keep ordinary user regions backed by process-private page tables. If a user mapping lands in a 4 MB region that still has an inherited supervisor page table, the kernel allocates a brand-new page table, copies the existing supervisor entries that ring 0 still needs, installs that private table in the process page directory, and only then writes the user PTE. After that, the process has its own page table for the region containing its user segments, and any deliberately inherited kernel mapping is untouched.
 
 #### Cloning a Page Directory
 

@@ -34,7 +34,7 @@ MOUSE_SPEED ?= 4
 ARM64_SMOKE_FALLBACK ?= 0
 ARM64_HALT_TEST ?= 0
 X86_SERIAL_CONSOLE ?= 0
-X86_USER_LOAD_ADDR ?= 0x10000000
+X86_USER_LOAD_ADDR ?= 0x08048000
 
 #Build with NO_DESKTOP = 1 to skip desktop init entirely and boot straight to
 #the legacy console.The runtime "nodesktop" cmdline flag(set via grub) is

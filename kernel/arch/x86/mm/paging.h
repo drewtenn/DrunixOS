@@ -54,8 +54,9 @@ void paging_init(void);
  * paging_identity_map_kernel_range: identity-map a physical range in the
  * shared kernel page directory as supervisor memory.
  *
- * This is used for device memory such as a Multiboot-provided framebuffer that
- * can live above the low 128 MB identity map created at boot.
+ * This is used for device memory such as a Multiboot-provided framebuffer.
+ * Process page directories inherit deliberate higher-half supervisor aliases,
+ * not arbitrary low identity mappings created here.
  *
  * phys_start: physical start address; may be unaligned.
  * byte_len:   number of bytes to map.
@@ -92,8 +93,10 @@ extern void paging_enable(void);
 /*
  * paging_create_user_space: allocate a fresh page directory for a new process.
  *
- * Copies all present supervisor-only kernel PDEs into the new directory
- * without PG_USER, so ring-3 code cannot reach kernel memory. User pages are
+ * Copies the supervisor-only mappings a process address space still needs:
+ * low PDEs covering the low-linked kernel image and higher-half kernel aliases.
+ * Most low identity-map PDEs are intentionally not inherited because low
+ * addresses above ARCH_USER_VADDR_MIN are legal user space. User pages are
  * added separately with paging_map_page().
  *
  * Returns the physical address of the new page directory, or 0 on failure.

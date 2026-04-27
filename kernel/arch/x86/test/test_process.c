@@ -93,8 +93,8 @@ static void init_frame_proc(process_t *proc,
 static void init_vma_proc(process_t *proc)
 {
 	k_memset(proc, 0, sizeof(*proc));
-	proc->heap_start = 0x10010000u;
-	proc->brk = 0x10018000u;
+	proc->heap_start = (uint32_t)ARCH_USER_IMAGE_BASE + 0x00010000u;
+	proc->brk = proc->heap_start + 0x00008000u;
 	proc->stack_low_limit =
 	    USER_STACK_TOP - (uint32_t)USER_STACK_PAGES * 0x1000u;
 	vma_init(proc);
@@ -114,8 +114,8 @@ static void init_vma_proc(process_t *proc)
 static void init_fresh_process_layout_proc(process_t *proc)
 {
 	k_memset(proc, 0, sizeof(*proc));
-	proc->image_start = 0x10000000u;
-	proc->image_end = 0x10010000u;
+	proc->image_start = (uint32_t)ARCH_USER_IMAGE_BASE;
+	proc->image_end = (uint32_t)ARCH_USER_IMAGE_BASE + 0x00010000u;
 	proc->heap_start = proc->image_end;
 	proc->brk = proc->heap_start;
 	proc->stack_low_limit =
@@ -408,20 +408,29 @@ static int test_load_elf_with_phdrs(const char *name,
 	return rc;
 }
 
-static void test_elf_loader_rejects_direct_map_pt_load(ktest_case_t *tc)
+static void test_elf_loader_accepts_linux_style_pt_load(ktest_case_t *tc)
 {
-	Elf32_Phdr phdr = test_elf_load_phdr(0x01000000u, PAGE_SIZE);
+	Elf32_Phdr phdr = test_elf_load_phdr(0x08048000u, PAGE_SIZE);
+
+	KTEST_EXPECT_EQ(
+	    tc, (uint32_t)test_load_elf_with_phdrs("_ktelf_lx_", &phdr, 1), 0u);
+}
+
+static void test_elf_loader_rejects_below_user_min_pt_load(ktest_case_t *tc)
+{
+	Elf32_Phdr phdr = test_elf_load_phdr(0x00008000u, PAGE_SIZE);
 
 	KTEST_EXPECT_NE(
-	    tc, (uint32_t)test_load_elf_with_phdrs("_ktelf_dm_", &phdr, 1), 0u);
+	    tc, (uint32_t)test_load_elf_with_phdrs("_ktelf_lo_", &phdr, 1), 0u);
 }
 
 static void test_elf_loader_rejects_overlapping_pt_loads(ktest_case_t *tc)
 {
 	Elf32_Phdr phdrs[2];
 
-	phdrs[0] = test_elf_load_phdr(0x10000000u, 0x3000u);
-	phdrs[1] = test_elf_load_phdr(0x10002000u, PAGE_SIZE);
+	phdrs[0] = test_elf_load_phdr((uint32_t)ARCH_USER_IMAGE_BASE, 0x3000u);
+	phdrs[1] =
+	    test_elf_load_phdr((uint32_t)ARCH_USER_IMAGE_BASE + 0x2000u, PAGE_SIZE);
 
 	KTEST_EXPECT_NE(
 	    tc, (uint32_t)test_load_elf_with_phdrs("_ktelf_ov_", phdrs, 2), 0u);
@@ -526,6 +535,9 @@ static void test_process_builds_linux_i386_initial_stack_shape(ktest_case_t *tc)
 
 static void test_x86_user_layout_invariants(ktest_case_t *tc)
 {
+	KTEST_EXPECT_EQ(tc, ARCH_USER_VADDR_MIN, 0x00010000u);
+	KTEST_EXPECT_EQ(tc, ARCH_USER_IMAGE_BASE, 0x08048000u);
+	KTEST_EXPECT_EQ(tc, ARCH_USER_VADDR_MAX, 0xC0000000u);
 	KTEST_EXPECT_EQ(tc, USER_STACK_TOP, 0xC0000000u);
 	KTEST_EXPECT_TRUE(tc, USER_STACK_BASE < USER_STACK_TOP);
 	KTEST_EXPECT_TRUE(tc, USER_MMAP_MIN < USER_STACK_BASE);
@@ -842,7 +854,9 @@ static void test_vma_unmap_range_rejects_heap_or_stack(ktest_case_t *tc)
 
 	init_vma_proc(&proc);
 	KTEST_EXPECT_EQ(
-	    tc, vma_unmap_range(&proc, 0x10010000u, 0x10011000u), (uint32_t)-1);
+	    tc,
+	    vma_unmap_range(&proc, proc.heap_start, proc.heap_start + PAGE_SIZE),
+	    (uint32_t)-1);
 	KTEST_EXPECT_EQ(tc, proc.vma_count, 2u);
 }
 
@@ -948,8 +962,8 @@ static void test_mem_forensics_collects_basic_region_totals(ktest_case_t *tc)
 	uint32_t stack_reserved = (uint32_t)USER_STACK_MAX_PAGES * 0x1000u;
 
 	init_vma_proc(&proc);
-	proc.image_start = 0x10000000u;
-	proc.image_end = 0x10010000u;
+	proc.image_start = (uint32_t)ARCH_USER_IMAGE_BASE;
+	proc.image_end = (uint32_t)ARCH_USER_IMAGE_BASE + 0x00010000u;
 	k_strncpy(proc.name, "shell", sizeof(proc.name) - 1);
 
 	KTEST_ASSERT_EQ(tc, mem_forensics_collect(&proc, &report), 0u);
@@ -1141,9 +1155,9 @@ test_mem_forensics_collects_full_vma_table_with_fallback_image(ktest_case_t *tc)
 	uint32_t expected_total = 0x00010000u;
 
 	k_memset(&proc, 0, sizeof(proc));
-	proc.image_start = 0x10000000u;
-	proc.image_end = 0x10010000u;
-	proc.brk = 0x10050000u;
+	proc.image_start = (uint32_t)ARCH_USER_IMAGE_BASE;
+	proc.image_end = (uint32_t)ARCH_USER_IMAGE_BASE + 0x00010000u;
+	proc.brk = (uint32_t)ARCH_USER_IMAGE_BASE + 0x00050000u;
 	vma_init(&proc);
 
 	for (uint32_t i = 0; i < PROCESS_MAX_VMAS; i++) {
@@ -2405,7 +2419,8 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_process_build_initial_frame_layout),
     KTEST_CASE(test_process_build_exec_frame_layout),
     KTEST_CASE(test_elf_machine_validation_is_arch_owned),
-    KTEST_CASE(test_elf_loader_rejects_direct_map_pt_load),
+    KTEST_CASE(test_elf_loader_accepts_linux_style_pt_load),
+    KTEST_CASE(test_elf_loader_rejects_below_user_min_pt_load),
     KTEST_CASE(test_elf_loader_rejects_overlapping_pt_loads),
     KTEST_CASE(test_elf_loader_rejects_stack_pt_load),
     KTEST_CASE(test_elf_loader_rejects_kernel_pt_load),

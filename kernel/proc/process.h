@@ -16,9 +16,9 @@
  * Virtual address layout for user processes.
  *
  * Code and data are loaded at whatever address the ELF specifies
- * (0x08000000 for x86 user executables built by the top-level Makefile).
- * On x86, user mappings must stay above the low 128 MB kernel direct map
- * until the kernel moves to a higher-half layout.
+ * (0x08048000 for x86 user executables built by the top-level Makefile).
+ * On x86, user mappings may occupy the Linux-like low task range because the
+ * kernel's low identity and higher-half mappings remain supervisor-only.
  *
  * Heap: begins at the page-rounded end of the BSS segment and grows upward
  *   via SYS_BRK.  May not grow into the user stack region.
