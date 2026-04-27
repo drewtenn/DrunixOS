@@ -15,7 +15,7 @@
  * Virtual address layout for user processes.
  *
  * Code and data are loaded at whatever address the ELF specifies
- * (typically 0x400000 for a user-land executable).
+ * (0x01000000 for x86 user executables built by the top-level Makefile).
  *
  * Heap: begins at the page-rounded end of the BSS segment and grows upward
  *   via SYS_BRK.  May not grow into the user stack region.

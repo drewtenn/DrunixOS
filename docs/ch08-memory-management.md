@@ -142,7 +142,7 @@ After every page table is filled in, the kernel loads the page directory's physi
 
 If processes shared a page table, writes from one would overwrite another — process A's mapping of `0x400000` would replace process B's the moment A ran. Every process therefore needs its own page table for the regions it uses.
 
-When a user program is loaded at virtual address `0x400000` (which falls in PDE index 1), it lands inside a region that every new process initially inherits from the kernel. The page tables covering the 0–128 MB identity mapping are **shared** among all processes: every process's page directory points to the same physical page tables for PDEs 0–31.
+When an x86 user program is loaded at virtual address `0x01000000` (which falls in PDE index 4), it lands inside a region that every new process initially inherits from the kernel. The page tables covering the 0–128 MB identity mapping are **shared** among all processes: every process's page directory points to the same physical page tables for PDEs 0–31.
 
 If the kernel simply wrote a new user PTE into one of those shared page tables, every later process would overwrite the previous process's mappings. When the earlier process resumed and `CR3` was reloaded (flushing the **TLB**, the CPU's cache of recent translations), it would execute the new process's physical pages instead of its own — a guaranteed crash.
 

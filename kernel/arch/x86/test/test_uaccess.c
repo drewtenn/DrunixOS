@@ -603,6 +603,65 @@ cleanup:
 	destroy_test_proc(&parent);
 }
 
+static void test_process_fork_preserves_user_io_mappings(ktest_case_t *tc)
+{
+	static process_t parent;
+	static process_t child;
+	static uint32_t parent_kstack_words[64];
+	uint32_t io_virt = 0x480000u;
+	uint32_t io_phys = 0xE0000000u;
+	uint32_t *parent_pte = 0;
+	uint32_t *child_pte = 0;
+	int child_live = 0;
+
+	if (init_fork_test_proc(&parent, parent_kstack_words, 64u) != 0) {
+		KTEST_EXPECT_TRUE(tc, 0);
+		return;
+	}
+
+	if (vma_add(&parent,
+	            io_virt,
+	            io_virt + PAGE_SIZE,
+	            VMA_FLAG_READ | VMA_FLAG_WRITE,
+	            VMA_KIND_GENERIC) != 0 ||
+	    paging_map_page(parent.pd_phys,
+	                    io_virt,
+	                    io_phys,
+	                    PG_PRESENT | PG_WRITABLE | PG_USER | PG_IO) != 0) {
+		KTEST_EXPECT_TRUE(tc, 0);
+		destroy_test_proc(&parent);
+		return;
+	}
+
+	k_memset(&child, 0, sizeof(child));
+	if (process_fork(&child, &parent) != 0) {
+		KTEST_EXPECT_TRUE(tc, 0);
+		destroy_test_proc(&parent);
+		return;
+	}
+	child_live = 1;
+
+	if (paging_walk(parent.pd_phys, io_virt, &parent_pte) != 0 ||
+	    paging_walk(child.pd_phys, io_virt, &child_pte) != 0) {
+		KTEST_EXPECT_TRUE(tc, 0);
+		goto cleanup;
+	}
+
+	KTEST_EXPECT_EQ(tc, *parent_pte & PG_ENTRY_ADDR_MASK, io_phys);
+	KTEST_EXPECT_EQ(tc, *child_pte & PG_ENTRY_ADDR_MASK, io_phys);
+	KTEST_EXPECT_TRUE(tc, (*parent_pte & PG_IO) != 0);
+	KTEST_EXPECT_TRUE(tc, (*child_pte & PG_IO) != 0);
+	KTEST_EXPECT_TRUE(tc, (*parent_pte & PG_WRITABLE) != 0);
+	KTEST_EXPECT_TRUE(tc, (*child_pte & PG_WRITABLE) != 0);
+	KTEST_EXPECT_TRUE(tc, (*parent_pte & PG_COW) == 0);
+	KTEST_EXPECT_TRUE(tc, (*child_pte & PG_COW) == 0);
+
+cleanup:
+	if (child_live)
+		destroy_forked_child(&child);
+	destroy_test_proc(&parent);
+}
+
 static void
 test_process_fork_child_survives_parent_exit_and_reuses_last_cow_ref(
     ktest_case_t *tc)
@@ -1264,6 +1323,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_release_user_space_drops_only_child_cow_reference),
     KTEST_CASE(test_process_fork_stack_pages_break_cow_on_write_fault),
     KTEST_CASE(test_process_fork_child_writes_image_data_before_exec),
+    KTEST_CASE(test_process_fork_preserves_user_io_mappings),
     KTEST_CASE(
         test_process_fork_child_survives_parent_exit_and_reuses_last_cow_ref),
     KTEST_CASE(test_process_fork_child_stack_growth_is_private),

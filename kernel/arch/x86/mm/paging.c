@@ -591,10 +591,19 @@ uint32_t paging_clone_user_space(uint32_t src_pd_phys)
 		for (int j = 0; j < 1024; j++)
 			new_pt[j] = src_pt[j];
 
-		/* Mark user entries CoW in parent and child, bump refcounts */
+		/*
+		 * Mark PMM-managed user entries CoW in parent and child, bump
+		 * refcounts. Device mappings are already shared by definition:
+		 * preserving PG_WRITABLE on PG_IO entries lets framebuffer and
+		 * MMIO mappings keep targeting the hardware after fork().
+		 */
 		for (int j = 0; j < 1024; j++) {
 			if ((src_pt[j] & (PG_PRESENT | PG_USER)) != (PG_PRESENT | PG_USER))
 				continue;
+			if (src_pt[j] & PG_IO) {
+				new_pt[j] = src_pt[j];
+				continue;
+			}
 
 			uint32_t virt = ((uint32_t)i << 22) | ((uint32_t)j << 12);
 			if (src_pt[j] & PG_WRITABLE) {

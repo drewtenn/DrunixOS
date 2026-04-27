@@ -34,6 +34,7 @@ MOUSE_SPEED ?= 4
 ARM64_SMOKE_FALLBACK ?= 0
 ARM64_HALT_TEST ?= 0
 X86_SERIAL_CONSOLE ?= 0
+X86_USER_LOAD_ADDR ?= 0x01000000
 
 #Build with NO_DESKTOP = 1 to skip desktop init entirely and boot straight to
 #the legacy console.The runtime "nodesktop" cmdline flag(set via grub) is
@@ -300,10 +301,10 @@ $(USER_BINS): user/user.ld
 
 # Generated linker scripts.  user/user.ld.in is the single source of truth;
 # the two arches differ only in load address.
-user/user.ld: user/user.ld.in
-	sed 's|@USER_LOAD_ADDR@|0x400000|' $< > $@
+user/user.ld: user/user.ld.in Makefile
+	sed 's|@USER_LOAD_ADDR@|$(X86_USER_LOAD_ADDR)|' $< > $@
 
-user/user_arm64.ld: user/user.ld.in
+user/user_arm64.ld: user/user.ld.in Makefile
 	sed 's|@USER_LOAD_ADDR@|0x02000000|' $< > $@
 
 user/lib/libc.a user/lib/tcc_crt0.o:
@@ -581,7 +582,7 @@ debug: os.iso $(DUFS_IMG)
 #                after connecting.
 debug-user: os.iso $(DUFS_IMG)
 	@test -n "$(APP)" || (echo "Usage: make debug-user APP=<program name>  (e.g. APP=shell)"; exit 1)
-	$(call qemu_debug,-ex "add-symbol-file user/$(APP) 0x400000")
+	$(call qemu_debug,-ex "add-symbol-file user/$(APP) $(X86_USER_LOAD_ADDR)")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RUN + FRESH FILESYSTEM  (rebuild img/disk.img before booting)
