@@ -62,7 +62,7 @@ def main() -> int:
 
     debug_user_output = make_dry_run("debug-user", "APP=shell")
     reject_x86_delegate("debug-user", debug_user_output, failures)
-    if "add-symbol-file build/arm64-user/shell 0x02000000" not in debug_user_output:
+    if "add-symbol-file build/user/arm64/bin/shell 0x02000000" not in debug_user_output:
         failures.append("debug-user does not load arm64 user symbols")
 
     for target in ("debug-fresh", "test-halt", "test-threadtest"):

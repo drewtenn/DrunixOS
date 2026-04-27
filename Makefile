@@ -297,9 +297,11 @@ kernel-vga.elf: $(KOBJS_VGA) $(KTOBJS)
 # Declared phony so make always delegates to the user subdirectory's own
 # dependency tracking — changes to user/*.c or user/lib/* are picked up
 # without needing a manual clean.
+ifneq ($(ARCH),arm64)
 .PHONY: $(USER_BINS)
 $(USER_BINS):
 	$(MAKE) -C user USER_ARCH=$(ARCH) USER_LOAD_ADDR=$(X86_USER_LOAD_ADDR) ../$@
+endif
 
 # ─── Hard-disk images ────────────────────────────────────────────────────────
 # disk.img is the primary root disk.  On x86 it is the ATA master; on arm64 it
@@ -789,7 +791,7 @@ debug: kernel-arm64.elf
 
 debug-user: kernel-arm64.elf $(ROOT_DISK_IMG)
 	@test -n "$(APP)" || (echo "Usage: make debug-user APP=<program name>  (e.g. APP=shell)"; exit 1)
-	$(call arm64_qemu_debug,-ex "add-symbol-file build/arm64-user/$(APP) 0x02000000")
+	$(call arm64_qemu_debug,-ex "add-symbol-file $(ARM_USER_BIN_DIR)/$(APP) 0x02000000")
 
 debug-fresh: $(ROOT_DISK_IMG)
 	$(MAKE) ARCH=$(ARCH) debug
@@ -802,15 +804,15 @@ test-threadtest:
 
 ARM_SCAN_FORMAT_SOURCES := $(shell find kernel/arch/arm64 -type f \( -name '*.c' -o -name '*.h' \) -print | sort)
 ARM_SCAN_KERNEL_OBJS := $(ARM_KOBJS) $(ARM_SHARED_KOBJS)
-ARM_SCAN_USER_C_RUNTIME_OBJS := $(ARM_USER_BUILD_DIR)/lib/cxx_init.o \
-                                $(ARM_USER_BUILD_DIR)/lib/syscall.o \
-                                $(ARM_USER_BUILD_DIR)/lib/malloc.o \
-                                $(ARM_USER_BUILD_DIR)/lib/string.o \
-                                $(ARM_USER_BUILD_DIR)/lib/ctype.o \
-                                $(ARM_USER_BUILD_DIR)/lib/stdlib.o \
-                                $(ARM_USER_BUILD_DIR)/lib/stdio.o \
-                                $(ARM_USER_BUILD_DIR)/lib/unistd.o \
-                                $(ARM_USER_BUILD_DIR)/lib/time.o
+ARM_SCAN_USER_C_RUNTIME_OBJS := $(ARM_USER_RUNTIME_OBJ_DIR)/cxx_init.o \
+                                $(ARM_USER_RUNTIME_OBJ_DIR)/syscall.o \
+                                $(ARM_USER_RUNTIME_OBJ_DIR)/malloc.o \
+                                $(ARM_USER_RUNTIME_OBJ_DIR)/string.o \
+                                $(ARM_USER_RUNTIME_OBJ_DIR)/ctype.o \
+                                $(ARM_USER_RUNTIME_OBJ_DIR)/stdlib.o \
+                                $(ARM_USER_RUNTIME_OBJ_DIR)/stdio.o \
+                                $(ARM_USER_RUNTIME_OBJ_DIR)/unistd.o \
+                                $(ARM_USER_RUNTIME_OBJ_DIR)/time.o
 ARM_SPARSE_CFLAGS := -D__aarch64__ -DDRUNIX_ARM64_VGA=1 \
                      -DDRUNIX_INIT_PROGRAM=\"$(INIT_PROGRAM)\" \
                      -DDRUNIX_INIT_ARG0=\"$(INIT_ARG0)\" \
@@ -828,7 +830,8 @@ compile_commands.json: tools/generate_compile_commands.py kernel/arch/arm64/arch
 		--kernel-cflags="$(ARM_CFLAGS)" \
 		--kernel-inc="$(ARM_INC)" \
 		--user-cc="$(ARM_CC)" \
-		--user-cflags="$(ARM_USER_CFLAGS) -I user -I user/lib" \
+		--user-cflags="$(ARM_USER_CFLAGS) -I user/apps -I user/runtime" \
+		--user-build-root="$(ARM_USER_BUILD_DIR)" \
 		--linux-cc="$(LINUX_ARM64_CC)" \
 		--linux-cflags="$(LINUX_CFLAGS)" \
 		--user-c-runtime-objs="$(ARM_SCAN_USER_C_RUNTIME_OBJS)" \
