@@ -29,9 +29,36 @@ static void test_terminal_window_hit_tests_controls(ktest_case_t *tc)
 	                DRUNIX_WINDOW_HIT_BODY);
 }
 
+static void test_taskbar_hit_tests_all_rendered_apps(ktest_case_t *tc)
+{
+	int screen_h = 600;
+	int taskbar_h = 48;
+	int y = screen_h - taskbar_h + 12;
+
+	KTEST_EXPECT_EQ(tc,
+	                drunix_taskbar_app_at(18, y, screen_h, taskbar_h),
+	                DRUNIX_TASKBAR_APP_MENU);
+	KTEST_EXPECT_EQ(tc,
+	                drunix_taskbar_app_at(70, y, screen_h, taskbar_h),
+	                DRUNIX_TASKBAR_APP_TERMINAL);
+	KTEST_EXPECT_EQ(tc,
+	                drunix_taskbar_app_at(110, y, screen_h, taskbar_h),
+	                DRUNIX_TASKBAR_APP_FILES);
+	KTEST_EXPECT_EQ(tc,
+	                drunix_taskbar_app_at(150, y, screen_h, taskbar_h),
+	                DRUNIX_TASKBAR_APP_PROCESSES);
+	KTEST_EXPECT_EQ(tc,
+	                drunix_taskbar_app_at(190, y, screen_h, taskbar_h),
+	                DRUNIX_TASKBAR_APP_HELP);
+	KTEST_EXPECT_EQ(tc,
+	                drunix_taskbar_app_at(230, y, screen_h, taskbar_h),
+	                DRUNIX_TASKBAR_APP_NONE);
+}
+
 static ktest_case_t cases[] = {
     KTEST_CASE(test_terminal_window_hit_tests_title_and_body),
     KTEST_CASE(test_terminal_window_hit_tests_controls),
+    KTEST_CASE(test_taskbar_hit_tests_all_rendered_apps),
 };
 
 static ktest_suite_t suite = KTEST_SUITE("desktop_window", cases);

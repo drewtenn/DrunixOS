@@ -74,15 +74,21 @@ typedef struct {
 #define TERM_DEFAULT_Y 64
 
 #define TASKBAR_H 48
-#define TASKBAR_PAD 14
-#define TASKBAR_ICON_SIZE 30
-#define TASKBAR_ICON_GAP 10
+#define TASKBAR_PAD DRUNIX_TASKBAR_PAD
+#define TASKBAR_ICON_SIZE DRUNIX_TASKBAR_ICON_SIZE
+#define TASKBAR_ICON_GAP DRUNIX_TASKBAR_ICON_GAP
 
 #define POINTER_W DRUNIX_CURSOR_W
 #define POINTER_H DRUNIX_CURSOR_H
 
 #define EVT_KEY 'K'
 #define EVT_MOUSE 'M'
+
+#define APP_WIN_W 320
+#define APP_WIN_H 220
+#define APP_WIN_PAD 10
+#define APP_LINE_H 16
+#define APP_LINE_MAX 36
 
 static uint32_t *g_fb;
 static uint32_t *g_scene;
@@ -100,11 +106,18 @@ static int g_term_x = TERM_DEFAULT_X;
 static int g_term_y = TERM_DEFAULT_Y;
 static int g_terminal_minimized;
 static int g_terminal_closed;
-static int g_dragging_terminal;
+static int g_dragging_app;
 static int g_shell_pid = -1;
 static int g_term_helper_pid = -1;
 static int g_ptmx = -1;
 static int g_term_pipe_r = -1;
+
+static int g_app_open[DRUNIX_TASKBAR_APP_HELP + 1];
+static int g_app_minimized[DRUNIX_TASKBAR_APP_HELP + 1];
+static int g_app_x[DRUNIX_TASKBAR_APP_HELP + 1];
+static int g_app_y[DRUNIX_TASKBAR_APP_HELP + 1];
+static int g_app_geometry_ready;
+static int g_focused_app = DRUNIX_TASKBAR_APP_TERMINAL;
 
 static int g_pointer_x;
 static int g_pointer_y;
@@ -399,30 +412,8 @@ static int terminal_visible(void)
 	return !g_terminal_closed && !g_terminal_minimized;
 }
 
-static void clamp_terminal_position(void)
-{
-	int max_x = (int)g_info.width - terminal_window_w();
-	int max_y = (int)g_info.height - TASKBAR_H - terminal_window_h();
-
-	if (max_x < 0)
-		max_x = 0;
-	if (max_y < 0)
-		max_y = 0;
-	if (g_term_x < 0)
-		g_term_x = 0;
-	if (g_term_y < 0)
-		g_term_y = 0;
-	if (g_term_x > max_x)
-		g_term_x = max_x;
-	if (g_term_y > max_y)
-		g_term_y = max_y;
-}
-
-static void draw_title_button(uint32_t *target,
-                              int x,
-                              int y,
-                              uint32_t bg,
-                              int close_button)
+static void
+draw_title_button(uint32_t *target, int x, int y, uint32_t bg, int close_button)
 {
 	fill_rect(target,
 	          x,
@@ -448,40 +439,19 @@ static void draw_title_button(uint32_t *target,
 	          COLOR_TITLEBAR_BUTTON_FG);
 }
 
+static void
+render_window_frame(uint32_t *target, int app, int x, int y, int w, int h);
+
 static void render_terminal(uint32_t *target)
 {
 	int win_w = terminal_window_w();
 	int win_h = terminal_window_h();
-	int control_y;
 
 	if (!terminal_visible())
 		return;
 
-	fill_rect(target, g_term_x, g_term_y, win_w, TITLE_H, COLOR_TITLEBAR);
-	draw_text(target,
-	          g_term_x + 8,
-	          g_term_y + 2,
-	          "Terminal",
-	          COLOR_TITLEBAR_FG,
-	          COLOR_TITLEBAR);
-	control_y = drunix_window_control_y(g_term_y, TITLE_H);
-	draw_title_button(target,
-	                  drunix_window_minimize_button_x(g_term_x, win_w),
-	                  control_y,
-	                  COLOR_TITLEBAR_BUTTON,
-	                  0);
-	draw_title_button(target,
-	                  drunix_window_close_button_x(g_term_x, win_w),
-	                  control_y,
-	                  COLOR_TITLEBAR_CLOSE,
-	                  1);
-
-	fill_rect(target,
-	          g_term_x,
-	          g_term_y + TITLE_H,
-	          win_w,
-	          win_h - TITLE_H,
-	          COLOR_TERM_BG);
+	render_window_frame(
+	    target, DRUNIX_TASKBAR_APP_TERMINAL, g_term_x, g_term_y, win_w, win_h);
 
 	int gx = g_term_x + TERM_PAD;
 	int gy = g_term_y + TITLE_H + TERM_PAD;
@@ -548,22 +518,7 @@ static void draw_taskbar_icon_logo(uint32_t *target, int x, int y)
 
 static int taskbar_icon_y(void)
 {
-	return (int)g_info.height - TASKBAR_H + 8;
-}
-
-static int taskbar_terminal_x(void)
-{
-	return TASKBAR_PAD + TASKBAR_ICON_SIZE + TASKBAR_ICON_GAP * 2;
-}
-
-static int point_in_terminal_taskbar_button(int x, int y)
-{
-	return drunix_point_in_rect(x,
-	                            y,
-	                            taskbar_terminal_x(),
-	                            taskbar_icon_y(),
-	                            TASKBAR_ICON_SIZE,
-	                            TASKBAR_ICON_SIZE);
+	return drunix_taskbar_icon_y((int)g_info.height, TASKBAR_H);
 }
 
 static void draw_taskbar_button(uint32_t *target,
@@ -603,6 +558,262 @@ static void format_clock(char *buf, int bufsz)
 	snprintf(buf, (size_t)bufsz, "%02d:%02d", hours, minutes);
 }
 
+static int app_window_x(int app)
+{
+	int x = 96 + (app - DRUNIX_TASKBAR_APP_FILES) * 36;
+	int max_x = (int)g_info.width - APP_WIN_W;
+
+	if (max_x < 0)
+		max_x = 0;
+	if (x > max_x)
+		x = max_x;
+	if (x < 0)
+		x = 0;
+	return x;
+}
+
+static int app_window_y(int app)
+{
+	int y = 92 + (app - DRUNIX_TASKBAR_APP_FILES) * 28;
+	int max_y = (int)g_info.height - TASKBAR_H - APP_WIN_H;
+
+	if (max_y < 0)
+		max_y = 0;
+	if (y > max_y)
+		y = max_y;
+	if (y < 0)
+		y = 0;
+	return y;
+}
+
+static int app_is_managed_window(int app)
+{
+	return app >= DRUNIX_TASKBAR_APP_TERMINAL && app <= DRUNIX_TASKBAR_APP_HELP;
+}
+
+static int app_uses_static_window(int app)
+{
+	return app >= DRUNIX_TASKBAR_APP_FILES && app <= DRUNIX_TASKBAR_APP_HELP;
+}
+
+static void ensure_app_geometry(void)
+{
+	if (g_app_geometry_ready)
+		return;
+	for (int app = DRUNIX_TASKBAR_APP_FILES; app <= DRUNIX_TASKBAR_APP_HELP;
+	     app++) {
+		g_app_x[app] = app_window_x(app);
+		g_app_y[app] = app_window_y(app);
+	}
+	g_app_geometry_ready = 1;
+}
+
+static const char *window_title(int app)
+{
+	if (app == DRUNIX_TASKBAR_APP_TERMINAL)
+		return "Terminal";
+	if (app == DRUNIX_TASKBAR_APP_FILES)
+		return "Files";
+	if (app == DRUNIX_TASKBAR_APP_PROCESSES)
+		return "Processes";
+	if (app == DRUNIX_TASKBAR_APP_HELP)
+		return "Help";
+	return "App";
+}
+
+static void window_rect(int app, int *x, int *y, int *w, int *h)
+{
+	ensure_app_geometry();
+	if (app == DRUNIX_TASKBAR_APP_TERMINAL) {
+		*x = g_term_x;
+		*y = g_term_y;
+		*w = terminal_window_w();
+		*h = terminal_window_h();
+		return;
+	}
+	*x = g_app_x[app];
+	*y = g_app_y[app];
+	*w = APP_WIN_W;
+	*h = APP_WIN_H;
+}
+
+static int window_visible(int app)
+{
+	if (app == DRUNIX_TASKBAR_APP_TERMINAL)
+		return terminal_visible();
+	if (!app_uses_static_window(app))
+		return 0;
+	return g_app_open[app] && !g_app_minimized[app];
+}
+
+static void set_window_position(int app, int x, int y)
+{
+	if (app == DRUNIX_TASKBAR_APP_TERMINAL) {
+		g_term_x = x;
+		g_term_y = y;
+		return;
+	}
+	if (app_uses_static_window(app)) {
+		ensure_app_geometry();
+		g_app_x[app] = x;
+		g_app_y[app] = y;
+	}
+}
+
+static void clamp_window_position(int app)
+{
+	int x;
+	int y;
+	int w;
+	int h;
+	int max_x;
+	int max_y;
+
+	if (!app_is_managed_window(app))
+		return;
+	window_rect(app, &x, &y, &w, &h);
+	max_x = (int)g_info.width - w;
+	max_y = (int)g_info.height - TASKBAR_H - h;
+	if (max_x < 0)
+		max_x = 0;
+	if (max_y < 0)
+		max_y = 0;
+	if (x < 0)
+		x = 0;
+	if (y < 0)
+		y = 0;
+	if (x > max_x)
+		x = max_x;
+	if (y > max_y)
+		y = max_y;
+	set_window_position(app, x, y);
+}
+
+static void
+render_window_frame(uint32_t *target, int app, int x, int y, int w, int h)
+{
+	int control_y;
+
+	fill_rect(target, x, y, w, TITLE_H, COLOR_TITLEBAR);
+	draw_text(target,
+	          x + 8,
+	          y + 2,
+	          window_title(app),
+	          COLOR_TITLEBAR_FG,
+	          COLOR_TITLEBAR);
+	control_y = drunix_window_control_y(y, TITLE_H);
+	draw_title_button(target,
+	                  drunix_window_minimize_button_x(x, w),
+	                  control_y,
+	                  COLOR_TITLEBAR_BUTTON,
+	                  0);
+	draw_title_button(target,
+	                  drunix_window_close_button_x(x, w),
+	                  control_y,
+	                  COLOR_TITLEBAR_CLOSE,
+	                  1);
+	fill_rect(target, x, y + TITLE_H, w, h - TITLE_H, COLOR_TERM_BG);
+}
+
+static void draw_app_line(uint32_t *target, int x, int y, const char *line)
+{
+	char clipped[APP_LINE_MAX + 1];
+	int i = 0;
+
+	if (!line)
+		line = "";
+	while (line[i] && i < APP_LINE_MAX) {
+		clipped[i] = line[i];
+		i++;
+	}
+	clipped[i] = '\0';
+	draw_text(target, x, y, clipped, COLOR_TERM_FG, COLOR_TERM_BG);
+}
+
+static void draw_dents_lines(
+    uint32_t *target, int x, int y, const char *path, const char *heading)
+{
+	char dents[512];
+	int n = sys_getdents(path, dents, (int)sizeof(dents));
+	int line = 1;
+
+	draw_app_line(target, x, y, heading);
+	if (n < 0) {
+		draw_app_line(target, x, y + APP_LINE_H, "cannot read directory");
+		return;
+	}
+	for (int i = 0; i < n && line < 10;) {
+		const char *entry = dents + i;
+		int len = 0;
+
+		while (i + len < n && entry[len])
+			len++;
+		if (i + len >= n)
+			break;
+		draw_app_line(target, x, y + line * APP_LINE_H, entry);
+		line++;
+		i += len + 1;
+	}
+	if (line == 1)
+		draw_app_line(target, x, y + APP_LINE_H, "(empty)");
+}
+
+static void render_app_content(uint32_t *target, int app, int x, int y)
+{
+	if (app == DRUNIX_TASKBAR_APP_FILES) {
+		draw_dents_lines(target, x, y, "/", "Files: /");
+		return;
+	}
+	if (app == DRUNIX_TASKBAR_APP_PROCESSES) {
+		draw_dents_lines(target, x, y, "/proc", "Processes: /proc");
+		return;
+	}
+	if (app == DRUNIX_TASKBAR_APP_HELP) {
+		draw_app_line(target, x, y, "Drunix Desktop");
+		draw_app_line(target, x, y + APP_LINE_H, "Taskbar opens apps");
+		draw_app_line(target, x, y + APP_LINE_H * 2, "Terminal runs shell");
+		draw_app_line(target, x, y + APP_LINE_H * 3, "Files lists root");
+		draw_app_line(target, x, y + APP_LINE_H * 4, "Processes lists /proc");
+		draw_app_line(target, x, y + APP_LINE_H * 5, "Drag app title bars");
+	}
+}
+
+static void render_app_window(uint32_t *target, int app)
+{
+	int x;
+	int y;
+	int w;
+	int h;
+
+	if (!app_uses_static_window(app))
+		return;
+	if (!window_visible(app))
+		return;
+
+	window_rect(app, &x, &y, &w, &h);
+	render_window_frame(target, app, x, y, w, h);
+	render_app_content(target, app, x + APP_WIN_PAD, y + TITLE_H + APP_WIN_PAD);
+}
+
+static void render_window_by_app(uint32_t *target, int app)
+{
+	if (app == DRUNIX_TASKBAR_APP_TERMINAL) {
+		render_terminal(target);
+		return;
+	}
+	render_app_window(target, app);
+}
+
+static void render_windows(uint32_t *target)
+{
+	for (int app = DRUNIX_TASKBAR_APP_TERMINAL; app <= DRUNIX_TASKBAR_APP_HELP;
+	     app++) {
+		if (app != g_focused_app)
+			render_window_by_app(target, app);
+	}
+	render_window_by_app(target, g_focused_app);
+}
+
 static void render_taskbar(uint32_t *target)
 {
 	int y = (int)g_info.height - TASKBAR_H;
@@ -616,16 +827,32 @@ static void render_taskbar(uint32_t *target)
 	fill_rect(target, 0, y, (int)g_info.width, TASKBAR_H, COLOR_TASKBAR);
 	fill_rect(target, 0, y, (int)g_info.width, 1, COLOR_TASKBAR_EDGE);
 
+	x = drunix_taskbar_app_x(DRUNIX_TASKBAR_APP_MENU);
 	draw_taskbar_button(target, x, icon_y, 0, draw_taskbar_icon_logo);
-	x += TASKBAR_ICON_SIZE + TASKBAR_ICON_GAP * 2;
+	x = drunix_taskbar_app_x(DRUNIX_TASKBAR_APP_TERMINAL);
 	draw_taskbar_button(
 	    target, x, icon_y, terminal_visible(), draw_taskbar_icon_terminal);
-	x += TASKBAR_ICON_SIZE + TASKBAR_ICON_GAP;
-	draw_taskbar_button(target, x, icon_y, 0, draw_taskbar_icon_file);
-	x += TASKBAR_ICON_SIZE + TASKBAR_ICON_GAP;
-	draw_taskbar_button(target, x, icon_y, 0, draw_taskbar_icon_gear);
-	x += TASKBAR_ICON_SIZE + TASKBAR_ICON_GAP;
-	draw_taskbar_button(target, x, icon_y, 0, draw_taskbar_icon_browser);
+	x = drunix_taskbar_app_x(DRUNIX_TASKBAR_APP_FILES);
+	draw_taskbar_button(target,
+	                    x,
+	                    icon_y,
+	                    g_app_open[DRUNIX_TASKBAR_APP_FILES] &&
+	                        !g_app_minimized[DRUNIX_TASKBAR_APP_FILES],
+	                    draw_taskbar_icon_file);
+	x = drunix_taskbar_app_x(DRUNIX_TASKBAR_APP_PROCESSES);
+	draw_taskbar_button(target,
+	                    x,
+	                    icon_y,
+	                    g_app_open[DRUNIX_TASKBAR_APP_PROCESSES] &&
+	                        !g_app_minimized[DRUNIX_TASKBAR_APP_PROCESSES],
+	                    draw_taskbar_icon_gear);
+	x = drunix_taskbar_app_x(DRUNIX_TASKBAR_APP_HELP);
+	draw_taskbar_button(target,
+	                    x,
+	                    icon_y,
+	                    g_app_open[DRUNIX_TASKBAR_APP_HELP] &&
+	                        !g_app_minimized[DRUNIX_TASKBAR_APP_HELP],
+	                    draw_taskbar_icon_browser);
 
 	format_clock(clock, (int)sizeof(clock));
 	clock_x = (int)g_info.width - TASKBAR_PAD - 5 * TERM_GLYPH_W;
@@ -643,7 +870,7 @@ static void compose_scene(void)
 		memcpy(g_scene, g_wallpaper, g_fb_bytes);
 	else
 		render_wallpaper(g_scene);
-	render_terminal(g_scene);
+	render_windows(g_scene);
 	render_taskbar(g_scene);
 }
 
@@ -667,10 +894,7 @@ static void draw_pointer_sprite(void)
 			int cursor_pixel = drunix_cursor_pixel_at(i, j);
 
 			if (cursor_pixel == DRUNIX_CURSOR_PIXEL_FG)
-				put_pixel(g_fb,
-				          g_pointer_x + i,
-				          g_pointer_y + j,
-				          COLOR_CURSOR);
+				put_pixel(g_fb, g_pointer_x + i, g_pointer_y + j, COLOR_CURSOR);
 			else if (cursor_pixel == DRUNIX_CURSOR_PIXEL_SHADOW)
 				put_pixel(g_fb,
 				          g_pointer_x + i,
@@ -967,13 +1191,60 @@ static void wrap_mouse(int pipe_w, int unused)
 	run_mouse_helper(pipe_w);
 }
 
+static int start_terminal_session(void)
+{
+	int slave;
+	int term_fds[2];
+	char *shell_argv[] = {"shell", 0};
+	char *shell_envp[] = {"PATH=/usr/bin:/bin", 0};
+
+	if (g_ptmx >= 0 && g_term_pipe_r >= 0 && g_shell_pid > 0)
+		return 0;
+
+	g_ptmx = sys_open_flags("/dev/ptmx", SYS_O_RDWR, 0);
+	if (g_ptmx < 0) {
+		sys_write("desktop: cannot open /dev/ptmx\n");
+		return -1;
+	}
+	slave = sys_open_flags("/dev/pts0", SYS_O_RDWR, 0);
+	if (slave < 0) {
+		sys_write("desktop: cannot open /dev/pts0\n");
+		sys_close(g_ptmx);
+		g_ptmx = -1;
+		return -1;
+	}
+	g_shell_pid = spawn_shell(slave, shell_argv, shell_envp);
+	sys_close(slave);
+
+	if (sys_pipe(term_fds) != 0) {
+		sys_write("desktop: pipe failed\n");
+		if (g_shell_pid > 0)
+			sys_kill(g_shell_pid, SIGTERM);
+		if (g_ptmx >= 0) {
+			sys_close(g_ptmx);
+			g_ptmx = -1;
+		}
+		g_shell_pid = -1;
+		return -1;
+	}
+	g_term_pipe_r = term_fds[0];
+	g_term_helper_pid = spawn_helper_child(wrap_term, term_fds[1], g_ptmx);
+	sys_close(term_fds[1]);
+	term_clear();
+	g_terminal_closed = 0;
+	g_terminal_minimized = 0;
+	g_focused_app = DRUNIX_TASKBAR_APP_TERMINAL;
+	return 0;
+}
+
 static void close_terminal_window(void)
 {
 	if (g_terminal_closed)
 		return;
 	g_terminal_closed = 1;
 	g_terminal_minimized = 0;
-	g_dragging_terminal = 0;
+	if (g_dragging_app == DRUNIX_TASKBAR_APP_TERMINAL)
+		g_dragging_app = DRUNIX_TASKBAR_APP_NONE;
 	if (g_shell_pid > 0)
 		sys_kill(g_shell_pid, SIGTERM);
 	if (g_term_helper_pid > 0)
@@ -986,6 +1257,103 @@ static void close_terminal_window(void)
 		sys_close(g_term_pipe_r);
 		g_term_pipe_r = -1;
 	}
+	g_shell_pid = -1;
+	g_term_helper_pid = -1;
+}
+
+static void open_or_toggle_terminal(void)
+{
+	if (g_terminal_closed) {
+		if (start_terminal_session() == 0)
+			g_focused_app = DRUNIX_TASKBAR_APP_TERMINAL;
+		return;
+	}
+	g_terminal_minimized = terminal_visible();
+	g_focused_app = DRUNIX_TASKBAR_APP_TERMINAL;
+}
+
+static void open_or_toggle_app(int app)
+{
+	if (app < DRUNIX_TASKBAR_APP_FILES || app > DRUNIX_TASKBAR_APP_HELP)
+		return;
+	if (g_app_open[app] && !g_app_minimized[app] && g_focused_app == app) {
+		g_app_minimized[app] = 1;
+		return;
+	}
+	g_app_open[app] = 1;
+	g_app_minimized[app] = 0;
+	g_focused_app = app;
+}
+
+static int handle_taskbar_app_click(int app)
+{
+	if (app == DRUNIX_TASKBAR_APP_NONE)
+		return 0;
+	if (app == DRUNIX_TASKBAR_APP_MENU) {
+		open_or_toggle_app(DRUNIX_TASKBAR_APP_HELP);
+		return 1;
+	}
+	if (app == DRUNIX_TASKBAR_APP_TERMINAL) {
+		open_or_toggle_terminal();
+		return 1;
+	}
+	open_or_toggle_app(app);
+	return 1;
+}
+
+static int window_hit_test_app(int app, int px, int py)
+{
+	int x;
+	int y;
+	int w;
+	int h;
+
+	if (!window_visible(app))
+		return DRUNIX_WINDOW_HIT_NONE;
+	window_rect(app, &x, &y, &w, &h);
+	return drunix_window_hit_test(x, y, w, h, TITLE_H, px, py);
+}
+
+static int window_at_pointer(int px, int py)
+{
+	if (window_hit_test_app(g_focused_app, px, py) != DRUNIX_WINDOW_HIT_NONE)
+		return g_focused_app;
+	for (int app = DRUNIX_TASKBAR_APP_HELP; app >= DRUNIX_TASKBAR_APP_TERMINAL;
+	     app--) {
+		if (app == g_focused_app)
+			continue;
+		if (window_hit_test_app(app, px, py) != DRUNIX_WINDOW_HIT_NONE)
+			return app;
+	}
+	return DRUNIX_TASKBAR_APP_NONE;
+}
+
+static void focus_window_app(int app)
+{
+	if (app_is_managed_window(app))
+		g_focused_app = app;
+}
+
+static void minimize_window_app(int app)
+{
+	if (app == DRUNIX_TASKBAR_APP_TERMINAL)
+		g_terminal_minimized = 1;
+	else if (app_uses_static_window(app))
+		g_app_minimized[app] = 1;
+	if (g_dragging_app == app)
+		g_dragging_app = DRUNIX_TASKBAR_APP_NONE;
+}
+
+static void close_window_app(int app)
+{
+	if (app == DRUNIX_TASKBAR_APP_TERMINAL)
+		close_terminal_window();
+	else if (app_uses_static_window(app)) {
+		g_app_open[app] = 0;
+		g_app_minimized[app] = 0;
+	}
+	if (g_dragging_app == app)
+		g_dragging_app = DRUNIX_TASKBAR_APP_NONE;
 }
 
 static void handle_mouse_event(uint8_t buttons, int8_t sdx, int8_t sdy)
@@ -1006,43 +1374,50 @@ static void handle_mouse_event(uint8_t buttons, int8_t sdx, int8_t sdy)
 	if (g_pointer_y > (int)g_info.height - POINTER_H)
 		g_pointer_y = (int)g_info.height - POINTER_H;
 
-	if (g_dragging_terminal && (old_buttons & 0x01u)) {
+	if (g_dragging_app != DRUNIX_TASKBAR_APP_NONE && (old_buttons & 0x01u)) {
 		int dx = g_pointer_x - old_x;
 		int dy = g_pointer_y - old_y;
 
 		if (dx != 0 || dy != 0) {
-			g_term_x += dx;
-			g_term_y += dy;
-			clamp_terminal_position();
+			int x;
+			int y;
+			int w;
+			int h;
+
+			window_rect(g_dragging_app, &x, &y, &w, &h);
+			set_window_position(g_dragging_app, x + dx, y + dy);
+			clamp_window_position(g_dragging_app);
 			full_repaint = 1;
 		}
 	}
-	if (g_dragging_terminal && !(buttons & 0x01u))
-		g_dragging_terminal = 0;
+	if (g_dragging_app != DRUNIX_TASKBAR_APP_NONE && !(buttons & 0x01u))
+		g_dragging_app = DRUNIX_TASKBAR_APP_NONE;
 
 	if ((buttons & 0x01u) && !(old_buttons & 0x01u)) {
-		if (!g_terminal_closed &&
-		    point_in_terminal_taskbar_button(g_pointer_x, g_pointer_y)) {
-			g_terminal_minimized = terminal_visible();
-			full_repaint = 1;
-		} else if (terminal_visible()) {
-			int hit = drunix_window_hit_test(g_term_x,
-			                                 g_term_y,
-			                                 terminal_window_w(),
-			                                 terminal_window_h(),
-			                                 TITLE_H,
-			                                 g_pointer_x,
-			                                 g_pointer_y);
+		int taskbar_app = drunix_taskbar_app_at(
+		    g_pointer_x, g_pointer_y, (int)g_info.height, TASKBAR_H);
 
-			if (hit == DRUNIX_WINDOW_HIT_CLOSE) {
-				close_terminal_window();
-				full_repaint = 1;
-			} else if (hit == DRUNIX_WINDOW_HIT_MINIMIZE) {
-				g_terminal_minimized = 1;
-				g_dragging_terminal = 0;
-				full_repaint = 1;
-			} else if (hit == DRUNIX_WINDOW_HIT_TITLE) {
-				g_dragging_terminal = 1;
+		if (handle_taskbar_app_click(taskbar_app)) {
+			full_repaint = 1;
+		} else {
+			int app = window_at_pointer(g_pointer_x, g_pointer_y);
+
+			if (app != DRUNIX_TASKBAR_APP_NONE) {
+				int hit = window_hit_test_app(app, g_pointer_x, g_pointer_y);
+
+				focus_window_app(app);
+				if (hit == DRUNIX_WINDOW_HIT_CLOSE) {
+					close_window_app(app);
+					full_repaint = 1;
+				} else if (hit == DRUNIX_WINDOW_HIT_MINIMIZE) {
+					minimize_window_app(app);
+					full_repaint = 1;
+				} else if (hit == DRUNIX_WINDOW_HIT_TITLE) {
+					g_dragging_app = app;
+					full_repaint = 1;
+				} else if (hit == DRUNIX_WINDOW_HIT_BODY) {
+					full_repaint = 1;
+				}
 			}
 		}
 	}
@@ -1091,50 +1466,26 @@ int main(int argc, char **argv)
 	if (g_wallpaper)
 		render_wallpaper(g_wallpaper);
 
-	g_ptmx = sys_open_flags("/dev/ptmx", SYS_O_RDWR, 0);
-	if (g_ptmx < 0) {
-		sys_write("desktop: cannot open /dev/ptmx\n");
-		return 1;
-	}
-	int slave = sys_open_flags("/dev/pts0", SYS_O_RDWR, 0);
-	if (slave < 0) {
-		sys_write("desktop: cannot open /dev/pts0\n");
-		return 1;
-	}
-
-	char *shell_argv[] = {"shell", 0};
-	char *shell_envp[] = {"PATH=/usr/bin:/bin", 0};
-	g_shell_pid = spawn_shell(slave, shell_argv, shell_envp);
-	sys_close(slave);
-
 	int evt_fds[2];
 	if (sys_pipe(evt_fds) != 0) {
-		sys_write("desktop: pipe failed\n");
-		return 1;
-	}
-	int term_fds[2];
-	if (sys_pipe(term_fds) != 0) {
 		sys_write("desktop: pipe failed\n");
 		return 1;
 	}
 
 	int evt_r = evt_fds[0];
 	int evt_w = evt_fds[1];
-	int term_w = term_fds[1];
-	g_term_pipe_r = term_fds[0];
 
 	(void)spawn_helper_child(wrap_kbd, evt_w, 0);
-	g_term_helper_pid = spawn_helper_child(wrap_term, term_w, g_ptmx);
 	(void)spawn_helper_child(wrap_mouse, evt_w, 0);
 	sys_close(evt_w);
-	sys_close(term_w);
 
 	g_pointer_x = (int)g_info.width / 2;
 	g_pointer_y = (int)g_info.height / 2;
 	g_pointer_old_x = g_pointer_x;
 	g_pointer_old_y = g_pointer_y;
 
-	term_clear();
+	if (start_terminal_session() != 0)
+		return 1;
 	present_scene();
 
 	for (;;) {
