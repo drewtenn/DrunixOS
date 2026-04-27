@@ -319,6 +319,36 @@ INTENTS: tuple[TestIntent, ...] = (
         },
     ),
     TestIntent(
+        name="user runtime string fast paths",
+        target="check",
+        commands={
+            "x86": ("python3 tools/test_user_runtime_string_fastpaths.py",),
+            "arm64": ("python3 tools/test_user_runtime_string_fastpaths.py",),
+        },
+        sources={
+            "x86": (
+                SourceMarkers(
+                    "tools/test_user_runtime_string_fastpaths.py",
+                    ("require_fastpath_markers",),
+                ),
+                SourceMarkers(
+                    "user/runtime/string.c",
+                    ("uintptr_t", "uint32_t", "sizeof(uint32_t)"),
+                ),
+            ),
+            "arm64": (
+                SourceMarkers(
+                    "tools/test_user_runtime_string_fastpaths.py",
+                    ("require_fastpath_markers",),
+                ),
+                SourceMarkers(
+                    "user/runtime/string.c",
+                    ("uintptr_t", "uint32_t", "sizeof(uint32_t)"),
+                ),
+            ),
+        },
+    ),
+    TestIntent(
         name="sleep syscall behavior",
         target="test-headless",
         commands={

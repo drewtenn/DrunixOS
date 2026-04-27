@@ -382,7 +382,7 @@ build: kernel disk
 iso: os.iso
 images: disk
 fresh: run-fresh
-check: clang-tidy-include-check test-headless check-warning-policy check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
+check: clang-tidy-include-check test-headless check-user-runtime-string check-warning-policy check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
 check-phase6:
 	python3 tools/test_kernel_arch_boundary_phase6.py
 
@@ -408,6 +408,9 @@ check-shell-history:
 
 check-userspace-smoke:
 	python3 tools/test_user_programs.py --arch x86
+
+check-user-runtime-string:
+	python3 tools/test_user_runtime_string_fastpaths.py
 
 check-filesystem-init:
 	python3 tools/test_shell_prompt.py --arch x86
@@ -636,7 +639,7 @@ clean:
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all test-busybox-compat \
-        check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
+        check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history check-user-runtime-string \
         check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-warning-policy check-test-wiring check-test-intent-coverage \
         validate-ext3-linux \
         pdf epub docs \
@@ -676,7 +679,7 @@ disk: $(ROOT_DISK_IMG)
 
 fresh: run
 
-check: clang-tidy-include-check test-headless check-warning-policy check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
+check: clang-tidy-include-check test-headless check-user-runtime-string check-warning-policy check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
 
 test:
 	$(MAKE) ARCH=$(ARCH) check
@@ -710,6 +713,9 @@ check-phase7:
 
 check-userspace-smoke:
 	python3 tools/test_arm64_userspace_smoke.py
+
+check-user-runtime-string:
+	python3 tools/test_user_runtime_string_fastpaths.py
 
 check-filesystem-init:
 	python3 tools/test_arm64_filesystem_init.py
@@ -922,7 +928,7 @@ clean:
         run run-stdio run-grub-menu run-fresh \
         debug debug-user debug-fresh \
         test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all test-busybox-compat \
-        check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history \
+        check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history check-user-runtime-string \
         check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-warning-policy check-test-wiring check-test-intent-coverage \
         validate-ext3-linux \
         pdf epub docs \
