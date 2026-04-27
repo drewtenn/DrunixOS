@@ -134,6 +134,22 @@ static const char *mem_forensics_fault_name(uint32_t classification)
 	}
 }
 
+static const vm_area_t *mem_forensics_vma_table(const struct process *proc)
+{
+	if (!proc)
+		return 0;
+	return proc->as ? proc->as->vmas : proc->vmas;
+}
+
+static uint32_t mem_forensics_vma_count(const struct process *proc)
+{
+	if (!proc)
+		return 0;
+	if (proc->as)
+		return proc->as->vmas ? proc->as->vma_count : 0;
+	return proc->vma_count;
+}
+
 static uint32_t mem_forensics_fault_vector(const arch_trap_frame_t *frame)
 {
 	return arch_trap_frame_fault_vector(frame);
@@ -239,39 +255,43 @@ static int mem_forensics_append_region(mem_forensics_report_t *out,
                                        const char *label)
 {
 	mem_forensics_region_t *r;
+	uint32_t reserved_bytes;
+	uint32_t mapped_bytes;
 
-	if (out->region_count >= MEM_FORENSICS_MAX_REGIONS)
-		return -1;
+	reserved_bytes = end - start;
+	mapped_bytes = count_present_user_pages(aspace, start, end) * 0x1000u;
 
-	r = &out->regions[out->region_count++];
-	r->start = start;
-	r->end = end;
-	r->kind = kind;
-	r->prot_flags = prot_flags;
-	r->reserved_bytes = end - start;
-	r->mapped_bytes = count_present_user_pages(aspace, start, end) * 0x1000u;
-	k_strncpy(r->label, label, sizeof(r->label) - 1);
-	r->label[sizeof(r->label) - 1] = '\0';
+	if (out->region_count < MEM_FORENSICS_MAX_REGIONS) {
+		r = &out->regions[out->region_count++];
+		r->start = start;
+		r->end = end;
+		r->kind = kind;
+		r->prot_flags = prot_flags;
+		r->reserved_bytes = reserved_bytes;
+		r->mapped_bytes = mapped_bytes;
+		k_strncpy(r->label, label, sizeof(r->label) - 1);
+		r->label[sizeof(r->label) - 1] = '\0';
+	}
 
-	out->total_reserved_bytes += r->reserved_bytes;
-	out->total_mapped_bytes += r->mapped_bytes;
+	out->total_reserved_bytes += reserved_bytes;
+	out->total_mapped_bytes += mapped_bytes;
 	if (kind == MEM_FORENSICS_REGION_IMAGE)
-		out->image_reserved_bytes += r->reserved_bytes;
+		out->image_reserved_bytes += reserved_bytes;
 	else if (kind == MEM_FORENSICS_REGION_HEAP)
-		out->heap_reserved_bytes += r->reserved_bytes;
+		out->heap_reserved_bytes += reserved_bytes;
 	else if (kind == MEM_FORENSICS_REGION_STACK)
-		out->stack_reserved_bytes += r->reserved_bytes;
+		out->stack_reserved_bytes += reserved_bytes;
 	else
-		out->mmap_reserved_bytes += r->reserved_bytes;
+		out->mmap_reserved_bytes += reserved_bytes;
 
 	if (kind == MEM_FORENSICS_REGION_IMAGE)
-		out->image_mapped_bytes += r->mapped_bytes;
+		out->image_mapped_bytes += mapped_bytes;
 	else if (kind == MEM_FORENSICS_REGION_HEAP)
-		out->heap_mapped_bytes += r->mapped_bytes;
+		out->heap_mapped_bytes += mapped_bytes;
 	else if (kind == MEM_FORENSICS_REGION_STACK)
-		out->stack_mapped_bytes += r->mapped_bytes;
+		out->stack_mapped_bytes += mapped_bytes;
 	else
-		out->mmap_mapped_bytes += r->mapped_bytes;
+		out->mmap_mapped_bytes += mapped_bytes;
 
 	return 0;
 }
@@ -280,18 +300,22 @@ int mem_forensics_collect(const struct process *proc,
                           mem_forensics_report_t *out)
 {
 	arch_aspace_t aspace;
+	const vm_area_t *vmas;
+	uint32_t vma_count;
 
 	if (!proc || !out)
 		return -1;
 
 	k_memset(out, 0, sizeof(*out));
 	aspace = (arch_aspace_t)proc->pd_phys;
+	vmas = mem_forensics_vma_table(proc);
+	vma_count = mem_forensics_vma_count(proc);
 
 	if (proc->image_start < proc->image_end) {
 		int image_seen = 0;
 
-		for (uint32_t i = 0; i < proc->vma_count; i++) {
-			if (proc->vmas[i].kind == VMA_KIND_IMAGE) {
+		for (uint32_t i = 0; i < vma_count; i++) {
+			if (vmas[i].kind == VMA_KIND_IMAGE) {
 				image_seen = 1;
 				break;
 			}
@@ -309,8 +333,8 @@ int mem_forensics_collect(const struct process *proc,
 		}
 	}
 
-	for (uint32_t i = 0; i < proc->vma_count; i++) {
-		const vm_area_t *vma = &proc->vmas[i];
+	for (uint32_t i = 0; i < vma_count; i++) {
+		const vm_area_t *vma = &vmas[i];
 		uint32_t kind;
 		const char *label;
 

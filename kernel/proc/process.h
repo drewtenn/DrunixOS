@@ -171,8 +171,9 @@ typedef struct proc_address_space {
 	uint32_t image_start;
 	uint32_t image_end;
 	uint32_t stack_low_limit;
-	vm_area_t vmas[PROCESS_MAX_VMAS];
+	vm_area_t *vmas;
 	uint32_t vma_count;
+	uint32_t vma_capacity;
 	char name[16];
 	char psargs[80];
 } proc_address_space_t;

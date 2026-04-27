@@ -8,10 +8,7 @@
 
 struct process;
 
-/*
- * A small fixed VMA table is enough for the current kernel:
- * executable images, heap, stack, and a handful of mmap() regions.
- */
+/* Stack-local process_t fallback capacity for tests without proc resources. */
 #define PROCESS_MAX_VMAS 16u
 
 #define VMA_FLAG_READ 0x01u

@@ -649,6 +649,50 @@ static void test_vma_map_anonymous_places_regions_below_stack(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc, proc.vmas[1].kind, VMA_KIND_GENERIC);
 }
 
+static void test_vma_table_grows_beyond_legacy_limit(ktest_case_t *tc)
+{
+	static process_t proc;
+	mem_forensics_report_t report;
+	uint32_t addr = 0;
+
+	k_memset(&proc, 0, sizeof(proc));
+	KTEST_ASSERT_EQ(tc, (uint32_t)proc_resource_init_fresh(&proc), 0u);
+	vma_init(&proc);
+	proc.as->brk = ARCH_USER_IMAGE_BASE + PAGE_SIZE;
+	KTEST_ASSERT_EQ(tc,
+	                vma_add(&proc,
+	                        proc.as->brk,
+	                        proc.as->brk,
+	                        VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_ANON |
+	                            VMA_FLAG_PRIVATE,
+	                        VMA_KIND_HEAP),
+	                0u);
+	KTEST_ASSERT_EQ(tc,
+	                vma_add(&proc,
+	                        USER_STACK_BASE,
+	                        USER_STACK_TOP,
+	                        VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_ANON |
+	                            VMA_FLAG_PRIVATE | VMA_FLAG_GROWSDOWN,
+	                        VMA_KIND_STACK),
+	                0u);
+
+	for (uint32_t i = 0; i < 24u; i++) {
+		uint32_t flags = VMA_FLAG_READ | VMA_FLAG_ANON | VMA_FLAG_PRIVATE;
+		if ((i & 1u) != 0)
+			flags |= VMA_FLAG_WRITE;
+
+		KTEST_ASSERT_EQ(tc,
+		                vma_map_anonymous(&proc, 0, PAGE_SIZE, flags, &addr),
+		                0u);
+	}
+
+	KTEST_EXPECT_TRUE(tc, proc.as->vma_count > PROCESS_MAX_VMAS);
+	KTEST_ASSERT_EQ(tc, (uint32_t)mem_forensics_collect(&proc, &report), 0u);
+	KTEST_EXPECT_EQ(tc, report.region_count, MEM_FORENSICS_MAX_REGIONS);
+	KTEST_EXPECT_EQ(tc, report.mmap_reserved_bytes, 24u * PAGE_SIZE);
+	proc_resource_put_all(&proc);
+}
+
 static void test_vma_file_metadata_survives_address_space_copy(ktest_case_t *tc)
 {
 	static process_t parent;
@@ -682,6 +726,58 @@ static void test_vma_file_metadata_survives_address_space_copy(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc, copied->file_size, 0x1234u);
 	KTEST_EXPECT_EQ(tc, copied->file_ref.mount_id, 7u);
 	KTEST_EXPECT_EQ(tc, copied->file_ref.inode_num, 0x55AAu);
+}
+
+static void test_proc_resource_clone_for_fork_copies_vma_storage(ktest_case_t *tc)
+{
+	static process_t parent;
+	static process_t child;
+	uint32_t extra_start = USER_MMAP_MIN;
+
+	k_memset(&parent, 0, sizeof(parent));
+	k_memset(&child, 0, sizeof(child));
+	KTEST_ASSERT_EQ(tc, (uint32_t)proc_resource_init_fresh(&parent), 0u);
+	vma_init(&parent);
+
+	KTEST_ASSERT_EQ(tc,
+	                vma_add(&parent,
+	                        ARCH_USER_IMAGE_BASE,
+	                        ARCH_USER_IMAGE_BASE + PAGE_SIZE,
+	                        VMA_FLAG_READ | VMA_FLAG_EXEC |
+	                            VMA_FLAG_PRIVATE,
+	                        VMA_KIND_IMAGE),
+	                0u);
+	KTEST_ASSERT_EQ(tc,
+	                vma_add(&parent,
+	                        USER_STACK_BASE,
+	                        USER_STACK_TOP,
+	                        VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_ANON |
+	                            VMA_FLAG_PRIVATE | VMA_FLAG_GROWSDOWN,
+	                        VMA_KIND_STACK),
+	                0u);
+
+	KTEST_ASSERT_EQ(tc, (uint32_t)proc_resource_clone_for_fork(&child, &parent), 0u);
+	KTEST_ASSERT_NOT_NULL(tc, child.as);
+	KTEST_ASSERT_NOT_NULL(tc, parent.as->vmas);
+	KTEST_ASSERT_NOT_NULL(tc, child.as->vmas);
+	KTEST_EXPECT_NE(tc, (uint32_t)child.as, (uint32_t)parent.as);
+	KTEST_EXPECT_NE(tc, (uint32_t)child.as->vmas, (uint32_t)parent.as->vmas);
+	KTEST_EXPECT_EQ(tc, child.as->vma_count, parent.as->vma_count);
+	KTEST_EXPECT_EQ(tc, child.as->vmas[0].start, parent.as->vmas[0].start);
+	KTEST_EXPECT_EQ(tc, child.as->pd_phys, child.pd_phys);
+
+	KTEST_ASSERT_EQ(tc,
+	                vma_add(&child,
+	                        extra_start,
+	                        extra_start + PAGE_SIZE,
+	                        VMA_FLAG_READ | VMA_FLAG_ANON | VMA_FLAG_PRIVATE,
+	                        VMA_KIND_GENERIC),
+	                0u);
+	KTEST_EXPECT_EQ(tc, parent.as->vma_count, 2u);
+	KTEST_EXPECT_EQ(tc, child.as->vma_count, 3u);
+
+	proc_resource_put_all(&child);
+	proc_resource_put_all(&parent);
 }
 
 static void test_vma_unmap_range_splits_generic_mapping(ktest_case_t *tc)
@@ -1539,10 +1635,34 @@ test_clone_process_without_vm_gets_distinct_group_and_as(ktest_case_t *tc)
 	KTEST_ASSERT_NE(tc, tid, (uint32_t)-1);
 
 	process_t *child = sched_find_pid(tid);
+	uint32_t parent_vma_count;
 	KTEST_ASSERT_NOT_NULL(tc, child);
 	KTEST_EXPECT_EQ(tc, child->tgid, child->tid);
 	KTEST_EXPECT_NE(tc, child->group, parent->group);
 	KTEST_EXPECT_NE(tc, child->as, parent->as);
+	KTEST_ASSERT_NOT_NULL(tc, child->as);
+	KTEST_ASSERT_NOT_NULL(tc, parent->as);
+	KTEST_ASSERT_NOT_NULL(tc, child->as->vmas);
+	KTEST_ASSERT_NOT_NULL(tc, parent->as->vmas);
+	KTEST_EXPECT_NE(tc, (uint32_t)child->as->vmas, (uint32_t)parent->as->vmas);
+	if (child->as->vmas == parent->as->vmas) {
+		child->as->vmas = 0;
+		child->as->vma_count = 0;
+		child->as->vma_capacity = 0;
+		sched_init();
+		return;
+	}
+
+	parent_vma_count = parent->as->vma_count;
+	KTEST_ASSERT_EQ(tc,
+	                vma_add(child,
+	                        USER_MMAP_MIN,
+	                        USER_MMAP_MIN + PAGE_SIZE,
+	                        VMA_FLAG_READ | VMA_FLAG_ANON | VMA_FLAG_PRIVATE,
+	                        VMA_KIND_GENERIC),
+	                0u);
+	KTEST_EXPECT_EQ(tc, parent->as->vma_count, parent_vma_count);
+	KTEST_EXPECT_EQ(tc, child->as->vma_count, parent_vma_count + 1u);
 
 	sched_init();
 }
@@ -2297,7 +2417,9 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_vma_add_keeps_regions_sorted_and_findable),
     KTEST_CASE(test_vma_add_rejects_overlapping_regions),
     KTEST_CASE(test_vma_map_anonymous_places_regions_below_stack),
+    KTEST_CASE(test_vma_table_grows_beyond_legacy_limit),
     KTEST_CASE(test_vma_file_metadata_survives_address_space_copy),
+    KTEST_CASE(test_proc_resource_clone_for_fork_copies_vma_storage),
     KTEST_CASE(test_vma_unmap_range_splits_generic_mapping),
     KTEST_CASE(test_vma_unmap_range_advances_file_offset_for_right_split),
     KTEST_CASE(test_vma_unmap_range_rejects_heap_or_stack),
