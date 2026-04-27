@@ -48,6 +48,8 @@ X86_PROCESS_KTESTS = (
     "test_elf_loader_rejects_overflowing_pt_load",
     "test_sched_add_builds_initial_frame_for_never_run_process",
     "test_process_builds_linux_i386_initial_stack_shape",
+    "test_x86_user_layout_invariants",
+    "test_brk_refuses_stack_collision",
     "test_vma_add_keeps_regions_sorted_and_findable",
     "test_vma_add_rejects_overlapping_regions",
     "test_vma_map_anonymous_places_regions_below_stack",
