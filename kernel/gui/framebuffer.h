@@ -2,6 +2,7 @@
 #define GUI_FRAMEBUFFER_H
 
 #include "pixel.h"
+#include "cursor_sprite.h"
 #include <stdint.h>
 
 #define GUI_FONT_W 8u
@@ -17,8 +18,8 @@
  * requires re-presenting the old and new cursor rects from the back buffer
  * — no back-buffer repaints, no rasterisation work per motion event.
  */
-#define FRAMEBUFFER_CURSOR_W 8
-#define FRAMEBUFFER_CURSOR_H 12
+#define FRAMEBUFFER_CURSOR_W DRUNIX_CURSOR_W
+#define FRAMEBUFFER_CURSOR_H DRUNIX_CURSOR_H
 
 typedef struct framebuffer_cursor {
 	int x;

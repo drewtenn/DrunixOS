@@ -19,6 +19,7 @@
  */
 
 #include "desktop_font.h"
+#include "cursor_sprite.h"
 #include "kbdmap.h"
 #include "lib/mman.h"
 #include "lib/nanojpeg/nanojpeg.h"
@@ -73,8 +74,8 @@ typedef struct {
 #define TASKBAR_ICON_SIZE 30
 #define TASKBAR_ICON_GAP 10
 
-#define POINTER_W 13
-#define POINTER_H 20
+#define POINTER_W DRUNIX_CURSOR_W
+#define POINTER_H DRUNIX_CURSOR_H
 
 #define EVT_KEY 'K'
 #define EVT_MOUSE 'M'
@@ -546,18 +547,20 @@ static void draw_pointer_sprite(void)
 	 * buffer keeps the desktop/window pixels underneath it.
 	 */
 	for (int j = 0; j < POINTER_H; j++) {
-		int row_w = j < 12 ? 1 + j / 2 : 7 - (j - 12) / 2;
-		if (row_w < 2)
-			row_w = 2;
-		if (row_w > POINTER_W - 2)
-			row_w = POINTER_W - 2;
-		fill_rect(g_fb, g_pointer_x, g_pointer_y + j, row_w, 1, COLOR_CURSOR);
-		fill_rect(g_fb,
-		          g_pointer_x + row_w,
-		          g_pointer_y + j,
-		          2,
-		          1,
-		          COLOR_CURSOR_SHADOW);
+		for (int i = 0; i < POINTER_W; i++) {
+			int cursor_pixel = drunix_cursor_pixel_at(i, j);
+
+			if (cursor_pixel == DRUNIX_CURSOR_PIXEL_FG)
+				put_pixel(g_fb,
+				          g_pointer_x + i,
+				          g_pointer_y + j,
+				          COLOR_CURSOR);
+			else if (cursor_pixel == DRUNIX_CURSOR_PIXEL_SHADOW)
+				put_pixel(g_fb,
+				          g_pointer_x + i,
+				          g_pointer_y + j,
+				          COLOR_CURSOR_SHADOW);
+		}
 	}
 }
 

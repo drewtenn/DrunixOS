@@ -112,6 +112,7 @@ void ktest_run_suite_counts(ktest_suite_t *suite,
 
 extern ktest_suite_t *ktest_suite_console_terminal(void);
 extern ktest_suite_t *ktest_suite_console_runtime(void);
+extern ktest_suite_t *ktest_suite_cursor_sprite(void);
 extern ktest_suite_t *ktest_suite_arch_shared(void);
 extern ktest_suite_t *ktest_suite_pmm_core(void);
 extern ktest_suite_t *ktest_suite_kheap(void);
@@ -151,6 +152,7 @@ void ktest_run_all(void)
 	run_and_tally(ktest_suite_arch_shared(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_console_runtime(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_console_terminal(), &total_pass, &total_fail);
+	run_and_tally(ktest_suite_cursor_sprite(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_pty(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_pmm_core(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_kheap(), &total_pass, &total_fail);

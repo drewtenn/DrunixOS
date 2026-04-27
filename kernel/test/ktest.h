@@ -149,6 +149,7 @@ void ktest_run_all(void);
 ktest_suite_t *ktest_suite_pmm(void);
 ktest_suite_t *ktest_suite_console_runtime(void);
 ktest_suite_t *ktest_suite_console_terminal(void);
+ktest_suite_t *ktest_suite_cursor_sprite(void);
 ktest_suite_t *ktest_suite_pty(void);
 ktest_suite_t *ktest_suite_pmm_core(void);
 ktest_suite_t *ktest_suite_kheap(void);

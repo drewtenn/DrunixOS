@@ -237,26 +237,6 @@ void framebuffer_fill_rect(
 	}
 }
 
-/*
- * Cursor sprite shape. Matches framebuffer_draw_cursor() so the overlay
- * looks identical to the legacy drawn cursor — we're just compositing it
- * later in the pipeline.
- */
-static const uint16_t k_cursor_sprite_rows[FRAMEBUFFER_CURSOR_H] = {
-    0x8000,
-    0xC000,
-    0xE000,
-    0xF000,
-    0xF800,
-    0xFC00,
-    0xFE00,
-    0xFF00,
-    0xF000,
-    0xD800,
-    0x8800,
-    0x0400,
-};
-
 static void framebuffer_composite_cursor_row(const framebuffer_info_t *fb,
                                              uintptr_t dst_row_base,
                                              int64_t row,
@@ -267,7 +247,6 @@ static void framebuffer_composite_cursor_row(const framebuffer_info_t *fb,
 	int64_t cursor_row;
 	int64_t cursor_left;
 	int64_t cursor_right;
-	uint16_t sprite_bits;
 	uint32_t *pixels;
 
 	if (!fb)
@@ -289,28 +268,16 @@ static void framebuffer_composite_cursor_row(const framebuffer_info_t *fb,
 	if (cursor_left >= cursor_right)
 		return;
 
-	sprite_bits = k_cursor_sprite_rows[cursor_row];
 	pixels = (uint32_t *)dst_row_base;
 	for (int64_t px = cursor_left; px < cursor_right; px++) {
-		int bit_index = (int)(px - cursor->x);
-		uint32_t mask;
+		int cursor_col = (int)(px - cursor->x);
+		int cursor_pixel;
 
-		if (bit_index < 0 || bit_index >= FRAMEBUFFER_CURSOR_W)
-			continue;
-		mask = 0x8000u >> bit_index;
-		if ((sprite_bits & mask) == 0)
-			continue;
-		pixels[px - row_left] = cursor->fg;
-	}
-
-	/*
-     * Inner shadow pixel — preserved from the legacy cursor shape. Placed
-     * after the main sprite so it sits on top of the fg pixel underneath.
-     */
-	if (cursor_row == 2) {
-		int64_t shadow_x = (int64_t)cursor->x + 2;
-		if (shadow_x >= row_left && shadow_x < row_right)
-			pixels[shadow_x - row_left] = cursor->shadow;
+		cursor_pixel = drunix_cursor_pixel_at(cursor_col, (int)cursor_row);
+		if (cursor_pixel == DRUNIX_CURSOR_PIXEL_FG)
+			pixels[px - row_left] = cursor->fg;
+		else if (cursor_pixel == DRUNIX_CURSOR_PIXEL_SHADOW)
+			pixels[px - row_left] = cursor->shadow;
 	}
 }
 
@@ -787,29 +754,18 @@ void framebuffer_draw_glyph(const framebuffer_info_t *fb,
 void framebuffer_draw_cursor(
     const framebuffer_info_t *fb, int x, int y, uint32_t fg, uint32_t shadow)
 {
-	static const uint16_t rows[12] = {
-	    0x8000,
-	    0xC000,
-	    0xE000,
-	    0xF000,
-	    0xF800,
-	    0xFC00,
-	    0xFE00,
-	    0xFF00,
-	    0xF000,
-	    0xD800,
-	    0x8800,
-	    0x0400,
-	};
-
-	if (x > INT_MAX - 7 || y > INT_MAX - 11)
+	if (x > INT_MAX - (DRUNIX_CURSOR_W - 1) ||
+	    y > INT_MAX - (DRUNIX_CURSOR_H - 1))
 		return;
 
-	for (int row = 0; row < 12; row++) {
-		for (int col = 0; col < 8; col++) {
-			if (rows[row] & (0x8000u >> col))
+	for (int row = 0; row < DRUNIX_CURSOR_H; row++) {
+		for (int col = 0; col < DRUNIX_CURSOR_W; col++) {
+			int cursor_pixel = drunix_cursor_pixel_at(col, row);
+			if (cursor_pixel == DRUNIX_CURSOR_PIXEL_FG)
 				framebuffer_fill_rect(fb, x + col, y + row, 1, 1, fg);
+			else if (cursor_pixel == DRUNIX_CURSOR_PIXEL_SHADOW)
+				framebuffer_fill_rect(
+				    fb, x + col, y + row, 1, 1, shadow);
 		}
 	}
-	framebuffer_fill_rect(fb, x + 2, y + 2, 1, 1, shadow);
 }
