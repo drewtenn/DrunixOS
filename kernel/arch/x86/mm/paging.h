@@ -103,13 +103,15 @@ void paging_destroy_user_space(uint32_t pd_phys);
 /*
  * paging_map_page: install a single page mapping in an arbitrary page directory.
  *
- * pd_phys: physical address of the target page directory (identity-accessible).
+ * pd_phys: physical address of the target page directory.
  * virt:    virtual address to map (must be 4 KB aligned).
  * phys:    physical address to map to (must be 4 KB aligned).
  * flags:   combination of PG_PRESENT, PG_WRITABLE, PG_USER, etc.
  *
  * PG_USER mappings are accepted only inside the x86 user virtual range.
  * Allocates a new page table via pmm_alloc_page() if the PDE is not yet present.
+ * Paging-structure physical pages are accessed through the x86 kernel direct
+ * map, so PMM pages above the legacy low identity window work.
  * Returns 0 on success, -1 if the address is invalid or a page table could not
  * be allocated.
  */
@@ -122,7 +124,7 @@ int paging_unmap_page(uint32_t pd_phys, uint32_t virt);
 /*
  * paging_walk: locate the live PTE slot for a virtual address.
  *
- * Returns 0 on success and writes the identity-mapped PTE pointer to pte_out.
+ * Returns 0 on success and writes a kernel-accessible PTE pointer to pte_out.
  * Returns -1 if the PDE or PTE is not present.
  */
 int paging_walk(uint32_t pd_phys, uint32_t virt, uint32_t **pte_out);

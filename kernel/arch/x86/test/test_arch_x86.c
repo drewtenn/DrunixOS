@@ -99,10 +99,52 @@ static void test_paging_rejects_direct_user_page_mapping(ktest_case_t *tc)
 	paging_destroy_user_space(pd_phys);
 }
 
+static void test_user_space_inherits_higher_half_kernel_pdes(ktest_case_t *tc)
+{
+	uint32_t pd_phys;
+	uint32_t *pd;
+	uint32_t first_kernel_pde = (uint32_t)ARCH_KERNEL_VIRT_BASE >> 22;
+	uint32_t kernel_pde_count =
+	    (uint32_t)ARCH_KERNEL_DIRECT_PHYS_MAX / 0x400000u;
+	uint32_t phys;
+	int map_rc;
+
+	pd_phys = paging_create_user_space();
+	KTEST_ASSERT_NE(tc, pd_phys, 0u);
+
+	pd = (uint32_t *)paging_temp_map(pd_phys);
+	KTEST_ASSERT_NOT_NULL(tc, pd);
+
+	for (uint32_t i = 0; i < kernel_pde_count; i++) {
+		uint32_t pde = pd[first_kernel_pde + i];
+
+		KTEST_EXPECT_TRUE(tc, (pde & PG_PRESENT) != 0);
+		KTEST_EXPECT_TRUE(tc, (pde & PG_USER) == 0);
+	}
+
+	phys = pmm_alloc_page();
+	KTEST_ASSERT_NE(tc, phys, 0u);
+	map_rc = paging_map_page(pd_phys,
+	                         (uint32_t)ARCH_USER_IMAGE_BASE,
+	                         phys,
+	                         PG_PRESENT | PG_WRITABLE | PG_USER);
+	KTEST_EXPECT_EQ(tc, map_rc, 0u);
+	if (map_rc == 0) {
+		KTEST_EXPECT_TRUE(
+		    tc, (pd[(uint32_t)ARCH_USER_IMAGE_BASE >> 22] & PG_USER) != 0);
+	} else {
+		pmm_free_page(phys);
+	}
+
+	paging_temp_unmap(pd);
+	paging_destroy_user_space(pd_phys);
+}
+
 static ktest_case_t cases[] = {
     KTEST_CASE(test_sched_record_user_fault_preserves_full_fault_addr),
     KTEST_CASE(test_user_mapping_rejects_direct_map_addresses),
     KTEST_CASE(test_paging_rejects_direct_user_page_mapping),
+    KTEST_CASE(test_user_space_inherits_higher_half_kernel_pdes),
 };
 
 static ktest_suite_t suite = KTEST_SUITE("arch-x86", cases);

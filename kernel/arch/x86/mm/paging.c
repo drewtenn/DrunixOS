@@ -27,9 +27,21 @@
 static int g_pat_wc_slot_ready;
 static int g_paging_present_depth;
 static uint32_t g_paging_present_saved_cr3;
+static uint32_t g_kernel_high_page_tables[ARCH_KERNEL_DIRECT_PHYS_MAX /
+                                          0x400000u][1024]
+    __attribute__((aligned(PAGE_SIZE)));
 
 #define X86_KERNEL_DIRECT_MAP_PDES \
 	((uint32_t)ARCH_KERNEL_DIRECT_MAP_END / 0x400000u)
+#define X86_KERNEL_HIGH_MAP_PDES \
+	((uint32_t)ARCH_KERNEL_DIRECT_PHYS_MAX / 0x400000u)
+
+static void *paging_phys_ptr(uint32_t phys)
+{
+	if (phys >= (uint32_t)ARCH_KERNEL_DIRECT_PHYS_MAX)
+		return 0;
+	return (void *)ARCH_KERNEL_PHYS_TO_VIRT(phys);
+}
 
 static uint32_t paging_read_cr3(void)
 {
@@ -56,15 +68,19 @@ static void paging_invlpg(uint32_t virt)
 static int
 paging_lookup_slot(uint32_t pd_phys, uint32_t virt, uint32_t **pte_out)
 {
-	uint32_t *pd = (uint32_t *)pd_phys;
+	uint32_t *pd = (uint32_t *)paging_phys_ptr(pd_phys);
 	uint32_t pdi = virt >> 22;
 	uint32_t pti = (virt >> 12) & 0x3FFu;
 	uint32_t *pt;
 
+	if (!pd)
+		return -1;
 	if (!(pd[pdi] & PG_PRESENT))
 		return -1;
 
-	pt = (uint32_t *)paging_entry_addr(pd[pdi]);
+	pt = (uint32_t *)paging_phys_ptr(paging_entry_addr(pd[pdi]));
+	if (!pt)
+		return -1;
 	*pte_out = &pt[pti];
 	return 0;
 }
@@ -123,13 +139,15 @@ static int paging_prepare_wc_slot(void)
 
 int paging_mark_range_write_combining(uint32_t phys_start, uint32_t byte_len)
 {
-	uint32_t *pd = (uint32_t *)PAGE_DIR_ADDR;
+	uint32_t *pd = (uint32_t *)paging_phys_ptr(PAGE_DIR_ADDR);
 	uint32_t start;
 	uint64_t end64;
 	uint32_t end;
 
 	if (byte_len == 0)
 		return 0;
+	if (!pd)
+		return -2;
 	if (paging_prepare_wc_slot() != 0)
 		return -1;
 	if (phys_start > UINT32_MAX - (byte_len - 1u))
@@ -150,7 +168,9 @@ int paging_mark_range_write_combining(uint32_t phys_start, uint32_t byte_len)
 
 		if (!(pd[pdi] & PG_PRESENT))
 			return -2;
-		pt = (uint32_t *)paging_entry_addr(pd[pdi]);
+		pt = (uint32_t *)paging_phys_ptr(paging_entry_addr(pd[pdi]));
+		if (!pt)
+			return -2;
 		pte = pt[pti];
 		if (!(pte & PG_PRESENT))
 			return -2;
@@ -192,6 +212,25 @@ void paging_init(void)
 		pd[i] = pt_phys | PG_PRESENT | PG_WRITABLE;
 	}
 
+	/*
+	 * Transitional higher-half direct map. Keep the low identity map above
+	 * intact for current boot/runtime code, and add supervisor-only aliases
+	 * for physical 0..1 GiB at 0xC0000000..0xFFFFFFFF.
+	 */
+	for (uint32_t i = 0; i < X86_KERNEL_HIGH_MAP_PDES; i++) {
+		uint32_t virt = (uint32_t)ARCH_KERNEL_VIRT_BASE + i * 0x400000u;
+		uint32_t pdi = virt >> 22;
+		uint32_t pt_phys = (uint32_t)(uintptr_t)g_kernel_high_page_tables[i];
+		uint32_t *pt = g_kernel_high_page_tables[i];
+
+		for (int j = 0; j < 1024; j++) {
+			uint32_t phys = i * 0x400000u + (uint32_t)j * 0x1000u;
+			pt[j] = phys | PG_PRESENT | PG_WRITABLE;
+		}
+
+		pd[pdi] = pt_phys | PG_PRESENT | PG_WRITABLE;
+	}
+
 	/* Load CR3 first, then set CR0.PG — order is critical */
 	paging_load_cr3(PAGE_DIR_ADDR);
 	paging_enable();
@@ -201,7 +240,7 @@ int paging_identity_map_kernel_range(uint32_t phys_start,
                                      uint32_t byte_len,
                                      uint32_t flags)
 {
-	uint32_t *pd = (uint32_t *)PAGE_DIR_ADDR;
+	uint32_t *pd = (uint32_t *)paging_phys_ptr(PAGE_DIR_ADDR);
 	uint32_t start = phys_start & ~0xFFFu;
 	uint64_t end64;
 	uint32_t end;
@@ -209,6 +248,8 @@ int paging_identity_map_kernel_range(uint32_t phys_start,
 
 	if (byte_len == 0)
 		return 0;
+	if (!pd)
+		return -1;
 	if (phys_start > UINT32_MAX - (byte_len - 1u))
 		return -1;
 
@@ -228,12 +269,18 @@ int paging_identity_map_kernel_range(uint32_t phys_start,
 			if (!pt_phys)
 				return -1;
 
-			pt = (uint32_t *)pt_phys;
+			pt = (uint32_t *)paging_phys_ptr(pt_phys);
+			if (!pt) {
+				pmm_free_page(pt_phys);
+				return -1;
+			}
 			for (int i = 0; i < 1024; i++)
 				pt[i] = 0;
 			pd[pdi] = paging_entry_build(pt_phys, PG_PRESENT | PG_WRITABLE);
 		} else {
-			pt = (uint32_t *)paging_entry_addr(pd[pdi]);
+			pt = (uint32_t *)paging_phys_ptr(paging_entry_addr(pd[pdi]));
+			if (!pt)
+				return -1;
 		}
 
 		pt[pti] = paging_entry_build(virt, page_flags);
@@ -248,8 +295,12 @@ uint32_t paging_create_user_space(void)
 	if (!pd_phys)
 		return 0;
 
-	uint32_t *new_pd = (uint32_t *)pd_phys; /* identity-mapped: virt == phys */
-	uint32_t *kernel_pd = (uint32_t *)PAGE_DIR_ADDR;
+	uint32_t *new_pd = (uint32_t *)paging_phys_ptr(pd_phys);
+	uint32_t *kernel_pd = (uint32_t *)paging_phys_ptr(PAGE_DIR_ADDR);
+	if (!new_pd || !kernel_pd) {
+		pmm_free_page(pd_phys);
+		return 0;
+	}
 
 	/* Zero all 1024 PDEs */
 	for (int i = 0; i < 1024; i++)
@@ -276,14 +327,20 @@ void paging_destroy_user_space(uint32_t pd_phys)
 	if (pd_phys == 0 || pd_phys == PAGE_DIR_ADDR)
 		return;
 
-	pd = (uint32_t *)pd_phys;
+	pd = (uint32_t *)paging_phys_ptr(pd_phys);
+	if (!pd)
+		return;
 	for (uint32_t pdi = 0; pdi < 1024; pdi++) {
 		uint32_t *pt;
+		uint32_t pt_phys;
 
 		if ((pd[pdi] & (PG_PRESENT | PG_USER)) != (PG_PRESENT | PG_USER))
 			continue;
 
-		pt = (uint32_t *)paging_entry_addr(pd[pdi]);
+		pt_phys = paging_entry_addr(pd[pdi]);
+		pt = (uint32_t *)paging_phys_ptr(pt_phys);
+		if (!pt)
+			continue;
 		for (uint32_t pti = 0; pti < 1024; pti++) {
 			if ((pt[pti] & (PG_PRESENT | PG_USER)) != (PG_PRESENT | PG_USER))
 				continue;
@@ -292,7 +349,7 @@ void paging_destroy_user_space(uint32_t pd_phys)
 			pt[pti] = 0;
 		}
 
-		pmm_free_page((uint32_t)pt);
+		pmm_free_page(pt_phys);
 		pd[pdi] = 0;
 	}
 
@@ -304,12 +361,14 @@ int paging_map_page(uint32_t pd_phys,
                     uint32_t phys,
                     uint32_t flags)
 {
-	uint32_t *pd = (uint32_t *)pd_phys;
+	uint32_t *pd = (uint32_t *)paging_phys_ptr(pd_phys);
 	uint32_t pdi = virt >> 22;           /* bits 31–22: PD index */
 	uint32_t pti = (virt >> 12) & 0x3FF; /* bits 21–12: PT index */
 
 	uint32_t *pt;
 
+	if (!pd)
+		return -1;
 	if ((flags & PG_USER) && !paging_user_page_allowed(virt))
 		return -1;
 
@@ -319,7 +378,11 @@ int paging_map_page(uint32_t pd_phys,
 		if (!pt_phys)
 			return -1;
 
-		pt = (uint32_t *)pt_phys;
+		pt = (uint32_t *)paging_phys_ptr(pt_phys);
+		if (!pt) {
+			pmm_free_page(pt_phys);
+			return -1;
+		}
 		for (int i = 0; i < 1024; i++)
 			pt[i] = 0;
 
@@ -341,15 +404,22 @@ int paging_map_page(uint32_t pd_phys,
 		if (!pt_phys)
 			return -1;
 
-		uint32_t *old_pt = (uint32_t *)paging_entry_addr(pd[pdi]);
-		pt = (uint32_t *)pt_phys;
+		uint32_t *old_pt =
+		    (uint32_t *)paging_phys_ptr(paging_entry_addr(pd[pdi]));
+		pt = (uint32_t *)paging_phys_ptr(pt_phys);
+		if (!old_pt || !pt) {
+			pmm_free_page(pt_phys);
+			return -1;
+		}
 		for (int i = 0; i < 1024; i++)
 			pt[i] = old_pt[i];
 
 		pd[pdi] =
 		    paging_entry_build(pt_phys, PG_PRESENT | PG_WRITABLE | PG_USER);
 	} else {
-		pt = (uint32_t *)paging_entry_addr(pd[pdi]);
+		pt = (uint32_t *)paging_phys_ptr(paging_entry_addr(pd[pdi]));
+		if (!pt)
+			return -1;
 		if (flags & PG_USER)
 			pd[pdi] |= PG_USER;
 	}
@@ -361,10 +431,12 @@ int paging_map_page(uint32_t pd_phys,
 
 int paging_unmap_page(uint32_t pd_phys, uint32_t virt)
 {
-	uint32_t *pd = (uint32_t *)pd_phys;
+	uint32_t *pd = (uint32_t *)paging_phys_ptr(pd_phys);
 	uint32_t pdi = virt >> 22;
 	uint32_t *pte;
 
+	if (!pd)
+		return -1;
 	if (paging_lookup_slot(pd_phys, virt, &pte) != 0 ||
 	    (*pte & PG_PRESENT) == 0)
 		return -1;
@@ -454,7 +526,7 @@ void paging_invalidate_page(uint32_t virt)
 
 void *paging_temp_map(uint32_t phys_addr)
 {
-	return (void *)(uintptr_t)phys_addr;
+	return paging_phys_ptr(phys_addr);
 }
 
 void paging_temp_unmap(void *ptr)
@@ -533,8 +605,12 @@ uint32_t paging_clone_user_space(uint32_t src_pd_phys)
 	if (!new_pd_phys)
 		return 0;
 
-	uint32_t *new_pd = (uint32_t *)new_pd_phys;
-	uint32_t *src_pd = (uint32_t *)src_pd_phys;
+	uint32_t *new_pd = (uint32_t *)paging_phys_ptr(new_pd_phys);
+	uint32_t *src_pd = (uint32_t *)paging_phys_ptr(src_pd_phys);
+	if (!new_pd || !src_pd) {
+		pmm_free_page(new_pd_phys);
+		return 0;
+	}
 
 	for (int i = 0; i < 1024; i++)
 		new_pd[i] = 0;
@@ -555,8 +631,11 @@ uint32_t paging_clone_user_space(uint32_t src_pd_phys)
 		if (!(src_pd[i] & PG_PRESENT))
 			continue;
 
-		uint32_t *src_pt = (uint32_t *)paging_entry_addr(src_pd[i]);
+		uint32_t *src_pt =
+		    (uint32_t *)paging_phys_ptr(paging_entry_addr(src_pd[i]));
 		int has_user_pte = 0;
+		if (!src_pt)
+			continue;
 		for (int j = 0; j < 1024; j++) {
 			if ((src_pt[j] & (PG_PRESENT | PG_USER)) ==
 			    (PG_PRESENT | PG_USER)) {
@@ -585,6 +664,18 @@ uint32_t paging_clone_user_space(uint32_t src_pd_phys)
 			pmm_free_page(new_pd_phys);
 			return 0;
 		}
+		if (!paging_phys_ptr(new_pt_phys)) {
+			for (int k = 0; k < i; k++) {
+				if (!(new_pd[k] & PG_PRESENT))
+					continue;
+				if (paging_entry_addr(new_pd[k]) !=
+				    paging_entry_addr(src_pd[k]))
+					pmm_free_page(paging_entry_addr(new_pd[k]));
+			}
+			pmm_free_page(new_pt_phys);
+			pmm_free_page(new_pd_phys);
+			return 0;
+		}
 
 		new_pd[i] =
 		    paging_entry_build(new_pt_phys, paging_entry_flags(src_pd[i]));
@@ -599,8 +690,12 @@ uint32_t paging_clone_user_space(uint32_t src_pd_phys)
 		if (paging_entry_addr(new_pd[i]) == paging_entry_addr(src_pd[i]))
 			continue;
 
-		uint32_t *src_pt = (uint32_t *)paging_entry_addr(src_pd[i]);
-		uint32_t *new_pt = (uint32_t *)paging_entry_addr(new_pd[i]);
+		uint32_t *src_pt =
+		    (uint32_t *)paging_phys_ptr(paging_entry_addr(src_pd[i]));
+		uint32_t *new_pt =
+		    (uint32_t *)paging_phys_ptr(paging_entry_addr(new_pd[i]));
+		if (!src_pt || !new_pt)
+			continue;
 
 		/* Copy all entries (kernel + user) into the child PT */
 		for (int j = 0; j < 1024; j++)
