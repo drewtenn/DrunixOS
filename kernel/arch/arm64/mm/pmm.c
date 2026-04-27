@@ -5,7 +5,11 @@
 
 #include "pmm.h"
 
+#define ARM64_PMM_MAX_PAGES (0x10000000u / PAGE_SIZE)
+
 static pmm_core_state_t g_pmm;
+static uint8_t g_pmm_bitmap[(ARM64_PMM_MAX_PAGES + 7u) / 8u];
+static uint8_t g_pmm_refcounts[ARM64_PMM_MAX_PAGES];
 
 void pmm_mark_used(uint32_t base, uint32_t length)
 {
@@ -27,6 +31,10 @@ void pmm_init(void)
 	    {.base = 0x3f000000u, .length = 0x01000000u},
 	};
 
+	pmm_core_bind_storage(&g_pmm,
+	                      g_pmm_bitmap,
+	                      g_pmm_refcounts,
+	                      ARM64_PMM_MAX_PAGES);
 	pmm_core_init(&g_pmm, usable, 1u, reserved, 2u);
 }
 

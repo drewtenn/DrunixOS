@@ -8,6 +8,17 @@
 #include "paging.h"
 #include "kstring.h"
 
+#define X86_PMM_TEST_1G_PAGES (0x40000000u / PAGE_SIZE)
+#define X86_PMM_TEST_512M_PAGES (0x20000000u / PAGE_SIZE)
+
+extern void pmm_x86_init_state_from_multiboot_for_test(pmm_core_state_t *state,
+                                                       const multiboot_info_t *mbi,
+                                                       void *bitmap,
+                                                       void *refcounts);
+
+static uint8_t x86_pmm_test_bitmap[(X86_PMM_TEST_1G_PAGES + 7u) / 8u];
+static uint8_t x86_pmm_test_refcounts[X86_PMM_TEST_1G_PAGES];
+
 /*
  * PMM unit tests.
  *
@@ -187,13 +198,14 @@ test_multiboot_usable_ranges_ignore_high_addr_wrap(ktest_case_t *tc)
 {
 	static pmm_core_state_t state;
 	static multiboot_mmap_entry_t map[1];
+	static uint8_t bitmap[512u / 8u];
+	static uint8_t refcounts[512u];
 	multiboot_info_t mbi;
 
 	k_memset(&state, 0, sizeof(state));
 	k_memset(&mbi, 0, sizeof(mbi));
 	k_memset(map, 0, sizeof(map));
 
-	pmm_core_init(&state, 0, 0, 0, 0);
 	map[0].size = sizeof(multiboot_mmap_entry_t) - sizeof(uint32_t);
 	map[0].addr = 0x100002000ull;
 	map[0].len = PAGE_SIZE;
@@ -203,11 +215,86 @@ test_multiboot_usable_ranges_ignore_high_addr_wrap(ktest_case_t *tc)
 	mbi.mmap_addr = (uint32_t)(uintptr_t)map;
 	mbi.mmap_length = sizeof(map);
 
+	pmm_core_bind_storage(&state, bitmap, refcounts, 512u);
+	pmm_core_init(&state, 0, 0, 0, 0);
 	pmm_multiboot_apply_usable_ranges_for_test(&state, &mbi);
 
 	KTEST_EXPECT_EQ(tc, pmm_core_free_page_count(&state), 0u);
 	KTEST_EXPECT_EQ(tc, pmm_core_refcount(&state, 0x00002000u), 255u);
 	KTEST_EXPECT_EQ(tc, pmm_core_alloc_page(&state), 0u);
+}
+
+static void expect_synthetic_usable_map_capacity(ktest_case_t *tc,
+                                                 uint32_t memory_bytes,
+                                                 uint32_t expected_pages)
+{
+	static pmm_core_state_t state;
+	static multiboot_mmap_entry_t map[1];
+	multiboot_info_t mbi;
+
+	k_memset(&state, 0, sizeof(state));
+	k_memset(&mbi, 0, sizeof(mbi));
+	k_memset(map, 0, sizeof(map));
+
+	map[0].size = sizeof(multiboot_mmap_entry_t) - sizeof(uint32_t);
+	map[0].addr = 0x00100000ull;
+	map[0].len = (uint64_t)memory_bytes - 0x00100000ull;
+	map[0].type = 1u;
+
+	mbi.flags = MULTIBOOT_FLAG_MMAP;
+	mbi.mmap_addr = (uint32_t)(uintptr_t)map;
+	mbi.mmap_length = sizeof(map);
+
+	pmm_x86_init_state_from_multiboot_for_test(&state,
+	                                           &mbi,
+	                                           x86_pmm_test_bitmap,
+	                                           x86_pmm_test_refcounts);
+
+	KTEST_EXPECT_EQ(tc, state.max_pages, expected_pages);
+	KTEST_EXPECT_TRUE(tc, pmm_core_free_page_count(&state) > 0u);
+}
+
+static void test_multiboot_512m_map_sets_runtime_capacity(ktest_case_t *tc)
+{
+	expect_synthetic_usable_map_capacity(tc,
+	                                     0x20000000u,
+	                                     X86_PMM_TEST_512M_PAGES);
+}
+
+static void test_multiboot_1g_map_sets_runtime_capacity(ktest_case_t *tc)
+{
+	expect_synthetic_usable_map_capacity(tc, 0x40000000u, X86_PMM_TEST_1G_PAGES);
+}
+
+static void test_multiboot_mmap_snapshot_survives_metadata_overlap(ktest_case_t *tc)
+{
+	static pmm_core_state_t state;
+	static uint8_t overlapping_bitmap[X86_PMM_TEST_512M_PAGES / 8u];
+	static uint8_t refcounts[X86_PMM_TEST_512M_PAGES];
+	multiboot_mmap_entry_t *map = (multiboot_mmap_entry_t *)overlapping_bitmap;
+	multiboot_info_t mbi;
+
+	k_memset(&state, 0, sizeof(state));
+	k_memset(&mbi, 0, sizeof(mbi));
+	k_memset(overlapping_bitmap, 0, sizeof(overlapping_bitmap));
+	k_memset(refcounts, 0, sizeof(refcounts));
+
+	map[0].size = sizeof(multiboot_mmap_entry_t) - sizeof(uint32_t);
+	map[0].addr = 0x00100000ull;
+	map[0].len = 0x20000000ull - 0x00100000ull;
+	map[0].type = 1u;
+
+	mbi.flags = MULTIBOOT_FLAG_MMAP;
+	mbi.mmap_addr = (uint32_t)(uintptr_t)map;
+	mbi.mmap_length = sizeof(*map);
+
+	pmm_x86_init_state_from_multiboot_for_test(&state,
+	                                           &mbi,
+	                                           overlapping_bitmap,
+	                                           refcounts);
+
+	KTEST_EXPECT_EQ(tc, state.max_pages, X86_PMM_TEST_512M_PAGES);
+	KTEST_EXPECT_TRUE(tc, pmm_core_free_page_count(&state) > 0u);
 }
 
 /* ── Suite ──────────────────────────────────────────────────────────────── */
@@ -226,6 +313,9 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_multiboot_framebuffer_reservation_covers_visible_rows),
     KTEST_CASE(test_multiboot_framebuffer_reservation_rejects_wrap),
     KTEST_CASE(test_multiboot_usable_ranges_ignore_high_addr_wrap),
+    KTEST_CASE(test_multiboot_512m_map_sets_runtime_capacity),
+    KTEST_CASE(test_multiboot_1g_map_sets_runtime_capacity),
+    KTEST_CASE(test_multiboot_mmap_snapshot_survives_metadata_overlap),
 };
 
 static ktest_suite_t suite = KTEST_SUITE("pmm", cases);
