@@ -804,6 +804,76 @@ cleanup:
 	destroy_test_proc(&parent);
 }
 
+static void test_process_fork_preserves_user_shared_mappings(ktest_case_t *tc)
+{
+	static process_t parent;
+	static process_t child;
+	static uint32_t parent_kstack_words[64];
+	uint32_t shared_virt = 0x1004C000u;
+	uint32_t shared_phys = 0;
+	uint32_t *parent_pte = 0;
+	uint32_t *child_pte = 0;
+	int child_live = 0;
+
+	if (init_fork_test_proc(&parent, parent_kstack_words, 64u) != 0) {
+		KTEST_EXPECT_TRUE(tc, 0);
+		return;
+	}
+
+	shared_phys = pmm_alloc_page();
+	if (!shared_phys ||
+	    vma_add(&parent,
+	            shared_virt,
+	            shared_virt + PAGE_SIZE,
+	            VMA_FLAG_READ | VMA_FLAG_WRITE,
+	            VMA_KIND_GENERIC) != 0 ||
+	    paging_map_page(parent.pd_phys,
+	                    shared_virt,
+	                    shared_phys,
+	                    PG_PRESENT | PG_WRITABLE | PG_USER | PG_SHARED) != 0) {
+		if (shared_phys)
+			pmm_free_page(shared_phys);
+		KTEST_EXPECT_TRUE(tc, 0);
+		destroy_test_proc(&parent);
+		return;
+	}
+	k_memset((void *)shared_phys, 0x5Au, PAGE_SIZE);
+	KTEST_ASSERT_EQ(tc, pmm_refcount(shared_phys), 1u);
+
+	k_memset(&child, 0, sizeof(child));
+	if (process_fork(&child, &parent) != 0) {
+		KTEST_EXPECT_TRUE(tc, 0);
+		destroy_test_proc(&parent);
+		return;
+	}
+	child_live = 1;
+
+	if (paging_walk(parent.pd_phys, shared_virt, &parent_pte) != 0 ||
+	    paging_walk(child.pd_phys, shared_virt, &child_pte) != 0) {
+		KTEST_EXPECT_TRUE(tc, 0);
+		goto cleanup;
+	}
+
+	KTEST_EXPECT_EQ(tc, *parent_pte & PG_ENTRY_ADDR_MASK, shared_phys);
+	KTEST_EXPECT_EQ(tc, *child_pte & PG_ENTRY_ADDR_MASK, shared_phys);
+	KTEST_EXPECT_TRUE(tc, (*parent_pte & PG_SHARED) != 0);
+	KTEST_EXPECT_TRUE(tc, (*child_pte & PG_SHARED) != 0);
+	KTEST_EXPECT_TRUE(tc, (*parent_pte & PG_WRITABLE) != 0);
+	KTEST_EXPECT_TRUE(tc, (*child_pte & PG_WRITABLE) != 0);
+	KTEST_EXPECT_TRUE(tc, (*parent_pte & PG_COW) == 0);
+	KTEST_EXPECT_TRUE(tc, (*child_pte & PG_COW) == 0);
+	KTEST_EXPECT_EQ(tc, pmm_refcount(shared_phys), 2u);
+
+	destroy_forked_child(&child);
+	child_live = 0;
+	KTEST_EXPECT_EQ(tc, pmm_refcount(shared_phys), 1u);
+
+cleanup:
+	if (child_live)
+		destroy_forked_child(&child);
+	destroy_test_proc(&parent);
+}
+
 static void
 test_process_fork_child_survives_parent_exit_and_reuses_last_cow_ref(
     ktest_case_t *tc)
@@ -1474,6 +1544,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_process_fork_stack_pages_break_cow_on_write_fault),
     KTEST_CASE(test_process_fork_child_writes_image_data_before_exec),
     KTEST_CASE(test_process_fork_preserves_user_io_mappings),
+    KTEST_CASE(test_process_fork_preserves_user_shared_mappings),
     KTEST_CASE(
         test_process_fork_child_survives_parent_exit_and_reuses_last_cow_ref),
     KTEST_CASE(test_process_fork_child_stack_growth_is_private),

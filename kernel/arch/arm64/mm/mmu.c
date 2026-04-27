@@ -31,6 +31,7 @@
 #define ARM64_MMU_DESC_PXN (1ull << 53)
 #define ARM64_MMU_DESC_UXN (1ull << 54)
 #define ARM64_MMU_DESC_SW_COW (1ull << 55)
+#define ARM64_MMU_DESC_SW_SHARED (1ull << 56)
 
 #define ARM64_MMU_OUTPUT_ADDR_MASK 0x0000FFFFFFFFF000ull
 #define ARM64_MMU_ATTR_INDEX_MASK (7ull << 2)
@@ -164,6 +165,8 @@ static arm64_mmu_desc_t arm64_mmu_page_desc_from_flags(uint64_t phys,
 		desc |= ARM64_MMU_DESC_UXN;
 	if (flags & ARCH_MM_MAP_COW)
 		desc |= ARM64_MMU_DESC_SW_COW;
+	if (flags & ARCH_MM_MAP_SHARED)
+		desc |= ARM64_MMU_DESC_SW_SHARED;
 
 	return desc;
 }
@@ -179,6 +182,8 @@ static uint32_t arm64_mmu_arch_flags_from_desc(arm64_mmu_desc_t desc)
 		flags |= ARCH_MM_MAP_USER;
 	if (desc & ARM64_MMU_DESC_SW_COW)
 		flags |= ARCH_MM_MAP_COW;
+	if (desc & ARM64_MMU_DESC_SW_SHARED)
+		flags |= ARCH_MM_MAP_SHARED;
 	if ((desc & ARM64_MMU_DESC_UXN) == 0)
 		flags |= ARCH_MM_MAP_EXEC;
 
@@ -488,26 +493,32 @@ arch_aspace_t arm64_mmu_aspace_clone(arch_aspace_t src)
 				uint32_t src_flags;
 				uint32_t src_phys;
 				uint32_t dst_phys;
-				void *src_page;
-				void *dst_page;
 
 				if (!arm64_mmu_desc_leaf(src_desc, 3) ||
 				    (src_desc & ARM64_MMU_DESC_AP_USER) == 0)
 					continue;
 
 				src_phys = (uint32_t)arm64_mmu_leaf_base(src_desc, 3);
-				dst_phys = pmm_alloc_page();
-				if (!dst_phys)
-					goto fail;
-
-				src_page = (void *)(uintptr_t)src_phys;
-				dst_page = (void *)(uintptr_t)dst_phys;
-				k_memcpy(dst_page, src_page, PAGE_SIZE);
-
 				virt = ((uintptr_t)l1i << ARM64_MMU_L1_SHIFT) |
 				       ((uintptr_t)l2i << ARM64_MMU_L2_SHIFT) |
 				       ((uintptr_t)l3i << ARM64_MMU_L3_SHIFT);
 				src_flags = arm64_mmu_arch_flags_from_desc(src_desc);
+				if ((src_flags & ARCH_MM_MAP_SHARED) != 0) {
+					pmm_incref(src_phys);
+					if (arm64_mmu_map(dst, virt, src_phys, src_flags) != 0) {
+						pmm_decref(src_phys);
+						goto fail;
+					}
+					continue;
+				}
+
+				dst_phys = pmm_alloc_page();
+				if (!dst_phys)
+					goto fail;
+				k_memcpy((void *)(uintptr_t)dst_phys,
+				         (void *)(uintptr_t)src_phys,
+				         PAGE_SIZE);
+
 				if (arm64_mmu_map(dst, virt, dst_phys, src_flags) != 0) {
 					pmm_free_page(dst_phys);
 					goto fail;

@@ -607,6 +607,56 @@ static void test_wmdev_server_close_destroys_windows_and_stales_handles(
 	KTEST_EXPECT_FALSE(tc, wmdev_server_msg_available((uint32_t)new_server));
 }
 
+static void test_wmdev_server_close_delivers_disconnect_when_client_queue_full(
+    ktest_case_t *tc)
+{
+	drwin_surface_info_t surface;
+	drwin_server_msg_t msg;
+	drwin_event_t event = {DRWIN_EVENT_CLOSE, 0, 0, 0, 0, 0};
+	drwin_event_t out;
+	uint32_t window = 0;
+	uint32_t saw_disconnect = 0;
+
+	wmdev_reset_for_test();
+	int server = wmdev_open(10);
+	int client = wmdev_open(42);
+	KTEST_ASSERT_TRUE(tc, server >= 0);
+	KTEST_ASSERT_TRUE(tc, client >= 0);
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)wmdev_register_server((uint32_t)server,
+	                                                DRWIN_SERVER_MAGIC),
+	                0u);
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)wmdev_create_window((uint32_t)client,
+	                                              "full",
+	                                              0,
+	                                              0,
+	                                              32,
+	                                              32,
+	                                              &window,
+	                                              &surface),
+	                0u);
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)wmdev_read_server_msg((uint32_t)server, &msg),
+	                0u);
+	event.window = (int32_t)window;
+	for (uint32_t i = 0; i < WMDEV_EVENT_QUEUE_CAP; i++)
+		KTEST_ASSERT_EQ(tc, (uint32_t)wmdev_queue_event(window, &event), 0u);
+	KTEST_ASSERT_EQ(tc, (uint32_t)wmdev_queue_event(window, &event),
+	                (uint32_t)-1);
+
+	wmdev_close((uint32_t)server);
+
+	while (wmdev_event_available((uint32_t)client)) {
+		KTEST_ASSERT_EQ(tc,
+		                (uint32_t)wmdev_read_event((uint32_t)client, &out),
+		                0u);
+		if (out.type == DRWIN_EVENT_DISCONNECT)
+			saw_disconnect = 1;
+	}
+	KTEST_EXPECT_TRUE(tc, saw_disconnect);
+}
+
 static ktest_case_t cases[] = {
     KTEST_CASE(test_wmdev_registers_single_server),
     KTEST_CASE(test_wmdev_create_window_tracks_owner_and_surface),
@@ -622,6 +672,8 @@ static ktest_case_t cases[] = {
     KTEST_CASE(
         test_wmdev_client_close_prioritizes_destroy_when_other_windows_fill_queue),
     KTEST_CASE(test_wmdev_server_close_destroys_windows_and_stales_handles),
+    KTEST_CASE(
+        test_wmdev_server_close_delivers_disconnect_when_client_queue_full),
 };
 
 static ktest_suite_t suite = KTEST_SUITE("wmdev", cases);

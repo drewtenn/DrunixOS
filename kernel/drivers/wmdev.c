@@ -213,6 +213,23 @@ static int enqueue_event_to_conn(uint32_t conn_id, const drwin_event_t *event)
 	return 0;
 }
 
+static void make_room_for_lifecycle_event(uint32_t conn_id)
+{
+	wmdev_conn_t *conn;
+
+	if (!conn_valid(conn_id))
+		return;
+	conn = &g_conns[conn_id];
+	if (conn->event_count < WMDEV_EVENT_QUEUE_CAP)
+		return;
+
+	k_memset(&conn->events[conn->event_tail],
+	         0,
+	         sizeof(conn->events[conn->event_tail]));
+	conn->event_tail = (conn->event_tail + 1u) % WMDEV_EVENT_QUEUE_CAP;
+	conn->event_count--;
+}
+
 static void fill_surface(drwin_surface_info_t *surface,
                          uint32_t window,
                          uint32_t width,
@@ -375,6 +392,7 @@ void wmdev_close(uint32_t conn_id)
 				continue;
 			owner = g_windows[i].owner_conn;
 			if (owner < WMDEV_MAX_CONNECTIONS && !notified[owner]) {
+				make_room_for_lifecycle_event(owner);
 				(void)enqueue_event_to_conn(owner, &disconnect);
 				notified[owner] = 1;
 			}

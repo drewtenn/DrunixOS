@@ -468,7 +468,8 @@ void paging_destroy_user_space(uint32_t pd_phys)
 			if ((pt[pti] & (PG_PRESENT | PG_USER)) != (PG_PRESENT | PG_USER))
 				continue;
 
-			pmm_decref(paging_entry_addr(pt[pti]));
+			if ((pt[pti] & PG_IO) == 0)
+				pmm_decref(paging_entry_addr(pt[pti]));
 			pt[pti] = 0;
 		}
 
@@ -607,6 +608,10 @@ int paging_query_page(uint32_t pd_phys, uint32_t virt, arch_mm_mapping_t *out)
 		out->flags |= ARCH_MM_MAP_USER;
 	if (*pte & PG_COW)
 		out->flags |= ARCH_MM_MAP_COW;
+	if (*pte & PG_IO)
+		out->flags |= ARCH_MM_MAP_IO;
+	if (*pte & PG_SHARED)
+		out->flags |= ARCH_MM_MAP_SHARED;
 
 	return 0;
 }
@@ -845,16 +850,20 @@ uint32_t paging_clone_user_space(uint32_t src_pd_phys)
 			new_pt[j] = src_pt[j];
 
 		/*
-		 * Mark PMM-managed user entries CoW in parent and child, bump
-		 * refcounts. Device mappings are already shared by definition:
-		 * preserving PG_WRITABLE on PG_IO entries lets framebuffer and
-		 * MMIO mappings keep targeting the hardware after fork().
+		 * Mark private PMM-managed user entries CoW in parent and child, bump
+		 * refcounts. Device mappings are already shared by definition and
+		 * shared PMM mappings are deliberately inherited without CoW.
 		 */
 		for (int j = 0; j < 1024; j++) {
 			if ((src_pt[j] & (PG_PRESENT | PG_USER)) != (PG_PRESENT | PG_USER))
 				continue;
 			if (src_pt[j] & PG_IO) {
 				new_pt[j] = src_pt[j];
+				continue;
+			}
+			if (src_pt[j] & PG_SHARED) {
+				new_pt[j] = src_pt[j];
+				pmm_incref(paging_entry_addr(src_pt[j]));
 				continue;
 			}
 

@@ -124,6 +124,7 @@ X86_UACCESS_KTESTS = (
     "test_process_fork_stack_pages_break_cow_on_write_fault",
     "test_process_fork_child_writes_image_data_before_exec",
     "test_process_fork_preserves_user_io_mappings",
+    "test_process_fork_preserves_user_shared_mappings",
     "test_process_fork_child_survives_parent_exit_and_reuses_last_cow_ref",
     "test_process_fork_child_stack_growth_is_private",
     "test_process_fork_child_gets_fresh_task_group_slot",
@@ -297,6 +298,7 @@ WMDEV_KTESTS = (
     "test_wmdev_client_close_replaces_saturated_window_queue_with_destroy",
     "test_wmdev_client_close_prioritizes_destroy_when_other_windows_fill_queue",
     "test_wmdev_server_close_destroys_windows_and_stales_handles",
+    "test_wmdev_server_close_delivers_disconnect_when_client_queue_full",
 )
 
 X86_ARCH_KTESTS = (
@@ -517,6 +519,7 @@ INTENTS: tuple[TestIntent, ...] = (
                         "test_shared_clone_rejects_thread_without_sighand",
                         "test_shared_clone_thread_shares_group_and_selected_resources",
                         "test_shared_clone_process_without_vm_gets_distinct_group_and_as",
+                        "test_shared_arch_clone_preserves_shared_user_mapping",
                     ),
                 ),
                 SourceMarkers(
@@ -791,7 +794,12 @@ INTENTS: tuple[TestIntent, ...] = (
                         "test_process_fork_child_gets_fresh_task_group_slot",
                         "test_process_fork_bumps_pipe_refs_once_with_resource_table",
                         "test_process_fork_rolls_back_when_kstack_alloc_fails",
+                        "test_process_fork_preserves_user_shared_mappings",
                     ),
+                ),
+                SourceMarkers(
+                    "kernel/test/test_arch_shared.c",
+                    ("test_shared_arch_clone_preserves_shared_user_mapping",),
                 ),
                 SourceMarkers(
                     "kernel/arch/x86/test/test_process.c",
@@ -956,6 +964,8 @@ INTENTS: tuple[TestIntent, ...] = (
                     "kernel/test/test_arch_shared.c",
                     (
                         "test_shared_wmdev_mmap_refs_shared_surface_page",
+                        "test_shared_wmdev_mprotect_prot_none_keeps_refs",
+                        "test_shared_wmdev_mmap_rejects_prot_none_without_ref",
                         "test_shared_dup2_bumps_wmdev_ref",
                     ),
                 ),
@@ -973,6 +983,14 @@ INTENTS: tuple[TestIntent, ...] = (
                     (
                         "Drunix ARM64 console",
                         "drunix shell -- type 'help' for commands",
+                    ),
+                ),
+                SourceMarkers(
+                    "kernel/test/test_arch_shared.c",
+                    (
+                        "test_shared_wmdev_mmap_refs_shared_surface_page",
+                        "test_shared_wmdev_mprotect_prot_none_keeps_refs",
+                        "test_shared_wmdev_mmap_rejects_prot_none_without_ref",
                     ),
                 ),
             ),

@@ -24,6 +24,11 @@
  * frames. Stored in one of the OS-available bits (10) of the PTE.
  */
 #define PG_IO (1u << 10)
+/*
+ * PG_SHARED marks a PMM-managed user page that should be inherited by fork()
+ * without copy-on-write while still participating in PMM refcounting.
+ */
+#define PG_SHARED (1u << 11)
 
 #define PG_ENTRY_ADDR_MASK 0xFFFFF000u
 #define PG_ENTRY_FLAGS_MASK 0x00000FFFu

@@ -244,6 +244,28 @@ syscall_committed_munmap_bytes(process_t *proc, uint32_t start, uint32_t end)
 	return bytes;
 }
 
+static int syscall_range_has_shared_mapping(process_t *proc,
+                                            uint32_t start,
+                                            uint32_t end)
+{
+	arch_aspace_t aspace;
+
+	if (!proc || start >= end)
+		return 0;
+
+	aspace = (arch_aspace_t)proc->pd_phys;
+	for (uint32_t page = start; page < end; page += PAGE_SIZE) {
+		arch_mm_mapping_t mapping;
+
+		if (arch_mm_query(aspace, page, &mapping) != 0)
+			continue;
+		if (mapping.flags & ARCH_MM_MAP_SHARED)
+			return 1;
+	}
+
+	return 0;
+}
+
 static int syscall_mmap_anonymous_private(process_t *cur,
                                           uint32_t hint,
                                           uint32_t length,
@@ -362,6 +384,8 @@ static int syscall_mmap_wmdev(process_t *cur,
 	fh = &proc_fd_entries(cur)[fd];
 	if (fh->type != FD_TYPE_WM)
 		return -1;
+	if (!prot_has_user_access(prot))
+		return -1;
 	map_len = (length + PAGE_SIZE - 1u) & ~(PAGE_SIZE - 1u);
 	if (map_len == 0)
 		return -1;
@@ -369,9 +393,8 @@ static int syscall_mmap_wmdev(process_t *cur,
 	if (vma_map_anonymous(cur, hint, map_len, vma_flags, &map_addr) != 0)
 		return -1;
 	aspace = (arch_aspace_t)cur->pd_phys;
-	map_flags = ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ;
-	if (prot_has_user_access(prot))
-		map_flags |= ARCH_MM_MAP_USER;
+	map_flags = ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ | ARCH_MM_MAP_USER |
+	            ARCH_MM_MAP_SHARED;
 	if (prot & LINUX_PROT_WRITE)
 		map_flags |= ARCH_MM_MAP_WRITE;
 	for (uint32_t off = 0; off < map_len; off += PAGE_SIZE) {
@@ -728,6 +751,10 @@ uint32_t SYSCALL_NOINLINE syscall_case_mprotect(uint32_t ebx,
 			return (uint32_t)-1;
 
 		new_flags = prot_to_vma_flags(edx);
+		if (!prot_has_user_access(edx) &&
+		    syscall_range_has_shared_mapping(cur, ebx, end))
+			return (uint32_t)-1;
+
 		reserve_bytes = syscall_mprotect_transition_bytes(
 		    cur, ebx, end, new_flags, 1);
 		if (reserve_bytes != 0 && vm_commit_reserve(cur, reserve_bytes) != 0)

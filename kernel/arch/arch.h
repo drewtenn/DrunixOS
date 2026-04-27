@@ -33,6 +33,14 @@ typedef struct {
  * refcount decrement that ordinary user pages receive.
  */
 #define ARCH_MM_MAP_IO 0x0040u
+/*
+ * ARCH_MM_MAP_SHARED marks a PMM-managed user page that is intentionally
+ * shared across cloned address spaces. Clone/fork preserves the same physical
+ * frame and permissions, increments its PMM refcount, and normal unmap/destroy
+ * paths still decref it. This is distinct from ARCH_MM_MAP_IO, whose frames are
+ * not PMM-managed.
+ */
+#define ARCH_MM_MAP_SHARED 0x0080u
 
 uint32_t arch_time_unix_seconds(void);
 uint32_t arch_time_uptime_ticks(void);
