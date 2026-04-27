@@ -204,6 +204,35 @@ int paging_mark_range_write_combining(uint32_t phys_start, uint32_t byte_len)
 	return 0;
 }
 
+int paging_mark_kernel_range_write_combining(uint32_t virt_start,
+                                             uint32_t byte_len)
+{
+	uint32_t start;
+	uint64_t end64;
+	uint32_t end;
+
+	if (byte_len == 0)
+		return 0;
+	if (paging_prepare_wc_slot() != 0)
+		return -1;
+	if (virt_start > UINT32_MAX - (byte_len - 1u))
+		return -1;
+
+	start = virt_start & ~0xFFFu;
+	end64 = ((uint64_t)virt_start + byte_len + 0xFFFu) & ~0xFFFull;
+	if (end64 > UINT32_MAX)
+		return -1;
+	end = (uint32_t)end64;
+	if (end <= start)
+		return -1;
+
+	for (uint32_t virt = start; virt < end; virt += 0x1000u) {
+		if (paging_mark_pte_write_combining(virt) != 0)
+			return -2;
+	}
+	return 0;
+}
+
 void paging_init(void)
 {
 	uint32_t *pd = (uint32_t *)PAGE_DIR_ADDR;
@@ -308,11 +337,76 @@ int paging_identity_map_kernel_range(uint32_t phys_start,
 	return 0;
 }
 
+int paging_map_kernel_range(uint32_t virt_start,
+                            uint32_t phys_start,
+                            uint32_t byte_len,
+                            uint32_t flags)
+{
+	uint32_t *pd = (uint32_t *)paging_phys_ptr(PAGE_DIR_ADDR);
+	uint32_t virt = virt_start & ~0xFFFu;
+	uint32_t phys = phys_start & ~0xFFFu;
+	uint32_t offset = phys_start - phys;
+	uint64_t end64;
+	uint32_t end;
+	uint32_t page_flags;
+
+	if (byte_len == 0)
+		return 0;
+	if (!pd)
+		return -1;
+	if (virt_start < (uint32_t)ARCH_KERNEL_DEVICE_MAP_BASE)
+		return -1;
+	if (virt_start >= (uint32_t)ARCH_KERNEL_DEVICE_MAP_END)
+		return -1;
+	if (phys_start > UINT32_MAX - (byte_len - 1u))
+		return -1;
+
+	end64 = ((uint64_t)virt_start + offset + byte_len + 0xFFFu) & ~0xFFFull;
+	if (end64 > (uint32_t)ARCH_KERNEL_DEVICE_MAP_END)
+		return -1;
+	end = (uint32_t)end64;
+	if (end <= virt)
+		return -1;
+
+	page_flags = (flags | PG_PRESENT) & ~(uint32_t)PG_USER;
+	for (; virt < end; virt += 0x1000u, phys += 0x1000u) {
+		uint32_t pdi = virt >> 22;
+		uint32_t pti = (virt >> 12) & 0x3FFu;
+		uint32_t *pt;
+
+		if (!(pd[pdi] & PG_PRESENT)) {
+			uint32_t pt_phys = pmm_alloc_page();
+			if (!pt_phys)
+				return -1;
+
+			pt = (uint32_t *)paging_phys_ptr(pt_phys);
+			if (!pt) {
+				pmm_free_page(pt_phys);
+				return -1;
+			}
+			for (int i = 0; i < 1024; i++)
+				pt[i] = 0;
+			pd[pdi] = paging_entry_build(pt_phys, PG_PRESENT | PG_WRITABLE);
+		} else {
+			pt = (uint32_t *)paging_phys_ptr(paging_entry_addr(pd[pdi]));
+			if (!pt)
+				return -1;
+		}
+
+		pt[pti] = paging_entry_build(phys, page_flags);
+		paging_invlpg(virt);
+	}
+	return 0;
+}
+
 uint32_t paging_create_user_space(void)
 {
 	uint32_t pd_phys = pmm_alloc_page();
 	uint32_t low_kernel_pdes =
 	    (((uint32_t)(uintptr_t)&_kernel_end) + 0x3FFFFFu) >> 22;
+	uint32_t first_device_pde = (uint32_t)ARCH_KERNEL_DEVICE_MAP_BASE >> 22;
+	uint32_t first_after_device_pde =
+	    ((uint32_t)ARCH_KERNEL_DEVICE_MAP_END + 0x3FFFFFu) >> 22;
 	uint32_t first_high_pde = (uint32_t)ARCH_KERNEL_VIRT_BASE >> 22;
 	if (!pd_phys)
 		return 0;
@@ -329,12 +423,18 @@ uint32_t paging_create_user_space(void)
 		new_pd[i] = 0;
 
 	/*
-     * Copy the low PDEs still needed by the low-linked kernel image, plus the
-     * higher-half aliases. Do not inherit the rest of the low direct map:
-     * those addresses are now legal user space.
-     */
+	 * Copy the low PDEs still needed by the low-linked kernel image, the
+	 * supervisor-only device aperture, and the higher-half aliases. Do not
+	 * inherit the rest of the low direct map: those addresses are now legal
+	 * user space.
+	 */
 	for (uint32_t i = 0; i < 1024; i++) {
-		if (i >= low_kernel_pdes && i < first_high_pde)
+		int is_low_kernel = i < low_kernel_pdes;
+		int is_device =
+		    i >= first_device_pde && i < first_after_device_pde;
+		int is_high_kernel = i >= first_high_pde;
+
+		if (!is_low_kernel && !is_device && !is_high_kernel)
 			continue;
 		if ((kernel_pd[i] & (PG_PRESENT | PG_USER)) == PG_PRESENT)
 			new_pd[i] = kernel_pd[i];

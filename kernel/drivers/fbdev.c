@@ -34,10 +34,6 @@ static int fbdev_mmap_phys(uint32_t offset,
 	if (prot & ~(uint32_t)(LINUX_PROT_READ | LINUX_PROT_WRITE))
 		return -1;
 
-	/*
-	 * The framebuffer is identity-mapped into the kernel address space at
-	 * boot, so its kernel virtual address equals its physical address.
-	 */
 	fb_size = fbdev_target->pitch * fbdev_target->height;
 	if (fb_size == 0)
 		return -1;
@@ -47,7 +43,7 @@ static int fbdev_mmap_phys(uint32_t offset,
 	if (end < offset || end > fb_size)
 		return -1;
 
-	*phys_out = (uint64_t)(uintptr_t)fbdev_target->address + offset;
+	*phys_out = (uint64_t)(uintptr_t)fbdev_target->phys_address + offset;
 	return 0;
 }
 
@@ -83,7 +79,8 @@ static const chardev_ops_t fbdev_info_ops = {
 
 int fbdev_init(const framebuffer_info_t *fb)
 {
-	if (!fb || fb->address == 0 || fb->pitch == 0 || fb->height == 0)
+	if (!fb || fb->phys_address == 0 || fb->address == 0 || fb->pitch == 0 ||
+	    fb->height == 0)
 		return -1;
 
 	fbdev_target = fb;

@@ -50,7 +50,11 @@ X86_USER_LOAD_ADDR ?= 0x08048000
 ifneq ($(origin no_desktop),undefined)
 NO_DESKTOP ?= $(no_desktop)
 endif
+ifeq ($(ARCH),arm64)
 NO_DESKTOP ?= 1
+else
+NO_DESKTOP ?= 0
+endif
 
 ifeq ($(NO_DESKTOP),1)
 INIT_PROGRAM ?= bin/shell

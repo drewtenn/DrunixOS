@@ -291,6 +291,7 @@ X86_ARCH_KTESTS = (
     "test_user_mapping_cannot_replace_inherited_kernel_pte",
     "test_user_space_inherits_higher_half_kernel_pdes",
     "test_identity_map_preserves_higher_half_direct_pte",
+    "test_kernel_device_map_accepts_high_physical_framebuffer",
     "test_guard_page_updates_higher_half_alias",
     "test_write_combining_updates_higher_half_alias",
 )

@@ -30,6 +30,7 @@ typedef struct framebuffer_cursor {
 } framebuffer_cursor_t;
 
 typedef struct framebuffer_info {
+	uintptr_t phys_address;
 	uintptr_t address;
 	uint32_t pitch;
 	uint32_t width;

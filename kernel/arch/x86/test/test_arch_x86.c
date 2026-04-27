@@ -213,6 +213,44 @@ static void test_identity_map_preserves_higher_half_direct_pte(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc, *pte, before);
 }
 
+static void test_kernel_device_map_accepts_high_physical_framebuffer(ktest_case_t *tc)
+{
+	uint32_t device_virt = (uint32_t)ARCH_KERNEL_DEVICE_MAP_BASE;
+	uint32_t framebuffer_phys = 0xFD000000u;
+	uint32_t pd_phys;
+	uint32_t *pd;
+	uint32_t *pte;
+	uint32_t device_pde = device_virt >> 22;
+
+	KTEST_EXPECT_NE(tc,
+	                paging_map_kernel_range(ARCH_KERNEL_DIRECT_MAP_END,
+	                                        framebuffer_phys,
+	                                        PAGE_SIZE,
+	                                        PG_PRESENT | PG_WRITABLE),
+	                0);
+	KTEST_EXPECT_EQ(tc,
+	                paging_map_kernel_range(device_virt,
+	                                        framebuffer_phys,
+	                                        PAGE_SIZE,
+	                                        PG_PRESENT | PG_WRITABLE |
+	                                            PG_USER),
+	                0);
+	KTEST_ASSERT_EQ(tc, paging_walk(PAGE_DIR_ADDR, device_virt, &pte), 0u);
+	KTEST_EXPECT_EQ(tc, paging_entry_addr(*pte), framebuffer_phys);
+	KTEST_EXPECT_TRUE(tc, (*pte & PG_PRESENT) != 0);
+	KTEST_EXPECT_TRUE(tc, (*pte & PG_WRITABLE) != 0);
+	KTEST_EXPECT_TRUE(tc, (*pte & PG_USER) == 0);
+
+	pd_phys = paging_create_user_space();
+	KTEST_ASSERT_NE(tc, pd_phys, 0u);
+	pd = (uint32_t *)paging_temp_map(pd_phys);
+	KTEST_ASSERT_NOT_NULL(tc, pd);
+	KTEST_EXPECT_TRUE(tc, (pd[device_pde] & PG_PRESENT) != 0);
+	KTEST_EXPECT_TRUE(tc, (pd[device_pde] & PG_USER) == 0);
+	paging_temp_unmap(pd);
+	paging_destroy_user_space(pd_phys);
+}
+
 static void test_guard_page_updates_higher_half_alias(ktest_case_t *tc)
 {
 	uint32_t phys;
@@ -284,6 +322,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_user_mapping_cannot_replace_inherited_kernel_pte),
     KTEST_CASE(test_user_space_inherits_higher_half_kernel_pdes),
     KTEST_CASE(test_identity_map_preserves_higher_half_direct_pte),
+    KTEST_CASE(test_kernel_device_map_accepts_high_physical_framebuffer),
     KTEST_CASE(test_guard_page_updates_higher_half_alias),
     KTEST_CASE(test_write_combining_updates_higher_half_alias),
 };

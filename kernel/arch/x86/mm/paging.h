@@ -69,6 +69,18 @@ int paging_identity_map_kernel_range(uint32_t phys_start,
                                      uint32_t flags);
 
 /*
+ * paging_map_kernel_range: map physical device memory at a chosen kernel
+ * virtual address in the shared kernel page directory.
+ *
+ * This is for MMIO apertures whose physical addresses would collide with the
+ * higher-half direct map if identity-mapped. PG_USER is stripped.
+ */
+int paging_map_kernel_range(uint32_t virt_start,
+                            uint32_t phys_start,
+                            uint32_t byte_len,
+                            uint32_t flags);
+
+/*
  * paging_mark_range_write_combining: switch a kernel-mapped physical range's
  * cacheability to write-combining (WC) so successive writes — such as every
  * memcpy that flushes the back buffer to the visible framebuffer — coalesce
@@ -85,6 +97,8 @@ int paging_identity_map_kernel_range(uint32_t phys_start,
  * for any page in the range is not present.
  */
 int paging_mark_range_write_combining(uint32_t phys_start, uint32_t byte_len);
+int paging_mark_kernel_range_write_combining(uint32_t virt_start,
+                                             uint32_t byte_len);
 
 /* Implemented in paging.asm — CR3/CR0 cannot be written from plain C */
 extern void paging_load_cr3(uint32_t pd_phys);

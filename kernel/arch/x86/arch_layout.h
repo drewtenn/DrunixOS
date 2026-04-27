@@ -9,6 +9,8 @@
 #define ARCH_HEAP_END 0x0009F000u
 
 #define ARCH_KERNEL_DIRECT_MAP_END ((uintptr_t)0x10000000u)
+#define ARCH_KERNEL_DEVICE_MAP_BASE ((uintptr_t)0xB0000000u)
+#define ARCH_KERNEL_DEVICE_MAP_END ((uintptr_t)0xC0000000u)
 #define ARCH_KERNEL_VIRT_BASE ((uintptr_t)0xC0000000u)
 #define ARCH_KERNEL_DIRECT_PHYS_MAX ((uintptr_t)0x40000000u)
 #define ARCH_KERNEL_PHYS_TO_VIRT(p) ((uintptr_t)(p) + ARCH_KERNEL_VIRT_BASE)
