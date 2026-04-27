@@ -649,6 +649,41 @@ static void test_vma_map_anonymous_places_regions_below_stack(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc, proc.vmas[1].kind, VMA_KIND_GENERIC);
 }
 
+static void test_vma_file_metadata_survives_address_space_copy(ktest_case_t *tc)
+{
+	static process_t parent;
+	static process_t child;
+	vfs_file_ref_t ref;
+	uint32_t addr = 0;
+	vm_area_t *copied;
+
+	ref.mount_id = 7u;
+	ref.inode_num = 0x55AAu;
+	init_vma_proc(&parent);
+	k_memset(&child, 0, sizeof(child));
+
+	KTEST_ASSERT_EQ(tc,
+	                vma_map_file_private(&parent,
+	                                     0,
+	                                     PAGE_SIZE,
+	                                     VMA_FLAG_READ | VMA_FLAG_PRIVATE,
+	                                     ref,
+	                                     0x2000u,
+	                                     0x1234u,
+	                                     &addr),
+	                0u);
+
+	k_memcpy(child.vmas, parent.vmas, sizeof(parent.vmas));
+	child.vma_count = parent.vma_count;
+
+	copied = vma_find(&child, addr);
+	KTEST_ASSERT_NOT_NULL(tc, copied);
+	KTEST_EXPECT_EQ(tc, copied->file_offset, 0x2000u);
+	KTEST_EXPECT_EQ(tc, copied->file_size, 0x1234u);
+	KTEST_EXPECT_EQ(tc, copied->file_ref.mount_id, 7u);
+	KTEST_EXPECT_EQ(tc, copied->file_ref.inode_num, 0x55AAu);
+}
+
 static void test_vma_unmap_range_splits_generic_mapping(ktest_case_t *tc)
 {
 	static process_t proc;
@@ -669,6 +704,40 @@ static void test_vma_unmap_range_splits_generic_mapping(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc, proc.vmas[1].end, 0x80001000u);
 	KTEST_EXPECT_EQ(tc, proc.vmas[2].start, 0x80002000u);
 	KTEST_EXPECT_EQ(tc, proc.vmas[2].end, 0x80003000u);
+}
+
+static void test_vma_unmap_range_advances_file_offset_for_right_split(
+    ktest_case_t *tc)
+{
+	static process_t proc;
+	vfs_file_ref_t ref;
+	uint32_t addr = 0;
+	vm_area_t *right;
+
+	ref.mount_id = 3u;
+	ref.inode_num = 0x7001u;
+	init_vma_proc(&proc);
+
+	KTEST_ASSERT_EQ(tc,
+	                vma_map_file_private(&proc,
+	                                     0,
+	                                     3u * PAGE_SIZE,
+	                                     VMA_FLAG_READ | VMA_FLAG_PRIVATE,
+	                                     ref,
+	                                     0x3000u,
+	                                     0x9000u,
+	                                     &addr),
+	                0u);
+
+	KTEST_ASSERT_EQ(tc, vma_unmap_range(&proc, addr, addr + PAGE_SIZE), 0u);
+
+	right = vma_find(&proc, addr + PAGE_SIZE);
+	KTEST_ASSERT_NOT_NULL(tc, right);
+	KTEST_EXPECT_EQ(tc, right->start, addr + PAGE_SIZE);
+	KTEST_EXPECT_EQ(tc, right->file_offset, 0x3000u + PAGE_SIZE);
+	KTEST_EXPECT_EQ(tc, right->file_size, 0x9000u);
+	KTEST_EXPECT_EQ(tc, right->file_ref.mount_id, 3u);
+	KTEST_EXPECT_EQ(tc, right->file_ref.inode_num, 0x7001u);
 }
 
 static void test_vma_unmap_range_rejects_heap_or_stack(ktest_case_t *tc)
@@ -716,6 +785,64 @@ test_vma_protect_range_splits_and_requires_full_coverage(ktest_case_t *tc)
 	                      0x80005000u,
 	                      VMA_FLAG_READ | VMA_FLAG_ANON | VMA_FLAG_PRIVATE),
 	    (uint32_t)-1);
+}
+
+static void
+test_vma_protect_range_preserves_file_backing_and_offsets(ktest_case_t *tc)
+{
+	static process_t proc;
+	vfs_file_ref_t ref;
+	uint32_t addr = 0;
+	vm_area_t *left;
+	vm_area_t *protected;
+	vm_area_t *right;
+
+	ref.mount_id = 4u;
+	ref.inode_num = 0x8002u;
+	init_vma_proc(&proc);
+
+	KTEST_ASSERT_EQ(tc,
+	                vma_map_file_private(&proc,
+	                                     0,
+	                                     3u * PAGE_SIZE,
+	                                     VMA_FLAG_READ | VMA_FLAG_WRITE |
+	                                         VMA_FLAG_PRIVATE,
+	                                     ref,
+	                                     0x4000u,
+	                                     0xA000u,
+	                                     &addr),
+	                0u);
+
+	KTEST_ASSERT_EQ(
+	    tc,
+	    vma_protect_range(&proc,
+	                      addr + PAGE_SIZE,
+	                      addr + 2u * PAGE_SIZE,
+	                      VMA_FLAG_READ | VMA_FLAG_ANON | VMA_FLAG_PRIVATE),
+	    0u);
+
+	left = vma_find(&proc, addr);
+	protected = vma_find(&proc, addr + PAGE_SIZE);
+	right = vma_find(&proc, addr + 2u * PAGE_SIZE);
+	KTEST_ASSERT_NOT_NULL(tc, left);
+	KTEST_ASSERT_NOT_NULL(tc, protected);
+	KTEST_ASSERT_NOT_NULL(tc, right);
+	KTEST_EXPECT_EQ(tc, left->file_offset, 0x4000u);
+	KTEST_EXPECT_EQ(tc, protected->file_offset, 0x4000u + PAGE_SIZE);
+	KTEST_EXPECT_EQ(tc, right->file_offset, 0x4000u + 2u * PAGE_SIZE);
+	KTEST_EXPECT_EQ(tc,
+	                left->flags,
+	                VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_PRIVATE);
+	KTEST_EXPECT_EQ(tc,
+	                protected->flags,
+	                VMA_FLAG_READ | VMA_FLAG_PRIVATE);
+	KTEST_EXPECT_EQ(tc,
+	                right->flags,
+	                VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_PRIVATE);
+	KTEST_EXPECT_EQ(tc, protected->file_ref.mount_id, 4u);
+	KTEST_EXPECT_EQ(tc, protected->file_ref.inode_num, 0x8002u);
+	KTEST_EXPECT_EQ(tc, right->file_ref.mount_id, 4u);
+	KTEST_EXPECT_EQ(tc, right->file_ref.inode_num, 0x8002u);
 }
 
 static void test_mem_forensics_collects_basic_region_totals(ktest_case_t *tc)
@@ -2115,9 +2242,12 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_vma_add_keeps_regions_sorted_and_findable),
     KTEST_CASE(test_vma_add_rejects_overlapping_regions),
     KTEST_CASE(test_vma_map_anonymous_places_regions_below_stack),
+    KTEST_CASE(test_vma_file_metadata_survives_address_space_copy),
     KTEST_CASE(test_vma_unmap_range_splits_generic_mapping),
+    KTEST_CASE(test_vma_unmap_range_advances_file_offset_for_right_split),
     KTEST_CASE(test_vma_unmap_range_rejects_heap_or_stack),
     KTEST_CASE(test_vma_protect_range_splits_and_requires_full_coverage),
+    KTEST_CASE(test_vma_protect_range_preserves_file_backing_and_offsets),
     KTEST_CASE(test_mem_forensics_collects_basic_region_totals),
     KTEST_CASE(test_mem_forensics_core_note_sizes_are_nonzero),
     KTEST_CASE(test_core_dump_writes_drunix_notes_in_order),
