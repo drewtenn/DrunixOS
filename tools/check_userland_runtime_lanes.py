@@ -7,6 +7,10 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 USER = ROOT / "user"
+APPS = USER / "apps"
+RUNTIME = USER / "runtime"
+THIRD_PARTY = USER / "third_party"
+LINKER = USER / "linker"
 MAKEFILE = USER / "Makefile"
 PROGRAMS_MK = USER / "programs.mk"
 ROOT_MAKEFILE = ROOT / "Makefile"
@@ -107,6 +111,27 @@ def main():
         add_failure(failures, "top-level Makefile must include user/programs.mk for disk image packing")
     if not re.search(r"USER_PROGS\s*:?\=\s*\$\(PROGS\)", root_text):
         add_failure(failures, "top-level Makefile must derive USER_PROGS from the shared user/programs.mk manifest")
+    required_root_patterns = {
+        "USER_BUILD_ROOT": r"^USER_BUILD_ROOT[ \t]*:=[ \t]*build/user/\$\(ARCH\)[ \t]*$",
+        "USER_BIN_DIR": r"^USER_BIN_DIR[ \t]*:=[ \t]*\$\(USER_BUILD_ROOT\)/bin[ \t]*$",
+        "USER_BINS": r"^USER_BINS[ \t]*:=[ \t]*\$\(addprefix \$\(USER_BIN_DIR\)/,\$\(USER_PROGS\)\)[ \t]*$",
+        "DISK_FILES": r"^DISK_FILES[ \t]*:=[ \t]*\$\(foreach prog,\$\(USER_PROGS\),\$\(USER_BIN_DIR\)/\$\(prog\) bin/\$\(prog\)\)[ \t]*$",
+    }
+    for label, pattern in required_root_patterns.items():
+        if not re.search(pattern, root_text, re.MULTILINE):
+            add_failure(failures, f"top-level Makefile must define {label} for build/user/<arch> artifacts")
+
+    required_user_patterns = {
+        "USER_ARCH": r"^USER_ARCH[ \t]*\?=[ \t]*x86[ \t]*$",
+        "BUILD_ROOT": r"^BUILD_ROOT[ \t]*\?=[ \t]*\.\./build/user/\$\(USER_ARCH\)[ \t]*$",
+        "BIN_DIR": r"^BIN_DIR[ \t]*:=[ \t]*\$\(BUILD_ROOT\)/bin[ \t]*$",
+        "OBJ_DIR": r"^OBJ_DIR[ \t]*:=[ \t]*\$\(BUILD_ROOT\)/obj[ \t]*$",
+        "RUNTIME_DIR": r"^RUNTIME_DIR[ \t]*:=[ \t]*\$\(BUILD_ROOT\)/runtime[ \t]*$",
+        "LINKER_DIR": r"^LINKER_DIR[ \t]*:=[ \t]*\$\(BUILD_ROOT\)/linker[ \t]*$",
+    }
+    for label, pattern in required_user_patterns.items():
+        if not re.search(pattern, makefile_text, re.MULTILINE):
+            add_failure(failures, f"user/Makefile must define {label} for out-of-tree artifacts")
     forbidden_gcc_layout = {
         "user/gcc usr/bin/gcc",
         "user/gcc usr/bin/i686-linux-musl-gcc",
@@ -129,21 +154,36 @@ def main():
     if "$(C_RUNTIME_OBJS)" not in cxx_link or "$(CXX_RUNTIME_OBJS)" not in cxx_link:
         add_failure(failures, "CXX_LINK_OBJS must include both C and C++ runtime objects")
 
+    required_dirs = {
+        "user/apps": APPS,
+        "user/runtime": RUNTIME,
+        "user/third_party": THIRD_PARTY,
+        "user/linker": LINKER,
+    }
+    for label, path in required_dirs.items():
+        if not path.is_dir():
+            add_failure(failures, f"{label} directory is required")
+
+    if not (LINKER / "user.ld.in").exists():
+        add_failure(failures, "linker template must live at user/linker/user.ld.in")
+    if (USER / "user.ld.in").exists():
+        add_failure(failures, "linker template must not remain at user/user.ld.in")
+
     for prog in c_progs:
-        if not (USER / f"{prog}.c").exists():
-            add_failure(failures, f"C program missing C source: user/{prog}.c")
-        if (USER / f"{prog}.cpp").exists():
-            add_failure(failures, f"C program must not also have C++ source: user/{prog}.cpp")
+        if not (APPS / f"{prog}.c").exists():
+            add_failure(failures, f"C program missing C source: user/apps/{prog}.c")
+        if (APPS / f"{prog}.cpp").exists():
+            add_failure(failures, f"C program must not also have C++ source: user/apps/{prog}.cpp")
 
     for prog in cxx_progs:
-        if not (USER / f"{prog}.cpp").exists():
-            add_failure(failures, f"C++ program missing C++ source: user/{prog}.cpp")
-        if (USER / f"{prog}.c").exists():
-            add_failure(failures, f"C++ program must not also have C source: user/{prog}.c")
+        if not (APPS / f"{prog}.cpp").exists():
+            add_failure(failures, f"C++ program missing C++ source: user/apps/{prog}.cpp")
+        if (APPS / f"{prog}.c").exists():
+            add_failure(failures, f"C++ program must not also have C source: user/apps/{prog}.c")
 
     for prog in linux_progs:
-        if (USER / f"{prog}.cpp").exists():
-            add_failure(failures, f"Linux i386 smoke program must not use Drunix C++ runtime sources: user/{prog}.cpp")
+        if (APPS / f"{prog}.cpp").exists():
+            add_failure(failures, f"Linux i386 smoke program must not use Drunix C++ runtime sources: user/apps/{prog}.cpp")
 
     if failures:
         for failure in failures:
