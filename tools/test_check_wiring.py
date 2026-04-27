@@ -21,6 +21,20 @@ def required_check_commands(arch: str) -> tuple[str, ...]:
     )
 
 
+def required_test_all_commands(arch: str) -> tuple[str, ...]:
+    if arch == "arm64":
+        return (
+            "python3 tools/test_arm64_ktest.py",
+            "python3 tools/test_arm64_halt.py",
+            "python3 tools/test_arm64_threadtest.py",
+        )
+    return (
+        "make test-headless",
+        "make test-halt",
+        "make test-threadtest",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--arch", choices=("arm64", "x86"), required=True)
@@ -57,6 +71,28 @@ def main() -> int:
 
     if re.search(rf"\bmake(?:\[\d+\])?\s+ARCH={args.arch}\s+check\s*$", output, re.MULTILINE):
         print(f"make ARCH={args.arch} test-headless must not delegate back to check")
+        return 1
+
+    result = subprocess.run(
+        ["make", "-n", f"ARCH={args.arch}", "test-all"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    output = result.stdout + result.stderr
+    if result.returncode != 0:
+        print(output, end="")
+        return result.returncode
+
+    if re.search(rf"\bmake(?:\[\d+\])?\s+ARCH={args.arch}\s+check\s*$", output, re.MULTILINE):
+        print(f"make ARCH={args.arch} test-all must not delegate back to check")
+        return 1
+
+    missing = [cmd for cmd in required_test_all_commands(args.arch) if cmd not in output]
+    if missing:
+        print(f"make ARCH={args.arch} test-all is missing required wiring:")
+        for cmd in missing:
+            print(f"  {cmd}")
         return 1
 
     print(f"{args.arch} check target shape includes guard targets")

@@ -71,29 +71,29 @@ TASK5_REQUIRED = {
         r"\barm64_rootfs_end\b",
         r'\.incbin\s+"build/arm64-root\.fs"',
     ],
-    ROOT / "user/arm64init.c": [
+    ROOT / "user/apps/arm64init.c": [
         r"\barm64_sys_write\s*\(",
         r"ARM64 init: entered\\n",
         r"ARM64 init: pass\\n",
     ],
-    ROOT / "user/lib/crt0_arm64.S": [
+    ROOT / "user/runtime/crt0_arm64.S": [
         r"\b_start\b",
         r"\b__drunix_run_constructors\b",
         r"\b__drunix_run_destructors\b",
         r"\bbl\s+sys_exit\b",
     ],
-    ROOT / "user/lib/syscall_arm64.c": [
+    ROOT / "user/runtime/syscall_arm64.c": [
         r"\barm64_sys_write\s*\(",
         # The svc trampolines used to live here; they now live in
-        # user/lib/syscall_arm64_asm.h and are static-inline so each
+        # user/runtime/syscall_arm64_asm.h and are static-inline so each
         # caller still emits the same code in-place.
         r'#include\s+"syscall_arm64_asm\.h"',
     ],
-    ROOT / "user/lib/syscall_arm64_asm.h": [
+    ROOT / "user/runtime/syscall_arm64_asm.h": [
         r"\bregister\s+long\s+x8\b",
         r"\bsvc\s+#0\b",
     ],
-    ROOT / "user/lib/syscall_arm64.h": [
+    ROOT / "user/runtime/syscall_arm64.h": [
         r"\barm64_sys_write\s*\(",
     ],
     ROOT / "kernel/arch/arm64/arch.mk": [

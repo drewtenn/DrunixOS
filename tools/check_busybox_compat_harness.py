@@ -9,7 +9,7 @@ import sys
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-RUNNER = ROOT / "user" / "bbcompat.c"
+BB_COMPAT = ROOT / "user" / "apps" / "bbcompat.c"
 MAKEFILE = ROOT / "Makefile"
 USER_MAKEFILE = ROOT / "user" / "Makefile"
 PROGRAMS_MK = ROOT / "user" / "programs.mk"
@@ -28,10 +28,10 @@ def require(pattern: str, text: str, message: str) -> None:
 
 
 def main() -> int:
-    if not RUNNER.exists():
-        fail("missing user/bbcompat.c runner")
+    if not BB_COMPAT.exists():
+        fail("missing user/apps/bbcompat.c runner")
 
-    runner = RUNNER.read_text()
+    runner = BB_COMPAT.read_text()
     makefile = MAKEFILE.read_text()
     user_makefile = USER_MAKEFILE.read_text()
     programs_mk = PROGRAMS_MK.read_text()
@@ -40,7 +40,7 @@ def main() -> int:
 
     cases = re.findall(r"^\s*BB_CASE\(", runner, flags=re.M)
     if len(cases) < 50:
-        fail(f"user/bbcompat.c must define at least 50 BB_CASE entries, got {len(cases)}")
+        fail(f"user/apps/bbcompat.c must define at least 50 BB_CASE entries, got {len(cases)}")
 
     require(
         r"include\s+programs\.mk",

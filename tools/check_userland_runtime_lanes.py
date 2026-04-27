@@ -167,7 +167,7 @@ def main():
     if not (LINKER / "user.ld.in").exists():
         add_failure(failures, "linker template must live at user/linker/user.ld.in")
     if (USER / "user.ld.in").exists():
-        add_failure(failures, "linker template must not remain at user/user.ld.in")
+        add_failure(failures, "legacy flat linker template must not remain under user")
 
     for prog in c_progs:
         if not (APPS / f"{prog}.c").exists():

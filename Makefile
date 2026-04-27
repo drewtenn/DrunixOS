@@ -10,7 +10,7 @@ CLANG_FORMAT ?= clang-format
 CLANG_TIDY ?= clang-tidy
 CPPCHECK ?= cppcheck
 SPARSE ?= sparse
-SPARSEFLAGS ?= -Wno-non-pointer-null -nostdinc -I tools/sparse-include -I user/lib
+SPARSEFLAGS ?= -Wno-non-pointer-null -nostdinc -I tools/sparse-include -I user/runtime
 SCAN_FAIL ?= 1
 LINUX_I386_CC ?= i486-linux-musl-gcc
 LINUX_I386_CROSS_COMPILE ?= i486-linux-musl-
@@ -135,6 +135,8 @@ endif
 	echo "$(X86_SERIAL_CONSOLE)" | cmp -s - $@ || echo "$(X86_SERIAL_CONSOLE)" > $@
 .include-busybox-flag: FORCE
 	echo "$(INCLUDE_BUSYBOX)" | cmp -s - $@ || echo "$(INCLUDE_BUSYBOX)" > $@
+.disk-layout-flag: FORCE
+	printf '%s\n%s\n' "$(ARCH)" "$(ROOT_FS)" | cmp -s - $@ || printf '%s\n%s\n' "$(ARCH)" "$(ROOT_FS)" > $@
 .no-desktop-flag: FORCE
 	echo "$(NO_DESKTOP)" | cmp -s - $@ || echo "$(NO_DESKTOP)" > $@
 .vga-text-flag: FORCE
@@ -177,17 +179,19 @@ BUSYBOX_DISK_FILES := $(BUSYBOX_X86_BIN) bin/busybox
 BUSYBOX_DISK_DEPS := $(BUSYBOX_X86_BIN)
 endif
 endif
-USER_PROGS    := $(PROGS)
-USER_BINS     := $(addprefix user/,$(USER_PROGS))
+USER_PROGS := $(PROGS)
+USER_BUILD_ROOT := build/user/$(ARCH)
+USER_BIN_DIR := $(USER_BUILD_ROOT)/bin
+USER_BINS := $(addprefix $(USER_BIN_DIR)/,$(USER_PROGS))
 # bin/desktop is the user-space compositor.  Even though it is listed in
 # $(PROGS) the foreach below already drops it on the disk at /bin/desktop;
 # no separate disk-files entry is required.
-DISK_FILES    := $(foreach prog,$(USER_PROGS),user/$(prog) bin/$(prog)) \
-                 tools/hello.txt hello.txt \
-                 tools/readme.txt readme.txt \
-                 tools/wallpaper.jpg etc/wallpaper.jpg \
-                 $(BUSYBOX_DISK_FILES) \
-                 $(EXTRA_DISK_FILES)
+DISK_FILES := $(foreach prog,$(USER_PROGS),$(USER_BIN_DIR)/$(prog) bin/$(prog))
+DISK_FILES += tools/hello.txt hello.txt
+DISK_FILES += tools/readme.txt readme.txt
+DISK_FILES += tools/wallpaper.jpg etc/wallpaper.jpg
+DISK_FILES += $(BUSYBOX_DISK_FILES)
+DISK_FILES += $(EXTRA_DISK_FILES)
 LOG_DIR       := logs
 IMG_DIR       := img
 ROOT_DISK_IMG := $(IMG_DIR)/disk.img
@@ -202,7 +206,8 @@ TEST_LOGS     := $(foreach suffix,$(TEST_SUFFIXES),$(LOG_DIR)/serial-$(suffix).l
 SENTINELS     := .ktest-flag .double-fault-test-flag .klog-debugcon-flag \
                  .mouse-speed-flag .init-program-flag .no-desktop-flag \
                  .vga-text-flag .disk-sectors-flag .arm64-smoke-fallback-flag \
-                 .arm64-halt-test-flag .x86-serial-console-flag .include-busybox-flag
+                 .arm64-halt-test-flag .x86-serial-console-flag \
+                 .include-busybox-flag .disk-layout-flag
 
 QEMU_DISKS    = -drive format=raw,file=$(1),if=ide,index=0 \
                  -drive format=raw,file=$(2),if=ide,index=1
@@ -292,23 +297,12 @@ kernel-vga.elf: $(KOBJS_VGA) $(KTOBJS)
 	$(LD) -m elf_i386 -o $@ -T kernel/arch/x86/linker.ld $(KOBJS_VGA) $(KTOBJS)
 
 # ─── User programs ───────────────────────────────────────────────────────────
-# Declared phony so make always delegates to the user subdirectory's own
-# dependency tracking — changes to user/*.c or user/lib/* are picked up
-# without needing a manual clean.
-.PHONY: $(USER_BINS)
-$(USER_BINS): user/user.ld
-	$(MAKE) -C user $(@F)
-
-# Generated linker scripts.  user/user.ld.in is the single source of truth;
-# the two arches differ only in load address.
-user/user.ld: user/user.ld.in Makefile
-	sed 's|@USER_LOAD_ADDR@|$(X86_USER_LOAD_ADDR)|' $< > $@
-
-user/user_arm64.ld: user/user.ld.in Makefile
-	sed 's|@USER_LOAD_ADDR@|0x02000000|' $< > $@
-
-user/lib/libc.a user/lib/tcc_crt0.o:
-	$(MAKE) -C user $(@F:%=lib/%)
+# Depend on FORCE so make always delegates to the user subdirectory's own
+# dependency tracking while keeping concrete build outputs out of .PHONY.
+ifneq ($(ARCH),arm64)
+$(USER_BINS): FORCE
+	$(MAKE) -C user USER_ARCH=$(ARCH) USER_LOAD_ADDR=$(X86_USER_LOAD_ADDR) ../$@
+endif
 
 # ─── Hard-disk images ────────────────────────────────────────────────────────
 # disk.img is the primary root disk.  On x86 it is the ATA master; on arm64 it
@@ -317,26 +311,26 @@ user/lib/libc.a user/lib/tcc_crt0.o:
 # as DUFS instead.
 ifeq ($(ARCH),arm64)
 ifeq ($(ROOT_FS),dufs)
-disk.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf $(ARM_BUSYBOX_ROOTFS_DEPS) tools/hello.txt tools/readme.txt tools/wallpaper.jpg tools/mkfs.py .disk-sectors-flag .include-busybox-flag
+disk.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf $(ARM_BUSYBOX_ROOTFS_DEPS) tools/hello.txt tools/readme.txt tools/wallpaper.jpg tools/mkfs.py .disk-sectors-flag .include-busybox-flag .disk-layout-flag
 	$(PYTHON) tools/mkfs.py $@ $(FS_SECTORS) $(ARM_USER_ROOTFS_FILES)
-$(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
+$(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag .disk-layout-flag | $(IMG_DIR)
 	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0xDA
 else
-disk.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf $(ARM_BUSYBOX_ROOTFS_DEPS) tools/hello.txt tools/readme.txt tools/wallpaper.jpg tools/mkext3.py .disk-sectors-flag .include-busybox-flag
+disk.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf $(ARM_BUSYBOX_ROOTFS_DEPS) tools/hello.txt tools/readme.txt tools/wallpaper.jpg tools/mkext3.py .disk-sectors-flag .include-busybox-flag .disk-layout-flag
 	$(PYTHON) tools/mkext3.py $@ $(FS_SECTORS) $(ARM_USER_ROOTFS_FILES)
-$(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
+$(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag .disk-layout-flag | $(IMG_DIR)
 	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0x83
 endif
 else
 ifeq ($(ROOT_FS),dufs)
-disk.fs: $(USER_BINS) $(BUSYBOX_DISK_DEPS) tools/hello.txt tools/readme.txt tools/wallpaper.jpg tools/mkfs.py .disk-sectors-flag .include-busybox-flag
+disk.fs: $(USER_BINS) $(BUSYBOX_DISK_DEPS) tools/hello.txt tools/readme.txt tools/wallpaper.jpg tools/mkfs.py .disk-sectors-flag .include-busybox-flag .disk-layout-flag
 	$(PYTHON) tools/mkfs.py $@ $(FS_SECTORS) $(DISK_FILES)
-$(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
+$(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag .disk-layout-flag | $(IMG_DIR)
 	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0xDA
 else
-disk.fs: $(USER_BINS) $(BUSYBOX_DISK_DEPS) tools/hello.txt tools/readme.txt tools/wallpaper.jpg tools/mkext3.py .disk-sectors-flag .include-busybox-flag
+disk.fs: $(USER_BINS) $(BUSYBOX_DISK_DEPS) tools/hello.txt tools/readme.txt tools/wallpaper.jpg tools/mkext3.py .disk-sectors-flag .include-busybox-flag .disk-layout-flag
 	$(PYTHON) tools/mkext3.py $@ $(FS_SECTORS) $(DISK_FILES)
-$(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
+$(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag .disk-layout-flag | $(IMG_DIR)
 	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0x83
 endif
 endif
@@ -472,7 +466,7 @@ SCAN_USER_C_RUNTIME_OBJS := lib/cxx_init.o lib/syscall.o lib/malloc.o \
                             lib/string.o lib/ctype.o lib/stdlib.o \
                             lib/stdio.o lib/unistd.o lib/time.o
 
-compile_commands.json: tools/generate_compile_commands.py kernel/objects.mk user/programs.mk user/Makefile Makefile
+compile_commands.json: tools/generate_compile_commands.py kernel/objects.mk user/programs.mk user/Makefile Makefile FORCE
 	$(PYTHON) tools/generate_compile_commands.py \
 		--root=. \
 		--output=$@ \
@@ -481,7 +475,9 @@ compile_commands.json: tools/generate_compile_commands.py kernel/objects.mk user
 		--kernel-cflags="$(CFLAGS)" \
 		--kernel-inc="$(INC)" \
 		--user-cc="$(CC)" \
-		--user-cflags="-m32 -ffreestanding -nostdlib -fno-pie -no-pie -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall -Werror" \
+		--user-cflags="-m32 -ffreestanding -nostdlib -fno-pie -no-pie -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall -Werror -I user/runtime -I shared -I user/apps" \
+		--user-build-root="$(USER_BUILD_ROOT)" \
+		--user-arch="$(ARCH)" \
 		--linux-cc="$(LINUX_I386_CC)" \
 		--linux-cflags="$(LINUX_CFLAGS)" \
 		--user-c-runtime-objs="$(SCAN_USER_C_RUNTIME_OBJS)" \
@@ -572,17 +568,17 @@ debug: os.iso $(DUFS_IMG)
 
 # `debug-user` — like `debug` but also loads symbols for a user-space program
 #                so you can set breakpoints and step through user code.
-#                The binary is expected at user/$(APP); symbols are added at the
+#                The binary is expected at $(USER_BIN_DIR)/$(APP); symbols are added at the
 #                ELF preferred load address (offset 0).
 #
 #                Usage:  make debug-user APP=shell
 #
 #                If the program is loaded at a non-default address by the kernel
-#                ELF loader, adjust with GDB's `add-symbol-file user/<app> <addr>`
+#                ELF loader, adjust with GDB's `add-symbol-file $(USER_BIN_DIR)/<app> <addr>`
 #                after connecting.
 debug-user: os.iso $(DUFS_IMG)
 	@test -n "$(APP)" || (echo "Usage: make debug-user APP=<program name>  (e.g. APP=shell)"; exit 1)
-	$(call qemu_debug,-ex "add-symbol-file user/$(APP) $(X86_USER_LOAD_ADDR)")
+	$(call qemu_debug,-ex "add-symbol-file $(USER_BIN_DIR)/$(APP) $(X86_USER_LOAD_ADDR)")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RUN + FRESH FILESYSTEM  (rebuild img/disk.img before booting)
@@ -623,7 +619,7 @@ clean:
 	find kernel -name '*.d' -delete
 	$(RM) *.elf kernel8.img core.* disk.fs dufs.fs disk-ext3w.fs disk-ext3-host.fs $(ROOT_DISK_IMG) $(DUFS_IMG) $(TEST_IMAGES) os.iso $(ISO_KERNEL) $(ISO_KERNEL_VGA) iso/boot/grub/grub.cfg "$(PDF)" "$(EPUB)" $(SENTINELS) $(ARM_SERIAL_LOG)
 	$(RM) build/arm64init.o build/crt0_arm64.o build/syscall_arm64.o build/arm64init.elf build/arm64-root.fs build/arm64-rootfs-empty
-	$(RM) user/user.ld user/user_arm64.ld
+	rm -rf build/user
 	$(RM) $(RUN_LOGS) $(TEST_LOGS) build/ext3-host.txt
 	rm -rf build/busybox
 	rm -rf build/tcc
@@ -689,8 +685,7 @@ test-fresh:
 
 test-headless: check-kernel-unit check-shared-shell check-userspace-smoke check-filesystem-init check-syscall-parity
 
-test-all:
-	$(MAKE) ARCH=$(ARCH) check
+test-all: test-headless test-halt test-threadtest
 
 run-grub-menu run-stdio: run
 
@@ -797,7 +792,7 @@ debug: kernel-arm64.elf
 
 debug-user: kernel-arm64.elf $(ROOT_DISK_IMG)
 	@test -n "$(APP)" || (echo "Usage: make debug-user APP=<program name>  (e.g. APP=shell)"; exit 1)
-	$(call arm64_qemu_debug,-ex "add-symbol-file build/arm64-user/$(APP) 0x02000000")
+	$(call arm64_qemu_debug,-ex "add-symbol-file $(ARM_USER_BIN_DIR)/$(APP) 0x02000000")
 
 debug-fresh: $(ROOT_DISK_IMG)
 	$(MAKE) ARCH=$(ARCH) debug
@@ -810,15 +805,15 @@ test-threadtest:
 
 ARM_SCAN_FORMAT_SOURCES := $(shell find kernel/arch/arm64 -type f \( -name '*.c' -o -name '*.h' \) -print | sort)
 ARM_SCAN_KERNEL_OBJS := $(ARM_KOBJS) $(ARM_SHARED_KOBJS)
-ARM_SCAN_USER_C_RUNTIME_OBJS := $(ARM_USER_BUILD_DIR)/lib/cxx_init.o \
-                                $(ARM_USER_BUILD_DIR)/lib/syscall.o \
-                                $(ARM_USER_BUILD_DIR)/lib/malloc.o \
-                                $(ARM_USER_BUILD_DIR)/lib/string.o \
-                                $(ARM_USER_BUILD_DIR)/lib/ctype.o \
-                                $(ARM_USER_BUILD_DIR)/lib/stdlib.o \
-                                $(ARM_USER_BUILD_DIR)/lib/stdio.o \
-                                $(ARM_USER_BUILD_DIR)/lib/unistd.o \
-                                $(ARM_USER_BUILD_DIR)/lib/time.o
+ARM_SCAN_USER_C_RUNTIME_OBJS := $(ARM_USER_RUNTIME_OBJ_DIR)/cxx_init.o \
+                                $(ARM_USER_RUNTIME_OBJ_DIR)/syscall.o \
+                                $(ARM_USER_RUNTIME_OBJ_DIR)/malloc.o \
+                                $(ARM_USER_RUNTIME_OBJ_DIR)/string.o \
+                                $(ARM_USER_RUNTIME_OBJ_DIR)/ctype.o \
+                                $(ARM_USER_RUNTIME_OBJ_DIR)/stdlib.o \
+                                $(ARM_USER_RUNTIME_OBJ_DIR)/stdio.o \
+                                $(ARM_USER_RUNTIME_OBJ_DIR)/unistd.o \
+                                $(ARM_USER_RUNTIME_OBJ_DIR)/time.o
 ARM_SPARSE_CFLAGS := -D__aarch64__ -DDRUNIX_ARM64_VGA=1 \
                      -DDRUNIX_INIT_PROGRAM=\"$(INIT_PROGRAM)\" \
                      -DDRUNIX_INIT_ARG0=\"$(INIT_ARG0)\" \
@@ -827,7 +822,7 @@ ARM_SPARSE_CFLAGS := -D__aarch64__ -DDRUNIX_ARM64_VGA=1 \
                      -DDRUNIX_ARM64_SMOKE_FALLBACK=$(ARM64_SMOKE_FALLBACK) \
                      -DDRUNIX_ARM64_HALT_TEST=$(ARM64_HALT_TEST)
 
-compile_commands.json: tools/generate_compile_commands.py kernel/arch/arm64/arch.mk user/programs.mk user/Makefile Makefile
+compile_commands.json: tools/generate_compile_commands.py kernel/arch/arm64/arch.mk user/programs.mk user/Makefile Makefile FORCE
 	$(PYTHON) tools/generate_compile_commands.py \
 		--root=. \
 		--output=$@ \
@@ -836,7 +831,9 @@ compile_commands.json: tools/generate_compile_commands.py kernel/arch/arm64/arch
 		--kernel-cflags="$(ARM_CFLAGS)" \
 		--kernel-inc="$(ARM_INC)" \
 		--user-cc="$(ARM_CC)" \
-		--user-cflags="$(ARM_USER_CFLAGS) -I user -I user/lib" \
+		--user-cflags="$(ARM_USER_CFLAGS) -I user/apps -I user/runtime" \
+		--user-build-root="$(ARM_USER_BUILD_DIR)" \
+		--user-arch="$(ARCH)" \
 		--linux-cc="$(LINUX_ARM64_CC)" \
 		--linux-cflags="$(LINUX_CFLAGS)" \
 		--user-c-runtime-objs="$(ARM_SCAN_USER_C_RUNTIME_OBJS)" \
@@ -908,7 +905,7 @@ clean:
 	find kernel -name '*.d' -delete
 	$(RM) *.elf kernel8.img core.* disk.fs dufs.fs disk-ext3w.fs disk-ext3-host.fs $(ROOT_DISK_IMG) $(DUFS_IMG) $(TEST_IMAGES) os.iso $(ISO_KERNEL) $(ISO_KERNEL_VGA) iso/boot/grub/grub.cfg "$(PDF)" "$(EPUB)" $(SENTINELS) $(ARM_SERIAL_LOG)
 	$(RM) build/arm64init.o build/crt0_arm64.o build/syscall_arm64.o build/arm64init.elf build/arm64-root.fs build/arm64-rootfs-empty
-	$(RM) user/user.ld user/user_arm64.ld
+	rm -rf build/user
 	$(RM) $(RUN_LOGS) $(TEST_LOGS) build/ext3-host.txt
 	rm -rf build/busybox
 	rm -rf build/tcc

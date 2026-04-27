@@ -51,5 +51,5 @@ When adding a syscall, update:
    returns.
 3. `tools/check_linux_i386_syscall_abi.py` if the syscall is part of the public
    compatibility floor.
-4. `user/linuxabi.c` for direct return/errno semantics.
-5. `user/bbcompat.c` if a BusyBox applet can exercise the behavior naturally.
+4. `user/apps/linuxabi.c` for direct return/errno semantics.
+5. `user/apps/bbcompat.c` if a BusyBox applet can exercise the behavior naturally.

@@ -42,6 +42,7 @@ def main() -> int:
         success_message="arm64 syscall parity check passed",
         build_args=["INIT_PROGRAM=bin/arm64init", "INIT_ARG0=arm64init"],
         timeout=25.0,
+        refresh=True,
     )
 
 
