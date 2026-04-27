@@ -7,9 +7,9 @@
  *
  *   user program
  *       ↓  POSIX spelling (fork, sleep, read, write, pipe, dup2, ...)
- *   user/lib/unistd.c      ← this file
+ *   user/runtime/unistd.c      ← this file
  *       ↓  one-line forwarding calls
- *   user/lib/syscall.c     ← the raw ABI, one wrapper per SYS_* number
+ *   user/runtime/syscall.c     ← the raw ABI, one wrapper per SYS_* number
  *       ↓  int $0x80
  *   kernel/proc/syscall.c
  *

@@ -317,7 +317,7 @@ int sys_mprotect(void *addr, unsigned int length, int prot);
  * i386 nanosleep(2). Returns 0 on full sleep, or the remaining whole seconds
  * if interrupted.
  *
- * The POSIX-style sleep() wrapper lives in user/lib/unistd.h and forwards
+ * The POSIX-style sleep() wrapper lives in user/runtime/unistd.h and forwards
  * here.  Call sys_sleep() directly only if you deliberately want to bypass
  * the libc layer.
  */

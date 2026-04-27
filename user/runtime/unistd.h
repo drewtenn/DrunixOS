@@ -9,7 +9,7 @@
  * unistd.h — POSIX-style convenience layer over the raw INT 0x80 wrappers.
  *
  * Every function in this header is a one-liner that forwards to the
- * matching sys_* symbol in user/lib/syscall.c.  The split exists so that
+ * matching sys_* symbol in user/runtime/syscall.c.  The split exists so that
  * the bottom layer (syscall.{c,h}) stays a pure, self-contained description
  * of the kernel ABI — one wrapper per syscall number, no aliasing — and
  * application code can reach for the familiar POSIX names without knowing

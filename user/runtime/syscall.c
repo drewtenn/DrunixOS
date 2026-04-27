@@ -175,7 +175,7 @@ unsigned int sys_sleep(unsigned int seconds)
 	                 : "memory");
 	return r == 0 ? 0u : (unsigned int)rem.tv_sec;
 }
-/* The POSIX sleep() wrapper lives in user/lib/unistd.c. */
+/* The POSIX sleep() wrapper lives in user/runtime/unistd.c. */
 
 int sys_mkdir(const char *name)
 {

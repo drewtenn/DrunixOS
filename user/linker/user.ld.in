@@ -2,7 +2,7 @@
  * user.ld.in — linker script template for ring-3 user programs.
  *
  * The two arches differ only in load address; this template is rendered
- * to user/user.ld (x86) and user/user_arm64.ld (ARM64,
+ * to build/user/<arch>/linker/user.ld (x86) and user/user_arm64.ld (ARM64,
  * 0x02000000) by the top-level Makefile.  Edit the template, not the
  * generated files.
  */
