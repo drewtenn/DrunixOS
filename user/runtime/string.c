@@ -15,6 +15,7 @@
 #include "string.h"
 #include "malloc.h"
 #include <stddef.h>
+#include <stdint.h>
 
 size_t strlen(const char *s)
 {
@@ -112,6 +113,18 @@ void *memcpy(void *dst, const void *src, size_t n)
 {
 	unsigned char *d = (unsigned char *)dst;
 	const unsigned char *s = (const unsigned char *)src;
+	if ((((uintptr_t)d ^ (uintptr_t)s) & (sizeof(uint32_t) - 1u)) == 0) {
+		while (n > 0 && ((uintptr_t)d & (sizeof(uint32_t) - 1u)) != 0) {
+			*d++ = *s++;
+			n--;
+		}
+		while (n >= sizeof(uint32_t)) {
+			*(uint32_t *)d = *(const uint32_t *)s;
+			d += sizeof(uint32_t);
+			s += sizeof(uint32_t);
+			n -= sizeof(uint32_t);
+		}
+	}
 	while (n--)
 		*d++ = *s++;
 	return dst;
@@ -140,6 +153,19 @@ void *memset(void *s, int c, size_t n)
 {
 	unsigned char *p = (unsigned char *)s;
 	unsigned char v = (unsigned char)c;
+	uint32_t pattern = (uint32_t)v;
+
+	while (n > 0 && ((uintptr_t)p & (sizeof(uint32_t) - 1u)) != 0) {
+		*p++ = v;
+		n--;
+	}
+	pattern |= pattern << 8;
+	pattern |= pattern << 16;
+	while (n >= sizeof(uint32_t)) {
+		*(uint32_t *)p = pattern;
+		p += sizeof(uint32_t);
+		n -= sizeof(uint32_t);
+	}
 	while (n--)
 		*p++ = v;
 	return s;
