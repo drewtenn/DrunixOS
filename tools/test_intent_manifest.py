@@ -264,6 +264,13 @@ X86_DESKTOP_KTESTS = (
     "test_k_memset32_fills_words",
 )
 
+WMDEV_KTESTS = (
+    "test_wmdev_registers_single_server",
+    "test_wmdev_create_window_tracks_owner_and_surface",
+    "test_wmdev_rejects_cross_owner_present",
+    "test_wmdev_event_queue_round_trips_to_owner",
+)
+
 X86_ARCH_KTESTS = (
     "test_sched_record_user_fault_preserves_full_fault_addr",
     "test_user_mapping_rejects_direct_map_addresses",
@@ -911,6 +918,7 @@ INTENTS: tuple[TestIntent, ...] = (
                         "test_wallpaper_cover_crops_wide_source_horizontally",
                     ),
                 ),
+                SourceMarkers("kernel/test/test_wmdev.c", WMDEV_KTESTS),
             ),
             "arm64": (
                 SourceMarkers(
