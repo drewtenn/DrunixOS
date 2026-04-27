@@ -221,6 +221,7 @@ test_shared_vma_map_anonymous_places_regions_below_stack(ktest_case_t *tc)
 	uint32_t addr = 0;
 	uint32_t stack_base =
 	    USER_STACK_TOP - (uint32_t)USER_STACK_MAX_PAGES * PAGE_SIZE;
+	uint32_t mmap_ceiling = stack_base - VM_STACK_GUARD_GAP;
 
 	shared_init_vma_proc(&proc);
 
@@ -232,10 +233,10 @@ test_shared_vma_map_anonymous_places_regions_below_stack(ktest_case_t *tc)
 	                                      VMA_FLAG_ANON | VMA_FLAG_PRIVATE,
 	                                  &addr),
 	                0);
-	KTEST_EXPECT_EQ(tc, addr, stack_base - 0x2000u);
+	KTEST_EXPECT_EQ(tc, addr, mmap_ceiling - 0x2000u);
 	KTEST_EXPECT_EQ(tc, proc.vma_count, 3u);
-	KTEST_EXPECT_EQ(tc, proc.vmas[1].start, stack_base - 0x2000u);
-	KTEST_EXPECT_EQ(tc, proc.vmas[1].end, stack_base);
+	KTEST_EXPECT_EQ(tc, proc.vmas[1].start, mmap_ceiling - 0x2000u);
+	KTEST_EXPECT_EQ(tc, proc.vmas[1].end, mmap_ceiling);
 	KTEST_EXPECT_EQ(tc, proc.vmas[1].kind, VMA_KIND_GENERIC);
 }
 

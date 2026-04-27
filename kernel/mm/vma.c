@@ -7,6 +7,7 @@
 #include "process.h"
 #include "pmm.h"
 #include "kstring.h"
+#include "vm_layout.h"
 
 static vm_area_t *vma_table(struct process *proc)
 {
@@ -286,7 +287,7 @@ int vma_map_anonymous(struct process *proc,
 	if (!proc || !addr_out || length == 0)
 		return -1;
 
-	len = (length + PAGE_SIZE - 1u) & ~(PAGE_SIZE - 1u);
+	len = vm_page_align_up(length);
 	if (len == 0)
 		return -1;
 
@@ -294,10 +295,12 @@ int vma_map_anonymous(struct process *proc,
 	if (!stack_vma)
 		return -1;
 
-	low = (vma_brk_const(proc) + PAGE_SIZE - 1u) & ~(PAGE_SIZE - 1u);
-	if (low < USER_MMAP_MIN)
-		low = USER_MMAP_MIN;
+	low = vm_page_align_up(vma_brk_const(proc));
+	if (low < VM_MMAP_MIN)
+		low = VM_MMAP_MIN;
 	high = stack_vma->start;
+	if (high > VM_STACK_GUARD_GAP)
+		high -= VM_STACK_GUARD_GAP;
 	if (low >= high || len > high - low)
 		return -1;
 
