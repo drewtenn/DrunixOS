@@ -28,6 +28,9 @@ static int g_pat_wc_slot_ready;
 static int g_paging_present_depth;
 static uint32_t g_paging_present_saved_cr3;
 
+#define X86_KERNEL_DIRECT_MAP_PDES \
+	((uint32_t)ARCH_KERNEL_DIRECT_MAP_END / 0x400000u)
+
 static uint32_t paging_read_cr3(void)
 {
 	uint32_t cr3;
@@ -173,12 +176,11 @@ void paging_init(void)
 		pd[i] = 0;
 
 	/*
-     * Identity-map 0 – 128 MB using 32 page tables (each covers 4 MB).
-     * Virtual address == physical address throughout this range, so the
-     * kernel, VGA buffer, stack, and all our structures remain accessible
-     * at the same addresses after paging is enabled.
+     * Identity-map the low kernel direct-map window. Virtual address equals
+     * physical address throughout this range, so the kernel, VGA buffer,
+     * stack, and boot structures remain accessible after paging is enabled.
      */
-	for (int i = 0; i < 32; i++) {
+	for (uint32_t i = 0; i < X86_KERNEL_DIRECT_MAP_PDES; i++) {
 		uint32_t pt_phys = PAGE_TAB_BASE + (uint32_t)i * 0x1000;
 		uint32_t *pt = (uint32_t *)pt_phys;
 

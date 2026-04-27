@@ -874,6 +874,8 @@ INTENTS: tuple[TestIntent, ...] = (
                         "test_terminal_window_hit_tests_title_and_body",
                         "test_terminal_window_hit_tests_controls",
                         "test_taskbar_hit_tests_all_rendered_apps",
+                        "test_wallpaper_cover_crops_square_source_vertically",
+                        "test_wallpaper_cover_crops_wide_source_horizontally",
                     ),
                 ),
             ),

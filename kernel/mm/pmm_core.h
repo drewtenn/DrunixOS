@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define PAGE_SIZE 4096u
-#define PMM_MAX_PAGES 32768u
+#define PMM_MAX_PAGES 65536u
 
 typedef struct {
 	uint32_t base;

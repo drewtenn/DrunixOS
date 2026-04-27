@@ -19,6 +19,7 @@
  */
 
 #include "desktop_font.h"
+#include "desktop_wallpaper.h"
 #include "cursor_sprite.h"
 #include "desktop_window.h"
 #include "kbdmap.h"
@@ -253,6 +254,7 @@ static int try_load_wallpaper_jpeg(const char *path, uint32_t *target)
 	fd = sys_open(path);
 	if (fd < 0)
 		return 0;
+	sys_write("desktop: wallpaper open\n");
 
 	jpeg_buf = (uint8_t *)malloc(jpeg_cap);
 	if (!jpeg_buf) {
@@ -276,12 +278,15 @@ static int try_load_wallpaper_jpeg(const char *path, uint32_t *target)
 		read_total += n;
 	}
 	sys_close(fd);
+	sys_write("desktop: wallpaper read\n");
 	if (read_total < 2)
 		goto out_free;
 
 	njInit();
+	sys_write("desktop: wallpaper decode start\n");
 	if (njDecode(jpeg_buf, read_total) != NJ_OK)
 		goto out_done;
+	sys_write("desktop: wallpaper decode done\n");
 
 	src_w = njGetWidth();
 	src_h = njGetHeight();
@@ -291,27 +296,35 @@ static int try_load_wallpaper_jpeg(const char *path, uint32_t *target)
 		goto out_done;
 
 	for (uint32_t y = 0; y < g_info.height; y++) {
-		uint32_t sy = (y * (uint32_t)src_h) / g_info.height;
-		const uint8_t *srow = rgb + sy * (uint32_t)src_w * (color ? 3u : 1u);
 		uint32_t *drow = target + y * g_pitch_pixels;
 
 		for (uint32_t x = 0; x < g_info.width; x++) {
-			uint32_t sx = (x * (uint32_t)src_w) / g_info.width;
+			drunix_wallpaper_sample_t sample =
+			    drunix_wallpaper_cover_sample((int)x,
+			                                  (int)y,
+			                                  (int)g_info.width,
+			                                  (int)g_info.height,
+			                                  src_w,
+			                                  src_h);
+			const uint8_t *srow =
+			    rgb + (uint32_t)sample.y * (uint32_t)src_w *
+			              (color ? 3u : 1u);
 			uint8_t r;
 			uint8_t g;
 			uint8_t b;
 
 			if (color) {
-				const uint8_t *p = srow + sx * 3u;
+				const uint8_t *p = srow + (uint32_t)sample.x * 3u;
 				r = p[0];
 				g = p[1];
 				b = p[2];
 			} else {
-				r = g = b = srow[sx];
+				r = g = b = srow[sample.x];
 			}
 			drow[x] = pack_rgb(r, g, b);
 		}
 	}
+	sys_write("desktop: wallpaper render done\n");
 	decoded = 1;
 
 out_done:
@@ -920,17 +933,23 @@ static int read_fb_info(void)
 	int read_total = 0;
 	int n;
 
+	sys_write("desktop: fbinfo open start\n");
 	fd = sys_open("/dev/fb0info");
 	if (fd < 0)
 		return -1;
+	sys_write("desktop: fbinfo open done\n");
 	while (read_total < (int)sizeof(g_info)) {
+		sys_write("desktop: fbinfo read start\n");
 		n = sys_read(
 		    fd, (char *)&g_info + read_total, (int)sizeof(g_info) - read_total);
+		sys_write("desktop: fbinfo read done\n");
 		if (n <= 0)
 			break;
 		read_total += n;
 	}
+	sys_write("desktop: fbinfo close start\n");
 	sys_close(fd);
+	sys_write("desktop: fbinfo close done\n");
 	if (read_total != (int)sizeof(g_info))
 		return -1;
 	if (g_info.width == 0 || g_info.height == 0 || g_info.pitch == 0 ||
@@ -1434,37 +1453,49 @@ int main(int argc, char **argv)
 	(void)argc;
 	(void)argv;
 
+	sys_write("desktop: main start\n");
 	if (read_fb_info() != 0) {
 		sys_write("desktop: cannot read /dev/fb0info\n");
 		return 1;
 	}
+	sys_write("desktop: fbinfo ok\n");
 
+	sys_write("desktop: fb open start\n");
 	int fbfd = sys_open_flags("/dev/fb0", SYS_O_RDWR, 0);
 	if (fbfd < 0) {
 		sys_write("desktop: cannot open /dev/fb0\n");
 		return 1;
 	}
+	sys_write("desktop: fb open done\n");
 	g_fb_bytes = g_info.pitch * g_info.height;
+	sys_write("desktop: mmap start\n");
 	g_fb = (uint32_t *)mmap(
 	    0, g_fb_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
 	if (g_fb == MAP_FAILED) {
 		sys_write("desktop: framebuffer mmap failed\n");
 		return 1;
 	}
-	if (sys_display_claim() != 0) {
-		sys_write("desktop: cannot claim display\n");
-		return 1;
-	}
-
+	sys_write("desktop: mmap done\n");
+	sys_write("desktop: scene alloc start\n");
 	g_scene = (uint32_t *)malloc(g_fb_bytes);
 	if (!g_scene) {
 		sys_write("desktop: scene allocation failed\n");
 		return 1;
 	}
+	sys_write("desktop: scene alloc done\n");
 
+	sys_write("desktop: wallpaper alloc start\n");
 	g_wallpaper = (uint32_t *)malloc(g_fb_bytes);
+	sys_write("desktop: wallpaper alloc done\n");
 	if (g_wallpaper)
 		render_wallpaper(g_wallpaper);
+
+	sys_write("desktop: display claim start\n");
+	if (sys_display_claim() != 0) {
+		sys_write("desktop: cannot claim display\n");
+		return 1;
+	}
+	sys_write("desktop: display claim done\n");
 
 	int evt_fds[2];
 	if (sys_pipe(evt_fds) != 0) {

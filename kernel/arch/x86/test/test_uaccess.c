@@ -16,10 +16,10 @@
 #include "task_group.h"
 #include "kstring.h"
 
-#define TEST_IMAGE_START 0x08000000u
-#define TEST_IMAGE_END 0x08009000u
-#define TEST_IMAGE_PAGE 0x08008000u
-#define TEST_BSS_ADDR 0x080086A0u
+#define TEST_IMAGE_START 0x10000000u
+#define TEST_IMAGE_END 0x10009000u
+#define TEST_IMAGE_PAGE 0x10008000u
+#define TEST_BSS_ADDR 0x100086A0u
 #define TEST_STACK_PAGE (USER_STACK_TOP - PAGE_SIZE)
 #define TEST_STACK_ADDR (TEST_STACK_PAGE + 0x120u)
 #define TEST_GROWN_STACK_PAGE (TEST_STACK_PAGE - PAGE_SIZE)
@@ -160,13 +160,13 @@ static void test_copy_from_user_reads_mapped_bytes(ktest_case_t *tc)
 		return;
 	}
 
-	if (!map_user_page(&proc, 0x08040000u, 0x00)) {
+	if (!map_user_page(&proc, 0x10040000u, 0x00)) {
 		KTEST_EXPECT_TRUE(tc, 0);
 		destroy_test_proc(&proc);
 		return;
 	}
 
-	src = mapped_alias(&proc, 0x08040080u);
+	src = mapped_alias(&proc, 0x10040080u);
 	if (!src) {
 		KTEST_EXPECT_NOT_NULL(tc, src);
 		destroy_test_proc(&proc);
@@ -178,7 +178,7 @@ static void test_copy_from_user_reads_mapped_bytes(ktest_case_t *tc)
 	src[3] = 0x44;
 
 	KTEST_EXPECT_EQ(
-	    tc, uaccess_copy_from_user(&proc, buf, 0x08040080u, 4u), 0u);
+	    tc, uaccess_copy_from_user(&proc, buf, 0x10040080u, 4u), 0u);
 	KTEST_EXPECT_EQ(tc, buf[0], 0x11u);
 	KTEST_EXPECT_EQ(tc, buf[1], 0x22u);
 	KTEST_EXPECT_EQ(tc, buf[2], 0x33u);
@@ -193,15 +193,15 @@ static void test_copy_to_user_spans_pages(ktest_case_t *tc)
 	uint8_t src[200];
 	uint8_t *dst0;
 	uint8_t *dst1;
-	uint32_t start = 0x08041000u + PAGE_SIZE - 50u;
+	uint32_t start = 0x10041000u + PAGE_SIZE - 50u;
 
 	if (init_test_proc(&proc) != 0) {
 		KTEST_EXPECT_TRUE(tc, 0);
 		return;
 	}
 
-	if (!map_user_page(&proc, 0x08041000u, 0xAA) ||
-	    !map_user_page(&proc, 0x08042000u, 0xBB)) {
+	if (!map_user_page(&proc, 0x10041000u, 0xAA) ||
+	    !map_user_page(&proc, 0x10042000u, 0xBB)) {
 		KTEST_EXPECT_TRUE(tc, 0);
 		destroy_test_proc(&proc);
 		return;
@@ -214,7 +214,7 @@ static void test_copy_to_user_spans_pages(ktest_case_t *tc)
 	    tc, uaccess_copy_to_user(&proc, start, src, sizeof(src)), 0u);
 
 	dst0 = mapped_alias(&proc, start);
-	dst1 = mapped_alias(&proc, 0x08042000u);
+	dst1 = mapped_alias(&proc, 0x10042000u);
 	if (!dst0 || !dst1) {
 		KTEST_EXPECT_NOT_NULL(tc, dst0);
 		KTEST_EXPECT_NOT_NULL(tc, dst1);
@@ -281,15 +281,15 @@ static void test_copy_string_from_user_spans_pages(ktest_case_t *tc)
 	static process_t proc;
 	char buf[32];
 	static const char msg[] = "cross-page";
-	uint32_t start = 0x08041000u + PAGE_SIZE - 6u;
+	uint32_t start = 0x10041000u + PAGE_SIZE - 6u;
 
 	if (init_test_proc(&proc) != 0) {
 		KTEST_EXPECT_TRUE(tc, 0);
 		return;
 	}
 
-	if (!map_user_page(&proc, 0x08041000u, 0x00) ||
-	    !map_user_page(&proc, 0x08042000u, 0x00)) {
+	if (!map_user_page(&proc, 0x10041000u, 0x00) ||
+	    !map_user_page(&proc, 0x10042000u, 0x00)) {
 		KTEST_EXPECT_TRUE(tc, 0);
 		destroy_test_proc(&proc);
 		return;
@@ -319,14 +319,14 @@ static void test_prepare_rejects_kernel_and_unmapped_ranges(ktest_case_t *tc)
 
 	KTEST_EXPECT_EQ(tc, uaccess_prepare(&proc, 0x1000u, 1u, 0), (uint32_t)-1);
 
-	if (!map_user_page(&proc, 0x08043000u, 0x00)) {
+	if (!map_user_page(&proc, 0x10043000u, 0x00)) {
 		KTEST_EXPECT_TRUE(tc, 0);
 		destroy_test_proc(&proc);
 		return;
 	}
 
 	KTEST_EXPECT_EQ(tc,
-	                uaccess_prepare(&proc, 0x08043000u + PAGE_SIZE - 2u, 4u, 0),
+	                uaccess_prepare(&proc, 0x10043000u + PAGE_SIZE - 2u, 4u, 0),
 	                (uint32_t)-1);
 	KTEST_EXPECT_EQ(
 	    tc, uaccess_prepare(&proc, USER_STACK_TOP - 2u, 4u, 0), (uint32_t)-1);
@@ -349,14 +349,14 @@ static void test_copy_to_user_breaks_cow_clone(ktest_case_t *tc)
 		return;
 	}
 
-	if (!map_user_page(&parent, 0x08044000u, 0x00)) {
+	if (!map_user_page(&parent, 0x10044000u, 0x00)) {
 		KTEST_EXPECT_TRUE(tc, 0);
 		destroy_test_proc(&parent);
 		return;
 	}
 
 	if (uaccess_copy_to_user(
-	        &parent, 0x08044000u, parent_msg, sizeof(parent_msg)) != 0) {
+	        &parent, 0x10044000u, parent_msg, sizeof(parent_msg)) != 0) {
 		KTEST_EXPECT_TRUE(tc, 0);
 		destroy_test_proc(&parent);
 		return;
@@ -372,8 +372,8 @@ static void test_copy_to_user_breaks_cow_clone(ktest_case_t *tc)
 		return;
 	}
 
-	if (paging_walk(parent.pd_phys, 0x08044000u, &parent_pte) != 0 ||
-	    paging_walk(child.pd_phys, 0x08044000u, &child_pte) != 0) {
+	if (paging_walk(parent.pd_phys, 0x10044000u, &parent_pte) != 0 ||
+	    paging_walk(child.pd_phys, 0x10044000u, &child_pte) != 0) {
 		KTEST_EXPECT_TRUE(tc, 0);
 		destroy_test_proc(&child);
 		destroy_test_proc(&parent);
@@ -388,11 +388,11 @@ static void test_copy_to_user_breaks_cow_clone(ktest_case_t *tc)
 
 	KTEST_EXPECT_EQ(
 	    tc,
-	    uaccess_copy_to_user(&child, 0x08044000u, child_msg, sizeof(child_msg)),
+	    uaccess_copy_to_user(&child, 0x10044000u, child_msg, sizeof(child_msg)),
 	    0u);
 
-	if (paging_walk(parent.pd_phys, 0x08044000u, &parent_pte) != 0 ||
-	    paging_walk(child.pd_phys, 0x08044000u, &child_pte) != 0) {
+	if (paging_walk(parent.pd_phys, 0x10044000u, &parent_pte) != 0 ||
+	    paging_walk(child.pd_phys, 0x10044000u, &child_pte) != 0) {
 		KTEST_EXPECT_TRUE(tc, 0);
 		destroy_test_proc(&child);
 		destroy_test_proc(&parent);
@@ -403,10 +403,10 @@ static void test_copy_to_user_breaks_cow_clone(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc, pmm_refcount(*child_pte & ~0xFFFu), 1u);
 	KTEST_EXPECT_EQ(
 	    tc,
-	    k_strcmp((char *)mapped_alias(&parent, 0x08044000u), parent_msg),
+	    k_strcmp((char *)mapped_alias(&parent, 0x10044000u), parent_msg),
 	    0u);
 	KTEST_EXPECT_EQ(
-	    tc, k_strcmp((char *)mapped_alias(&child, 0x08044000u), child_msg), 0u);
+	    tc, k_strcmp((char *)mapped_alias(&child, 0x10044000u), child_msg), 0u);
 
 	destroy_test_proc(&child);
 	destroy_test_proc(&parent);
@@ -427,13 +427,13 @@ test_release_user_space_drops_only_child_cow_reference(ktest_case_t *tc)
 		return;
 	}
 
-	if (!map_user_page(&parent, 0x08045000u, 0x00)) {
+	if (!map_user_page(&parent, 0x10045000u, 0x00)) {
 		KTEST_EXPECT_TRUE(tc, 0);
 		destroy_test_proc(&parent);
 		return;
 	}
 
-	if (uaccess_copy_to_user(&parent, 0x08045000u, msg, sizeof(msg)) != 0) {
+	if (uaccess_copy_to_user(&parent, 0x10045000u, msg, sizeof(msg)) != 0) {
 		KTEST_EXPECT_TRUE(tc, 0);
 		destroy_test_proc(&parent);
 		return;
@@ -449,8 +449,8 @@ test_release_user_space_drops_only_child_cow_reference(ktest_case_t *tc)
 		return;
 	}
 
-	if (paging_walk(parent.pd_phys, 0x08045000u, &parent_pte) != 0 ||
-	    paging_walk(child.pd_phys, 0x08045000u, &child_pte) != 0) {
+	if (paging_walk(parent.pd_phys, 0x10045000u, &parent_pte) != 0 ||
+	    paging_walk(child.pd_phys, 0x10045000u, &child_pte) != 0) {
 		KTEST_EXPECT_TRUE(tc, 0);
 		destroy_test_proc(&child);
 		destroy_test_proc(&parent);
@@ -465,7 +465,7 @@ test_release_user_space_drops_only_child_cow_reference(ktest_case_t *tc)
 
 	KTEST_EXPECT_EQ(tc, pmm_refcount(shared_phys), 1u);
 	KTEST_EXPECT_EQ(
-	    tc, k_strcmp((char *)mapped_alias(&parent, 0x08045000u), msg), 0u);
+	    tc, k_strcmp((char *)mapped_alias(&parent, 0x10045000u), msg), 0u);
 
 	destroy_test_proc(&parent);
 }
@@ -658,7 +658,7 @@ static void test_process_fork_preserves_user_io_mappings(ktest_case_t *tc)
 	static process_t parent;
 	static process_t child;
 	static uint32_t parent_kstack_words[64];
-	uint32_t io_virt = 0x08048000u;
+	uint32_t io_virt = 0x10048000u;
 	uint32_t io_phys = 0xE0000000u;
 	uint32_t *parent_pte = 0;
 	uint32_t *child_pte = 0;
@@ -1196,14 +1196,14 @@ static void test_copy_to_user_handles_three_way_cow_sharing(ktest_case_t *tc)
 		return;
 	}
 
-	if (!map_user_page(&parent, 0x08046000u, 0x00)) {
+	if (!map_user_page(&parent, 0x10046000u, 0x00)) {
 		KTEST_EXPECT_TRUE(tc, 0);
 		destroy_test_proc(&parent);
 		return;
 	}
 
 	if (uaccess_copy_to_user(
-	        &parent, 0x08046000u, parent_msg, sizeof(parent_msg)) != 0) {
+	        &parent, 0x10046000u, parent_msg, sizeof(parent_msg)) != 0) {
 		KTEST_EXPECT_TRUE(tc, 0);
 		destroy_test_proc(&parent);
 		return;
@@ -1228,9 +1228,9 @@ static void test_copy_to_user_handles_three_way_cow_sharing(ktest_case_t *tc)
 		return;
 	}
 
-	if (paging_walk(parent.pd_phys, 0x08046000u, &parent_pte) != 0 ||
-	    paging_walk(child1.pd_phys, 0x08046000u, &child1_pte) != 0 ||
-	    paging_walk(child2.pd_phys, 0x08046000u, &child2_pte) != 0) {
+	if (paging_walk(parent.pd_phys, 0x10046000u, &parent_pte) != 0 ||
+	    paging_walk(child1.pd_phys, 0x10046000u, &child1_pte) != 0 ||
+	    paging_walk(child2.pd_phys, 0x10046000u, &child2_pte) != 0) {
 		KTEST_EXPECT_TRUE(tc, 0);
 		destroy_test_proc(&child2);
 		destroy_test_proc(&child1);
@@ -1245,12 +1245,12 @@ static void test_copy_to_user_handles_three_way_cow_sharing(ktest_case_t *tc)
 
 	KTEST_EXPECT_EQ(tc,
 	                uaccess_copy_to_user(
-	                    &child2, 0x08046000u, child2_msg, sizeof(child2_msg)),
+	                    &child2, 0x10046000u, child2_msg, sizeof(child2_msg)),
 	                0u);
 
-	if (paging_walk(parent.pd_phys, 0x08046000u, &parent_pte) != 0 ||
-	    paging_walk(child1.pd_phys, 0x08046000u, &child1_pte) != 0 ||
-	    paging_walk(child2.pd_phys, 0x08046000u, &child2_pte) != 0) {
+	if (paging_walk(parent.pd_phys, 0x10046000u, &parent_pte) != 0 ||
+	    paging_walk(child1.pd_phys, 0x10046000u, &child1_pte) != 0 ||
+	    paging_walk(child2.pd_phys, 0x10046000u, &child2_pte) != 0) {
 		KTEST_EXPECT_TRUE(tc, 0);
 		destroy_test_proc(&child2);
 		destroy_test_proc(&child1);
@@ -1265,12 +1265,12 @@ static void test_copy_to_user_handles_three_way_cow_sharing(ktest_case_t *tc)
 
 	KTEST_EXPECT_EQ(tc,
 	                uaccess_copy_to_user(
-	                    &child1, 0x08046000u, child1_msg, sizeof(child1_msg)),
+	                    &child1, 0x10046000u, child1_msg, sizeof(child1_msg)),
 	                0u);
 
-	if (paging_walk(parent.pd_phys, 0x08046000u, &parent_pte) != 0 ||
-	    paging_walk(child1.pd_phys, 0x08046000u, &child1_pte) != 0 ||
-	    paging_walk(child2.pd_phys, 0x08046000u, &child2_pte) != 0) {
+	if (paging_walk(parent.pd_phys, 0x10046000u, &parent_pte) != 0 ||
+	    paging_walk(child1.pd_phys, 0x10046000u, &child1_pte) != 0 ||
+	    paging_walk(child2.pd_phys, 0x10046000u, &child2_pte) != 0) {
 		KTEST_EXPECT_TRUE(tc, 0);
 		destroy_test_proc(&child2);
 		destroy_test_proc(&child1);
@@ -1284,15 +1284,15 @@ static void test_copy_to_user_handles_three_way_cow_sharing(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc, pmm_refcount(*parent_pte & ~0xFFFu), 1u);
 	KTEST_EXPECT_EQ(
 	    tc,
-	    k_strcmp((char *)mapped_alias(&parent, 0x08046000u), parent_msg),
+	    k_strcmp((char *)mapped_alias(&parent, 0x10046000u), parent_msg),
 	    0u);
 	KTEST_EXPECT_EQ(
 	    tc,
-	    k_strcmp((char *)mapped_alias(&child1, 0x08046000u), child1_msg),
+	    k_strcmp((char *)mapped_alias(&child1, 0x10046000u), child1_msg),
 	    0u);
 	KTEST_EXPECT_EQ(
 	    tc,
-	    k_strcmp((char *)mapped_alias(&child2, 0x08046000u), child2_msg),
+	    k_strcmp((char *)mapped_alias(&child2, 0x10046000u), child2_msg),
 	    0u);
 
 	destroy_test_proc(&child2);

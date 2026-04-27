@@ -2,6 +2,7 @@
 
 #include "ktest.h"
 #include "desktop_window.h"
+#include "desktop_wallpaper.h"
 
 static void test_terminal_window_hit_tests_title_and_body(ktest_case_t *tc)
 {
@@ -55,10 +56,38 @@ static void test_taskbar_hit_tests_all_rendered_apps(ktest_case_t *tc)
 	                DRUNIX_TASKBAR_APP_NONE);
 }
 
+static void test_wallpaper_cover_crops_square_source_vertically(ktest_case_t *tc)
+{
+	drunix_wallpaper_sample_t top_left =
+	    drunix_wallpaper_cover_sample(0, 0, 1000, 500, 6000, 6000);
+	drunix_wallpaper_sample_t center =
+	    drunix_wallpaper_cover_sample(500, 250, 1000, 500, 6000, 6000);
+
+	KTEST_EXPECT_EQ(tc, top_left.x, 0u);
+	KTEST_EXPECT_EQ(tc, top_left.y, 1500u);
+	KTEST_EXPECT_EQ(tc, center.x, 3000u);
+	KTEST_EXPECT_EQ(tc, center.y, 3000u);
+}
+
+static void test_wallpaper_cover_crops_wide_source_horizontally(ktest_case_t *tc)
+{
+	drunix_wallpaper_sample_t top_left =
+	    drunix_wallpaper_cover_sample(0, 0, 600, 600, 1200, 600);
+	drunix_wallpaper_sample_t center =
+	    drunix_wallpaper_cover_sample(300, 300, 600, 600, 1200, 600);
+
+	KTEST_EXPECT_EQ(tc, top_left.x, 300u);
+	KTEST_EXPECT_EQ(tc, top_left.y, 0u);
+	KTEST_EXPECT_EQ(tc, center.x, 600u);
+	KTEST_EXPECT_EQ(tc, center.y, 300u);
+}
+
 static ktest_case_t cases[] = {
     KTEST_CASE(test_terminal_window_hit_tests_title_and_body),
     KTEST_CASE(test_terminal_window_hit_tests_controls),
     KTEST_CASE(test_taskbar_hit_tests_all_rendered_apps),
+    KTEST_CASE(test_wallpaper_cover_crops_square_source_vertically),
+    KTEST_CASE(test_wallpaper_cover_crops_wide_source_horizontally),
 };
 
 static ktest_suite_t suite = KTEST_SUITE("desktop_window", cases);

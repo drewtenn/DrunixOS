@@ -121,7 +121,7 @@ static void x86_pmm_apply_reserved_ranges(pmm_core_state_t *state,
 
 	pmm_core_mark_used(state, 0x00000000u, 0x00100000u);
 	pmm_core_mark_used(state, kstart, kend_page * PAGE_SIZE - kstart);
-	pmm_core_mark_used(state, 0x00011000u, 0x00021000u);
+	pmm_core_mark_used(state, 0x00011000u, 0x00041000u);
 	pmm_core_mark_used(state, 0x00032000u, 0x000CE000u);
 	pmm_core_mark_used(state, 0x000A0000u, 0x00020000u);
 

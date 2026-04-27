@@ -5,6 +5,7 @@
 
 #include "ktest.h"
 #include "arch.h"
+#include "arch_layout.h"
 #include "kstring.h"
 #include "paging.h"
 #include "pmm.h"
@@ -69,7 +70,7 @@ static void test_user_mapping_rejects_direct_map_addresses(ktest_case_t *tc)
 	KTEST_ASSERT_NE(tc, phys, 0u);
 	KTEST_EXPECT_EQ(tc,
 	                arch_mm_map(aspace,
-	                            0x08000000u,
+	                            (uint32_t)ARCH_USER_IMAGE_BASE,
 	                            phys,
 	                            ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ |
 	                                ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER),

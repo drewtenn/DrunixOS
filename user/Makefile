@@ -1,7 +1,7 @@
 include programs.mk
 
 USER_ARCH ?= x86
-USER_LOAD_ADDR ?= 0x08000000
+USER_LOAD_ADDR ?= 0x10000000
 BUILD_ROOT ?= ../build/user/$(USER_ARCH)
 BIN_DIR := $(BUILD_ROOT)/bin
 OBJ_DIR := $(BUILD_ROOT)/obj

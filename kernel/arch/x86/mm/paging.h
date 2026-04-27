@@ -8,7 +8,7 @@
 
 /* Physical addresses for paging structures */
 #define PAGE_DIR_ADDR 0x00011000u /* page directory: 4 KB, 1024 PDEs */
-#define PAGE_TAB_BASE 0x00012000u /* first of 32 page tables          */
+#define PAGE_TAB_BASE 0x00012000u /* first kernel direct-map page table */
 
 /* PDE / PTE flag bits */
 #define PG_PRESENT 0x1
