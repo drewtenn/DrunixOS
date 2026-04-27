@@ -713,6 +713,17 @@ static void window_rect(int app, int *x, int *y, int *w, int *h)
 	*h = APP_WIN_H;
 }
 
+static drunix_rect_t window_dirty_rect(int app)
+{
+	int x;
+	int y;
+	int w;
+	int h;
+
+	window_rect(app, &x, &y, &w, &h);
+	return drunix_rect_make(x, y, w, h);
+}
+
 static int window_visible(int app)
 {
 	if (app == DRUNIX_TASKBAR_APP_TERMINAL)
@@ -976,8 +987,6 @@ static drunix_rect_t pointer_rect_at(int x, int y)
 {
 	return drunix_rect_make(x, y, POINTER_W, POINTER_H);
 }
-
-static void present_dirty_rect(drunix_rect_t rect) __attribute__((unused));
 
 static void present_dirty_rect(drunix_rect_t rect)
 {
@@ -1495,6 +1504,8 @@ static void handle_mouse_event(uint8_t buttons, int8_t sdx, int8_t sdy)
 	int old_x = g_pointer_x;
 	int old_y = g_pointer_y;
 	int full_repaint = 0;
+	int dirty_repaint = 0;
+	drunix_rect_t dirty_rect = drunix_rect_make(0, 0, 0, 0);
 
 	g_pointer_x += sdx;
 	g_pointer_y += sdy;
@@ -1516,11 +1527,14 @@ static void handle_mouse_event(uint8_t buttons, int8_t sdx, int8_t sdy)
 			int y;
 			int w;
 			int h;
+			drunix_rect_t old_rect = window_dirty_rect(g_dragging_app);
 
 			window_rect(g_dragging_app, &x, &y, &w, &h);
 			set_window_position(g_dragging_app, x + dx, y + dy);
 			clamp_window_position(g_dragging_app);
-			full_repaint = 1;
+			dirty_rect =
+			    drunix_rect_union(old_rect, window_dirty_rect(g_dragging_app));
+			dirty_repaint = 1;
 		}
 	}
 	if (g_dragging_app != DRUNIX_TASKBAR_APP_NONE && !(buttons & 0x01u))
@@ -1558,6 +1572,8 @@ static void handle_mouse_event(uint8_t buttons, int8_t sdx, int8_t sdy)
 	g_mouse_buttons = buttons;
 	if (full_repaint)
 		present_scene();
+	else if (dirty_repaint)
+		present_dirty_rect(dirty_rect);
 	else
 		render_pointer();
 }
