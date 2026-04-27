@@ -71,6 +71,7 @@ ARM_SHARED_KOBJS := kernel/lib/klog.arm64.o \
                     kernel/blk/bcache.arm64.o \
                     kernel/drivers/chardev.arm64.o \
                     kernel/drivers/tty.arm64.o \
+                    kernel/drivers/wmdev.arm64.o \
                     kernel/proc/elf.arm64.o \
                     kernel/arch/arm64/proc/elf64.arm64.o \
                     kernel/proc/process.arm64.o \

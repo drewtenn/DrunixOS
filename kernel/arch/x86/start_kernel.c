@@ -30,6 +30,7 @@
 #include "klog.h"
 #include "kstring.h"
 #include "tty.h"
+#include "wmdev.h"
 #ifdef KTEST_ENABLED
 #include "ktest.h"
 #endif
@@ -530,6 +531,10 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
 		klog("BOOT", "/dev/kbd published");
 	if (mousedev_init() == 0)
 		klog("BOOT", "/dev/mouse published");
+	if (wmdev_init() == 0)
+		klog("BOOT", "window broker initialized");
+	else
+		klog("BOOT", "window broker init failed");
 	kheap_init();
 	klog_uint("HEAP", "after kheap_init", kheap_free_bytes());
 	scrollback_init();
