@@ -187,7 +187,7 @@ When the desktop starts, it claims the framebuffer through the kernel display-ow
 
 The mouse pointer sprite lives in `shared/cursor_sprite.h`, so the desktop compositor and kernel framebuffer cursor paths render the same 13x20 shape instead of maintaining separate ad hoc cursor drawings.
 
-On x86, user ELF images are linked and loaded above the low kernel direct-map window at `0x08000000`. The loader rejects user mappings that overlap the protected low address range, the user stack, or another `PT_LOAD` segment, which keeps oversized or misplaced programs from silently corrupting kernel-owned memory.
+On x86, user ELF images follow the Linux i386 convention and are linked at `0x08048000`. User mappings are legal from `0x00010000` up to the 3 GB task limit, while process page directories inherit only deliberate supervisor mappings: the low PDEs still needed by the low-linked kernel image and the higher-half kernel aliases. The loader rejects segments below the user floor, at or above the task limit, overlapping the user stack, or overlapping another `PT_LOAD` segment.
 
 For the AArch64 bring-up path, run the normal graphical console directly:
 

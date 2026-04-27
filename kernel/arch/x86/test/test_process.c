@@ -93,8 +93,8 @@ static void init_frame_proc(process_t *proc,
 static void init_vma_proc(process_t *proc)
 {
 	k_memset(proc, 0, sizeof(*proc));
-	proc->heap_start = 0x10010000u;
-	proc->brk = 0x10018000u;
+	proc->heap_start = (uint32_t)ARCH_USER_IMAGE_BASE + 0x00010000u;
+	proc->brk = proc->heap_start + 0x00008000u;
 	proc->stack_low_limit =
 	    USER_STACK_TOP - (uint32_t)USER_STACK_PAGES * 0x1000u;
 	vma_init(proc);
@@ -114,8 +114,8 @@ static void init_vma_proc(process_t *proc)
 static void init_fresh_process_layout_proc(process_t *proc)
 {
 	k_memset(proc, 0, sizeof(*proc));
-	proc->image_start = 0x10000000u;
-	proc->image_end = 0x10010000u;
+	proc->image_start = (uint32_t)ARCH_USER_IMAGE_BASE;
+	proc->image_end = (uint32_t)ARCH_USER_IMAGE_BASE + 0x00010000u;
 	proc->heap_start = proc->image_end;
 	proc->brk = proc->heap_start;
 	proc->stack_low_limit =
@@ -408,20 +408,29 @@ static int test_load_elf_with_phdrs(const char *name,
 	return rc;
 }
 
-static void test_elf_loader_rejects_direct_map_pt_load(ktest_case_t *tc)
+static void test_elf_loader_accepts_linux_style_pt_load(ktest_case_t *tc)
 {
-	Elf32_Phdr phdr = test_elf_load_phdr(0x01000000u, PAGE_SIZE);
+	Elf32_Phdr phdr = test_elf_load_phdr(0x08048000u, PAGE_SIZE);
+
+	KTEST_EXPECT_EQ(
+	    tc, (uint32_t)test_load_elf_with_phdrs("_ktelf_lx_", &phdr, 1), 0u);
+}
+
+static void test_elf_loader_rejects_below_user_min_pt_load(ktest_case_t *tc)
+{
+	Elf32_Phdr phdr = test_elf_load_phdr(0x00008000u, PAGE_SIZE);
 
 	KTEST_EXPECT_NE(
-	    tc, (uint32_t)test_load_elf_with_phdrs("_ktelf_dm_", &phdr, 1), 0u);
+	    tc, (uint32_t)test_load_elf_with_phdrs("_ktelf_lo_", &phdr, 1), 0u);
 }
 
 static void test_elf_loader_rejects_overlapping_pt_loads(ktest_case_t *tc)
 {
 	Elf32_Phdr phdrs[2];
 
-	phdrs[0] = test_elf_load_phdr(0x10000000u, 0x3000u);
-	phdrs[1] = test_elf_load_phdr(0x10002000u, PAGE_SIZE);
+	phdrs[0] = test_elf_load_phdr((uint32_t)ARCH_USER_IMAGE_BASE, 0x3000u);
+	phdrs[1] =
+	    test_elf_load_phdr((uint32_t)ARCH_USER_IMAGE_BASE + 0x2000u, PAGE_SIZE);
 
 	KTEST_EXPECT_NE(
 	    tc, (uint32_t)test_load_elf_with_phdrs("_ktelf_ov_", phdrs, 2), 0u);
@@ -526,6 +535,9 @@ static void test_process_builds_linux_i386_initial_stack_shape(ktest_case_t *tc)
 
 static void test_x86_user_layout_invariants(ktest_case_t *tc)
 {
+	KTEST_EXPECT_EQ(tc, ARCH_USER_VADDR_MIN, 0x00010000u);
+	KTEST_EXPECT_EQ(tc, ARCH_USER_IMAGE_BASE, 0x08048000u);
+	KTEST_EXPECT_EQ(tc, ARCH_USER_VADDR_MAX, 0xC0000000u);
 	KTEST_EXPECT_EQ(tc, USER_STACK_TOP, 0xC0000000u);
 	KTEST_EXPECT_TRUE(tc, USER_STACK_BASE < USER_STACK_TOP);
 	KTEST_EXPECT_TRUE(tc, USER_MMAP_MIN < USER_STACK_BASE);
@@ -537,6 +549,8 @@ static void test_brk_refuses_stack_collision(ktest_case_t *tc)
 {
 	static process_t proc;
 	process_t *cur;
+	uint32_t old_brk;
+	uint32_t ret;
 
 	sched_init();
 	init_vma_proc(&proc);
@@ -546,11 +560,12 @@ static void test_brk_refuses_stack_collision(ktest_case_t *tc)
 	KTEST_ASSERT_NE(tc, sched_add(&proc), -1);
 	cur = sched_bootstrap();
 	KTEST_ASSERT_NOT_NULL(tc, cur);
+	old_brk = cur->brk;
 
-	KTEST_EXPECT_EQ(
-	    tc,
-	    syscall_handler(SYS_BRK, USER_STACK_BASE + PAGE_SIZE, 0, 0, 0, 0, 0),
-	    cur->brk);
+	ret =
+	    syscall_handler(SYS_BRK, USER_STACK_BASE + PAGE_SIZE, 0, 0, 0, 0, 0);
+	KTEST_EXPECT_EQ(tc, ret, old_brk);
+	KTEST_EXPECT_EQ(tc, cur->brk, old_brk);
 
 	sched_init();
 }
@@ -627,6 +642,7 @@ static void test_vma_map_anonymous_places_regions_below_stack(ktest_case_t *tc)
 	uint32_t addr = 0;
 	uint32_t stack_base =
 	    USER_STACK_TOP - (uint32_t)USER_STACK_MAX_PAGES * 0x1000u;
+	uint32_t mmap_ceiling = stack_base - VM_STACK_GUARD_GAP;
 
 	init_vma_proc(&proc);
 
@@ -638,11 +654,174 @@ static void test_vma_map_anonymous_places_regions_below_stack(ktest_case_t *tc)
 	                                      VMA_FLAG_ANON | VMA_FLAG_PRIVATE,
 	                                  &addr),
 	                0u);
-	KTEST_EXPECT_EQ(tc, addr, stack_base - 0x2000u);
+	KTEST_EXPECT_EQ(tc, addr, mmap_ceiling - 0x2000u);
 	KTEST_EXPECT_EQ(tc, proc.vma_count, 3u);
-	KTEST_EXPECT_EQ(tc, proc.vmas[1].start, stack_base - 0x2000u);
-	KTEST_EXPECT_EQ(tc, proc.vmas[1].end, stack_base);
+	KTEST_EXPECT_EQ(tc, proc.vmas[1].start, mmap_ceiling - 0x2000u);
+	KTEST_EXPECT_EQ(tc, proc.vmas[1].end, mmap_ceiling);
 	KTEST_EXPECT_EQ(tc, proc.vmas[1].kind, VMA_KIND_GENERIC);
+}
+
+static void test_vma_table_grows_beyond_legacy_limit(ktest_case_t *tc)
+{
+	static process_t proc;
+	mem_forensics_report_t report;
+	uint32_t addr = 0;
+
+	k_memset(&proc, 0, sizeof(proc));
+	KTEST_ASSERT_EQ(tc, (uint32_t)proc_resource_init_fresh(&proc), 0u);
+	vma_init(&proc);
+	proc.as->brk = ARCH_USER_IMAGE_BASE + PAGE_SIZE;
+	KTEST_ASSERT_EQ(tc,
+	                vma_add(&proc,
+	                        proc.as->brk,
+	                        proc.as->brk,
+	                        VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_ANON |
+	                            VMA_FLAG_PRIVATE,
+	                        VMA_KIND_HEAP),
+	                0u);
+	KTEST_ASSERT_EQ(tc,
+	                vma_add(&proc,
+	                        USER_STACK_BASE,
+	                        USER_STACK_TOP,
+	                        VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_ANON |
+	                            VMA_FLAG_PRIVATE | VMA_FLAG_GROWSDOWN,
+	                        VMA_KIND_STACK),
+	                0u);
+
+	for (uint32_t i = 0; i < 24u; i++) {
+		uint32_t flags = VMA_FLAG_READ | VMA_FLAG_ANON | VMA_FLAG_PRIVATE;
+		if ((i & 1u) != 0)
+			flags |= VMA_FLAG_WRITE;
+
+		KTEST_ASSERT_EQ(tc,
+		                vma_map_anonymous(&proc, 0, PAGE_SIZE, flags, &addr),
+		                0u);
+	}
+
+	KTEST_EXPECT_TRUE(tc, proc.as->vma_count > PROCESS_MAX_VMAS);
+	KTEST_ASSERT_EQ(tc, (uint32_t)mem_forensics_collect(&proc, &report), 0u);
+	KTEST_EXPECT_EQ(tc, report.region_count, MEM_FORENSICS_MAX_REGIONS);
+	KTEST_EXPECT_EQ(tc, report.mmap_reserved_bytes, 24u * PAGE_SIZE);
+	proc_resource_put_all(&proc);
+}
+
+static void test_vma_file_metadata_survives_address_space_copy(ktest_case_t *tc)
+{
+	static process_t parent;
+	static process_t child;
+	vfs_file_ref_t ref;
+	uint32_t addr = 0;
+	vm_area_t *copied;
+
+	ref.mount_id = 7u;
+	ref.inode_num = 0x55AAu;
+	init_vma_proc(&parent);
+	k_memset(&child, 0, sizeof(child));
+
+	KTEST_ASSERT_EQ(tc,
+	                vma_map_file_private(&parent,
+	                                     0,
+	                                     PAGE_SIZE,
+	                                     VMA_FLAG_READ | VMA_FLAG_PRIVATE,
+	                                     ref,
+	                                     0x2000u,
+	                                     0x1234u,
+	                                     &addr),
+	                0u);
+
+	k_memcpy(child.vmas, parent.vmas, sizeof(parent.vmas));
+	child.vma_count = parent.vma_count;
+
+	copied = vma_find(&child, addr);
+	KTEST_ASSERT_NOT_NULL(tc, copied);
+	KTEST_EXPECT_EQ(tc, copied->file_offset, 0x2000u);
+	KTEST_EXPECT_EQ(tc, copied->file_size, 0x1234u);
+	KTEST_EXPECT_EQ(tc, copied->file_ref.mount_id, 7u);
+	KTEST_EXPECT_EQ(tc, copied->file_ref.inode_num, 0x55AAu);
+}
+
+static void test_proc_resource_clone_for_fork_copies_vma_storage(ktest_case_t *tc)
+{
+	static process_t parent;
+	static process_t child;
+	uint32_t extra_start = USER_MMAP_MIN;
+
+	k_memset(&parent, 0, sizeof(parent));
+	k_memset(&child, 0, sizeof(child));
+	KTEST_ASSERT_EQ(tc, (uint32_t)proc_resource_init_fresh(&parent), 0u);
+	vma_init(&parent);
+
+	KTEST_ASSERT_EQ(tc,
+	                vma_add(&parent,
+	                        ARCH_USER_IMAGE_BASE,
+	                        ARCH_USER_IMAGE_BASE + PAGE_SIZE,
+	                        VMA_FLAG_READ | VMA_FLAG_EXEC |
+	                            VMA_FLAG_PRIVATE,
+	                        VMA_KIND_IMAGE),
+	                0u);
+	KTEST_ASSERT_EQ(tc,
+	                vma_add(&parent,
+	                        USER_STACK_BASE,
+	                        USER_STACK_TOP,
+	                        VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_ANON |
+	                            VMA_FLAG_PRIVATE | VMA_FLAG_GROWSDOWN,
+	                        VMA_KIND_STACK),
+	                0u);
+
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)proc_resource_clone_for_fork(&child, &parent),
+	                0u);
+	KTEST_ASSERT_NOT_NULL(tc, child.as);
+	KTEST_ASSERT_NOT_NULL(tc, parent.as->vmas);
+	KTEST_ASSERT_NOT_NULL(tc, child.as->vmas);
+	KTEST_EXPECT_NE(tc, (uint32_t)child.as, (uint32_t)parent.as);
+	KTEST_EXPECT_NE(tc, (uint32_t)child.as->vmas, (uint32_t)parent.as->vmas);
+	KTEST_EXPECT_EQ(tc, child.as->vma_count, parent.as->vma_count);
+	KTEST_EXPECT_EQ(tc, child.as->vmas[0].start, parent.as->vmas[0].start);
+	KTEST_EXPECT_EQ(tc, child.as->pd_phys, child.pd_phys);
+
+	KTEST_ASSERT_EQ(tc,
+	                vma_add(&child,
+	                        extra_start,
+	                        extra_start + PAGE_SIZE,
+	                        VMA_FLAG_READ | VMA_FLAG_ANON | VMA_FLAG_PRIVATE,
+	                        VMA_KIND_GENERIC),
+	                0u);
+	KTEST_EXPECT_EQ(tc, parent.as->vma_count, 2u);
+	KTEST_EXPECT_EQ(tc, child.as->vma_count, 3u);
+
+	proc_resource_put_all(&child);
+	proc_resource_put_all(&parent);
+}
+
+static void test_proc_resource_defaults_and_fork_copy_commit_limits(
+    ktest_case_t *tc)
+{
+	static process_t parent;
+	static process_t child;
+
+	k_memset(&parent, 0, sizeof(parent));
+	k_memset(&child, 0, sizeof(child));
+	KTEST_ASSERT_EQ(tc, (uint32_t)proc_resource_init_fresh(&parent), 0u);
+	KTEST_ASSERT_NOT_NULL(tc, parent.as);
+	KTEST_EXPECT_EQ(tc, parent.as->rlimit_as, VM_TASK_SIZE);
+	KTEST_EXPECT_EQ(tc, parent.as->rlimit_data, 64u * 1024u * 1024u);
+	KTEST_EXPECT_EQ(tc, parent.as->committed_pages, 0u);
+
+	parent.as->rlimit_as = VM_TASK_SIZE - PAGE_SIZE;
+	parent.as->rlimit_data = 2u * PAGE_SIZE;
+	parent.as->committed_pages = 7u;
+
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)proc_resource_clone_for_fork(&child, &parent),
+	                0u);
+	KTEST_ASSERT_NOT_NULL(tc, child.as);
+	KTEST_EXPECT_EQ(tc, child.as->rlimit_as, parent.as->rlimit_as);
+	KTEST_EXPECT_EQ(tc, child.as->rlimit_data, parent.as->rlimit_data);
+	KTEST_EXPECT_EQ(tc, child.as->committed_pages, parent.as->committed_pages);
+
+	proc_resource_put_all(&child);
+	proc_resource_put_all(&parent);
 }
 
 static void test_vma_unmap_range_splits_generic_mapping(ktest_case_t *tc)
@@ -667,13 +846,49 @@ static void test_vma_unmap_range_splits_generic_mapping(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc, proc.vmas[2].end, 0x80003000u);
 }
 
+static void test_vma_unmap_range_advances_file_offset_for_right_split(
+    ktest_case_t *tc)
+{
+	static process_t proc;
+	vfs_file_ref_t ref;
+	uint32_t addr = 0;
+	vm_area_t *right;
+
+	ref.mount_id = 3u;
+	ref.inode_num = 0x7001u;
+	init_vma_proc(&proc);
+
+	KTEST_ASSERT_EQ(tc,
+	                vma_map_file_private(&proc,
+	                                     0,
+	                                     3u * PAGE_SIZE,
+	                                     VMA_FLAG_READ | VMA_FLAG_PRIVATE,
+	                                     ref,
+	                                     0x3000u,
+	                                     0x9000u,
+	                                     &addr),
+	                0u);
+
+	KTEST_ASSERT_EQ(tc, vma_unmap_range(&proc, addr, addr + PAGE_SIZE), 0u);
+
+	right = vma_find(&proc, addr + PAGE_SIZE);
+	KTEST_ASSERT_NOT_NULL(tc, right);
+	KTEST_EXPECT_EQ(tc, right->start, addr + PAGE_SIZE);
+	KTEST_EXPECT_EQ(tc, right->file_offset, 0x3000u + PAGE_SIZE);
+	KTEST_EXPECT_EQ(tc, right->file_size, 0x9000u);
+	KTEST_EXPECT_EQ(tc, right->file_ref.mount_id, 3u);
+	KTEST_EXPECT_EQ(tc, right->file_ref.inode_num, 0x7001u);
+}
+
 static void test_vma_unmap_range_rejects_heap_or_stack(ktest_case_t *tc)
 {
 	static process_t proc;
 
 	init_vma_proc(&proc);
 	KTEST_EXPECT_EQ(
-	    tc, vma_unmap_range(&proc, 0x10010000u, 0x10011000u), (uint32_t)-1);
+	    tc,
+	    vma_unmap_range(&proc, proc.heap_start, proc.heap_start + PAGE_SIZE),
+	    (uint32_t)-1);
 	KTEST_EXPECT_EQ(tc, proc.vma_count, 2u);
 }
 
@@ -714,6 +929,64 @@ test_vma_protect_range_splits_and_requires_full_coverage(ktest_case_t *tc)
 	    (uint32_t)-1);
 }
 
+static void
+test_vma_protect_range_preserves_file_backing_and_offsets(ktest_case_t *tc)
+{
+	static process_t proc;
+	vfs_file_ref_t ref;
+	uint32_t addr = 0;
+	vm_area_t *left;
+	vm_area_t *protected;
+	vm_area_t *right;
+
+	ref.mount_id = 4u;
+	ref.inode_num = 0x8002u;
+	init_vma_proc(&proc);
+
+	KTEST_ASSERT_EQ(tc,
+	                vma_map_file_private(&proc,
+	                                     0,
+	                                     3u * PAGE_SIZE,
+	                                     VMA_FLAG_READ | VMA_FLAG_WRITE |
+	                                         VMA_FLAG_PRIVATE,
+	                                     ref,
+	                                     0x4000u,
+	                                     0xA000u,
+	                                     &addr),
+	                0u);
+
+	KTEST_ASSERT_EQ(
+	    tc,
+	    vma_protect_range(&proc,
+	                      addr + PAGE_SIZE,
+	                      addr + 2u * PAGE_SIZE,
+	                      VMA_FLAG_READ | VMA_FLAG_ANON | VMA_FLAG_PRIVATE),
+	    0u);
+
+	left = vma_find(&proc, addr);
+	protected = vma_find(&proc, addr + PAGE_SIZE);
+	right = vma_find(&proc, addr + 2u * PAGE_SIZE);
+	KTEST_ASSERT_NOT_NULL(tc, left);
+	KTEST_ASSERT_NOT_NULL(tc, protected);
+	KTEST_ASSERT_NOT_NULL(tc, right);
+	KTEST_EXPECT_EQ(tc, left->file_offset, 0x4000u);
+	KTEST_EXPECT_EQ(tc, protected->file_offset, 0x4000u + PAGE_SIZE);
+	KTEST_EXPECT_EQ(tc, right->file_offset, 0x4000u + 2u * PAGE_SIZE);
+	KTEST_EXPECT_EQ(tc,
+	                left->flags,
+	                VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_PRIVATE);
+	KTEST_EXPECT_EQ(tc,
+	                protected->flags,
+	                VMA_FLAG_READ | VMA_FLAG_PRIVATE);
+	KTEST_EXPECT_EQ(tc,
+	                right->flags,
+	                VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_PRIVATE);
+	KTEST_EXPECT_EQ(tc, protected->file_ref.mount_id, 4u);
+	KTEST_EXPECT_EQ(tc, protected->file_ref.inode_num, 0x8002u);
+	KTEST_EXPECT_EQ(tc, right->file_ref.mount_id, 4u);
+	KTEST_EXPECT_EQ(tc, right->file_ref.inode_num, 0x8002u);
+}
+
 static void test_mem_forensics_collects_basic_region_totals(ktest_case_t *tc)
 {
 	static process_t proc;
@@ -721,8 +994,8 @@ static void test_mem_forensics_collects_basic_region_totals(ktest_case_t *tc)
 	uint32_t stack_reserved = (uint32_t)USER_STACK_MAX_PAGES * 0x1000u;
 
 	init_vma_proc(&proc);
-	proc.image_start = 0x10000000u;
-	proc.image_end = 0x10010000u;
+	proc.image_start = (uint32_t)ARCH_USER_IMAGE_BASE;
+	proc.image_end = (uint32_t)ARCH_USER_IMAGE_BASE + 0x00010000u;
 	k_strncpy(proc.name, "shell", sizeof(proc.name) - 1);
 
 	KTEST_ASSERT_EQ(tc, mem_forensics_collect(&proc, &report), 0u);
@@ -732,6 +1005,12 @@ static void test_mem_forensics_collects_basic_region_totals(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc,
 	                report.stack_reserved_bytes,
 	                (uint32_t)USER_STACK_MAX_PAGES * 0x1000u);
+	KTEST_EXPECT_TRUE(tc,
+	                  report.heap_reserved_bytes >= report.heap_mapped_bytes);
+	KTEST_EXPECT_TRUE(tc,
+	                  report.stack_reserved_bytes >= report.stack_mapped_bytes);
+	KTEST_EXPECT_TRUE(tc,
+	                  report.mmap_reserved_bytes >= report.mmap_mapped_bytes);
 }
 
 static void test_mem_forensics_core_note_sizes_are_nonzero(ktest_case_t *tc)
@@ -904,6 +1183,226 @@ static void test_mem_forensics_collects_fresh_process_layout(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc, report.mmap_reserved_bytes, 0u);
 	KTEST_EXPECT_EQ(
 	    tc, report.total_reserved_bytes, 0x00010000u + stack_reserved);
+	KTEST_EXPECT_TRUE(tc,
+	                  report.heap_reserved_bytes >= report.heap_mapped_bytes);
+	KTEST_EXPECT_TRUE(tc,
+	                  report.stack_reserved_bytes >= report.stack_mapped_bytes);
+	KTEST_EXPECT_TRUE(tc,
+	                  report.mmap_reserved_bytes >= report.mmap_mapped_bytes);
+}
+
+static void test_mem_forensics_reports_committed_bytes(ktest_case_t *tc)
+{
+	static process_t proc;
+	mem_forensics_report_t report;
+
+	init_fresh_process_layout_proc(&proc);
+	KTEST_ASSERT_EQ(tc, (uint32_t)proc_resource_init_fresh(&proc), 0u);
+	proc_resource_mirror_from_process(&proc);
+	proc.as->committed_pages = 5u;
+
+	KTEST_ASSERT_EQ(tc, mem_forensics_collect(&proc, &report), 0u);
+	KTEST_EXPECT_EQ(tc, report.total_committed_bytes, 5u * PAGE_SIZE);
+
+	proc_resource_put_all(&proc);
+}
+
+static void test_mem_forensics_maps_use_linux_like_labels(ktest_case_t *tc)
+{
+	static process_t proc;
+	char buf[512];
+	uint32_t size = 0u;
+	uint32_t anon_addr = 0u;
+	uint32_t file_addr = 0u;
+	vfs_file_ref_t ref;
+	char expected_image[64];
+	char expected_heap[64];
+	char expected_anon[64];
+	char expected_file[64];
+	char expected_stack[64];
+
+	init_fresh_process_layout_proc(&proc);
+	k_strncpy(proc.name, "shell", sizeof(proc.name) - 1);
+	proc.brk = proc.heap_start + PAGE_SIZE;
+	KTEST_ASSERT_NOT_NULL(tc, vma_find_kind(&proc, VMA_KIND_HEAP));
+	vma_find_kind(&proc, VMA_KIND_HEAP)->end = proc.brk;
+	proc.pd_phys = paging_create_user_space();
+	KTEST_ASSERT_NE(tc, proc.pd_phys, 0u);
+
+	ref.mount_id = 3u;
+	ref.inode_num = 0x1234u;
+	KTEST_ASSERT_EQ(tc,
+	                vma_map_anonymous(&proc,
+	                                  0,
+	                                  PAGE_SIZE,
+	                                  VMA_FLAG_READ | VMA_FLAG_WRITE |
+	                                      VMA_FLAG_ANON | VMA_FLAG_PRIVATE,
+	                                  &anon_addr),
+	                0u);
+	KTEST_ASSERT_EQ(tc,
+	                vma_map_file_private(&proc,
+	                                     0,
+	                                     PAGE_SIZE,
+	                                     VMA_FLAG_READ | VMA_FLAG_PRIVATE,
+	                                     ref,
+	                                     0u,
+	                                     PAGE_SIZE,
+	                                     &file_addr),
+	                0u);
+
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)map_test_page(&proc,
+	                                        proc.image_start,
+	                                        PG_PRESENT | PG_USER),
+	                0u);
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)map_test_page(&proc,
+	                                        proc.heap_start,
+	                                        PG_PRESENT | PG_USER |
+	                                            PG_WRITABLE),
+	                0u);
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)map_test_page(&proc,
+	                                        anon_addr,
+	                                        PG_PRESENT | PG_USER |
+	                                            PG_WRITABLE),
+	                0u);
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)map_test_page(&proc,
+	                                        file_addr,
+	                                        PG_PRESENT | PG_USER),
+	                0u);
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)map_test_page(&proc,
+	                                        USER_STACK_TOP - PAGE_SIZE,
+	                                        PG_PRESENT | PG_USER |
+	                                            PG_WRITABLE),
+	                0u);
+
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)mem_forensics_render_maps(
+	                    &proc, buf, sizeof(buf), &size),
+	                0u);
+	if (size >= sizeof(buf))
+		size = sizeof(buf) - 1u;
+	buf[size] = '\0';
+
+	KTEST_ASSERT_TRUE(tc,
+	                  k_snprintf(expected_image,
+	                             sizeof(expected_image),
+	                             "%08x-%08x r--p shell",
+	                             proc.image_start,
+	                             proc.image_start + PAGE_SIZE) > 0);
+	KTEST_ASSERT_TRUE(tc,
+	                  k_snprintf(expected_heap,
+	                             sizeof(expected_heap),
+	                             "%08x-%08x rw-p [heap]",
+	                             proc.heap_start,
+	                             proc.heap_start + PAGE_SIZE) > 0);
+	KTEST_ASSERT_TRUE(tc,
+	                  k_snprintf(expected_anon,
+	                             sizeof(expected_anon),
+	                             "%08x-%08x rw-p anon",
+	                             anon_addr,
+	                             anon_addr + PAGE_SIZE) > 0);
+	KTEST_ASSERT_TRUE(tc,
+	                  k_snprintf(expected_file,
+	                             sizeof(expected_file),
+	                             "%08x-%08x r--p file",
+	                             file_addr,
+	                             file_addr + PAGE_SIZE) > 0);
+	KTEST_ASSERT_TRUE(tc,
+	                  k_snprintf(expected_stack,
+	                             sizeof(expected_stack),
+	                             "%08x-%08x rw-p [stack]",
+	                             USER_STACK_TOP - PAGE_SIZE,
+	                             USER_STACK_TOP) > 0);
+
+	KTEST_EXPECT_TRUE(tc, k_strstr(buf, expected_image) != 0);
+	KTEST_EXPECT_TRUE(tc, k_strstr(buf, expected_heap) != 0);
+	KTEST_EXPECT_TRUE(tc, k_strstr(buf, expected_anon) != 0);
+	KTEST_EXPECT_TRUE(tc, k_strstr(buf, expected_file) != 0);
+	KTEST_EXPECT_TRUE(tc, k_strstr(buf, expected_stack) != 0);
+
+	process_release_user_space(&proc);
+}
+
+static void
+test_mem_forensics_maps_keeps_label_when_merging_file_vmas(ktest_case_t *tc)
+{
+	static process_t proc;
+	char buf[256];
+	uint32_t size = 0u;
+	uint32_t upper_addr = 0u;
+	uint32_t lower_addr = 0u;
+	vfs_file_ref_t ref;
+	char expected_merged[64];
+	char unexpected_unlabeled[64];
+
+	init_fresh_process_layout_proc(&proc);
+	proc.pd_phys = paging_create_user_space();
+	KTEST_ASSERT_NE(tc, proc.pd_phys, 0u);
+
+	ref.mount_id = 3u;
+	ref.inode_num = 0x1234u;
+	KTEST_ASSERT_EQ(tc,
+	                vma_map_file_private(&proc,
+	                                     0,
+	                                     PAGE_SIZE,
+	                                     VMA_FLAG_READ | VMA_FLAG_PRIVATE,
+	                                     ref,
+	                                     0u,
+	                                     PAGE_SIZE,
+	                                     &upper_addr),
+	                0u);
+	KTEST_ASSERT_EQ(tc,
+	                vma_map_file_private(&proc,
+	                                     0,
+	                                     PAGE_SIZE,
+	                                     VMA_FLAG_READ | VMA_FLAG_PRIVATE,
+	                                     ref,
+	                                     PAGE_SIZE,
+	                                     PAGE_SIZE,
+	                                     &lower_addr),
+	                0u);
+	KTEST_ASSERT_EQ(tc, lower_addr + PAGE_SIZE, upper_addr);
+
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)map_test_page(&proc,
+	                                        lower_addr,
+	                                        PG_PRESENT | PG_USER),
+	                0u);
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)map_test_page(&proc,
+	                                        upper_addr,
+	                                        PG_PRESENT | PG_USER),
+	                0u);
+
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)mem_forensics_render_maps(
+	                    &proc, buf, sizeof(buf), &size),
+	                0u);
+	if (size >= sizeof(buf))
+		size = sizeof(buf) - 1u;
+	buf[size] = '\0';
+
+	KTEST_ASSERT_TRUE(tc,
+	                  k_snprintf(expected_merged,
+	                             sizeof(expected_merged),
+	                             "%08x-%08x r--p file",
+	                             lower_addr,
+	                             upper_addr + PAGE_SIZE) > 0);
+	KTEST_ASSERT_TRUE(tc,
+	                  k_snprintf(unexpected_unlabeled,
+	                             sizeof(unexpected_unlabeled),
+	                             "%08x-%08x r--p\n",
+	                             lower_addr,
+	                             upper_addr + PAGE_SIZE) > 0);
+
+	KTEST_EXPECT_TRUE(tc, k_strstr(buf, expected_merged) != 0);
+	KTEST_EXPECT_TRUE(tc, k_strstr(buf, unexpected_unlabeled) == 0);
+
+	process_release_user_space(&proc);
 }
 
 static void
@@ -914,9 +1413,9 @@ test_mem_forensics_collects_full_vma_table_with_fallback_image(ktest_case_t *tc)
 	uint32_t expected_total = 0x00010000u;
 
 	k_memset(&proc, 0, sizeof(proc));
-	proc.image_start = 0x10000000u;
-	proc.image_end = 0x10010000u;
-	proc.brk = 0x10050000u;
+	proc.image_start = (uint32_t)ARCH_USER_IMAGE_BASE;
+	proc.image_end = (uint32_t)ARCH_USER_IMAGE_BASE + 0x00010000u;
+	proc.brk = (uint32_t)ARCH_USER_IMAGE_BASE + 0x00050000u;
 	vma_init(&proc);
 
 	for (uint32_t i = 0; i < PROCESS_MAX_VMAS; i++) {
@@ -1311,6 +1810,219 @@ static void test_syscall_brk_reads_resource_address_space(ktest_case_t *tc)
 	stop_syscall_test_process(cur);
 }
 
+static void test_brk_obeys_data_limit_and_commit_accounting(ktest_case_t *tc)
+{
+	static process_t proc;
+	process_t *cur = start_syscall_test_process(&proc);
+	uint32_t heap_start;
+
+	KTEST_ASSERT_NOT_NULL(tc, cur);
+	KTEST_ASSERT_NOT_NULL(tc, cur->as);
+	heap_start = cur->as->heap_start;
+	cur->as->rlimit_data = PAGE_SIZE;
+
+	KTEST_EXPECT_EQ(tc,
+	                syscall_handler(SYS_BRK,
+	                                heap_start + 2u * PAGE_SIZE,
+	                                0,
+	                                0,
+	                                0,
+	                                0,
+	                                0),
+	                heap_start);
+	KTEST_EXPECT_EQ(tc, cur->as->brk, heap_start);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
+
+	KTEST_EXPECT_EQ(tc,
+	                syscall_handler(SYS_BRK,
+	                                heap_start + PAGE_SIZE,
+	                                0,
+	                                0,
+	                                0,
+	                                0,
+	                                0),
+	                heap_start + PAGE_SIZE);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 1u);
+
+	KTEST_EXPECT_EQ(
+	    tc, syscall_handler(SYS_BRK, heap_start, 0, 0, 0, 0, 0), heap_start);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
+
+	stop_syscall_test_process(cur);
+}
+
+static void test_private_writable_anonymous_mmap_commit_release(
+    ktest_case_t *tc)
+{
+	static process_t proc;
+	process_t *cur = start_syscall_test_process(&proc);
+	uint32_t addr;
+	uint32_t readonly_addr;
+
+	KTEST_ASSERT_NOT_NULL(tc, cur);
+	KTEST_ASSERT_NOT_NULL(tc, cur->as);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
+
+	addr = syscall_handler(SYS_MMAP2,
+	                       0,
+	                       3u * PAGE_SIZE,
+	                       PROT_READ | PROT_WRITE,
+	                       MAP_PRIVATE | MAP_ANONYMOUS,
+	                       (uint32_t)-1,
+	                       0);
+	KTEST_ASSERT_NE(tc, addr, (uint32_t)-1);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 3u);
+
+	KTEST_ASSERT_EQ(tc,
+	                syscall_handler(SYS_MUNMAP,
+	                                addr + PAGE_SIZE,
+	                                PAGE_SIZE,
+	                                0,
+	                                0,
+	                                0,
+	                                0),
+	                0u);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 2u);
+	KTEST_EXPECT_NULL(tc, vma_find(cur, addr + PAGE_SIZE));
+	KTEST_EXPECT_TRUE(tc, vma_find(cur, addr) != 0);
+	KTEST_EXPECT_TRUE(tc, vma_find(cur, addr + 2u * PAGE_SIZE) != 0);
+
+	KTEST_ASSERT_EQ(tc,
+	                syscall_handler(SYS_MUNMAP,
+	                                addr,
+	                                3u * PAGE_SIZE,
+	                                0,
+	                                0,
+	                                0,
+	                                0),
+	                0u);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
+
+	readonly_addr = syscall_handler(SYS_MMAP2,
+	                                0,
+	                                PAGE_SIZE,
+	                                PROT_READ,
+	                                MAP_PRIVATE | MAP_ANONYMOUS,
+	                                (uint32_t)-1,
+	                                0);
+	KTEST_ASSERT_NE(tc, readonly_addr, (uint32_t)-1);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
+	KTEST_ASSERT_EQ(tc,
+	                syscall_handler(SYS_MUNMAP,
+	                                readonly_addr,
+	                                PAGE_SIZE,
+	                                0,
+	                                0,
+	                                0,
+	                                0),
+	                0u);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
+
+	stop_syscall_test_process(cur);
+}
+
+static void test_commit_reserve_counts_existing_reservations(ktest_case_t *tc)
+{
+	static process_t proc;
+	process_t *cur = start_syscall_test_process(&proc);
+	uint32_t free_pages;
+	uint32_t addr;
+
+	KTEST_ASSERT_NOT_NULL(tc, cur);
+	KTEST_ASSERT_NOT_NULL(tc, cur->as);
+	free_pages = pmm_free_page_count();
+	KTEST_ASSERT_TRUE(tc, free_pages > 1u);
+	cur->as->committed_pages = free_pages - 1u;
+
+	addr = syscall_handler(SYS_MMAP2,
+	                       0,
+	                       2u * PAGE_SIZE,
+	                       PROT_READ | PROT_WRITE,
+	                       MAP_PRIVATE | MAP_ANONYMOUS,
+	                       (uint32_t)-1,
+	                       0);
+	KTEST_EXPECT_EQ(tc, addr, (uint32_t)-1);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, free_pages - 1u);
+
+	stop_syscall_test_process(cur);
+}
+
+static void test_mprotect_read_to_write_reserves_commit_before_munmap(
+    ktest_case_t *tc)
+{
+	static process_t proc;
+	process_t *cur = start_syscall_test_process(&proc);
+	uint32_t addr;
+
+	KTEST_ASSERT_NOT_NULL(tc, cur);
+	KTEST_ASSERT_NOT_NULL(tc, cur->as);
+
+	addr = syscall_handler(SYS_MMAP2,
+	                       0,
+	                       PAGE_SIZE,
+	                       PROT_READ,
+	                       MAP_PRIVATE | MAP_ANONYMOUS,
+	                       (uint32_t)-1,
+	                       0);
+	KTEST_ASSERT_NE(tc, addr, (uint32_t)-1);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
+
+	KTEST_ASSERT_EQ(tc,
+	                syscall_handler(SYS_MPROTECT,
+	                                addr,
+	                                PAGE_SIZE,
+	                                PROT_READ | PROT_WRITE,
+	                                0,
+	                                0,
+	                                0),
+	                0u);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 1u);
+
+	KTEST_ASSERT_EQ(
+	    tc, syscall_handler(SYS_MUNMAP, addr, PAGE_SIZE, 0, 0, 0, 0), 0u);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
+
+	stop_syscall_test_process(cur);
+}
+
+static void test_mprotect_write_to_read_releases_commit_before_munmap(
+    ktest_case_t *tc)
+{
+	static process_t proc;
+	process_t *cur = start_syscall_test_process(&proc);
+	uint32_t addr;
+
+	KTEST_ASSERT_NOT_NULL(tc, cur);
+	KTEST_ASSERT_NOT_NULL(tc, cur->as);
+
+	addr = syscall_handler(SYS_MMAP2,
+	                       0,
+	                       PAGE_SIZE,
+	                       PROT_READ | PROT_WRITE,
+	                       MAP_PRIVATE | MAP_ANONYMOUS,
+	                       (uint32_t)-1,
+	                       0);
+	KTEST_ASSERT_NE(tc, addr, (uint32_t)-1);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 1u);
+
+	KTEST_ASSERT_EQ(tc,
+	                syscall_handler(SYS_MPROTECT,
+	                                addr,
+	                                PAGE_SIZE,
+	                                PROT_READ,
+	                                0,
+	                                0,
+	                                0),
+	                0u);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
+
+	KTEST_ASSERT_EQ(
+	    tc, syscall_handler(SYS_MUNMAP, addr, PAGE_SIZE, 0, 0, 0, 0), 0u);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
+
+	stop_syscall_test_process(cur);
+}
+
 static void test_rt_sigaction_reads_resource_handlers(ktest_case_t *tc)
 {
 	static process_t proc;
@@ -1408,10 +2120,34 @@ test_clone_process_without_vm_gets_distinct_group_and_as(ktest_case_t *tc)
 	KTEST_ASSERT_NE(tc, tid, (uint32_t)-1);
 
 	process_t *child = sched_find_pid(tid);
+	uint32_t parent_vma_count;
 	KTEST_ASSERT_NOT_NULL(tc, child);
 	KTEST_EXPECT_EQ(tc, child->tgid, child->tid);
 	KTEST_EXPECT_NE(tc, child->group, parent->group);
 	KTEST_EXPECT_NE(tc, child->as, parent->as);
+	KTEST_ASSERT_NOT_NULL(tc, child->as);
+	KTEST_ASSERT_NOT_NULL(tc, parent->as);
+	KTEST_ASSERT_NOT_NULL(tc, child->as->vmas);
+	KTEST_ASSERT_NOT_NULL(tc, parent->as->vmas);
+	KTEST_EXPECT_NE(tc, (uint32_t)child->as->vmas, (uint32_t)parent->as->vmas);
+	if (child->as->vmas == parent->as->vmas) {
+		child->as->vmas = 0;
+		child->as->vma_count = 0;
+		child->as->vma_capacity = 0;
+		sched_init();
+		return;
+	}
+
+	parent_vma_count = parent->as->vma_count;
+	KTEST_ASSERT_EQ(tc,
+	                vma_add(child,
+	                        USER_MMAP_MIN,
+	                        USER_MMAP_MIN + PAGE_SIZE,
+	                        VMA_FLAG_READ | VMA_FLAG_ANON | VMA_FLAG_PRIVATE,
+	                        VMA_KIND_GENERIC),
+	                0u);
+	KTEST_EXPECT_EQ(tc, parent->as->vma_count, parent_vma_count);
+	KTEST_EXPECT_EQ(tc, child->as->vma_count, parent_vma_count + 1u);
 
 	sched_init();
 }
@@ -1997,6 +2733,61 @@ test_linux_open_create_append_preserves_flags_and_data(ktest_case_t *tc)
 	vfs_reset();
 }
 
+static void test_linux_private_file_mmap_reserves_without_mapping(ktest_case_t *tc)
+{
+	static const uint8_t contents[] = {'H', 'e', 'l', 'l', 'o'};
+	static process_t seed;
+	process_t *cur;
+	vfs_file_ref_t ref;
+	arch_mm_mapping_t mapping;
+	uint32_t size = 0;
+	uint32_t fd = 3u;
+	uint32_t addr;
+	int ino;
+
+	vfs_reset();
+	dufs_register();
+	KTEST_ASSERT_EQ(tc, (uint32_t)vfs_mount("/", "dufs"), 0u);
+	(void)fs_unlink("_ktmmap_");
+
+	ino = vfs_create("_ktmmap_");
+	KTEST_ASSERT_TRUE(tc, ino > 0);
+	KTEST_ASSERT_EQ(tc, (uint32_t)vfs_open_file("_ktmmap_", &ref, &size), 0u);
+	KTEST_ASSERT_EQ(
+	    tc,
+	    (uint32_t)vfs_write(ref, 0, contents, (uint32_t)sizeof(contents)),
+	    (uint32_t)sizeof(contents));
+	KTEST_ASSERT_EQ(tc, (uint32_t)vfs_open_file("_ktmmap_", &ref, &size), 0u);
+	KTEST_ASSERT_EQ(tc, size, (uint32_t)sizeof(contents));
+
+	cur = start_syscall_test_process(&seed);
+	KTEST_ASSERT_NOT_NULL(tc, cur);
+	cur->files->open_files[fd].type = FD_TYPE_FILE;
+	cur->files->open_files[fd].access_mode = 0u;
+	cur->files->open_files[fd].u.file.ref = ref;
+	cur->files->open_files[fd].u.file.size = size;
+
+	addr = syscall_handler(
+	    SYS_MMAP2, 0, PAGE_SIZE, PROT_READ, MAP_PRIVATE, fd, 0);
+	KTEST_ASSERT_NE(tc, addr, (uint32_t)-1);
+	KTEST_EXPECT_TRUE(tc, vma_find(cur, addr) != 0);
+	KTEST_EXPECT_NE(
+	    tc, (uint32_t)arch_mm_query(cur->pd_phys, addr, &mapping), 0u);
+	KTEST_EXPECT_EQ(tc,
+	                syscall_handler(SYS_MMAP2,
+	                                0,
+	                                2u * PAGE_SIZE,
+	                                PROT_READ,
+	                                MAP_PRIVATE,
+	                                fd,
+	                                UINT32_MAX / PAGE_SIZE),
+	                (uint32_t)-1);
+
+	stop_syscall_test_process(cur);
+	KTEST_ASSERT_EQ(tc, (uint32_t)fs_unlink("_ktmmap_"), 0u);
+	vfs_reset();
+}
+
 static void
 test_process_restore_user_tls_switches_global_gdt_slot(ktest_case_t *tc)
 {
@@ -2099,7 +2890,8 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_process_build_initial_frame_layout),
     KTEST_CASE(test_process_build_exec_frame_layout),
     KTEST_CASE(test_elf_machine_validation_is_arch_owned),
-    KTEST_CASE(test_elf_loader_rejects_direct_map_pt_load),
+    KTEST_CASE(test_elf_loader_accepts_linux_style_pt_load),
+    KTEST_CASE(test_elf_loader_rejects_below_user_min_pt_load),
     KTEST_CASE(test_elf_loader_rejects_overlapping_pt_loads),
     KTEST_CASE(test_elf_loader_rejects_stack_pt_load),
     KTEST_CASE(test_elf_loader_rejects_kernel_pt_load),
@@ -2111,13 +2903,22 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_vma_add_keeps_regions_sorted_and_findable),
     KTEST_CASE(test_vma_add_rejects_overlapping_regions),
     KTEST_CASE(test_vma_map_anonymous_places_regions_below_stack),
+    KTEST_CASE(test_vma_table_grows_beyond_legacy_limit),
+    KTEST_CASE(test_vma_file_metadata_survives_address_space_copy),
+    KTEST_CASE(test_proc_resource_clone_for_fork_copies_vma_storage),
+    KTEST_CASE(test_proc_resource_defaults_and_fork_copy_commit_limits),
     KTEST_CASE(test_vma_unmap_range_splits_generic_mapping),
+    KTEST_CASE(test_vma_unmap_range_advances_file_offset_for_right_split),
     KTEST_CASE(test_vma_unmap_range_rejects_heap_or_stack),
     KTEST_CASE(test_vma_protect_range_splits_and_requires_full_coverage),
+    KTEST_CASE(test_vma_protect_range_preserves_file_backing_and_offsets),
     KTEST_CASE(test_mem_forensics_collects_basic_region_totals),
     KTEST_CASE(test_mem_forensics_core_note_sizes_are_nonzero),
     KTEST_CASE(test_core_dump_writes_drunix_notes_in_order),
     KTEST_CASE(test_mem_forensics_collects_fresh_process_layout),
+    KTEST_CASE(test_mem_forensics_reports_committed_bytes),
+    KTEST_CASE(test_mem_forensics_maps_use_linux_like_labels),
+    KTEST_CASE(test_mem_forensics_maps_keeps_label_when_merging_file_vmas),
     KTEST_CASE(test_mem_forensics_collects_full_vma_table_with_fallback_image),
     KTEST_CASE(test_mem_forensics_classifies_unmapped_fault),
     KTEST_CASE(test_mem_forensics_classifies_heap_lazy_miss),
@@ -2135,6 +2936,11 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_syscall_getcwd_reads_resource_fs_state),
     KTEST_CASE(test_syscall_chdir_updates_resource_fs_state),
     KTEST_CASE(test_syscall_brk_reads_resource_address_space),
+    KTEST_CASE(test_brk_obeys_data_limit_and_commit_accounting),
+    KTEST_CASE(test_private_writable_anonymous_mmap_commit_release),
+    KTEST_CASE(test_commit_reserve_counts_existing_reservations),
+    KTEST_CASE(test_mprotect_read_to_write_reserves_commit_before_munmap),
+    KTEST_CASE(test_mprotect_write_to_read_releases_commit_before_munmap),
     KTEST_CASE(test_rt_sigaction_reads_resource_handlers),
     KTEST_CASE(test_clone_rejects_sighand_without_vm),
     KTEST_CASE(test_clone_rejects_thread_without_sighand),
@@ -2147,6 +2953,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_linux_syscalls_support_busybox_identity_and_rt_sigmask),
     KTEST_CASE(test_linux_syscalls_support_busybox_stdio_helpers),
     KTEST_CASE(test_linux_open_create_append_preserves_flags_and_data),
+    KTEST_CASE(test_linux_private_file_mmap_reserves_without_mapping),
     KTEST_CASE(test_process_restore_user_tls_switches_global_gdt_slot),
     KTEST_CASE(test_linux_syscalls_install_tls_and_map_mmap2),
 };

@@ -296,8 +296,6 @@ static int arch_x86_validate_elf_load_range(vfs_file_ref_t file_ref,
                                             uint32_t start,
                                             uint32_t end)
 {
-	if (start < (uint32_t)ARCH_KERNEL_DIRECT_MAP_END)
-		return -1;
 	if (start < (uint32_t)ARCH_USER_VADDR_MIN ||
 	    end > (uint32_t)ARCH_USER_VADDR_MAX)
 		return -1;

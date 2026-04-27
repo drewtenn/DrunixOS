@@ -54,8 +54,9 @@ void paging_init(void);
  * paging_identity_map_kernel_range: identity-map a physical range in the
  * shared kernel page directory as supervisor memory.
  *
- * This is used for device memory such as a Multiboot-provided framebuffer that
- * can live above the low 128 MB identity map created at boot.
+ * This is used for device memory such as a Multiboot-provided framebuffer.
+ * Process page directories inherit deliberate higher-half supervisor aliases,
+ * not arbitrary low identity mappings created here.
  *
  * phys_start: physical start address; may be unaligned.
  * byte_len:   number of bytes to map.
@@ -68,16 +69,17 @@ int paging_identity_map_kernel_range(uint32_t phys_start,
                                      uint32_t flags);
 
 /*
- * paging_mark_range_write_combining: switch an identity-mapped physical
- * range's cacheability to write-combining (WC) so successive writes — such
- * as every memcpy that flushes the back buffer to the visible
- * framebuffer — coalesce into burst transactions instead of paying a full
- * bus cycle per store.
+ * paging_mark_range_write_combining: switch a kernel-mapped physical range's
+ * cacheability to write-combining (WC) so successive writes — such as every
+ * memcpy that flushes the back buffer to the visible framebuffer — coalesce
+ * into burst transactions instead of paying a full bus cycle per store.
  *
  * On first call this programs the IA32_PAT MSR's PA4 slot to WC if the
  * CPU supports PAT; subsequent calls reuse the same slot. Pages in the
  * range are rewritten with PAT=1, PCD=0, PWT=0 (which selects PA4) and
- * each page's TLB entry is invalidated.
+ * each page's TLB entry is invalidated. When the range also exists in the
+ * higher-half direct map, that alias is updated too so the same frame does not
+ * have conflicting cacheability mappings.
  *
  * Returns 0 on success, -1 if the CPU doesn't support PAT, -2 if the PTE
  * for any page in the range is not present.
@@ -91,8 +93,10 @@ extern void paging_enable(void);
 /*
  * paging_create_user_space: allocate a fresh page directory for a new process.
  *
- * Copies all present supervisor-only kernel PDEs into the new directory
- * without PG_USER, so ring-3 code cannot reach kernel memory. User pages are
+ * Copies the supervisor-only mappings a process address space still needs:
+ * low PDEs covering the low-linked kernel image and higher-half kernel aliases.
+ * Most low identity-map PDEs are intentionally not inherited because low
+ * addresses above ARCH_USER_VADDR_MIN are legal user space. User pages are
  * added separately with paging_map_page().
  *
  * Returns the physical address of the new page directory, or 0 on failure.
@@ -168,12 +172,13 @@ void paging_switch_directory(uint32_t pd_phys);
 
 /*
  * paging_guard_page / paging_unguard_page: manage a non-present guard page
- * in the shared kernel identity-map page tables.
+ * in the shared kernel direct-map page tables.
  *
  * paging_guard_page:   clear PG_PRESENT so any access faults immediately.
  * paging_unguard_page: restore PG_PRESENT | PG_WRITABLE (call before kfree).
  *
- * Only valid for virt in 0–128 MB (PDE 0–31), which covers the kernel heap.
+ * Only valid for low direct-map virtual addresses, which cover the kernel heap.
+ * Both the low identity and higher-half direct-map aliases are updated.
  */
 void paging_guard_page(uint32_t virt);
 void paging_unguard_page(uint32_t virt);

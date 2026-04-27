@@ -1,6 +1,6 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
- * malloc.c — user-space first-fit heap allocator backed by SYS_BRK.
+ * malloc.c — user-space first-fit heap allocator backed by SYS_BRK and mmap.
  */
 
 #include "malloc.h"
@@ -10,6 +10,7 @@
 
 /*
  * malloc.c — first-fit free-list heap allocator backed by SYS_BRK.
+ * Large allocations are backed directly by anonymous private mmap.
  *
  * Block layout:
  *
@@ -20,6 +21,7 @@
  *
  *   size:  payload length in bytes (not counting the header itself).
  *   flags: bit 0 — 1 = allocated, 0 = free.
+ *          bit 1 — block is backed by mmap, not brk.
  *
  * Free blocks store a pointer to the next free block in the first 4 bytes
  * of their payload.  malloc() enforces a minimum allocation of 4 bytes so
@@ -31,6 +33,10 @@
 
 #define HDR_SIZE 8u
 #define FLAG_USED 1u
+#define MMAP_THRESHOLD (128u * 1024u)
+#define HDR_FLAG_MMAP 0x2u
+#define PAGE_SIZE 4096u
+#define PAGE_MASK (PAGE_SIZE - 1u)
 #define FREE_LINK_SIZE ((uint32_t)sizeof(uintptr_t))
 
 typedef struct block_hdr {
@@ -106,9 +112,31 @@ void *malloc(size_t size)
 		size = FREE_LINK_SIZE;
 
 	/* Align to pointer width. */
+	if (size > (size_t)UINT32_MAX - (FREE_LINK_SIZE - 1u))
+		return 0;
 	size = (size + FREE_LINK_SIZE - 1u) & ~(size_t)(FREE_LINK_SIZE - 1u);
 	if (size > UINT32_MAX - HDR_SIZE)
 		return 0;
+
+	uint32_t total = HDR_SIZE + (uint32_t)size;
+	if (size >= MMAP_THRESHOLD) {
+		if (total > UINT32_MAX - PAGE_MASK)
+			return 0;
+
+		total = (total + PAGE_MASK) & ~PAGE_MASK;
+		block_hdr_t *blk = (block_hdr_t *)sys_mmap(0,
+		                                           total,
+		                                           PROT_READ | PROT_WRITE,
+		                                           MAP_PRIVATE | MAP_ANONYMOUS,
+		                                           -1,
+		                                           0);
+		if (blk == MAP_FAILED)
+			return 0;
+
+		blk->size = total - HDR_SIZE;
+		blk->flags = FLAG_USED | HDR_FLAG_MMAP;
+		return payload_of(blk);
+	}
 
 	/* First-fit scan of the free list. */
 	block_hdr_t *prev = 0;
@@ -153,7 +181,7 @@ void *malloc(size_t size)
 	}
 
 	/* No suitable free block found — extend the heap. */
-	uint32_t need = HDR_SIZE + (uint32_t)size;
+	uint32_t need = total;
 	block_hdr_t *blk = (block_hdr_t *)sbrk((int)need);
 	if (blk == (block_hdr_t *)(uintptr_t)-1)
 		return 0; /* OOM */
@@ -171,6 +199,11 @@ void free(void *ptr)
 		return;
 
 	block_hdr_t *h = hdr_of(ptr);
+	if ((h->flags & HDR_FLAG_MMAP) != 0) {
+		sys_munmap(h, h->size + HDR_SIZE);
+		return;
+	}
+
 	h->flags = 0;
 
 	/* Prepend to the free list (LIFO). */

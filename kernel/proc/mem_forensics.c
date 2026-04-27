@@ -77,16 +77,59 @@ static uint32_t mem_forensics_rendered_size(uint32_t len, uint32_t cap)
 	return len;
 }
 
+static int mem_forensics_vma_is_file_backed(const vm_area_t *vma)
+{
+	return vma && vma->kind == VMA_KIND_GENERIC &&
+	       (vma->flags & VMA_FLAG_ANON) == 0;
+}
+
+static uint32_t mem_forensics_committed_pages(const struct process *proc)
+{
+	if (!proc || !proc->as)
+		return 0;
+	return proc->as->committed_pages;
+}
+
+static const char *mem_forensics_image_label(const struct process *proc)
+{
+	if (!proc)
+		return "[image]";
+	return proc->name[0] ? proc->name : "[image]";
+}
+
+static const char *mem_forensics_label_for_vma(const struct process *proc,
+                                               const vm_area_t *vma)
+{
+	if (!vma)
+		return "";
+
+	if (vma->kind == VMA_KIND_IMAGE)
+		return mem_forensics_image_label(proc);
+	if (vma->kind == VMA_KIND_HEAP)
+		return "[heap]";
+	if (vma->kind == VMA_KIND_STACK)
+		return "[stack]";
+	if (mem_forensics_vma_is_file_backed(vma))
+		return "file";
+	return "anon";
+}
+
 static const char *mem_forensics_label_for_range(const struct process *proc,
                                                  uint32_t start,
                                                  uint32_t end)
 {
+	const vm_area_t *vma;
+
 	if (!proc)
 		return "";
 
+	vma = vma_find_const(proc, start);
+	if (vma && end <= vma->end)
+		return mem_forensics_label_for_vma(proc, vma);
+
 	if (proc->image_start < proc->image_end && start < proc->image_end &&
 	    end > proc->image_start)
-		return proc->name[0] ? proc->name : "[image]";
+		return mem_forensics_image_label(proc);
 
 	if (proc->heap_start < proc->brk && start < proc->brk &&
 	    end > proc->heap_start)
@@ -103,10 +146,13 @@ static void mem_forensics_emit_map_region(render_buf_t *rb,
                                           const struct process *proc,
                                           uint32_t start,
                                           uint32_t end,
-                                          uint32_t flags)
+                                          uint32_t flags,
+                                          const char *label)
 {
-	const char *label = mem_forensics_label_for_range(proc, start, end);
 	const char *perm = (flags & ARCH_MM_MAP_WRITE) ? "rw-p" : "r--p";
+
+	if (!label)
+		label = mem_forensics_label_for_range(proc, start, end);
 
 	if (label[0] != '\0')
 		mem_forensics_emitf(rb, "%08x-%08x %s %s\n", start, end, perm, label);
@@ -132,6 +178,22 @@ static const char *mem_forensics_fault_name(uint32_t classification)
 	default:
 		return "unknown";
 	}
+}
+
+static const vm_area_t *mem_forensics_vma_table(const struct process *proc)
+{
+	if (!proc)
+		return 0;
+	return proc->as ? proc->as->vmas : proc->vmas;
+}
+
+static uint32_t mem_forensics_vma_count(const struct process *proc)
+{
+	if (!proc)
+		return 0;
+	if (proc->as)
+		return proc->as->vmas ? proc->as->vma_count : 0;
+	return proc->vma_count;
 }
 
 static uint32_t mem_forensics_fault_vector(const arch_trap_frame_t *frame)
@@ -239,39 +301,43 @@ static int mem_forensics_append_region(mem_forensics_report_t *out,
                                        const char *label)
 {
 	mem_forensics_region_t *r;
+	uint32_t reserved_bytes;
+	uint32_t mapped_bytes;
 
-	if (out->region_count >= MEM_FORENSICS_MAX_REGIONS)
-		return -1;
+	reserved_bytes = end - start;
+	mapped_bytes = count_present_user_pages(aspace, start, end) * 0x1000u;
 
-	r = &out->regions[out->region_count++];
-	r->start = start;
-	r->end = end;
-	r->kind = kind;
-	r->prot_flags = prot_flags;
-	r->reserved_bytes = end - start;
-	r->mapped_bytes = count_present_user_pages(aspace, start, end) * 0x1000u;
-	k_strncpy(r->label, label, sizeof(r->label) - 1);
-	r->label[sizeof(r->label) - 1] = '\0';
+	if (out->region_count < MEM_FORENSICS_MAX_REGIONS) {
+		r = &out->regions[out->region_count++];
+		r->start = start;
+		r->end = end;
+		r->kind = kind;
+		r->prot_flags = prot_flags;
+		r->reserved_bytes = reserved_bytes;
+		r->mapped_bytes = mapped_bytes;
+		k_strncpy(r->label, label, sizeof(r->label) - 1);
+		r->label[sizeof(r->label) - 1] = '\0';
+	}
 
-	out->total_reserved_bytes += r->reserved_bytes;
-	out->total_mapped_bytes += r->mapped_bytes;
+	out->total_reserved_bytes += reserved_bytes;
+	out->total_mapped_bytes += mapped_bytes;
 	if (kind == MEM_FORENSICS_REGION_IMAGE)
-		out->image_reserved_bytes += r->reserved_bytes;
+		out->image_reserved_bytes += reserved_bytes;
 	else if (kind == MEM_FORENSICS_REGION_HEAP)
-		out->heap_reserved_bytes += r->reserved_bytes;
+		out->heap_reserved_bytes += reserved_bytes;
 	else if (kind == MEM_FORENSICS_REGION_STACK)
-		out->stack_reserved_bytes += r->reserved_bytes;
+		out->stack_reserved_bytes += reserved_bytes;
 	else
-		out->mmap_reserved_bytes += r->reserved_bytes;
+		out->mmap_reserved_bytes += reserved_bytes;
 
 	if (kind == MEM_FORENSICS_REGION_IMAGE)
-		out->image_mapped_bytes += r->mapped_bytes;
+		out->image_mapped_bytes += mapped_bytes;
 	else if (kind == MEM_FORENSICS_REGION_HEAP)
-		out->heap_mapped_bytes += r->mapped_bytes;
+		out->heap_mapped_bytes += mapped_bytes;
 	else if (kind == MEM_FORENSICS_REGION_STACK)
-		out->stack_mapped_bytes += r->mapped_bytes;
+		out->stack_mapped_bytes += mapped_bytes;
 	else
-		out->mmap_mapped_bytes += r->mapped_bytes;
+		out->mmap_mapped_bytes += mapped_bytes;
 
 	return 0;
 }
@@ -280,18 +346,23 @@ int mem_forensics_collect(const struct process *proc,
                           mem_forensics_report_t *out)
 {
 	arch_aspace_t aspace;
+	const vm_area_t *vmas;
+	uint32_t vma_count;
 
 	if (!proc || !out)
 		return -1;
 
 	k_memset(out, 0, sizeof(*out));
 	aspace = (arch_aspace_t)proc->pd_phys;
+	vmas = mem_forensics_vma_table(proc);
+	vma_count = mem_forensics_vma_count(proc);
+	out->total_committed_bytes = mem_forensics_committed_pages(proc) * 0x1000u;
 
 	if (proc->image_start < proc->image_end) {
 		int image_seen = 0;
 
-		for (uint32_t i = 0; i < proc->vma_count; i++) {
-			if (proc->vmas[i].kind == VMA_KIND_IMAGE) {
+		for (uint32_t i = 0; i < vma_count; i++) {
+			if (vmas[i].kind == VMA_KIND_IMAGE) {
 				image_seen = 1;
 				break;
 			}
@@ -309,8 +380,8 @@ int mem_forensics_collect(const struct process *proc,
 		}
 	}
 
-	for (uint32_t i = 0; i < proc->vma_count; i++) {
-		const vm_area_t *vma = &proc->vmas[i];
+	for (uint32_t i = 0; i < vma_count; i++) {
+		const vm_area_t *vma = &vmas[i];
 		uint32_t kind;
 		const char *label;
 
@@ -319,7 +390,7 @@ int mem_forensics_collect(const struct process *proc,
 
 		if (vma->kind == VMA_KIND_IMAGE) {
 			kind = MEM_FORENSICS_REGION_IMAGE;
-			label = "[image]";
+			label = mem_forensics_image_label(proc);
 		} else if (vma->kind == VMA_KIND_HEAP) {
 			kind = MEM_FORENSICS_REGION_HEAP;
 			label = "[heap]";
@@ -328,7 +399,7 @@ int mem_forensics_collect(const struct process *proc,
 			label = "[stack]";
 		} else {
 			kind = MEM_FORENSICS_REGION_MMAP;
-			label = "[anon]";
+			label = mem_forensics_vma_is_file_backed(vma) ? "file" : "anon";
 		}
 
 		if (mem_forensics_append_region(out,
@@ -359,6 +430,7 @@ int mem_forensics_render_vmstat(const struct process *proc,
 
 	mem_forensics_emitf(&rb, "Reserved:\t%u\n", report.total_reserved_bytes);
 	mem_forensics_emitf(&rb, "Mapped:\t%u\n", report.total_mapped_bytes);
+	mem_forensics_emitf(&rb, "Committed:\t%u\n", report.total_committed_bytes);
 	mem_forensics_emitf(&rb,
 	                    "Image:\t%u/%u\n",
 	                    report.image_mapped_bytes,
@@ -426,6 +498,7 @@ int mem_forensics_render_maps(const struct process *proc,
 	uint32_t region_start = 0;
 	uint32_t region_end = 0;
 	uint32_t region_flags = 0;
+	const char *region_label = "";
 	arch_aspace_t aspace;
 	int have_region = 0;
 
@@ -442,42 +515,60 @@ int mem_forensics_render_maps(const struct process *proc,
 	for (uint32_t vaddr = 0; vaddr < USER_STACK_TOP; vaddr += 0x1000u) {
 		arch_mm_mapping_t mapping;
 		uint32_t flags;
+		const char *label;
 
 		if (arch_mm_query(aspace, vaddr, &mapping) != 0 ||
 		    (mapping.flags & ARCH_MM_MAP_USER) == 0) {
 			if (have_region) {
 				mem_forensics_emit_map_region(
-				    &rb, proc, region_start, region_end, region_flags);
+				    &rb,
+				    proc,
+				    region_start,
+				    region_end,
+				    region_flags,
+				    region_label);
 				have_region = 0;
 			}
 			continue;
 		}
 
 		flags = mapping.flags & (ARCH_MM_MAP_WRITE | ARCH_MM_MAP_COW);
+		label = mem_forensics_label_for_range(proc, vaddr, vaddr + 0x1000u);
 
 		if (!have_region) {
 			region_start = vaddr;
 			region_end = vaddr + 0x1000u;
 			region_flags = flags;
+			region_label = label;
 			have_region = 1;
 			continue;
 		}
 
-		if (vaddr == region_end && flags == region_flags) {
+		if (vaddr == region_end && flags == region_flags &&
+		    k_strcmp(label, region_label) == 0) {
 			region_end += 0x1000u;
 			continue;
 		}
 
-		mem_forensics_emit_map_region(
-		    &rb, proc, region_start, region_end, region_flags);
+		mem_forensics_emit_map_region(&rb,
+		                              proc,
+		                              region_start,
+		                              region_end,
+		                              region_flags,
+		                              region_label);
 		region_start = vaddr;
 		region_end = vaddr + 0x1000u;
 		region_flags = flags;
+		region_label = label;
 	}
 
 	if (have_region) {
-		mem_forensics_emit_map_region(
-		    &rb, proc, region_start, region_end, region_flags);
+		mem_forensics_emit_map_region(&rb,
+		                              proc,
+		                              region_start,
+		                              region_end,
+		                              region_flags,
+		                              region_label);
 	}
 
 	*size_out = mem_forensics_rendered_size(rb.len, cap);
