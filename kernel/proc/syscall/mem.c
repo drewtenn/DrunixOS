@@ -10,6 +10,7 @@
 #include "syscall_linux.h"
 #include "arch.h"
 #include "chardev.h"
+#include "commit.h"
 #include "kheap.h"
 #include "klog.h"
 #include "kstring.h"
@@ -120,6 +121,154 @@ static void syscall_apply_mprotect(process_t *proc,
 
 		(void)arch_mm_map(aspace, page, mapping.phys_addr, desired_flags);
 	}
+}
+
+static int syscall_vma_is_committable(const vm_area_t *vma)
+{
+	if (!vma)
+		return 0;
+
+	return vma->kind == VMA_KIND_GENERIC &&
+	       (vma->flags & (VMA_FLAG_ANON | VMA_FLAG_PRIVATE)) ==
+	           (VMA_FLAG_ANON | VMA_FLAG_PRIVATE);
+}
+
+static int syscall_vma_requires_commit(const vm_area_t *vma)
+{
+	return syscall_vma_is_committable(vma) &&
+	       (vma->flags & VMA_FLAG_WRITE) != 0;
+}
+
+static uint32_t syscall_mprotect_transition_bytes(process_t *proc,
+                                                  uint32_t start,
+                                                  uint32_t end,
+                                                  uint32_t new_flags,
+                                                  int reserve_transition)
+{
+	const vm_area_t *vmas;
+	uint32_t count;
+	uint32_t bytes = 0;
+
+	if (!proc || start >= end)
+		return 0;
+
+	if (proc->as) {
+		vmas = proc->as->vmas;
+		count = proc->as->vma_count;
+	} else {
+		vmas = proc->vmas;
+		count = proc->vma_count;
+	}
+	if (!vmas)
+		return 0;
+
+	for (uint32_t i = 0; i < count; i++) {
+		const vm_area_t *vma = &vmas[i];
+		uint32_t overlap_start;
+		uint32_t overlap_end;
+		uint32_t overlap_bytes;
+		int has_commit;
+		int needs_commit;
+
+		if (!syscall_vma_is_committable(vma))
+			continue;
+		if (start >= vma->end || end <= vma->start)
+			continue;
+
+		has_commit = (vma->flags & VMA_FLAG_WRITE) != 0;
+		needs_commit = (new_flags & VMA_FLAG_WRITE) != 0;
+		if (reserve_transition) {
+			if (has_commit || !needs_commit)
+				continue;
+		} else if (!has_commit || needs_commit) {
+			continue;
+		}
+
+		overlap_start = start > vma->start ? start : vma->start;
+		overlap_end = end < vma->end ? end : vma->end;
+		if (overlap_start >= overlap_end)
+			continue;
+
+		overlap_bytes = overlap_end - overlap_start;
+		if (bytes > UINT32_MAX - overlap_bytes)
+			return UINT32_MAX;
+		bytes += overlap_bytes;
+	}
+
+	return bytes;
+}
+
+static uint32_t
+syscall_committed_munmap_bytes(process_t *proc, uint32_t start, uint32_t end)
+{
+	const vm_area_t *vmas;
+	uint32_t count;
+	uint32_t bytes = 0;
+
+	if (!proc || start >= end)
+		return 0;
+
+	if (proc->as) {
+		vmas = proc->as->vmas;
+		count = proc->as->vma_count;
+	} else {
+		vmas = proc->vmas;
+		count = proc->vma_count;
+	}
+	if (!vmas)
+		return 0;
+
+	for (uint32_t i = 0; i < count; i++) {
+		const vm_area_t *vma = &vmas[i];
+		uint32_t overlap_start;
+		uint32_t overlap_end;
+		uint32_t overlap_bytes;
+
+		if (!syscall_vma_requires_commit(vma))
+			continue;
+		if (start >= vma->end || end <= vma->start)
+			continue;
+
+		overlap_start = start > vma->start ? start : vma->start;
+		overlap_end = end < vma->end ? end : vma->end;
+		if (overlap_start >= overlap_end)
+			continue;
+
+		overlap_bytes = overlap_end - overlap_start;
+		if (bytes > UINT32_MAX - overlap_bytes)
+			return UINT32_MAX;
+		bytes += overlap_bytes;
+	}
+
+	return bytes;
+}
+
+static int syscall_mmap_anonymous_private(process_t *cur,
+                                          uint32_t hint,
+                                          uint32_t length,
+                                          uint32_t prot,
+                                          uint32_t *addr_out)
+{
+	uint32_t flags;
+	int reserved = 0;
+
+	if (!cur || !addr_out || length == 0)
+		return -1;
+
+	flags = prot_to_vma_flags(prot);
+	if ((flags & VMA_FLAG_WRITE) != 0) {
+		if (vm_commit_reserve(cur, length) != 0)
+			return -1;
+		reserved = 1;
+	}
+
+	if (vma_map_anonymous(cur, hint, length, flags, addr_out) != 0) {
+		if (reserved)
+			vm_commit_release(cur, length);
+		return -1;
+	}
+
+	return 0;
 }
 
 static int syscall_mmap_chardev(process_t *cur,
@@ -277,11 +426,26 @@ uint32_t SYSCALL_NOINLINE syscall_case_brk(uint32_t ebx)
 		if (new_brk < heap_vma->start || new_brk > USER_HEAP_MAX)
 			return *brk_ptr;
 
+		if (new_brk > *brk_ptr) {
+			uint32_t old_commit_end = vm_page_align_up(*brk_ptr);
+			uint32_t new_commit_end = vm_page_align_up(new_brk);
+
+			if (as && new_brk - heap_vma->start > as->rlimit_data)
+				return *brk_ptr;
+			if (new_commit_end == 0)
+				return *brk_ptr;
+			if (new_commit_end > old_commit_end &&
+			    vm_commit_reserve(cur, new_commit_end - old_commit_end) != 0)
+				return *brk_ptr;
+		}
+
 		if (new_brk < *brk_ptr) {
 			uint32_t unmap_start = (new_brk + 0xFFFu) & ~0xFFFu;
 			uint32_t old_end = (*brk_ptr + 0xFFFu) & ~0xFFFu;
 
 			syscall_unmap_user_range(cur, unmap_start, old_end);
+			if (old_end > unmap_start)
+				vm_commit_release(cur, old_end - unmap_start);
 		}
 
 		*brk_ptr = new_brk;
@@ -311,11 +475,11 @@ uint32_t SYSCALL_NOINLINE syscall_case_mmap(uint32_t ebx)
 				return (uint32_t)-1;
 			if (args.offset != 0)
 				return (uint32_t)-1;
-			if (vma_map_anonymous(cur,
-			                      args.addr,
-			                      args.length,
-			                      prot_to_vma_flags(args.prot),
-			                      &map_addr) != 0)
+			if (syscall_mmap_anonymous_private(cur,
+			                                   args.addr,
+			                                   args.length,
+			                                   args.prot,
+			                                   &map_addr) != 0)
 				return (uint32_t)-1;
 		} else {
 			file_handle_t *fh;
@@ -386,8 +550,11 @@ uint32_t SYSCALL_NOINLINE syscall_case_mmap2(uint32_t ebx,
 				return (uint32_t)-1;
 			if (ebp != 0)
 				return (uint32_t)-1;
-			if (vma_map_anonymous(
-			        cur, ebx, ecx, prot_to_vma_flags(edx), &map_addr) != 0)
+			if (syscall_mmap_anonymous_private(cur,
+			                                   ebx,
+			                                   ecx,
+			                                   edx,
+			                                   &map_addr) != 0)
 				return (uint32_t)-1;
 		} else {
 			file_handle_t *fh;
@@ -436,6 +603,7 @@ uint32_t SYSCALL_NOINLINE syscall_case_munmap(uint32_t ebx, uint32_t ecx)
 		process_t *cur = sched_current();
 		uint32_t length;
 		uint32_t end;
+		uint32_t commit_bytes;
 
 		if (!cur || ebx == 0 || (ebx & (PAGE_SIZE - 1u)) != 0 || ecx == 0)
 			return (uint32_t)-1;
@@ -444,10 +612,12 @@ uint32_t SYSCALL_NOINLINE syscall_case_munmap(uint32_t ebx, uint32_t ecx)
 		end = ebx + length;
 		if (length == 0 || end <= ebx || end > USER_STACK_TOP)
 			return (uint32_t)-1;
+		commit_bytes = syscall_committed_munmap_bytes(cur, ebx, end);
 		if (vma_unmap_range(cur, ebx, end) != 0)
 			return (uint32_t)-1;
 
 		syscall_unmap_user_range(cur, ebx, end);
+		vm_commit_release(cur, commit_bytes);
 		return 0;
 	}
 }
@@ -460,6 +630,9 @@ uint32_t SYSCALL_NOINLINE syscall_case_mprotect(uint32_t ebx,
 		process_t *cur = sched_current();
 		uint32_t length;
 		uint32_t end;
+		uint32_t new_flags;
+		uint32_t reserve_bytes;
+		uint32_t release_bytes;
 
 		if (!cur || ebx == 0 || (ebx & (PAGE_SIZE - 1u)) != 0 || ecx == 0 ||
 		    !prot_is_valid(edx))
@@ -469,10 +642,24 @@ uint32_t SYSCALL_NOINLINE syscall_case_mprotect(uint32_t ebx,
 		end = ebx + length;
 		if (length == 0 || end <= ebx || end > USER_STACK_TOP)
 			return (uint32_t)-1;
-		if (vma_protect_range(cur, ebx, end, prot_to_vma_flags(edx)) != 0)
+
+		new_flags = prot_to_vma_flags(edx);
+		reserve_bytes = syscall_mprotect_transition_bytes(
+		    cur, ebx, end, new_flags, 1);
+		if (reserve_bytes != 0 && vm_commit_reserve(cur, reserve_bytes) != 0)
 			return (uint32_t)-1;
 
+		release_bytes = syscall_mprotect_transition_bytes(
+		    cur, ebx, end, new_flags, 0);
+		if (vma_protect_range(cur, ebx, end, new_flags) != 0) {
+			if (reserve_bytes != 0)
+				vm_commit_release(cur, reserve_bytes);
+			return (uint32_t)-1;
+		}
+
 		syscall_apply_mprotect(cur, ebx, end, edx);
+		if (release_bytes != 0)
+			vm_commit_release(cur, release_bytes);
 		return 0;
 	}
 }

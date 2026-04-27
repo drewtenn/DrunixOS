@@ -56,6 +56,7 @@ ARM_SHARED_KOBJS := kernel/lib/klog.arm64.o \
                     kernel/console/runtime.arm64.o \
                     kernel/mm/fault.arm64.o \
                     kernel/mm/vma.arm64.o \
+                    kernel/mm/commit.arm64.o \
                     kernel/mm/kheap.arm64.o \
                     kernel/mm/slab.arm64.o \
                     kernel/drivers/blkdev.arm64.o \

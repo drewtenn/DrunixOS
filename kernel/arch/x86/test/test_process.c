@@ -768,7 +768,9 @@ static void test_proc_resource_clone_for_fork_copies_vma_storage(ktest_case_t *t
 	                        VMA_KIND_STACK),
 	                0u);
 
-	KTEST_ASSERT_EQ(tc, (uint32_t)proc_resource_clone_for_fork(&child, &parent), 0u);
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)proc_resource_clone_for_fork(&child, &parent),
+	                0u);
 	KTEST_ASSERT_NOT_NULL(tc, child.as);
 	KTEST_ASSERT_NOT_NULL(tc, parent.as->vmas);
 	KTEST_ASSERT_NOT_NULL(tc, child.as->vmas);
@@ -787,6 +789,36 @@ static void test_proc_resource_clone_for_fork_copies_vma_storage(ktest_case_t *t
 	                0u);
 	KTEST_EXPECT_EQ(tc, parent.as->vma_count, 2u);
 	KTEST_EXPECT_EQ(tc, child.as->vma_count, 3u);
+
+	proc_resource_put_all(&child);
+	proc_resource_put_all(&parent);
+}
+
+static void test_proc_resource_defaults_and_fork_copy_commit_limits(
+    ktest_case_t *tc)
+{
+	static process_t parent;
+	static process_t child;
+
+	k_memset(&parent, 0, sizeof(parent));
+	k_memset(&child, 0, sizeof(child));
+	KTEST_ASSERT_EQ(tc, (uint32_t)proc_resource_init_fresh(&parent), 0u);
+	KTEST_ASSERT_NOT_NULL(tc, parent.as);
+	KTEST_EXPECT_EQ(tc, parent.as->rlimit_as, VM_TASK_SIZE);
+	KTEST_EXPECT_EQ(tc, parent.as->rlimit_data, 64u * 1024u * 1024u);
+	KTEST_EXPECT_EQ(tc, parent.as->committed_pages, 0u);
+
+	parent.as->rlimit_as = VM_TASK_SIZE - PAGE_SIZE;
+	parent.as->rlimit_data = 2u * PAGE_SIZE;
+	parent.as->committed_pages = 7u;
+
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)proc_resource_clone_for_fork(&child, &parent),
+	                0u);
+	KTEST_ASSERT_NOT_NULL(tc, child.as);
+	KTEST_EXPECT_EQ(tc, child.as->rlimit_as, parent.as->rlimit_as);
+	KTEST_EXPECT_EQ(tc, child.as->rlimit_data, parent.as->rlimit_data);
+	KTEST_EXPECT_EQ(tc, child.as->committed_pages, parent.as->committed_pages);
 
 	proc_resource_put_all(&child);
 	proc_resource_put_all(&parent);
@@ -1548,6 +1580,219 @@ static void test_syscall_brk_reads_resource_address_space(ktest_case_t *tc)
 
 	KTEST_EXPECT_EQ(
 	    tc, syscall_handler(SYS_BRK, 0, 0, 0, 0, 0, 0), cur->as->brk);
+
+	stop_syscall_test_process(cur);
+}
+
+static void test_brk_obeys_data_limit_and_commit_accounting(ktest_case_t *tc)
+{
+	static process_t proc;
+	process_t *cur = start_syscall_test_process(&proc);
+	uint32_t heap_start;
+
+	KTEST_ASSERT_NOT_NULL(tc, cur);
+	KTEST_ASSERT_NOT_NULL(tc, cur->as);
+	heap_start = cur->as->heap_start;
+	cur->as->rlimit_data = PAGE_SIZE;
+
+	KTEST_EXPECT_EQ(tc,
+	                syscall_handler(SYS_BRK,
+	                                heap_start + 2u * PAGE_SIZE,
+	                                0,
+	                                0,
+	                                0,
+	                                0,
+	                                0),
+	                heap_start);
+	KTEST_EXPECT_EQ(tc, cur->as->brk, heap_start);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
+
+	KTEST_EXPECT_EQ(tc,
+	                syscall_handler(SYS_BRK,
+	                                heap_start + PAGE_SIZE,
+	                                0,
+	                                0,
+	                                0,
+	                                0,
+	                                0),
+	                heap_start + PAGE_SIZE);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 1u);
+
+	KTEST_EXPECT_EQ(
+	    tc, syscall_handler(SYS_BRK, heap_start, 0, 0, 0, 0, 0), heap_start);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
+
+	stop_syscall_test_process(cur);
+}
+
+static void test_private_writable_anonymous_mmap_commit_release(
+    ktest_case_t *tc)
+{
+	static process_t proc;
+	process_t *cur = start_syscall_test_process(&proc);
+	uint32_t addr;
+	uint32_t readonly_addr;
+
+	KTEST_ASSERT_NOT_NULL(tc, cur);
+	KTEST_ASSERT_NOT_NULL(tc, cur->as);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
+
+	addr = syscall_handler(SYS_MMAP2,
+	                       0,
+	                       3u * PAGE_SIZE,
+	                       PROT_READ | PROT_WRITE,
+	                       MAP_PRIVATE | MAP_ANONYMOUS,
+	                       (uint32_t)-1,
+	                       0);
+	KTEST_ASSERT_NE(tc, addr, (uint32_t)-1);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 3u);
+
+	KTEST_ASSERT_EQ(tc,
+	                syscall_handler(SYS_MUNMAP,
+	                                addr + PAGE_SIZE,
+	                                PAGE_SIZE,
+	                                0,
+	                                0,
+	                                0,
+	                                0),
+	                0u);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 2u);
+	KTEST_EXPECT_NULL(tc, vma_find(cur, addr + PAGE_SIZE));
+	KTEST_EXPECT_TRUE(tc, vma_find(cur, addr) != 0);
+	KTEST_EXPECT_TRUE(tc, vma_find(cur, addr + 2u * PAGE_SIZE) != 0);
+
+	KTEST_ASSERT_EQ(tc,
+	                syscall_handler(SYS_MUNMAP,
+	                                addr,
+	                                3u * PAGE_SIZE,
+	                                0,
+	                                0,
+	                                0,
+	                                0),
+	                0u);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
+
+	readonly_addr = syscall_handler(SYS_MMAP2,
+	                                0,
+	                                PAGE_SIZE,
+	                                PROT_READ,
+	                                MAP_PRIVATE | MAP_ANONYMOUS,
+	                                (uint32_t)-1,
+	                                0);
+	KTEST_ASSERT_NE(tc, readonly_addr, (uint32_t)-1);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
+	KTEST_ASSERT_EQ(tc,
+	                syscall_handler(SYS_MUNMAP,
+	                                readonly_addr,
+	                                PAGE_SIZE,
+	                                0,
+	                                0,
+	                                0,
+	                                0),
+	                0u);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
+
+	stop_syscall_test_process(cur);
+}
+
+static void test_commit_reserve_counts_existing_reservations(ktest_case_t *tc)
+{
+	static process_t proc;
+	process_t *cur = start_syscall_test_process(&proc);
+	uint32_t free_pages;
+	uint32_t addr;
+
+	KTEST_ASSERT_NOT_NULL(tc, cur);
+	KTEST_ASSERT_NOT_NULL(tc, cur->as);
+	free_pages = pmm_free_page_count();
+	KTEST_ASSERT_TRUE(tc, free_pages > 1u);
+	cur->as->committed_pages = free_pages - 1u;
+
+	addr = syscall_handler(SYS_MMAP2,
+	                       0,
+	                       2u * PAGE_SIZE,
+	                       PROT_READ | PROT_WRITE,
+	                       MAP_PRIVATE | MAP_ANONYMOUS,
+	                       (uint32_t)-1,
+	                       0);
+	KTEST_EXPECT_EQ(tc, addr, (uint32_t)-1);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, free_pages - 1u);
+
+	stop_syscall_test_process(cur);
+}
+
+static void test_mprotect_read_to_write_reserves_commit_before_munmap(
+    ktest_case_t *tc)
+{
+	static process_t proc;
+	process_t *cur = start_syscall_test_process(&proc);
+	uint32_t addr;
+
+	KTEST_ASSERT_NOT_NULL(tc, cur);
+	KTEST_ASSERT_NOT_NULL(tc, cur->as);
+
+	addr = syscall_handler(SYS_MMAP2,
+	                       0,
+	                       PAGE_SIZE,
+	                       PROT_READ,
+	                       MAP_PRIVATE | MAP_ANONYMOUS,
+	                       (uint32_t)-1,
+	                       0);
+	KTEST_ASSERT_NE(tc, addr, (uint32_t)-1);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
+
+	KTEST_ASSERT_EQ(tc,
+	                syscall_handler(SYS_MPROTECT,
+	                                addr,
+	                                PAGE_SIZE,
+	                                PROT_READ | PROT_WRITE,
+	                                0,
+	                                0,
+	                                0),
+	                0u);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 1u);
+
+	KTEST_ASSERT_EQ(
+	    tc, syscall_handler(SYS_MUNMAP, addr, PAGE_SIZE, 0, 0, 0, 0), 0u);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
+
+	stop_syscall_test_process(cur);
+}
+
+static void test_mprotect_write_to_read_releases_commit_before_munmap(
+    ktest_case_t *tc)
+{
+	static process_t proc;
+	process_t *cur = start_syscall_test_process(&proc);
+	uint32_t addr;
+
+	KTEST_ASSERT_NOT_NULL(tc, cur);
+	KTEST_ASSERT_NOT_NULL(tc, cur->as);
+
+	addr = syscall_handler(SYS_MMAP2,
+	                       0,
+	                       PAGE_SIZE,
+	                       PROT_READ | PROT_WRITE,
+	                       MAP_PRIVATE | MAP_ANONYMOUS,
+	                       (uint32_t)-1,
+	                       0);
+	KTEST_ASSERT_NE(tc, addr, (uint32_t)-1);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 1u);
+
+	KTEST_ASSERT_EQ(tc,
+	                syscall_handler(SYS_MPROTECT,
+	                                addr,
+	                                PAGE_SIZE,
+	                                PROT_READ,
+	                                0,
+	                                0,
+	                                0),
+	                0u);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
+
+	KTEST_ASSERT_EQ(
+	    tc, syscall_handler(SYS_MUNMAP, addr, PAGE_SIZE, 0, 0, 0, 0), 0u);
+	KTEST_EXPECT_EQ(tc, cur->as->committed_pages, 0u);
 
 	stop_syscall_test_process(cur);
 }
@@ -2435,6 +2680,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_vma_table_grows_beyond_legacy_limit),
     KTEST_CASE(test_vma_file_metadata_survives_address_space_copy),
     KTEST_CASE(test_proc_resource_clone_for_fork_copies_vma_storage),
+    KTEST_CASE(test_proc_resource_defaults_and_fork_copy_commit_limits),
     KTEST_CASE(test_vma_unmap_range_splits_generic_mapping),
     KTEST_CASE(test_vma_unmap_range_advances_file_offset_for_right_split),
     KTEST_CASE(test_vma_unmap_range_rejects_heap_or_stack),
@@ -2461,6 +2707,11 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_syscall_getcwd_reads_resource_fs_state),
     KTEST_CASE(test_syscall_chdir_updates_resource_fs_state),
     KTEST_CASE(test_syscall_brk_reads_resource_address_space),
+    KTEST_CASE(test_brk_obeys_data_limit_and_commit_accounting),
+    KTEST_CASE(test_private_writable_anonymous_mmap_commit_release),
+    KTEST_CASE(test_commit_reserve_counts_existing_reservations),
+    KTEST_CASE(test_mprotect_read_to_write_reserves_commit_before_munmap),
+    KTEST_CASE(test_mprotect_write_to_read_releases_commit_before_munmap),
     KTEST_CASE(test_rt_sigaction_reads_resource_handlers),
     KTEST_CASE(test_clone_rejects_sighand_without_vm),
     KTEST_CASE(test_clone_rejects_thread_without_sighand),

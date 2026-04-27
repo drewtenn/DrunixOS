@@ -65,6 +65,9 @@ int proc_resource_init_fresh(process_t *proc)
 	}
 
 	proc->as->refs = 1;
+	proc->as->rlimit_as = VM_TASK_SIZE;
+	proc->as->rlimit_data = 64u * 1024u * 1024u;
+	proc->as->committed_pages = 0;
 	proc->files->refs = 1;
 	proc->fs_state->refs = 1;
 	proc->sig_actions->refs = 1;

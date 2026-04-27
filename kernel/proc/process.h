@@ -171,6 +171,9 @@ typedef struct proc_address_space {
 	uint32_t image_start;
 	uint32_t image_end;
 	uint32_t stack_low_limit;
+	uint32_t rlimit_as;
+	uint32_t rlimit_data;
+	uint32_t committed_pages;
 	vm_area_t *vmas;
 	uint32_t vma_count;
 	uint32_t vma_capacity;
