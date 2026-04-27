@@ -148,7 +148,10 @@ ARM_USER_C_RUNTIME_OBJS := $(ARM_USER_RUNTIME_OBJ_DIR)/crt0.o \
                            $(ARM_USER_RUNTIME_OBJ_DIR)/stdlib.o \
                            $(ARM_USER_RUNTIME_OBJ_DIR)/stdio.o \
                            $(ARM_USER_RUNTIME_OBJ_DIR)/unistd.o \
-                           $(ARM_USER_RUNTIME_OBJ_DIR)/time.o
+                           $(ARM_USER_RUNTIME_OBJ_DIR)/time.o \
+                           $(ARM_USER_RUNTIME_OBJ_DIR)/drwin.o \
+                           $(ARM_USER_RUNTIME_OBJ_DIR)/drwin_gfx.o \
+                           $(ARM_USER_RUNTIME_OBJ_DIR)/desktop_font.o
 ARM_USER_C_RUNTIME_LIB_OBJS := $(filter-out $(ARM_USER_RUNTIME_OBJ_DIR)/crt0.o,$(ARM_USER_C_RUNTIME_OBJS))
 ARM_USER_CXX_RUNTIME_OBJS := $(ARM_USER_RUNTIME_OBJ_DIR)/cxxrt.o \
                              $(ARM_USER_RUNTIME_OBJ_DIR)/cxxabi.o
@@ -238,11 +241,15 @@ $(ARM_USER_RUNTIME_OBJ_DIR)/syscall.o: user/runtime/syscall_arm64_compat.c user/
 
 $(ARM_USER_RUNTIME_OBJ_DIR)/%.o: user/runtime/%.c .build-mode-flag
 	@mkdir -p $(dir $@)
-	$(ARM_CC) $(ARM_USER_CFLAGS) -I user/runtime -c $< -o $@
+	$(ARM_CC) $(ARM_USER_CFLAGS) $(ARM_USER_INCLUDES) -c $< -o $@
 
 $(ARM_USER_RUNTIME_OBJ_DIR)/%.o: user/runtime/%.cpp .build-mode-flag
 	@mkdir -p $(dir $@)
-	$(ARM_CXX) $(ARM_USER_CXXFLAGS) -I user/runtime -c $< -o $@
+	$(ARM_CXX) $(ARM_USER_CXXFLAGS) $(ARM_USER_INCLUDES) -c $< -o $@
+
+$(ARM_USER_RUNTIME_OBJ_DIR)/desktop_font.o: user/apps/desktop_font.c user/apps/desktop_font.h .build-mode-flag
+	@mkdir -p $(dir $@)
+	$(ARM_CC) $(ARM_USER_CFLAGS) $(ARM_USER_INCLUDES) -c $< -o $@
 
 $(ARM_USER_APP_OBJ_DIR)/%.o: user/apps/%.c .build-mode-flag
 	@mkdir -p $(dir $@)
@@ -278,9 +285,9 @@ $(ARM_USER_APP_OBJ_DIR)/desktop_kbdmap.o: shared/kbdmap.c shared/kbdmap.h .build
 	@mkdir -p $(dir $@)
 	$(ARM_CC) $(ARM_USER_CFLAGS) -I shared -c $< -o $@
 
-$(ARM_USER_BIN_DIR)/desktop: $(ARM_USER_APP_OBJ_DIR)/desktop.o $(ARM_USER_APP_OBJ_DIR)/desktop_font.o $(ARM_USER_APP_OBJ_DIR)/desktop_kbdmap.o $(ARM_USER_DESKTOP_NANOJPEG_OBJS) $(ARM_USER_C_RUNTIME_OBJS) $(ARM_USER_LINKER)
+$(ARM_USER_BIN_DIR)/desktop: $(ARM_USER_APP_OBJ_DIR)/desktop.o $(ARM_USER_APP_OBJ_DIR)/desktop_kbdmap.o $(ARM_USER_DESKTOP_NANOJPEG_OBJS) $(ARM_USER_C_RUNTIME_OBJS) $(ARM_USER_LINKER)
 	@mkdir -p $(dir $@)
-	$(ARM_LD) -nostdlib -T $(ARM_USER_LINKER) -o $@ $(ARM_USER_C_RUNTIME_OBJS) $(ARM_USER_APP_OBJ_DIR)/desktop.o $(ARM_USER_APP_OBJ_DIR)/desktop_font.o $(ARM_USER_APP_OBJ_DIR)/desktop_kbdmap.o $(ARM_USER_DESKTOP_NANOJPEG_OBJS)
+	$(ARM_LD) -nostdlib -T $(ARM_USER_LINKER) -o $@ $(ARM_USER_C_RUNTIME_OBJS) $(ARM_USER_APP_OBJ_DIR)/desktop.o $(ARM_USER_APP_OBJ_DIR)/desktop_kbdmap.o $(ARM_USER_DESKTOP_NANOJPEG_OBJS)
 
 build/arm64init.elf: build/crt0_arm64.o build/syscall_arm64.o build/arm64init.o $(ARM_USER_RUNTIME_OBJ_DIR)/syscall.o $(ARM_USER_RUNTIME_OBJ_DIR)/cxx_init.o $(ARM_USER_LINKER) kernel/arch/arm64/arch.mk
 	$(ARM_LD) -nostdlib -e _start -T $(ARM_USER_LINKER) -o $@ build/crt0_arm64.o $(ARM_USER_RUNTIME_OBJ_DIR)/syscall.o build/syscall_arm64.o $(ARM_USER_RUNTIME_OBJ_DIR)/cxx_init.o build/arm64init.o

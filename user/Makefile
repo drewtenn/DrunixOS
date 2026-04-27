@@ -54,7 +54,8 @@ BUILD_MODE_FLAG := $(BUILD_ROOT)/.build-mode-flag
 
 C_RUNTIME_OBJS = $(RUNTIME_OBJ_DIR)/crt0.o $(RUNTIME_OBJ_DIR)/cxx_init.o $(RUNTIME_OBJ_DIR)/syscall.o $(RUNTIME_OBJ_DIR)/malloc.o \
                  $(RUNTIME_OBJ_DIR)/string.o $(RUNTIME_OBJ_DIR)/ctype.o $(RUNTIME_OBJ_DIR)/stdlib.o $(RUNTIME_OBJ_DIR)/stdio.o \
-                 $(RUNTIME_OBJ_DIR)/unistd.o $(RUNTIME_OBJ_DIR)/time.o
+                 $(RUNTIME_OBJ_DIR)/unistd.o $(RUNTIME_OBJ_DIR)/time.o $(RUNTIME_OBJ_DIR)/drwin.o \
+                 $(RUNTIME_OBJ_DIR)/drwin_gfx.o $(RUNTIME_OBJ_DIR)/desktop_font.o
 C_RUNTIME_LIB_OBJS = $(filter-out $(RUNTIME_OBJ_DIR)/crt0.o,$(C_RUNTIME_OBJS))
 CXX_RUNTIME_OBJS = $(RUNTIME_OBJ_DIR)/cxxrt.o $(RUNTIME_OBJ_DIR)/cxxabi.o
 C_LINK_OBJS = $(C_RUNTIME_OBJS)
@@ -84,11 +85,15 @@ $(RUNTIME_OBJ_DIR)/crt0.o: $(RUNTIME_SRC_DIR)/crt0.asm
 
 $(RUNTIME_OBJ_DIR)/%.o: $(RUNTIME_SRC_DIR)/%.c $(BUILD_MODE_FLAG)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(DEPFLAGS) -I $(RUNTIME_SRC_DIR) -c -o $@ $<
+	$(CC) $(CFLAGS) $(DEPFLAGS) $(USER_INCLUDES) -c -o $@ $<
 
 $(RUNTIME_OBJ_DIR)/%.o: $(RUNTIME_SRC_DIR)/%.cpp $(BUILD_MODE_FLAG)
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) $(DEPFLAGS) -I $(RUNTIME_SRC_DIR) -c -o $@ $<
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(USER_INCLUDES) -c -o $@ $<
+
+$(RUNTIME_OBJ_DIR)/desktop_font.o: $(APP_SRC_DIR)/desktop_font.c $(APP_SRC_DIR)/desktop_font.h $(BUILD_MODE_FLAG)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(DEPFLAGS) $(USER_INCLUDES) -c -o $@ $<
 
 $(APP_OBJ_DIR)/%.o: $(APP_SRC_DIR)/%.c $(BUILD_MODE_FLAG)
 	@mkdir -p $(dir $@)
@@ -131,9 +136,9 @@ $(APP_OBJ_DIR)/desktop_kbdmap.o: ../shared/kbdmap.c ../shared/kbdmap.h $(BUILD_M
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(DEPFLAGS) -I../shared -c -o $@ $<
 
-$(BIN_DIR)/desktop: $(APP_OBJ_DIR)/desktop.o $(APP_OBJ_DIR)/desktop_font.o $(APP_OBJ_DIR)/desktop_kbdmap.o $(DESKTOP_NANOJPEG_OBJS) $(C_LINK_OBJS) $(LINKER_DIR)/user.ld
+$(BIN_DIR)/desktop: $(APP_OBJ_DIR)/desktop.o $(APP_OBJ_DIR)/desktop_kbdmap.o $(DESKTOP_NANOJPEG_OBJS) $(C_LINK_OBJS) $(LINKER_DIR)/user.ld
 	@mkdir -p $(dir $@)
-	$(LD) -m elf_i386 -T $(LINKER_DIR)/user.ld -o $@ $(C_LINK_OBJS) $(APP_OBJ_DIR)/desktop.o $(APP_OBJ_DIR)/desktop_font.o $(APP_OBJ_DIR)/desktop_kbdmap.o $(DESKTOP_NANOJPEG_OBJS)
+	$(LD) -m elf_i386 -T $(LINKER_DIR)/user.ld -o $@ $(C_LINK_OBJS) $(APP_OBJ_DIR)/desktop.o $(APP_OBJ_DIR)/desktop_kbdmap.o $(DESKTOP_NANOJPEG_OBJS)
 
 clean:
 	rm -rf $(BUILD_ROOT)

@@ -112,10 +112,20 @@ int sys_display_claim(void)
 
 int sys_poll(sys_pollfd_t *fds, unsigned int nfds, int timeout)
 {
-	(void)fds;
-	(void)nfds;
-	(void)timeout;
-	return -1;
+	sys_timespec_t ts;
+	sys_timespec_t *tsp = 0;
+
+	if (timeout >= 0) {
+		ts.tv_sec = timeout / 1000;
+		ts.tv_nsec = (long)(timeout % 1000) * 1000000L;
+		tsp = &ts;
+	}
+	return (int)syscall5(ARM64_SYS_PPOLL,
+	                     (long)fds,
+	                     nfds,
+	                     (long)tsp,
+	                     0,
+	                     0);
 }
 
 int sys_getdents(const char *path, char *buf, int size)

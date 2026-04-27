@@ -153,7 +153,7 @@ uint32_t syscall_handler(uint32_t eax,
 		return syscall_case_utimensat(ebx, ecx, esi);
 
 	case SYS_POLL:
-		return syscall_case_poll(ebx, ecx);
+		return syscall_case_poll(ebx, ecx, edx);
 
 	case SYS_IOCTL:
 		return syscall_case_ioctl(ebx, ecx, edx);

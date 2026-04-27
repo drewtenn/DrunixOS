@@ -200,42 +200,137 @@ uint32_t SYSCALL_NOINLINE syscall_case_close(uint32_t ebx)
 	}
 }
 
-uint32_t SYSCALL_NOINLINE syscall_case_poll(uint32_t ebx, uint32_t ecx)
+static uint32_t poll_timeout_ticks(int32_t timeout_ms)
+{
+	uint32_t ms;
+	uint32_t seconds;
+	uint32_t remainder_ms;
+	uint32_t ticks;
+	uint32_t remainder_ticks;
+
+	if (timeout_ms <= 0)
+		return 0;
+	ms = (uint32_t)timeout_ms;
+	seconds = ms / 1000u;
+	remainder_ms = ms % 1000u;
+	if (seconds > 0xFFFFFFFFu / SCHED_HZ)
+		return 0xFFFFFFFFu;
+	ticks = seconds * SCHED_HZ;
+	remainder_ticks = (remainder_ms * SCHED_HZ + 999u) / 1000u;
+	if (0xFFFFFFFFu - ticks < remainder_ticks)
+		return 0xFFFFFFFFu;
+	ticks += remainder_ticks;
+	return ticks == 0 ? 1u : ticks;
+}
+
+#ifdef KTEST_ENABLED
+static void (*g_poll_wait_hook_for_test)(uint32_t deadline_tick);
+
+void syscall_poll_set_wait_hook_for_test(void (*hook)(uint32_t deadline_tick))
+{
+	g_poll_wait_hook_for_test = hook;
+}
+#endif
+
+static void poll_wait_until(uint32_t deadline_tick)
+{
+#ifdef KTEST_ENABLED
+	if (g_poll_wait_hook_for_test) {
+		g_poll_wait_hook_for_test(deadline_tick);
+		return;
+	}
+#endif
+	sched_block_until(deadline_tick);
+}
+
+static uint32_t poll_scan_user_fds(process_t *cur,
+                                   uint32_t user_fds,
+                                   uint32_t nfds,
+                                   int *error_out)
+{
+	uint32_t ready = 0;
+
+	if (error_out)
+		*error_out = 0;
+	for (uint32_t i = 0; i < nfds; i++) {
+		uint8_t pfd[8];
+		int32_t fd;
+		uint32_t events;
+		uint32_t revents;
+
+		if (uaccess_copy_from_user(
+		        cur, pfd, user_fds + i * sizeof(pfd), sizeof(pfd)) != 0) {
+			if (error_out)
+				*error_out = -1;
+			return 0;
+		}
+		fd = (int32_t)linux_get_u32(pfd, 0u);
+		events = linux_get_u16(pfd, 4u);
+		revents = linux_poll_revents(cur, fd, events);
+		linux_put_u16(pfd, 6u, revents);
+		if (uaccess_copy_to_user(
+		        cur, user_fds + i * sizeof(pfd), pfd, sizeof(pfd)) != 0) {
+			if (error_out)
+				*error_out = -1;
+			return 0;
+		}
+		if (revents)
+			ready++;
+	}
+
+	return ready;
+}
+
+uint32_t SYSCALL_NOINLINE
+syscall_case_poll(uint32_t ebx, uint32_t ecx, uint32_t edx)
 {
 	{
 		/*
          * Linux i386 poll(struct pollfd *fds, nfds_t nfds, int timeout).
-         * Return immediately with readiness for the simple fd types Drunix
-         * supports.  This is enough for BusyBox terminal/stdout probes.
+         * Readiness is rescanned on each scheduler tick while a timeout is
+         * active.  fd-specific wait queues can replace the tick wait later,
+         * but this preserves poll's visible timeout contract.
          */
 		process_t *cur = sched_current();
-		uint32_t ready = 0;
+		int32_t timeout_ms = (int32_t)edx;
+		uint32_t deadline = 0;
+		uint32_t timeout_ticks = 0;
+		int err = 0;
 
 		if (!cur || ecx > 1024u)
 			return (uint32_t)-1;
 		if (ecx != 0 && ebx == 0)
 			return (uint32_t)-LINUX_EFAULT;
+		if (ecx != 0 && ebx > 0xFFFFFFFFu - (ecx - 1u) * 8u)
+			return (uint32_t)-LINUX_EFAULT;
 
-		for (uint32_t i = 0; i < ecx; i++) {
-			uint8_t pfd[8];
-			int32_t fd;
-			uint32_t events;
-			uint32_t revents;
-
-			if (uaccess_copy_from_user(
-			        cur, pfd, ebx + i * sizeof(pfd), sizeof(pfd)) != 0)
-				return (uint32_t)-1;
-			fd = (int32_t)linux_get_u32(pfd, 0u);
-			events = linux_get_u16(pfd, 4u);
-			revents = linux_poll_revents(cur, fd, events);
-			linux_put_u16(pfd, 6u, revents);
-			if (uaccess_copy_to_user(
-			        cur, ebx + i * sizeof(pfd), pfd, sizeof(pfd)) != 0)
-				return (uint32_t)-1;
-			if (revents)
-				ready++;
+		if (timeout_ms > 0) {
+			timeout_ticks = poll_timeout_ticks(timeout_ms);
+			deadline = sched_ticks() + timeout_ticks;
 		}
-		return ready;
+
+		for (;;) {
+			uint32_t ready = poll_scan_user_fds(cur, ebx, ecx, &err);
+
+			if (err != 0)
+				return (uint32_t)-1;
+			if (ready != 0 || timeout_ms == 0)
+				return ready;
+			if (sched_process_has_unblocked_signal(cur))
+				return (uint32_t)-1;
+			if (timeout_ms > 0) {
+				uint32_t now = sched_ticks();
+				uint32_t next = now + 1u;
+
+				if ((int32_t)(deadline - now) <= 0)
+					return 0;
+				if ((int32_t)(deadline - next) < 0)
+					next = deadline;
+				poll_wait_until(next);
+			} else {
+				poll_wait_until(sched_ticks() + 1u);
+			}
+		}
 	}
 }
 
