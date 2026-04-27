@@ -16,6 +16,7 @@ def required_check_commands(arch: str) -> tuple[str, ...]:
         "python3 tools/test_arch_boundary_reuse.py",
         "python3 tools/test_shared_shell_tests_arch_neutral.py",
         "python3 tools/test_make_targets_arch_neutral.py",
+        "python3 tools/test_makefile_decomposition.py",
         f"python3 tools/test_check_wiring.py --arch {arch}",
         "python3 tools/check_test_intent_coverage.py",
     )

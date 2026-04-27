@@ -5,12 +5,20 @@ ARM_AR ?= aarch64-elf-ar
 ARM_OBJCOPY ?= aarch64-elf-objcopy
 ARM_GDB ?= aarch64-elf-gdb
 ROOT_FS ?= ext3
+BUILD_MODE ?= production
+ifeq ($(BUILD_MODE),debug)
+BUILD_OPT ?= -Og
+else ifeq ($(BUILD_MODE),production)
+BUILD_OPT ?= -O2
+else
+$(error BUILD_MODE must be production or debug)
+endif
 
 include user/programs.mk
 
 ARM_CFLAGS ?= -ffreestanding -fno-stack-protector -fno-pic -fno-pie \
               -mcpu=cortex-a53 -mgeneral-regs-only -mstrict-align \
-              -nostdlib -Wall -Wextra -Werror -g -O2
+              -nostdlib -Wall -Wextra -Werror -g $(BUILD_OPT)
 ARM_LDFLAGS ?= -nostdlib -T kernel/arch/arm64/linker.ld
 ARM_INC := -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 \
            -I kernel/arch/arm64/mm -I kernel/arch/arm64/proc \
@@ -123,7 +131,7 @@ ARM_USER_LINKER_DIR := $(ARM_USER_BUILD_DIR)/linker
 ARM_USER_LINKER := $(ARM_USER_LINKER_DIR)/user.ld
 ARM_USER_CFLAGS ?= -ffreestanding -nostdlib -fno-pic -fno-pie \
                    -fno-stack-protector -fno-omit-frame-pointer \
-                   -mcpu=cortex-a53 -mgeneral-regs-only -mstrict-align -g -Og -Wall -Werror \
+                   -mcpu=cortex-a53 -mgeneral-regs-only -mstrict-align -g $(BUILD_OPT) -Wall -Werror \
                    -fdebug-prefix-map=$(abspath .)=.
 ARM_USER_CXXFLAGS ?= $(ARM_USER_CFLAGS) -fno-exceptions -fno-rtti \
                      -fno-use-cxa-atexit -fno-threadsafe-statics
@@ -187,7 +195,7 @@ kernel/arch/arm64/proc/smoke.o: kernel/arch/arm64/proc/smoke.c
 kernel/arch/arm64/proc/%.o: kernel/arch/arm64/proc/%.S
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
 
-build/arm64-smoke-user.o: kernel/arch/arm64/proc/smoke_user.S
+build/arm64-smoke-user.o: kernel/arch/arm64/proc/smoke_user.S .build-mode-flag
 	@mkdir -p $(dir $@)
 	$(ARM_CC) $(ARM_CFLAGS) -c $< -o $@
 
@@ -202,15 +210,15 @@ ARM64_SYSCALL_HEADERS := user/runtime/syscall_arm64.h \
                          user/runtime/syscall_arm64_nr.h \
                          user/runtime/ustrlen.h
 
-build/arm64init.o: user/apps/arm64init.c $(ARM64_SYSCALL_HEADERS)
+build/arm64init.o: user/apps/arm64init.c $(ARM64_SYSCALL_HEADERS) .build-mode-flag
 	@mkdir -p $(dir $@)
 	$(ARM_CC) $(ARM_CFLAGS) -I user/apps -I user/runtime -c $< -o $@
 
-build/crt0_arm64.o: user/runtime/crt0_arm64.S
+build/crt0_arm64.o: user/runtime/crt0_arm64.S .build-mode-flag
 	@mkdir -p $(dir $@)
 	$(ARM_CC) $(ARM_CFLAGS) -c $< -o $@
 
-build/syscall_arm64.o: user/runtime/syscall_arm64.c $(ARM64_SYSCALL_HEADERS)
+build/syscall_arm64.o: user/runtime/syscall_arm64.c $(ARM64_SYSCALL_HEADERS) .build-mode-flag
 	@mkdir -p $(dir $@)
 	$(ARM_CC) $(ARM_CFLAGS) -I user/runtime -c $< -o $@
 
@@ -218,27 +226,27 @@ $(ARM_USER_LINKER): user/linker/user.ld.in Makefile
 	@mkdir -p $(dir $@)
 	sed 's|@USER_LOAD_ADDR@|0x02000000|' $< > $@
 
-$(ARM_USER_RUNTIME_OBJ_DIR)/crt0.o: user/runtime/crt0_arm64.S
+$(ARM_USER_RUNTIME_OBJ_DIR)/crt0.o: user/runtime/crt0_arm64.S .build-mode-flag
 	@mkdir -p $(dir $@)
 	$(ARM_CC) $(ARM_USER_CFLAGS) -c $< -o $@
 
-$(ARM_USER_RUNTIME_OBJ_DIR)/syscall.o: user/runtime/syscall_arm64_compat.c user/runtime/syscall.h $(ARM64_SYSCALL_HEADERS)
+$(ARM_USER_RUNTIME_OBJ_DIR)/syscall.o: user/runtime/syscall_arm64_compat.c user/runtime/syscall.h $(ARM64_SYSCALL_HEADERS) .build-mode-flag
 	@mkdir -p $(dir $@)
 	$(ARM_CC) $(ARM_USER_CFLAGS) -I user/runtime -c $< -o $@
 
-$(ARM_USER_RUNTIME_OBJ_DIR)/%.o: user/runtime/%.c
+$(ARM_USER_RUNTIME_OBJ_DIR)/%.o: user/runtime/%.c .build-mode-flag
 	@mkdir -p $(dir $@)
 	$(ARM_CC) $(ARM_USER_CFLAGS) -I user/runtime -c $< -o $@
 
-$(ARM_USER_RUNTIME_OBJ_DIR)/%.o: user/runtime/%.cpp
+$(ARM_USER_RUNTIME_OBJ_DIR)/%.o: user/runtime/%.cpp .build-mode-flag
 	@mkdir -p $(dir $@)
 	$(ARM_CXX) $(ARM_USER_CXXFLAGS) -I user/runtime -c $< -o $@
 
-$(ARM_USER_APP_OBJ_DIR)/%.o: user/apps/%.c
+$(ARM_USER_APP_OBJ_DIR)/%.o: user/apps/%.c .build-mode-flag
 	@mkdir -p $(dir $@)
 	$(ARM_CC) $(ARM_USER_CFLAGS) $(ARM_USER_INCLUDES) -c $< -o $@
 
-$(ARM_USER_APP_OBJ_DIR)/%.o: user/apps/%.cpp
+$(ARM_USER_APP_OBJ_DIR)/%.o: user/apps/%.cpp .build-mode-flag
 	@mkdir -p $(dir $@)
 	$(ARM_CXX) $(ARM_USER_CXXFLAGS) $(ARM_USER_INCLUDES) -c $< -o $@
 
@@ -256,15 +264,15 @@ $(ARM_USER_CXX_BINS): $(ARM_USER_BIN_DIR)/%: $(ARM_USER_APP_OBJ_DIR)/%.o $(ARM_U
 
 ARM_USER_DESKTOP_NANOJPEG_OBJS := $(ARM_USER_NANOJPEG_OBJ_DIR)/nanojpeg.o $(ARM_USER_NANOJPEG_OBJ_DIR)/nanojpeg_shim.o
 
-$(ARM_USER_NANOJPEG_OBJ_DIR)/nanojpeg.o: user/third_party/nanojpeg/nanojpeg.c user/third_party/nanojpeg/nanojpeg.h
+$(ARM_USER_NANOJPEG_OBJ_DIR)/nanojpeg.o: user/third_party/nanojpeg/nanojpeg.c user/third_party/nanojpeg/nanojpeg.h .build-mode-flag
 	@mkdir -p $(dir $@)
 	$(ARM_CC) $(ARM_USER_CFLAGS) -I user/runtime -DNJ_USE_LIBC=0 '-DNULL=((void*)0)' -Wno-unused-function -Wno-sign-compare -Wno-misleading-indentation -Wno-unused-parameter -Wno-implicit-fallthrough -c $< -o $@
 
-$(ARM_USER_NANOJPEG_OBJ_DIR)/nanojpeg_shim.o: user/third_party/nanojpeg/nanojpeg_shim.c
+$(ARM_USER_NANOJPEG_OBJ_DIR)/nanojpeg_shim.o: user/third_party/nanojpeg/nanojpeg_shim.c .build-mode-flag
 	@mkdir -p $(dir $@)
 	$(ARM_CC) $(ARM_USER_CFLAGS) -I user/runtime -I user/third_party/nanojpeg -c $< -o $@
 
-$(ARM_USER_APP_OBJ_DIR)/desktop_kbdmap.o: shared/kbdmap.c shared/kbdmap.h
+$(ARM_USER_APP_OBJ_DIR)/desktop_kbdmap.o: shared/kbdmap.c shared/kbdmap.h .build-mode-flag
 	@mkdir -p $(dir $@)
 	$(ARM_CC) $(ARM_USER_CFLAGS) -I shared -c $< -o $@
 

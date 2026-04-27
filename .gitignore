@@ -38,6 +38,7 @@ venv/
 .vga-text-flag
 .disk-sectors-flag
 .disk-layout-flag
+.build-mode-flag
 .arm64-smoke-fallback-flag
 .arm64-halt-test-flag
 .x86-serial-console-flag

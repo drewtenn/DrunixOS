@@ -31,17 +31,26 @@ CXX    = x86_64-elf-g++
 LD     = x86_64-elf-ld
 AR     = x86_64-elf-ar
 NASM   = nasm
+BUILD_MODE ?= production
+ifeq ($(BUILD_MODE),debug)
+BUILD_OPT ?= -Og
+else ifeq ($(BUILD_MODE),production)
+BUILD_OPT ?= -O2
+else
+$(error BUILD_MODE must be production or debug)
+endif
 CFLAGS = -m32 -ffreestanding -nostdlib -fno-pie -no-pie \
-         -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall \
+         -fno-stack-protector -fno-omit-frame-pointer -g $(BUILD_OPT) -Wall \
          -Werror -fdebug-prefix-map=$(abspath ..)=.
 CXXFLAGS = -m32 -ffreestanding -nostdlib -fno-pie -no-pie \
-           -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall \
+           -fno-stack-protector -fno-omit-frame-pointer -g $(BUILD_OPT) -Wall \
            -Werror -fno-exceptions -fno-rtti -fno-use-cxa-atexit \
            -fno-threadsafe-statics -fdebug-prefix-map=$(abspath ..)=.
 NASMFLAGS = -Werror
 CXXLIBS = $(shell $(CXX) -m32 -print-libgcc-file-name)
 USER_INCLUDES = -I $(RUNTIME_SRC_DIR) -I ../shared -I $(APP_SRC_DIR) -I $(THIRD_PARTY_SRC_DIR)/nanojpeg
 DEPFLAGS = -MMD -MP -MF $(@:.o=.d)
+BUILD_MODE_FLAG := $(BUILD_ROOT)/.build-mode-flag
 
 C_RUNTIME_OBJS = $(RUNTIME_OBJ_DIR)/crt0.o $(RUNTIME_OBJ_DIR)/cxx_init.o $(RUNTIME_OBJ_DIR)/syscall.o $(RUNTIME_OBJ_DIR)/malloc.o \
                  $(RUNTIME_OBJ_DIR)/string.o $(RUNTIME_OBJ_DIR)/ctype.o $(RUNTIME_OBJ_DIR)/stdlib.o $(RUNTIME_OBJ_DIR)/stdio.o \
@@ -63,23 +72,29 @@ $(LINKER_DIR)/user.ld: $(LINKER_SRC_DIR)/user.ld.in
 	@mkdir -p $(dir $@)
 	sed 's|@USER_LOAD_ADDR@|$(USER_LOAD_ADDR)|' $< > $@
 
+FORCE:
+
+$(BUILD_MODE_FLAG): FORCE
+	@mkdir -p $(dir $@)
+	@printf '%s\n%s\n' "$(BUILD_MODE)" "$(BUILD_OPT)" | cmp -s - $@ || printf '%s\n%s\n' "$(BUILD_MODE)" "$(BUILD_OPT)" > $@
+
 $(RUNTIME_OBJ_DIR)/crt0.o: $(RUNTIME_SRC_DIR)/crt0.asm
 	@mkdir -p $(dir $@)
 	$(NASM) $(NASMFLAGS) -f elf32 -o $@ $<
 
-$(RUNTIME_OBJ_DIR)/%.o: $(RUNTIME_SRC_DIR)/%.c
+$(RUNTIME_OBJ_DIR)/%.o: $(RUNTIME_SRC_DIR)/%.c $(BUILD_MODE_FLAG)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(DEPFLAGS) -I $(RUNTIME_SRC_DIR) -c -o $@ $<
 
-$(RUNTIME_OBJ_DIR)/%.o: $(RUNTIME_SRC_DIR)/%.cpp
+$(RUNTIME_OBJ_DIR)/%.o: $(RUNTIME_SRC_DIR)/%.cpp $(BUILD_MODE_FLAG)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(DEPFLAGS) -I $(RUNTIME_SRC_DIR) -c -o $@ $<
 
-$(APP_OBJ_DIR)/%.o: $(APP_SRC_DIR)/%.c
+$(APP_OBJ_DIR)/%.o: $(APP_SRC_DIR)/%.c $(BUILD_MODE_FLAG)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(DEPFLAGS) $(USER_INCLUDES) -c -o $@ $<
 
-$(APP_OBJ_DIR)/%.o: $(APP_SRC_DIR)/%.cpp
+$(APP_OBJ_DIR)/%.o: $(APP_SRC_DIR)/%.cpp $(BUILD_MODE_FLAG)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(USER_INCLUDES) -c -o $@ $<
 
@@ -101,18 +116,18 @@ $(CXX_BINS): $(BIN_DIR)/%: $(APP_OBJ_DIR)/%.o $(CXX_LINK_OBJS) $(LINKER_DIR)/use
 
 DESKTOP_NANOJPEG_OBJS = $(NANOJPEG_OBJ_DIR)/nanojpeg.o $(NANOJPEG_OBJ_DIR)/nanojpeg_shim.o
 
-$(NANOJPEG_OBJ_DIR)/nanojpeg.o: $(THIRD_PARTY_SRC_DIR)/nanojpeg/nanojpeg.c $(THIRD_PARTY_SRC_DIR)/nanojpeg/nanojpeg.h
+$(NANOJPEG_OBJ_DIR)/nanojpeg.o: $(THIRD_PARTY_SRC_DIR)/nanojpeg/nanojpeg.c $(THIRD_PARTY_SRC_DIR)/nanojpeg/nanojpeg.h $(BUILD_MODE_FLAG)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(DEPFLAGS) -I $(RUNTIME_SRC_DIR) -DNJ_USE_LIBC=0 '-DNULL=((void*)0)' -Wno-unused-function -Wno-sign-compare -Wno-misleading-indentation -Wno-unused-parameter -Wno-implicit-fallthrough -c -o $@ $<
 
-$(NANOJPEG_OBJ_DIR)/nanojpeg_shim.o: $(THIRD_PARTY_SRC_DIR)/nanojpeg/nanojpeg_shim.c
+$(NANOJPEG_OBJ_DIR)/nanojpeg_shim.o: $(THIRD_PARTY_SRC_DIR)/nanojpeg/nanojpeg_shim.c $(BUILD_MODE_FLAG)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(DEPFLAGS) -I $(RUNTIME_SRC_DIR) -c -o $@ $<
 
 # The keymap source lives at the top-level shared/ directory so the
 # kernel's VT keyboard handler and this user-space compositor build
 # from the exact same translation logic.
-$(APP_OBJ_DIR)/desktop_kbdmap.o: ../shared/kbdmap.c ../shared/kbdmap.h
+$(APP_OBJ_DIR)/desktop_kbdmap.o: ../shared/kbdmap.c ../shared/kbdmap.h $(BUILD_MODE_FLAG)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(DEPFLAGS) -I../shared -c -o $@ $<
 

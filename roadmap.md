@@ -33,15 +33,15 @@ Worktree: `/Users/drew/development/DrunixOS/.worktrees/desktop-snappy`
   - Why it matters: if those windows are open during movement, each full repaint can repeat directory or procfs reads.
   - Proposed improvement: cache static app content and refresh on open/focus or explicit invalidation.
 
-- [ ] 6. The desktop hot path builds with `-Og`.
-  - Status: not implemented.
-  - Evidence: `user/Makefile` still compiles user apps, including `desktop`, with the shared debug-oriented `-Og` `CFLAGS`.
+- [x] 6. The desktop hot path builds with `-Og`.
+  - Status: implemented.
+  - Evidence: `BUILD_MODE=production` is the default and uses `-O2` for x86 kernel C, x86 user C/C++, arm64 kernel C, and arm64 user C/C++. `BUILD_MODE=debug` uses `-Og` for those same binaries, and the `debug`, `debug-user`, and `debug-fresh` targets force that debug mode automatically. Build-mode sentinels force recompilation when the mode changes, and `tools/test_warning_policy.py` covers both modes in `make check`.
   - Why it matters: the compositor is a pixel-heavy loop; lower optimization leaves avoidable loop and call overhead in hot paths.
   - Proposed improvement: compile `desktop.o` and selected runtime pixel primitives with a targeted optimized flag.
 
 ## Current Plan
 
-Items 1, 3, and 4 are implemented.
+Items 1, 3, 4, and 6 are implemented.
 
 Historical detailed plan for item 1: `docs/superpowers/plans/2026-04-27-desktop-dirty-rect-drag.md`
 

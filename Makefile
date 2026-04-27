@@ -26,8 +26,16 @@ E2FSPROGS_SBIN ?= /opt/homebrew/opt/e2fsprogs/sbin
 E2FSCK  ?= $(if $(wildcard $(E2FSPROGS_SBIN)/e2fsck),$(E2FSPROGS_SBIN)/e2fsck,e2fsck)
 DUMPE2FS ?= $(if $(wildcard $(E2FSPROGS_SBIN)/dumpe2fs),$(E2FSPROGS_SBIN)/dumpe2fs,dumpe2fs)
 DEBUGFS ?= $(if $(wildcard $(E2FSPROGS_SBIN)/debugfs),$(E2FSPROGS_SBIN)/debugfs,debugfs)
+BUILD_MODE ?= production
+ifeq ($(BUILD_MODE),debug)
+BUILD_OPT ?= -Og
+else ifeq ($(BUILD_MODE),production)
+BUILD_OPT ?= -O2
+else
+$(error BUILD_MODE must be production or debug)
+endif
 -include kernel/arch/$(ARCH)/arch.mk
-CFLAGS  := -m32 -g -ffreestanding -mno-sse -mno-sse2 -mno-mmx -msoft-float -Wstack-usage=1024 -Werror
+CFLAGS  = -m32 -g $(BUILD_OPT) -ffreestanding -mno-sse -mno-sse2 -mno-mmx -msoft-float -Wstack-usage=1024 -Werror
 INC     := -I kernel -I kernel/arch -I kernel/arch/$(ARCH) -I kernel/arch/$(ARCH)/boot -I kernel/arch/$(ARCH)/mm -I kernel/arch/$(ARCH)/proc -I kernel/arch/x86/platform/pc -I kernel/mm -I kernel/drivers -I kernel/blk -I kernel/proc -I kernel/fs -I kernel/lib -I kernel/gui -I shared
 DEPFLAGS := -MMD -MP
 MOUSE_SPEED ?= 4
@@ -137,6 +145,8 @@ endif
 	echo "$(INCLUDE_BUSYBOX)" | cmp -s - $@ || echo "$(INCLUDE_BUSYBOX)" > $@
 .disk-layout-flag: FORCE
 	printf '%s\n%s\n' "$(ARCH)" "$(ROOT_FS)" | cmp -s - $@ || printf '%s\n%s\n' "$(ARCH)" "$(ROOT_FS)" > $@
+.build-mode-flag: FORCE
+	printf '%s\n%s\n' "$(BUILD_MODE)" "$(BUILD_OPT)" | cmp -s - $@ || printf '%s\n%s\n' "$(BUILD_MODE)" "$(BUILD_OPT)" > $@
 .no-desktop-flag: FORCE
 	echo "$(NO_DESKTOP)" | cmp -s - $@ || echo "$(NO_DESKTOP)" > $@
 .vga-text-flag: FORCE
@@ -207,7 +217,7 @@ SENTINELS     := .ktest-flag .double-fault-test-flag .klog-debugcon-flag \
                  .mouse-speed-flag .init-program-flag .no-desktop-flag \
                  .vga-text-flag .disk-sectors-flag .arm64-smoke-fallback-flag \
                  .arm64-halt-test-flag .x86-serial-console-flag \
-                 .include-busybox-flag .disk-layout-flag
+                 .include-busybox-flag .disk-layout-flag .build-mode-flag
 
 QEMU_DISKS    = -drive format=raw,file=$(1),if=ide,index=0 \
                  -drive format=raw,file=$(2),if=ide,index=1
@@ -219,6 +229,9 @@ GDB_COMMON    := -ex "set pagination off" \
                  -ex "set confirm off" \
                  -ex "set tcp auto-retry on" \
                  -ex "file kernel.elf"
+
+debug debug-user debug-fresh: BUILD_MODE := debug
+debug debug-user debug-fresh: BUILD_OPT := -Og
 
 $(BUSYBOX_X86_BIN): tools/build_linux_busybox.sh Makefile
 	env BUSYBOX_CC="$(LINUX_I386_CC)" BUSYBOX_CROSS_COMPILE="$(LINUX_I386_CROSS_COMPILE)" JOBS="$${JOBS:-4}" \
@@ -274,7 +287,7 @@ endef
 $(LOG_DIR) $(IMG_DIR):
 	mkdir -p $@
 
-%.o: %.c
+%.o: %.c .build-mode-flag
 	$(CC) $(CFLAGS) $(DEPFLAGS) $(INC) -c $< -o $@
 
 %.o: %.asm
@@ -283,7 +296,7 @@ $(LOG_DIR) $(IMG_DIR):
 include kernel/objects.mk
 
 # ─── Kernel link ─────────────────────────────────────────────────────────────
-$(KOBJS): .ktest-flag
+$(KOBJS) $(KOBJS_VGA) $(KTOBJS): .ktest-flag .build-mode-flag
 kernel/test/%.o: CFLAGS += -Wno-stack-usage
 kernel/arch/x86/test/%.o: CFLAGS += -Wno-stack-usage
 
@@ -301,49 +314,10 @@ kernel-vga.elf: $(KOBJS_VGA) $(KTOBJS)
 # dependency tracking while keeping concrete build outputs out of .PHONY.
 ifneq ($(ARCH),arm64)
 $(USER_BINS): FORCE
-	$(MAKE) -C user USER_ARCH=$(ARCH) USER_LOAD_ADDR=$(X86_USER_LOAD_ADDR) ../$@
+	$(MAKE) -C user USER_ARCH=$(ARCH) USER_LOAD_ADDR=$(X86_USER_LOAD_ADDR) BUILD_MODE=$(BUILD_MODE) BUILD_OPT=$(BUILD_OPT) ../$@
 endif
 
-# ─── Hard-disk images ────────────────────────────────────────────────────────
-# disk.img is the primary root disk.  On x86 it is the ATA master; on arm64 it
-# is attached to QEMU as SD media for the Pi EMMC controller. By default it is a
-# deterministic Linux-compatible ext3 root partition. ROOT_FS=dufs builds sda
-# as DUFS instead.
-ifeq ($(ARCH),arm64)
-ifeq ($(ROOT_FS),dufs)
-disk.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf $(ARM_BUSYBOX_ROOTFS_DEPS) tools/hello.txt tools/readme.txt tools/wallpaper.jpg tools/mkfs.py .disk-sectors-flag .include-busybox-flag .disk-layout-flag
-	$(PYTHON) tools/mkfs.py $@ $(FS_SECTORS) $(ARM_USER_ROOTFS_FILES)
-$(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag .disk-layout-flag | $(IMG_DIR)
-	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0xDA
-else
-disk.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf $(ARM_BUSYBOX_ROOTFS_DEPS) tools/hello.txt tools/readme.txt tools/wallpaper.jpg tools/mkext3.py .disk-sectors-flag .include-busybox-flag .disk-layout-flag
-	$(PYTHON) tools/mkext3.py $@ $(FS_SECTORS) $(ARM_USER_ROOTFS_FILES)
-$(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag .disk-layout-flag | $(IMG_DIR)
-	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0x83
-endif
-else
-ifeq ($(ROOT_FS),dufs)
-disk.fs: $(USER_BINS) $(BUSYBOX_DISK_DEPS) tools/hello.txt tools/readme.txt tools/wallpaper.jpg tools/mkfs.py .disk-sectors-flag .include-busybox-flag .disk-layout-flag
-	$(PYTHON) tools/mkfs.py $@ $(FS_SECTORS) $(DISK_FILES)
-$(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag .disk-layout-flag | $(IMG_DIR)
-	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0xDA
-else
-disk.fs: $(USER_BINS) $(BUSYBOX_DISK_DEPS) tools/hello.txt tools/readme.txt tools/wallpaper.jpg tools/mkext3.py .disk-sectors-flag .include-busybox-flag .disk-layout-flag
-	$(PYTHON) tools/mkext3.py $@ $(FS_SECTORS) $(DISK_FILES)
-$(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag .disk-layout-flag | $(IMG_DIR)
-	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0x83
-endif
-endif
-
-# dufs.img is the primary ATA slave (sdb), mounted at /dufs during ext3-root
-# boots.  It is intentionally not rebuilt by run-fresh when it already exists.
-dufs.fs: tools/mkfs.py .disk-sectors-flag
-	$(PYTHON) tools/mkfs.py $@ $(FS_SECTORS)
-$(DUFS_IMG): dufs.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
-	$(PYTHON) tools/wrap_mbr.py dufs.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0xDA
-
-disk.img: $(ROOT_DISK_IMG)
-dufs.img: $(DUFS_IMG)
+include mk/disk-images.mk
 
 # ─── Documentation ───────────────────────────────────────────────────────────
 include docs/build.mk
@@ -353,302 +327,15 @@ include docs/build.mk
 # ─────────────────────────────────────────────────────────────────────────────
 ifeq ($(ARCH),x86)
 
-# `kernel`  — compile and link the kernel, then build the bootable GRUB ISO.
-#             Does NOT touch img/disk.img.
-$(ISO_KERNEL): kernel.elf
-	cp $< $@
-
-$(ISO_KERNEL_VGA): kernel-vga.elf
-	cp $< $@
-
-# Regenerate grub.cfg only when the rendered output differs from what's on
-# disk — keeps mtime stable so os.iso isn't relinked on every invocation.
-iso/boot/grub/grub.cfg: iso/boot/grub/grub.cfg.in FORCE
-	@sed 's/@TIMEOUT@/$(GRUB_TIMEOUT)/' $< | cmp -s - $@ 2>/dev/null || \
-		sed 's/@TIMEOUT@/$(GRUB_TIMEOUT)/' $< > $@
-
-os.iso: $(ISO_KERNEL) $(ISO_KERNEL_VGA) iso/boot/grub/grub.cfg
-	$(GRUB_MKRESCUE) -o $@ iso
-
-kernel: os.iso
-
-# `disk`    — build the hard-disk images with all compiled user programs.
-#             Use this to (re)populate the filesystem after adding/changing user
-#             programs.  Most run/debug targets intentionally do NOT depend on
-#             this so that the filesystem state is preserved across boots.
-disk: $(ROOT_DISK_IMG) $(DUFS_IMG)
-
-build: kernel disk
-iso: os.iso
-images: disk
-fresh: run-fresh
-check: clang-tidy-include-check test-headless check-user-runtime-string check-warning-policy check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
-check-phase6:
-	python3 tools/test_kernel_arch_boundary_phase6.py
-
-check-phase7:
-	python3 tools/test_kernel_arch_boundary_phase7.py
-
-check-shared-shell: check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history
-
-check-shell-prompt:
-	python3 tools/test_shell_prompt.py --arch x86
-
-check-user-programs:
-	python3 tools/test_user_programs.py --arch x86
-
-check-sleep:
-	python3 tools/test_sleep.py --arch x86
-
-check-ctrl-c:
-	python3 tools/test_ctrl_c.py --arch x86
-
-check-shell-history:
-	python3 tools/test_shell_history.py --arch x86
-
-check-userspace-smoke:
-	python3 tools/test_user_programs.py --arch x86
-
-check-user-runtime-string:
-	python3 tools/test_user_runtime_string_fastpaths.py
-
-check-filesystem-init:
-	python3 tools/test_shell_prompt.py --arch x86
-
-check-kernel-unit: test-headless
-
-check-syscall-parity:
-	$(MAKE) ARCH=x86 test-headless
-
-check-arch-boundary-reuse:
-	python3 tools/test_arch_boundary_reuse.py
-
-check-start-boundary:
-	python3 tools/test_target_specific_sources_arch_local.py
-
-check-platform-split:
-	python3 tools/test_arm64_platform_split.py
-
-check-dev-loop-parity:
-	python3 tools/test_arm64_dev_loop_parity.py
-
-check-ext3-root-parity:
-	python3 tools/test_arm64_ext3_root_parity.py
-
-check-shared-shell-tests:
-	python3 tools/test_shared_shell_tests_arch_neutral.py
-
-check-busybox-compat:
-	python3 tools/test_busybox_compat.py --arch x86
-
-test-busybox-compat: check-busybox-compat
-
-check-targets-generic:
-	python3 tools/test_make_targets_arch_neutral.py
-
-check-warning-policy:
-	python3 tools/test_warning_policy.py
-
-check-test-wiring:
-	python3 tools/test_check_wiring.py --arch x86
-
-check-test-intent-coverage:
-	python3 tools/check_test_intent_coverage.py
-
-validate-ext3-linux: $(ROOT_DISK_IMG) tools/check_ext3_linux_compat.py tools/check_ext3_journal_activity.py
-	$(PYTHON) tools/check_ext3_linux_compat.py $(ROOT_DISK_IMG)
-	$(E2FSCK) -fn disk.fs
-	$(DUMPE2FS) -h disk.fs | grep -q 'Filesystem features:.*has_journal'
-	$(DUMPE2FS) -h disk.fs | grep -q 'Journal inode:[[:space:]]*8'
-
-# ─── Static analysis and style scans ─────────────────────────────────────────
-SCAN_C_STYLE_SOURCES := $(shell find kernel -path kernel/test -prune -o -type f \( -name '*.c' -o -name '*.h' \) -print | sort) \
-                        $(shell find user -type f \( -name '*.c' -o -name '*.h' \) | sort)
-SCAN_KERNEL_C_SOURCES := $(shell find kernel -path kernel/test -prune -o -type f -name '*.c' -print | sort)
-SCAN_USER_C_RUNTIME_OBJS := lib/cxx_init.o lib/syscall.o lib/malloc.o \
-                            lib/string.o lib/ctype.o lib/stdlib.o \
-                            lib/stdio.o lib/unistd.o lib/time.o
-
-compile_commands.json: tools/generate_compile_commands.py kernel/objects.mk user/programs.mk user/Makefile Makefile FORCE
-	$(PYTHON) tools/generate_compile_commands.py \
-		--root=. \
-		--output=$@ \
-		--kernel-objs="$(KOBJS)" \
-		--kernel-cc="$(CC)" \
-		--kernel-cflags="$(CFLAGS)" \
-		--kernel-inc="$(INC)" \
-		--user-cc="$(CC)" \
-		--user-cflags="-m32 -ffreestanding -nostdlib -fno-pie -no-pie -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall -Werror -I user/runtime -I shared -I user/apps" \
-		--user-build-root="$(USER_BUILD_ROOT)" \
-		--user-arch="$(ARCH)" \
-		--linux-cc="$(LINUX_I386_CC)" \
-		--linux-cflags="$(LINUX_CFLAGS)" \
-		--user-c-runtime-objs="$(SCAN_USER_C_RUNTIME_OBJS)" \
-		--user-c-progs="$(C_PROGS)" \
-		--linux-c-progs="$(LINUX_C_PROGS)"
-
-compile-commands: compile_commands.json
-
-format-check:
-	$(call require_tool,$(CLANG_FORMAT))
-	@mkdir -p build
-	@$(CLANG_FORMAT) --dry-run --Werror $(SCAN_C_STYLE_SOURCES) 2> build/clang-format.log || { \
-		sed -n '1,120p' build/clang-format.log; \
-		echo "... full clang-format report: build/clang-format.log"; \
-		test "$(SCAN_FAIL)" != "1"; \
-	}
-
-cppcheck: compile_commands.json
-	$(call require_tool,$(CPPCHECK))
-	@mkdir -p build/cppcheck
-	@$(CPPCHECK) --project=compile_commands.json \
-		--cppcheck-build-dir=build/cppcheck \
-		--enable=warning \
-		--std=c99 \
-		--error-exitcode=1 > build/cppcheck.log 2>&1 || { \
-		sed -n '1,180p' build/cppcheck.log; \
-		echo "... full Cppcheck report: build/cppcheck.log"; \
-		test "$(SCAN_FAIL)" != "1"; \
-	}
-
-sparse-check:
-	$(call require_tool,$(SPARSE))
-	@mkdir -p build
-	@: > build/sparse.log
-	@rc=0; for src in $(SCAN_KERNEL_C_SOURCES); do \
-		$(SPARSE) $(SPARSEFLAGS) $(CFLAGS) $(INC) $$src >> build/sparse.log 2>&1 || rc=1; \
-	done; \
-	if [ $$rc -ne 0 ]; then \
-		sed -n '1,180p' build/sparse.log; \
-		echo "... full Sparse report: build/sparse.log"; \
-		test "$(SCAN_FAIL)" != "1"; \
-	fi
-
-clang-tidy-include-check: compile_commands.json
-	$(call require_tool,$(CLANG_TIDY))
-	@mkdir -p build
-	@$(PYTHON) tools/compile_commands_sources.py compile_commands.json --under kernel > build/clang-tidy-sources.txt
-	@$(CLANG_TIDY) -p compile_commands.json --quiet \
-		--checks=-*,misc-include-cleaner \
-		--extra-arg=-Wno-unknown-warning-option \
-		$$(cat build/clang-tidy-sources.txt) > build/clang-tidy-include.log 2>&1 || { \
-		sed -n '1,180p' build/clang-tidy-include.log; \
-		echo "... full clang-tidy include report: build/clang-tidy-include.log"; \
-		test "$(SCAN_FAIL)" != "1"; \
-	}
-
-scan: format-check cppcheck clang-tidy-include-check sparse-check
-
-# ─────────────────────────────────────────────────────────────────────────────
-# RUN TARGETS  (boot QEMU with the current img/disk.img — no filesystem rebuild)
-# ─────────────────────────────────────────────────────────────────────────────
-
-# `run`     — boot the OS in QEMU.  Uses whatever img/disk.img is already on
-#             disk; does NOT rebuild the filesystem.  Logs written to
-#             logs/serial.log and logs/debugcon.log.
-run: os.iso $(DUFS_IMG)
-	$(call qemu_run)
-
-# `run-grub-menu` — boot with the GRUB menu visible for 10 seconds so the
-#                   menu entries can be exercised interactively.  Default
-#                   builds keep timeout=0 (boots straight into the default).
-run-grub-menu:
-	$(MAKE) GRUB_TIMEOUT=10 run
-
-# `run-stdio` — same as `run` but routes the debugcon port to the terminal
-#               instead of a file.  Useful when you want to tail kernel log
-#               output live without opening logs/debugcon.log separately.
-run-stdio: os.iso $(DUFS_IMG) | $(LOG_DIR)
-	$(QEMU) $(QEMU_COMMON) -serial file:$(LOG_DIR)/serial.log -debugcon stdio
-
-# `debug`   — start QEMU paused with the GDB remote stub active, then attach
-#             GDB loaded with kernel symbols. Uses a hardware breakpoint at
-#             `idt_init_early` so the first stop lands at a point that is safe
-#             for source-level stepping. Set breakpoints, then `continue` to
-#             boot. Does NOT rebuild the filesystem.
-#             Port: localhost:1234 (QEMU default).
-debug: os.iso $(DUFS_IMG)
-	$(call qemu_debug,)
-
-# `debug-user` — like `debug` but also loads symbols for a user-space program
-#                so you can set breakpoints and step through user code.
-#                The binary is expected at $(USER_BIN_DIR)/$(APP); symbols are added at the
-#                ELF preferred load address (offset 0).
-#
-#                Usage:  make debug-user APP=shell
-#
-#                If the program is loaded at a non-default address by the kernel
-#                ELF loader, adjust with GDB's `add-symbol-file $(USER_BIN_DIR)/<app> <addr>`
-#                after connecting.
-debug-user: os.iso $(DUFS_IMG)
-	@test -n "$(APP)" || (echo "Usage: make debug-user APP=<program name>  (e.g. APP=shell)"; exit 1)
-	$(call qemu_debug,-ex "add-symbol-file $(USER_BIN_DIR)/$(APP) $(X86_USER_LOAD_ADDR)")
-
-# ─────────────────────────────────────────────────────────────────────────────
-# RUN + FRESH FILESYSTEM  (rebuild img/disk.img before booting)
-# ─────────────────────────────────────────────────────────────────────────────
-
-# `run-fresh`   — rebuild the root disk image from scratch, then boot the OS.
-#                 Use this after adding or changing user programs to get a clean
-#                 filesystem state.
-run-fresh: $(ROOT_DISK_IMG)
-	$(MAKE) run
-
-# `debug-fresh` — rebuild the root disk image from scratch, then boot paused
-#                 under the GDB stub.  Combines `run-fresh` and `debug`.
-debug-fresh: $(ROOT_DISK_IMG)
-	$(MAKE) debug
-
-# ─── Test targets ────────────────────────────────────────────────────────────
-include test/targets.mk
-
-# ─────────────────────────────────────────────────────────────────────────────
-# UTILITY TARGETS
-# ─────────────────────────────────────────────────────────────────────────────
-
-# `all`     — default entry point: build the kernel ISO and disk image, then
-#             boot the OS with the freshly built filesystem.
-all: run-fresh
-
-# `rebuild` — wipe all build outputs, rebuild the kernel and filesystem from
-#             scratch, and boot.  Use this when you want a completely clean slate.
-rebuild:
-	$(MAKE) clean
-	$(MAKE) run-fresh
-
-# `clean`   — remove all build outputs: kernel objects, ELF, ISO, disk image,
-#             generated docs, and dependency/sentinel files.
-clean:
-	find kernel -name '*.o' -delete
-	find kernel -name '*.d' -delete
-	$(RM) *.elf kernel8.img core.* disk.fs dufs.fs disk-ext3w.fs disk-ext3-host.fs $(ROOT_DISK_IMG) $(DUFS_IMG) $(TEST_IMAGES) os.iso $(ISO_KERNEL) $(ISO_KERNEL_VGA) iso/boot/grub/grub.cfg "$(PDF)" "$(EPUB)" $(SENTINELS) $(ARM_SERIAL_LOG)
-	$(RM) build/arm64init.o build/crt0_arm64.o build/syscall_arm64.o build/arm64init.elf build/arm64-root.fs build/arm64-rootfs-empty
-	rm -rf build/user
-	$(RM) $(RUN_LOGS) $(TEST_LOGS) build/ext3-host.txt
-	rm -rf build/busybox
-	rm -rf build/tcc
-	rm -rf build/binutils
-	rm -rf build/nano
-	rm -rf build/gcc
-	$(RM) docs/diagrams/*.png
-	$(MAKE) -C user clean
-
-.PHONY: all build kernel iso images disk fresh check \
-        compile-commands format-check cppcheck sparse-check clang-tidy-include-check scan \
-        disk.img dufs.img \
-        run run-stdio run-grub-menu run-fresh \
-        debug debug-user debug-fresh \
-        test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all test-busybox-compat \
-        check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history check-user-runtime-string \
-        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-warning-policy check-test-wiring check-test-intent-coverage \
-        validate-ext3-linux \
-        pdf epub docs \
-        rebuild clean
+include mk/run-x86.mk
+include mk/checks.mk
+include mk/scan-x86.mk
 else
 
 $(ARM_KOBJS) $(ARM_SHARED_KOBJS) $(ARM_COMPILE_ONLY_OBJS) $(ARM_KTOBJS): CC = $(ARM_CC)
 $(ARM_KOBJS) $(ARM_SHARED_KOBJS) $(ARM_COMPILE_ONLY_OBJS) $(ARM_KTOBJS): CFLAGS = $(ARM_CFLAGS)
 $(ARM_KOBJS) $(ARM_SHARED_KOBJS) $(ARM_COMPILE_ONLY_OBJS) $(ARM_KTOBJS): INC = $(ARM_INC)
+$(ARM_KOBJS) $(ARM_SHARED_KOBJS) $(ARM_COMPILE_ONLY_OBJS) $(ARM_KTOBJS): .build-mode-flag
 
 kernel/arch/arm64/%.o: kernel/arch/arm64/%.S
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) -c $< -o $@
@@ -679,260 +366,11 @@ disk: $(ROOT_DISK_IMG)
 
 fresh: run
 
-check: clang-tidy-include-check test-headless check-user-runtime-string check-warning-policy check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-test-wiring check-test-intent-coverage
-
-test:
-	$(MAKE) ARCH=$(ARCH) check
-
-test-fresh:
-	$(MAKE) ARCH=$(ARCH) test-headless
-
-test-headless: check-kernel-unit check-shared-shell check-userspace-smoke check-filesystem-init check-syscall-parity
-
-test-all: test-headless test-halt test-threadtest
-
-run-grub-menu run-stdio: run
-
-test-ext3-linux-compat test-ext3-host-write-interop validate-ext3-linux:
-	@echo "make ARCH=arm64 $@ is not implemented yet"
-	@exit 2
-
-check-shell-prompt:
-	python3 tools/test_shell_prompt.py --arch arm64
-
-check-user-programs:
-	python3 tools/test_user_programs.py --arch arm64
-
-check-shared-shell: check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history
-
-check-phase6:
-	python3 tools/test_kernel_arch_boundary_phase6.py
-
-check-phase7:
-	python3 tools/test_kernel_arch_boundary_phase7.py
-
-check-userspace-smoke:
-	python3 tools/test_arm64_userspace_smoke.py
-
-check-user-runtime-string:
-	python3 tools/test_user_runtime_string_fastpaths.py
-
-check-filesystem-init:
-	python3 tools/test_arm64_filesystem_init.py
-
-check-kernel-unit:
-	python3 tools/test_arm64_ktest.py
-
-check-syscall-parity:
-	python3 tools/test_arm64_syscall_parity.py
-
-check-sleep:
-	python3 tools/test_sleep.py --arch arm64
-
-check-ctrl-c:
-	python3 tools/test_ctrl_c.py --arch arm64
-
-check-shell-history:
-	python3 tools/test_shell_history.py --arch arm64
-
-check-busybox-compat:
-	python3 tools/test_busybox_compat.py --arch arm64
-
-test-busybox-compat: check-busybox-compat
-
-check-arch-boundary-reuse:
-	python3 tools/test_arch_boundary_reuse.py
-
-check-start-boundary:
-	python3 tools/test_target_specific_sources_arch_local.py
-
-check-platform-split:
-	python3 tools/test_arm64_platform_split.py
-
-check-dev-loop-parity:
-	python3 tools/test_arm64_dev_loop_parity.py
-
-check-ext3-root-parity:
-	python3 tools/test_arm64_ext3_root_parity.py
-
-check-shared-shell-tests:
-	python3 tools/test_shared_shell_tests_arch_neutral.py
-
-check-targets-generic:
-	python3 tools/test_make_targets_arch_neutral.py
-
-check-warning-policy:
-	python3 tools/test_warning_policy.py
-
-check-test-wiring:
-	python3 tools/test_check_wiring.py --arch arm64
-
-check-test-intent-coverage:
-	python3 tools/check_test_intent_coverage.py
-
-run: kernel-arm64.elf $(ROOT_DISK_IMG) | $(LOG_DIR)
-	$(QEMU_ARM) -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf -drive if=sd,format=raw,file=$(ROOT_DISK_IMG) -serial null -serial stdio -device usb-kbd -monitor none -no-reboot
-
-run-fresh: run
-
-ARM_GDB_COMMON = -ex "set pagination off" \
-                 -ex "set confirm off" \
-                 -ex "set tcp auto-retry on" \
-                 -ex "file kernel-arm64.elf"
-
-define arm64_qemu_debug
-mkdir -p $(LOG_DIR)
-rm -f $(ARM_SERIAL_LOG)
-$(QEMU_ARM) -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf \
-    -drive if=sd,format=raw,file=$(ROOT_DISK_IMG) \
-    -serial null -serial file:$(ARM_SERIAL_LOG) -device usb-kbd \
-    -monitor none -no-reboot -s -S &
-sleep 1
-$(ARM_GDB) $(ARM_GDB_COMMON) $(1) \
-       -ex "target remote localhost:1234" \
-       -ex "hbreak arm64_start_kernel" \
-       -ex "continue"
-endef
-
-debug: kernel-arm64.elf
-	$(call arm64_qemu_debug,)
-
-debug-user: kernel-arm64.elf $(ROOT_DISK_IMG)
-	@test -n "$(APP)" || (echo "Usage: make debug-user APP=<program name>  (e.g. APP=shell)"; exit 1)
-	$(call arm64_qemu_debug,-ex "add-symbol-file $(ARM_USER_BIN_DIR)/$(APP) 0x02000000")
-
-debug-fresh: $(ROOT_DISK_IMG)
-	$(MAKE) ARCH=$(ARCH) debug
-
-test-halt:
-	$(PYTHON) tools/test_arm64_halt.py
-
-test-threadtest:
-	$(PYTHON) tools/test_arm64_threadtest.py
-
-ARM_SCAN_FORMAT_SOURCES := $(shell find kernel/arch/arm64 -type f \( -name '*.c' -o -name '*.h' \) -print | sort)
-ARM_SCAN_KERNEL_OBJS := $(ARM_KOBJS) $(ARM_SHARED_KOBJS)
-ARM_SCAN_USER_C_RUNTIME_OBJS := $(ARM_USER_RUNTIME_OBJ_DIR)/cxx_init.o \
-                                $(ARM_USER_RUNTIME_OBJ_DIR)/syscall.o \
-                                $(ARM_USER_RUNTIME_OBJ_DIR)/malloc.o \
-                                $(ARM_USER_RUNTIME_OBJ_DIR)/string.o \
-                                $(ARM_USER_RUNTIME_OBJ_DIR)/ctype.o \
-                                $(ARM_USER_RUNTIME_OBJ_DIR)/stdlib.o \
-                                $(ARM_USER_RUNTIME_OBJ_DIR)/stdio.o \
-                                $(ARM_USER_RUNTIME_OBJ_DIR)/unistd.o \
-                                $(ARM_USER_RUNTIME_OBJ_DIR)/time.o
-ARM_SPARSE_CFLAGS := -D__aarch64__ -DDRUNIX_ARM64_VGA=1 \
-                     -DDRUNIX_INIT_PROGRAM=\"$(INIT_PROGRAM)\" \
-                     -DDRUNIX_INIT_ARG0=\"$(INIT_ARG0)\" \
-                     -DDRUNIX_INIT_ENV0=\"$(INIT_ENV0)\" \
-                     -DDRUNIX_ROOT_FS=\"$(ROOT_FS)\" \
-                     -DDRUNIX_ARM64_SMOKE_FALLBACK=$(ARM64_SMOKE_FALLBACK) \
-                     -DDRUNIX_ARM64_HALT_TEST=$(ARM64_HALT_TEST)
-
-compile_commands.json: tools/generate_compile_commands.py kernel/arch/arm64/arch.mk user/programs.mk user/Makefile Makefile FORCE
-	$(PYTHON) tools/generate_compile_commands.py \
-		--root=. \
-		--output=$@ \
-		--kernel-objs="$(ARM_SCAN_KERNEL_OBJS)" \
-		--kernel-cc="$(ARM_CC)" \
-		--kernel-cflags="$(ARM_CFLAGS)" \
-		--kernel-inc="$(ARM_INC)" \
-		--user-cc="$(ARM_CC)" \
-		--user-cflags="$(ARM_USER_CFLAGS) -I user/apps -I user/runtime" \
-		--user-build-root="$(ARM_USER_BUILD_DIR)" \
-		--user-arch="$(ARCH)" \
-		--linux-cc="$(LINUX_ARM64_CC)" \
-		--linux-cflags="$(LINUX_CFLAGS)" \
-		--user-c-runtime-objs="$(ARM_SCAN_USER_C_RUNTIME_OBJS)" \
-		--user-c-progs="$(C_PROGS)" \
-		--linux-c-progs="$(LINUX_C_PROGS)"
-
-compile-commands: compile_commands.json
-
-format-check:
-	$(call require_tool,$(CLANG_FORMAT))
-	@mkdir -p build
-	@$(CLANG_FORMAT) --dry-run --Werror $(ARM_SCAN_FORMAT_SOURCES) 2> build/clang-format.log || { \
-		sed -n '1,120p' build/clang-format.log; \
-		echo "... full clang-format report: build/clang-format.log"; \
-		test "$(SCAN_FAIL)" != "1"; \
-	}
-
-cppcheck: compile_commands.json
-	$(call require_tool,$(CPPCHECK))
-	@mkdir -p build/cppcheck
-	@$(CPPCHECK) --project=compile_commands.json \
-		--cppcheck-build-dir=build/cppcheck \
-		--platform=unix64 \
-		--enable=warning \
-		--std=c99 \
-		--error-exitcode=1 > build/cppcheck.log 2>&1 || { \
-		sed -n '1,180p' build/cppcheck.log; \
-		echo "... full Cppcheck report: build/cppcheck.log"; \
-		test "$(SCAN_FAIL)" != "1"; \
-	}
-
-sparse-check: compile_commands.json
-	$(call require_tool,$(SPARSE))
-	@mkdir -p build
-	@$(PYTHON) tools/compile_commands_sources.py compile_commands.json --under kernel > build/sparse-sources.txt
-	@: > build/sparse.log
-	@for src in $$(cat build/sparse-sources.txt); do \
-		$(SPARSE) $(SPARSEFLAGS) $(ARM_SPARSE_CFLAGS) $(ARM_INC) $$src >> build/sparse.log 2>&1 || true; \
-	done; \
-	if grep -q "error:" build/sparse.log; then \
-		sed -n '1,180p' build/sparse.log; \
-		echo "... full Sparse report: build/sparse.log"; \
-		test "$(SCAN_FAIL)" != "1"; \
-	fi
-
-clang-tidy-include-check: compile_commands.json
-	$(call require_tool,$(CLANG_TIDY))
-	@mkdir -p build
-	@$(PYTHON) tools/compile_commands_sources.py compile_commands.json --under kernel > build/clang-tidy-sources.txt
-	@$(CLANG_TIDY) -p compile_commands.json --quiet \
-		--checks=-*,misc-include-cleaner \
-		--extra-arg=--target=aarch64-none-elf \
-		$$(cat build/clang-tidy-sources.txt) > build/clang-tidy-include.log 2>&1 || { \
-		sed -n '1,180p' build/clang-tidy-include.log; \
-		echo "... full clang-tidy include report: build/clang-tidy-include.log"; \
-		test "$(SCAN_FAIL)" != "1"; \
-	}
-
-scan: format-check cppcheck clang-tidy-include-check sparse-check
-
-all: run-fresh
-
-rebuild:
-	$(MAKE) clean ARCH=$(ARCH)
-	$(MAKE) run ARCH=$(ARCH)
-
-clean:
-	find kernel -name '*.o' -delete
-	find kernel -name '*.d' -delete
-	$(RM) *.elf kernel8.img core.* disk.fs dufs.fs disk-ext3w.fs disk-ext3-host.fs $(ROOT_DISK_IMG) $(DUFS_IMG) $(TEST_IMAGES) os.iso $(ISO_KERNEL) $(ISO_KERNEL_VGA) iso/boot/grub/grub.cfg "$(PDF)" "$(EPUB)" $(SENTINELS) $(ARM_SERIAL_LOG)
-	$(RM) build/arm64init.o build/crt0_arm64.o build/syscall_arm64.o build/arm64init.elf build/arm64-root.fs build/arm64-rootfs-empty
-	rm -rf build/user
-	$(RM) $(RUN_LOGS) $(TEST_LOGS) build/ext3-host.txt
-	rm -rf build/busybox
-	rm -rf build/tcc
-	rm -rf build/binutils
-	rm -rf build/nano
-	rm -rf build/gcc
-	$(RM) docs/diagrams/*.png
-	$(MAKE) -C user clean
-
-.PHONY: all build kernel iso images disk fresh check \
-        compile-commands format-check cppcheck sparse-check clang-tidy-include-check scan \
-        disk.img dufs.img \
-        run run-stdio run-grub-menu run-fresh \
-        debug debug-user debug-fresh \
-        test test-fresh test-headless test-halt test-threadtest test-ext3-linux-compat test-ext3-host-write-interop test-all test-busybox-compat \
-        check-shared-shell check-shell-prompt check-user-programs check-sleep check-ctrl-c check-shell-history check-user-runtime-string \
-        check-phase6 check-phase7 check-userspace-smoke check-filesystem-init check-kernel-unit check-syscall-parity check-busybox-compat check-arch-boundary-reuse check-start-boundary check-platform-split check-dev-loop-parity check-ext3-root-parity check-shared-shell-tests check-targets-generic check-warning-policy check-test-wiring check-test-intent-coverage \
-        validate-ext3-linux \
-        pdf epub docs \
-        rebuild clean
+include mk/checks.mk
+include mk/run-arm64.mk
+include mk/scan-arm64.mk
 endif
+
+include mk/utility-targets.mk
 
 -include $(KOBJS:.o=.d) $(KTOBJS:.o=.d) $(ARM_KOBJS:.o=.d) $(ARM_SHARED_KOBJS:.o=.d) $(ARM_COMPILE_ONLY_OBJS:.o=.d) $(ARM_KTOBJS:.o=.d)

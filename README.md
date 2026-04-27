@@ -36,8 +36,9 @@ Optional:
 - `clang-format`, `clang-tidy`, `cppcheck`, and `sparse` for `make scan`,
   `make check`, `make format-check`, `make clang-tidy-include-check`,
   `make cppcheck`, and `make sparse-check`
-- `aarch64-elf-gcc`, `aarch64-elf-ld`, and `aarch64-elf-objcopy` for
-  `make ARCH=arm64 run` and `make ARCH=arm64 check`
+- `aarch64-elf-gcc`, `aarch64-elf-g++`, `aarch64-elf-ld`, and
+  `aarch64-elf-objcopy` for `make ARCH=arm64 run` and
+  `make ARCH=arm64 check`
 - `qemu-system-aarch64` for the AArch64 / Raspberry Pi 3 bring-up path
 - `pandoc` for `make epub`, `make pdf`, and `make docs`
 - `typst` for `make pdf` and `make docs`
@@ -229,7 +230,8 @@ Build-only targets:
 - `make kernel` rebuilds `kernel.elf`, `kernel-vga.elf`, and `os.iso`
 - `make iso` rebuilds `os.iso`
 - `make disk` / `make images` rebuild `img/disk.img` and `img/dufs.img`
-- `make ARCH=arm64 build` rebuilds `kernel-arm64.elf` and `kernel8.img`
+- `make ARCH=arm64 build` rebuilds `kernel-arm64.elf`, `kernel8.img`, and
+  the arm64 root disk image
 
 Static analysis and style targets:
 
@@ -255,7 +257,10 @@ Run and debug targets:
 - `make debug-fresh` rebuilds `img/disk.img` first, then starts `make debug`
 - `make debug-user APP=shell` starts `debug` and loads symbols for `user/shell`
 
-For `ARCH=arm64`, `run-stdio` and `run-grub-menu` are simple aliases of `run`, and `debug` / `debug-user` are not implemented yet.
+For `ARCH=arm64`, `run-stdio` and `run-grub-menu` are simple aliases of `run`.
+`make ARCH=arm64 debug` starts QEMU paused with the AArch64 GDB remote stub,
+and `make ARCH=arm64 debug-user APP=shell` adds symbols for the selected arm64
+user binary at the fixed user load address.
 
 In-kernel tests (KTEST):
 
@@ -300,18 +305,31 @@ Documentation:
 
 ### Build System Layout
 
-The root `Makefile` owns the top-level workflows: kernel and ISO builds, disk
-image packing, QEMU launch commands, cleaning, and short aliases such as
-`check`, `docs`, and `fresh`. Long lists and specialized target families live
+The root `Makefile` is the entry point for architecture selection, global build
+options, sentinels, common pattern rules, and the small amount of kernel-link
+wiring that has to sit near the object lists. Specialized target families live
 in included fragments so the root file stays small:
 
 - `kernel/objects.mk` lists the normal and VGA kernel object sets
 - `kernel/tests.mk` lists in-kernel test objects, included only when `KTEST=1`
 - `user/programs.mk` is the shared user program manifest used by both the root
   `Makefile` and `user/Makefile`
+- `mk/disk-images.mk` builds `disk.fs`, `dufs.fs`, `img/disk.img`, and
+  `img/dufs.img` for both x86 and arm64 root filesystem layouts
+- `mk/checks.mk` owns the shared `check-*` wiring and architecture-neutral test
+  policy checks
+- `mk/scan-x86.mk` and `mk/scan-arm64.mk` generate `compile_commands.json` and
+  run the scanner targets for each architecture
+- `mk/run-x86.mk` and `mk/run-arm64.mk` own the run, debug, and architecture
+  specific test entry points
+- `mk/utility-targets.mk` owns common aliases such as `all`, `rebuild`,
+  `clean`, and the public `.PHONY` target list
 - `docs/sources.mk` lists book chapter sources
 - `docs/build.mk` contains the EPUB, PDF, and diagram build rules
 - `test/targets.mk` contains the headless and integration test targets
+
+`make check` runs `tools/test_makefile_decomposition.py` so new target families
+do not quietly accumulate back in the root `Makefile`.
 
 Contributor policy lives under `docs/contributing/`. Use
 `docs/contributing/c-style.md` for C formatting and cleanup rules,
@@ -343,6 +361,25 @@ make ROOT_FS=dufs run-fresh
 ```
 
 ### Build Options
+
+Builds default to production optimization:
+
+```sh
+make build
+```
+
+The default `BUILD_MODE=production` selects `-O2` for kernel and native user
+objects on both architectures. Use `BUILD_MODE=debug` when you want debug
+optimization without switching target names:
+
+```sh
+make BUILD_MODE=debug build
+make ARCH=arm64 BUILD_MODE=debug kernel
+```
+
+The interactive debug targets also force debug optimization automatically:
+`make debug`, `make debug-user APP=shell`, and `make debug-fresh` compile with
+`-Og` before launching QEMU/GDB.
 
 Mouse cursor speed in the framebuffer desktop is controlled at build time:
 
