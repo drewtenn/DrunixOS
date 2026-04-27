@@ -293,6 +293,10 @@ WMDEV_KTESTS = (
     "test_wmdev_mmap_page_rejects_non_base_surface_offsets",
     "test_wmdev_rejects_cross_owner_present",
     "test_wmdev_event_queue_round_trips_to_owner",
+    "test_wmdev_client_close_emits_destroy_and_frees_pages",
+    "test_wmdev_client_close_replaces_saturated_window_queue_with_destroy",
+    "test_wmdev_client_close_prioritizes_destroy_when_other_windows_fill_queue",
+    "test_wmdev_server_close_destroys_windows_and_stales_handles",
 )
 
 X86_ARCH_KTESTS = (
@@ -948,6 +952,13 @@ INTENTS: tuple[TestIntent, ...] = (
                     ),
                 ),
                 SourceMarkers("kernel/test/test_wmdev.c", WMDEV_KTESTS),
+                SourceMarkers(
+                    "kernel/test/test_arch_shared.c",
+                    (
+                        "test_shared_wmdev_mmap_refs_shared_surface_page",
+                        "test_shared_dup2_bumps_wmdev_ref",
+                    ),
+                ),
             ),
             "arm64": (
                 SourceMarkers(
