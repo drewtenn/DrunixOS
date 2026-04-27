@@ -476,6 +476,7 @@ compile_commands.json: tools/generate_compile_commands.py kernel/objects.mk user
 		--user-cc="$(CC)" \
 		--user-cflags="-m32 -ffreestanding -nostdlib -fno-pie -no-pie -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall -Werror -I user/runtime -I shared -I user/apps" \
 		--user-build-root="$(USER_BUILD_ROOT)" \
+		--user-arch="$(ARCH)" \
 		--linux-cc="$(LINUX_I386_CC)" \
 		--linux-cflags="$(LINUX_CFLAGS)" \
 		--user-c-runtime-objs="$(SCAN_USER_C_RUNTIME_OBJS)" \
@@ -832,6 +833,7 @@ compile_commands.json: tools/generate_compile_commands.py kernel/arch/arm64/arch
 		--user-cc="$(ARM_CC)" \
 		--user-cflags="$(ARM_USER_CFLAGS) -I user/apps -I user/runtime" \
 		--user-build-root="$(ARM_USER_BUILD_DIR)" \
+		--user-arch="$(ARCH)" \
 		--linux-cc="$(LINUX_ARM64_CC)" \
 		--linux-cflags="$(LINUX_CFLAGS)" \
 		--user-c-runtime-objs="$(ARM_SCAN_USER_C_RUNTIME_OBJS)" \

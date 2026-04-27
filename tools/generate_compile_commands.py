@@ -22,6 +22,12 @@ def object_to_source(obj):
     return obj[:-2] + ".c" if obj.endswith(".o") else obj
 
 
+def user_runtime_source(obj_name, user_arch):
+    if user_arch == "arm64" and obj_name == "syscall.o":
+        return "syscall_arm64_compat.c"
+    return object_to_source(obj_name)
+
+
 def add_command(commands, root, compiler, flags, source, output, extra_flags=""):
     source_path = root / source
     if not source_path.exists():
@@ -52,29 +58,33 @@ def build_commands(
     user_cflags,
     linux_cc,
     linux_cflags,
+    user_build_root,
     user_c_runtime_objs,
     user_c_progs,
     linux_c_progs,
+    user_arch="x86",
 ):
     commands = []
+    user_build_root = user_build_root.rstrip("/")
 
     for obj in kernel_objs:
         source = object_to_source(obj)
         add_command(commands, root, kernel_cc, kernel_cflags, source, obj, kernel_inc)
 
     for obj in user_c_runtime_objs:
-        source = "user/" + object_to_source(obj)
-        output = "user/" + obj
+        obj_path = Path(obj)
+        source = "user/runtime/" + user_runtime_source(obj_path.name, user_arch)
+        output = f"{user_build_root}/obj/runtime/{obj_path.stem}.o"
         add_command(commands, root, user_cc, user_cflags, source, output)
 
     for prog in user_c_progs:
-        source = f"user/{prog}.c"
-        output = f"user/{prog}.o"
+        source = f"user/apps/{prog}.c"
+        output = f"{user_build_root}/obj/apps/{prog}.o"
         add_command(commands, root, user_cc, user_cflags, source, output)
 
     for prog in linux_c_progs:
-        source = f"user/{prog}.c"
-        output = f"user/{prog}"
+        source = f"user/apps/{prog}.c"
+        output = f"{user_build_root}/bin/{prog}"
         add_command(commands, root, linux_cc, linux_cflags, source, output)
 
     commands.sort(key=lambda entry: entry["file"])
@@ -93,6 +103,8 @@ def parser():
     p.add_argument("--user-cflags", default="")
     p.add_argument("--linux-cc", required=True)
     p.add_argument("--linux-cflags", default="")
+    p.add_argument("--user-build-root", default="build/user/x86")
+    p.add_argument("--user-arch", default="x86")
     p.add_argument("--user-c-runtime-objs", default="")
     p.add_argument("--user-c-progs", default="")
     p.add_argument("--linux-c-progs", default="")
@@ -116,6 +128,8 @@ def main(argv=None):
         user_cflags=args.user_cflags,
         linux_cc=args.linux_cc,
         linux_cflags=args.linux_cflags,
+        user_build_root=args.user_build_root,
+        user_arch=args.user_arch,
         user_c_runtime_objs=split_words(args.user_c_runtime_objs),
         user_c_progs=split_words(args.user_c_progs),
         linux_c_progs=split_words(args.linux_c_progs),
