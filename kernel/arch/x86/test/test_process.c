@@ -524,6 +524,40 @@ static void test_process_builds_linux_i386_initial_stack_shape(ktest_case_t *tc)
 	process_release_user_space(&proc);
 }
 
+static void test_x86_user_layout_invariants(ktest_case_t *tc)
+{
+	KTEST_EXPECT_EQ(tc, USER_STACK_TOP, 0xC0000000u);
+	KTEST_EXPECT_TRUE(tc, USER_STACK_BASE < USER_STACK_TOP);
+	KTEST_EXPECT_TRUE(tc, USER_MMAP_MIN < USER_STACK_BASE);
+	KTEST_EXPECT_TRUE(tc, USER_HEAP_MAX <= USER_STACK_BASE);
+	KTEST_EXPECT_TRUE(tc, ARCH_USER_IMAGE_BASE < USER_MMAP_MIN);
+}
+
+static void test_brk_refuses_stack_collision(ktest_case_t *tc)
+{
+	static process_t proc;
+	process_t *cur;
+	uint32_t old_brk;
+	uint32_t ret;
+
+	sched_init();
+	init_vma_proc(&proc);
+	proc.as = 0;
+	proc.arch_state.context = 1;
+
+	KTEST_ASSERT_NE(tc, sched_add(&proc), -1);
+	cur = sched_bootstrap();
+	KTEST_ASSERT_NOT_NULL(tc, cur);
+	old_brk = cur->brk;
+
+	ret =
+	    syscall_handler(SYS_BRK, USER_STACK_BASE + PAGE_SIZE, 0, 0, 0, 0, 0);
+	KTEST_EXPECT_EQ(tc, ret, old_brk);
+	KTEST_EXPECT_EQ(tc, cur->brk, old_brk);
+
+	sched_init();
+}
+
 static void test_vma_add_keeps_regions_sorted_and_findable(ktest_case_t *tc)
 {
 	static process_t proc;
@@ -2075,6 +2109,8 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_elf_loader_rejects_overflowing_pt_load),
     KTEST_CASE(test_sched_add_builds_initial_frame_for_never_run_process),
     KTEST_CASE(test_process_builds_linux_i386_initial_stack_shape),
+    KTEST_CASE(test_x86_user_layout_invariants),
+    KTEST_CASE(test_brk_refuses_stack_collision),
     KTEST_CASE(test_vma_add_keeps_regions_sorted_and_findable),
     KTEST_CASE(test_vma_add_rejects_overlapping_regions),
     KTEST_CASE(test_vma_map_anonymous_places_regions_below_stack),
