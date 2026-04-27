@@ -3,10 +3,10 @@
  * lsblk.cpp - list Drunix block devices using /sys/block.
  */
 
-#include "lib/stdio.h"
-#include "lib/string.h"
-#include "lib/stdlib.h"
-#include "lib/syscall.h"
+#include "stdio.h"
+#include "string.h"
+#include "stdlib.h"
+#include "syscall.h"
 
 #define MAX_DEVS 16
 

@@ -3,9 +3,9 @@
  * uniq.c — user-space uniq utility.
  */
 
-#include "lib/stdio.h"
-#include "lib/stdlib.h"
-#include "lib/string.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
 
 static void chomp(char *line, ssize_t *len)
 {

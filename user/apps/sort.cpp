@@ -3,9 +3,9 @@
  * sort.c — user-space sort utility.
  */
 
-#include "lib/stdio.h"
-#include "lib/stdlib.h"
-#include "lib/string.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
 
 typedef struct
 {

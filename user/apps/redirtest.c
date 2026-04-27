@@ -3,8 +3,8 @@
  * redirtest.c - shell redirection smoke test.
  */
 
-#include "lib/string.h"
-#include "lib/syscall.h"
+#include "string.h"
+#include "syscall.h"
 
 static int write_all(int fd, const char *buf, int len)
 {

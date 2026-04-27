@@ -3,7 +3,7 @@
  * yes.c — user-space yes utility.
  */
 
-#include "lib/stdio.h"
+#include "stdio.h"
 
 int main(int argc, char **argv)
 {

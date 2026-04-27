@@ -8,7 +8,7 @@
  * end — the pipe buffer.  No special path for the pipeline case.
  */
 
-#include "lib/stdio.h"
+#include "stdio.h"
 
 int main(int argc, char **argv)
 {

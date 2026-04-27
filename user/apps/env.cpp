@@ -3,10 +3,10 @@
  * env.c — user-space environment listing utility.
  */
 
-#include "lib/stdio.h"
-#include "lib/stdlib.h"
-#include "lib/string.h"
-#include "lib/syscall.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
+#include "syscall.h"
 
 static int has_slash(const char *s)
 {

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 
-#include "lib/syscall.h"
+#include "syscall.h"
 
 #define THREADS 3
 #define STACK_SIZE 4096

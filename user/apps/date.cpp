@@ -3,8 +3,8 @@
  * date.c — user-space date utility.
  */
 
-#include "lib/stdio.h"
-#include "lib/time.h"
+#include "stdio.h"
+#include "time.h"
 
 int main(int argc, char **argv)
 {

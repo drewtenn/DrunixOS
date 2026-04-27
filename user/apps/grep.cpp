@@ -3,10 +3,10 @@
  * grep.c — user-space grep utility.
  */
 
-#include "lib/ctype.h"
-#include "lib/stdio.h"
-#include "lib/stdlib.h"
-#include "lib/string.h"
+#include "ctype.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
 
 static int char_eq(char a, char b, int ignore_case)
 {

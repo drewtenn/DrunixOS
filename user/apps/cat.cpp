@@ -3,8 +3,8 @@
  * cat.c — user-space cat utility.
  */
 
-#include "lib/stdio.h"
-#include "lib/string.h"
+#include "stdio.h"
+#include "string.h"
 
 static int cat_stream(FILE *f)
 {

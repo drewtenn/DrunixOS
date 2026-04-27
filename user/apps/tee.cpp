@@ -3,8 +3,8 @@
  * tee.c — user-space tee utility.
  */
 
-#include "lib/stdio.h"
-#include "lib/string.h"
+#include "stdio.h"
+#include "string.h"
 
 #define MAX_TEE_FILES 8
 
