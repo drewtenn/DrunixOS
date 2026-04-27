@@ -4,7 +4,7 @@
 
 Drunix is a hobby operating system with a feature-rich 32-bit x86 mainline and a newer AArch64 bring-up path. The mainline x86 kernel boots through GRUB2 with the Multiboot1 protocol and provides protected-mode interrupt handling, paging, a physical and heap allocator, ATA disk I/O, a DUFS filesystem, a mount-tree VFS with synthetic `/dev`, `/proc`, and `/sys` namespaces, preemptive scheduling built around generic wait queues, Linux-style `clone` user threads, ref-counted process resources for address spaces, file descriptors, filesystem state, and signal actions, a TTY subsystem with job control, an ELF user-program loader, and per-process virtual-memory bookkeeping for demand-paged heaps, grow-down stacks, copy-on-write fork, and anonymous `mmap` regions. User programs can be written in C or in a small freestanding C++ subset backed by the repo-owned user runtime.
 
-The x86 desktop build asks GRUB for a 1024x768x32 linear framebuffer and starts a simple GUI desktop. The boot shell is opened as the main desktop app inside that GUI shell, with keyboard input, PS/2 mouse pointer support, a dark wallpapered desktop, icon-only taskbar, clock, framebuffer text rendering, scene-buffered compositing with an overlay mouse cursor, and a VGA text-mode fallback when a suitable framebuffer is unavailable. The disk image includes a small mixed-language userland: the shell and `chello` exercise the C runtime path, while the utility programs exercise the C++ runtime path.
+The x86 desktop build asks GRUB for a 1024x768x32 linear framebuffer and starts a simple GUI desktop. The boot shell is opened as the main desktop app inside that GUI shell, with keyboard input, PS/2 mouse pointer support, a dark wallpapered desktop, icon-only taskbar, clock, framebuffer text rendering, scene-buffered compositing with an overlay mouse cursor drawn from a shared sprite mask, and a VGA text-mode fallback when a suitable framebuffer is unavailable. The disk image includes a small mixed-language userland: the shell and `chello` exercise the C runtime path, while the utility programs exercise the C++ runtime path.
 
 The AArch64 path now boots the Raspberry Pi 3 / `qemu-system-aarch64` target through EL1 setup, mini-UART, exception vectors, timer IRQs, MMU and heap setup, an initramfs-backed user program, and the same graphical-by-default workflow shape as x86. `make ARCH=arm64 run` opens the QEMU display and mirrors the ARM64 console into a framebuffer text terminal.
 
@@ -183,6 +183,8 @@ make KTEST=0 NO_DESKTOP=0 kernel disk
 ```
 
 When the desktop starts, it claims the framebuffer through the kernel display-ownership syscall. While that claim is active, kernel log text and legacy TTY keyboard echo are kept off the visible framebuffer, and keyboard events are delivered through `/dev/kbd` to the desktop instead of also feeding the old console path. Kernel logs remain available through the debug console and in-kernel log ring.
+
+The mouse pointer sprite lives in `shared/cursor_sprite.h`, so the desktop compositor and kernel framebuffer cursor paths render the same 13x20 shape instead of maintaining separate ad hoc cursor drawings.
 
 On x86, user ELF images are linked and loaded above the low kernel direct-map window at `0x08000000`. The loader rejects user mappings that overlap the protected low address range, the user stack, or another `PT_LOAD` segment, which keeps oversized or misplaced programs from silently corrupting kernel-owned memory.
 

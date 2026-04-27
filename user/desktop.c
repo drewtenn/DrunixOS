@@ -20,6 +20,7 @@
 
 #include "desktop_font.h"
 #include "cursor_sprite.h"
+#include "desktop_window.h"
 #include "kbdmap.h"
 #include "lib/mman.h"
 #include "lib/nanojpeg/nanojpeg.h"
@@ -51,6 +52,9 @@ typedef struct {
 #define COLOR_TERM_FG 0x00d0d0d0u
 #define COLOR_TITLEBAR 0x00374561u
 #define COLOR_TITLEBAR_FG 0x00f0f0f0u
+#define COLOR_TITLEBAR_BUTTON 0x00475f78u
+#define COLOR_TITLEBAR_BUTTON_FG 0x00dce7f2u
+#define COLOR_TITLEBAR_CLOSE 0x00644f61u
 #define COLOR_CURSOR 0x00ffffffu
 #define COLOR_CURSOR_SHADOW 0x00202020u
 #define COLOR_TASKBAR 0x0009121fu
@@ -66,8 +70,8 @@ typedef struct {
 #define TERM_GLYPH_H 16
 #define TERM_PAD 8
 #define TITLE_H 20
-#define TERM_X 64
-#define TERM_Y 64
+#define TERM_DEFAULT_X 64
+#define TERM_DEFAULT_Y 64
 
 #define TASKBAR_H 48
 #define TASKBAR_PAD 14
@@ -92,10 +96,21 @@ static int g_cursor_x;
 static int g_cursor_y;
 static int g_esc_state;
 
+static int g_term_x = TERM_DEFAULT_X;
+static int g_term_y = TERM_DEFAULT_Y;
+static int g_terminal_minimized;
+static int g_terminal_closed;
+static int g_dragging_terminal;
+static int g_shell_pid = -1;
+static int g_term_helper_pid = -1;
+static int g_ptmx = -1;
+static int g_term_pipe_r = -1;
+
 static int g_pointer_x;
 static int g_pointer_y;
 static int g_pointer_old_x;
 static int g_pointer_old_y;
+static uint8_t g_mouse_buttons;
 
 static uint32_t pack_rgb(uint8_t r, uint8_t g, uint8_t b)
 {
@@ -379,28 +394,97 @@ static int terminal_window_h(void)
 	return TERM_ROWS * TERM_GLYPH_H + 2 * TERM_PAD + TITLE_H;
 }
 
+static int terminal_visible(void)
+{
+	return !g_terminal_closed && !g_terminal_minimized;
+}
+
+static void clamp_terminal_position(void)
+{
+	int max_x = (int)g_info.width - terminal_window_w();
+	int max_y = (int)g_info.height - TASKBAR_H - terminal_window_h();
+
+	if (max_x < 0)
+		max_x = 0;
+	if (max_y < 0)
+		max_y = 0;
+	if (g_term_x < 0)
+		g_term_x = 0;
+	if (g_term_y < 0)
+		g_term_y = 0;
+	if (g_term_x > max_x)
+		g_term_x = max_x;
+	if (g_term_y > max_y)
+		g_term_y = max_y;
+}
+
+static void draw_title_button(uint32_t *target,
+                              int x,
+                              int y,
+                              uint32_t bg,
+                              int close_button)
+{
+	fill_rect(target,
+	          x,
+	          y,
+	          DRUNIX_WINDOW_CONTROL_SIZE,
+	          DRUNIX_WINDOW_CONTROL_SIZE,
+	          bg);
+	if (close_button) {
+		for (int i = 3; i < DRUNIX_WINDOW_CONTROL_SIZE - 3; i++) {
+			put_pixel(target, x + i, y + i, COLOR_TITLEBAR_BUTTON_FG);
+			put_pixel(target,
+			          x + i,
+			          y + DRUNIX_WINDOW_CONTROL_SIZE - 1 - i,
+			          COLOR_TITLEBAR_BUTTON_FG);
+		}
+		return;
+	}
+	fill_rect(target,
+	          x + 3,
+	          y + DRUNIX_WINDOW_CONTROL_SIZE - 4,
+	          DRUNIX_WINDOW_CONTROL_SIZE - 6,
+	          2,
+	          COLOR_TITLEBAR_BUTTON_FG);
+}
+
 static void render_terminal(uint32_t *target)
 {
 	int win_w = terminal_window_w();
 	int win_h = terminal_window_h();
+	int control_y;
 
-	fill_rect(target, TERM_X, TERM_Y, win_w, TITLE_H, COLOR_TITLEBAR);
+	if (!terminal_visible())
+		return;
+
+	fill_rect(target, g_term_x, g_term_y, win_w, TITLE_H, COLOR_TITLEBAR);
 	draw_text(target,
-	          TERM_X + 8,
-	          TERM_Y + 2,
+	          g_term_x + 8,
+	          g_term_y + 2,
 	          "Terminal",
 	          COLOR_TITLEBAR_FG,
 	          COLOR_TITLEBAR);
+	control_y = drunix_window_control_y(g_term_y, TITLE_H);
+	draw_title_button(target,
+	                  drunix_window_minimize_button_x(g_term_x, win_w),
+	                  control_y,
+	                  COLOR_TITLEBAR_BUTTON,
+	                  0);
+	draw_title_button(target,
+	                  drunix_window_close_button_x(g_term_x, win_w),
+	                  control_y,
+	                  COLOR_TITLEBAR_CLOSE,
+	                  1);
 
 	fill_rect(target,
-	          TERM_X,
-	          TERM_Y + TITLE_H,
+	          g_term_x,
+	          g_term_y + TITLE_H,
 	          win_w,
 	          win_h - TITLE_H,
 	          COLOR_TERM_BG);
 
-	int gx = TERM_X + TERM_PAD;
-	int gy = TERM_Y + TITLE_H + TERM_PAD;
+	int gx = g_term_x + TERM_PAD;
+	int gy = g_term_y + TITLE_H + TERM_PAD;
 	for (int r = 0; r < TERM_ROWS; r++) {
 		for (int c = 0; c < TERM_COLS; c++) {
 			draw_glyph(target,
@@ -462,6 +546,26 @@ static void draw_taskbar_icon_logo(uint32_t *target, int x, int y)
 	fill_rect(target, x + 19, y + 18, 4, 6, 0x001e91ffu);
 }
 
+static int taskbar_icon_y(void)
+{
+	return (int)g_info.height - TASKBAR_H + 8;
+}
+
+static int taskbar_terminal_x(void)
+{
+	return TASKBAR_PAD + TASKBAR_ICON_SIZE + TASKBAR_ICON_GAP * 2;
+}
+
+static int point_in_terminal_taskbar_button(int x, int y)
+{
+	return drunix_point_in_rect(x,
+	                            y,
+	                            taskbar_terminal_x(),
+	                            taskbar_icon_y(),
+	                            TASKBAR_ICON_SIZE,
+	                            TASKBAR_ICON_SIZE);
+}
+
 static void draw_taskbar_button(uint32_t *target,
                                 int x,
                                 int y,
@@ -502,7 +606,7 @@ static void format_clock(char *buf, int bufsz)
 static void render_taskbar(uint32_t *target)
 {
 	int y = (int)g_info.height - TASKBAR_H;
-	int icon_y = y + 8;
+	int icon_y = taskbar_icon_y();
 	int x = TASKBAR_PAD;
 	char clock[8];
 	int clock_x;
@@ -514,7 +618,8 @@ static void render_taskbar(uint32_t *target)
 
 	draw_taskbar_button(target, x, icon_y, 0, draw_taskbar_icon_logo);
 	x += TASKBAR_ICON_SIZE + TASKBAR_ICON_GAP * 2;
-	draw_taskbar_button(target, x, icon_y, 1, draw_taskbar_icon_terminal);
+	draw_taskbar_button(
+	    target, x, icon_y, terminal_visible(), draw_taskbar_icon_terminal);
 	x += TASKBAR_ICON_SIZE + TASKBAR_ICON_GAP;
 	draw_taskbar_button(target, x, icon_y, 0, draw_taskbar_icon_file);
 	x += TASKBAR_ICON_SIZE + TASKBAR_ICON_GAP;
@@ -528,6 +633,8 @@ static void render_taskbar(uint32_t *target)
 	    target, clock_x, y + 16, clock, COLOR_TASKBAR_CLOCK, COLOR_TASKBAR);
 }
 
+static void draw_pointer_sprite(void);
+
 static void compose_scene(void)
 {
 	if (!g_scene)
@@ -538,6 +645,15 @@ static void compose_scene(void)
 		render_wallpaper(g_scene);
 	render_terminal(g_scene);
 	render_taskbar(g_scene);
+}
+
+static void present_scene(void)
+{
+	compose_scene();
+	memcpy(g_fb, g_scene, g_fb_bytes);
+	draw_pointer_sprite();
+	g_pointer_old_x = g_pointer_x;
+	g_pointer_old_y = g_pointer_y;
 }
 
 static void draw_pointer_sprite(void)
@@ -600,7 +716,7 @@ static int read_fb_info(void)
 	return 0;
 }
 
-static void spawn_shell(int slave_fd, char *const *argv, char *const *envp)
+static int spawn_shell(int slave_fd, char *const *argv, char *const *envp)
 {
 	int pid = sys_fork();
 
@@ -618,6 +734,7 @@ static void spawn_shell(int slave_fd, char *const *argv, char *const *envp)
 		sys_write("desktop: exec failed\n");
 		sys_exit(1);
 	}
+	return pid;
 }
 
 /*
@@ -675,10 +792,10 @@ static void drain_terminal_bytes(int fd)
 			break;
 	}
 
-	if (rendered) {
+	if (rendered && terminal_visible()) {
 		render_terminal(g_scene);
 		copy_rect_from_scene(
-		    TERM_X, TERM_Y, terminal_window_w(), terminal_window_h());
+		    g_term_x, g_term_y, terminal_window_w(), terminal_window_h());
 		render_pointer();
 	}
 }
@@ -850,6 +967,93 @@ static void wrap_mouse(int pipe_w, int unused)
 	run_mouse_helper(pipe_w);
 }
 
+static void close_terminal_window(void)
+{
+	if (g_terminal_closed)
+		return;
+	g_terminal_closed = 1;
+	g_terminal_minimized = 0;
+	g_dragging_terminal = 0;
+	if (g_shell_pid > 0)
+		sys_kill(g_shell_pid, SIGTERM);
+	if (g_term_helper_pid > 0)
+		sys_kill(g_term_helper_pid, SIGTERM);
+	if (g_ptmx >= 0) {
+		sys_close(g_ptmx);
+		g_ptmx = -1;
+	}
+	if (g_term_pipe_r >= 0) {
+		sys_close(g_term_pipe_r);
+		g_term_pipe_r = -1;
+	}
+}
+
+static void handle_mouse_event(uint8_t buttons, int8_t sdx, int8_t sdy)
+{
+	uint8_t old_buttons = g_mouse_buttons;
+	int old_x = g_pointer_x;
+	int old_y = g_pointer_y;
+	int full_repaint = 0;
+
+	g_pointer_x += sdx;
+	g_pointer_y += sdy;
+	if (g_pointer_x < 0)
+		g_pointer_x = 0;
+	if (g_pointer_y < 0)
+		g_pointer_y = 0;
+	if (g_pointer_x > (int)g_info.width - POINTER_W)
+		g_pointer_x = (int)g_info.width - POINTER_W;
+	if (g_pointer_y > (int)g_info.height - POINTER_H)
+		g_pointer_y = (int)g_info.height - POINTER_H;
+
+	if (g_dragging_terminal && (old_buttons & 0x01u)) {
+		int dx = g_pointer_x - old_x;
+		int dy = g_pointer_y - old_y;
+
+		if (dx != 0 || dy != 0) {
+			g_term_x += dx;
+			g_term_y += dy;
+			clamp_terminal_position();
+			full_repaint = 1;
+		}
+	}
+	if (g_dragging_terminal && !(buttons & 0x01u))
+		g_dragging_terminal = 0;
+
+	if ((buttons & 0x01u) && !(old_buttons & 0x01u)) {
+		if (!g_terminal_closed &&
+		    point_in_terminal_taskbar_button(g_pointer_x, g_pointer_y)) {
+			g_terminal_minimized = terminal_visible();
+			full_repaint = 1;
+		} else if (terminal_visible()) {
+			int hit = drunix_window_hit_test(g_term_x,
+			                                 g_term_y,
+			                                 terminal_window_w(),
+			                                 terminal_window_h(),
+			                                 TITLE_H,
+			                                 g_pointer_x,
+			                                 g_pointer_y);
+
+			if (hit == DRUNIX_WINDOW_HIT_CLOSE) {
+				close_terminal_window();
+				full_repaint = 1;
+			} else if (hit == DRUNIX_WINDOW_HIT_MINIMIZE) {
+				g_terminal_minimized = 1;
+				g_dragging_terminal = 0;
+				full_repaint = 1;
+			} else if (hit == DRUNIX_WINDOW_HIT_TITLE) {
+				g_dragging_terminal = 1;
+			}
+		}
+	}
+
+	g_mouse_buttons = buttons;
+	if (full_repaint)
+		present_scene();
+	else
+		render_pointer();
+}
+
 int main(int argc, char **argv)
 {
 	(void)argc;
@@ -887,8 +1091,8 @@ int main(int argc, char **argv)
 	if (g_wallpaper)
 		render_wallpaper(g_wallpaper);
 
-	int ptmx = sys_open_flags("/dev/ptmx", SYS_O_RDWR, 0);
-	if (ptmx < 0) {
+	g_ptmx = sys_open_flags("/dev/ptmx", SYS_O_RDWR, 0);
+	if (g_ptmx < 0) {
 		sys_write("desktop: cannot open /dev/ptmx\n");
 		return 1;
 	}
@@ -900,7 +1104,7 @@ int main(int argc, char **argv)
 
 	char *shell_argv[] = {"shell", 0};
 	char *shell_envp[] = {"PATH=/usr/bin:/bin", 0};
-	spawn_shell(slave, shell_argv, shell_envp);
+	g_shell_pid = spawn_shell(slave, shell_argv, shell_envp);
 	sys_close(slave);
 
 	int evt_fds[2];
@@ -916,11 +1120,11 @@ int main(int argc, char **argv)
 
 	int evt_r = evt_fds[0];
 	int evt_w = evt_fds[1];
-	int term_r = term_fds[0];
 	int term_w = term_fds[1];
+	g_term_pipe_r = term_fds[0];
 
 	(void)spawn_helper_child(wrap_kbd, evt_w, 0);
-	(void)spawn_helper_child(wrap_term, term_w, ptmx);
+	g_term_helper_pid = spawn_helper_child(wrap_term, term_w, g_ptmx);
 	(void)spawn_helper_child(wrap_mouse, evt_w, 0);
 	sys_close(evt_w);
 	sys_close(term_w);
@@ -931,38 +1135,47 @@ int main(int argc, char **argv)
 	g_pointer_old_y = g_pointer_y;
 
 	term_clear();
-	compose_scene();
-	memcpy(g_fb, g_scene, g_fb_bytes);
-	draw_pointer_sprite();
+	present_scene();
 
 	for (;;) {
 		sys_pollfd_t pfds[2];
+		int nfds = 0;
+		int term_poll_idx = -1;
+		int evt_poll_idx;
 
-		pfds[0].fd = term_r;
-		pfds[0].events = SYS_POLLIN;
-		pfds[0].revents = 0;
-		pfds[1].fd = evt_r;
-		pfds[1].events = SYS_POLLIN;
-		pfds[1].revents = 0;
+		if (g_term_pipe_r >= 0) {
+			term_poll_idx = nfds;
+			pfds[nfds].fd = g_term_pipe_r;
+			pfds[nfds].events = SYS_POLLIN;
+			pfds[nfds].revents = 0;
+			nfds++;
+		}
+		evt_poll_idx = nfds;
+		pfds[nfds].fd = evt_r;
+		pfds[nfds].events = SYS_POLLIN;
+		pfds[nfds].revents = 0;
+		nfds++;
 
-		if (sys_poll(pfds, 2, -1) <= 0) {
+		if (sys_poll(pfds, (unsigned int)nfds, -1) <= 0) {
 			sys_yield();
 			continue;
 		}
 
-		if (pfds[0].revents & SYS_POLLIN)
-			drain_terminal_bytes(term_r);
+		if (term_poll_idx >= 0 && (pfds[term_poll_idx].revents & SYS_POLLIN))
+			drain_terminal_bytes(g_term_pipe_r);
 
-		while ((pfds[1].revents & SYS_POLLIN) || fd_has_input(evt_r)) {
+		while ((pfds[evt_poll_idx].revents & SYS_POLLIN) ||
+		       fd_has_input(evt_r)) {
 			uint8_t rec[4];
 
-			pfds[1].revents = 0;
+			pfds[evt_poll_idx].revents = 0;
 			if (read_event_record(evt_r, rec) != 0)
 				break;
 
 			switch (rec[0]) {
 			case EVT_KEY:
-				sys_fwrite(ptmx, (const char *)&rec[1], 1);
+				if (terminal_visible() && g_ptmx >= 0)
+					sys_fwrite(g_ptmx, (const char *)&rec[1], 1);
 				break;
 			case EVT_MOUSE: {
 				/*
@@ -978,17 +1191,7 @@ int main(int argc, char **argv)
 				int8_t sdx = (int8_t)rec[2];
 				int8_t sdy = (int8_t)rec[3];
 
-				g_pointer_x += sdx;
-				g_pointer_y += sdy;
-				if (g_pointer_x < 0)
-					g_pointer_x = 0;
-				if (g_pointer_y < 0)
-					g_pointer_y = 0;
-				if (g_pointer_x > (int)g_info.width - POINTER_W)
-					g_pointer_x = (int)g_info.width - POINTER_W;
-				if (g_pointer_y > (int)g_info.height - POINTER_H)
-					g_pointer_y = (int)g_info.height - POINTER_H;
-				render_pointer();
+				handle_mouse_event(rec[1], sdx, sdy);
 				break;
 			}
 			default:
