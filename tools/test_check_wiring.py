@@ -31,6 +31,7 @@ def required_test_all_commands(arch: str) -> tuple[str, ...]:
         )
     return (
         "make test-headless",
+        "make test-desktop-screenshot",
         "make test-halt",
         "make test-threadtest",
     )

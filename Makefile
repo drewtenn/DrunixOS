@@ -211,11 +211,14 @@ IMG_DIR       := img
 ROOT_DISK_IMG := $(IMG_DIR)/disk.img
 DUFS_IMG      := $(IMG_DIR)/dufs.img
 RUN_LOGS      := $(LOG_DIR)/serial.log $(LOG_DIR)/debugcon.log
-TEST_SUFFIXES := ktest df ext3w threadtest
+TEST_SUFFIXES := ktest df ext3w threadtest desktop-screenshot
 TEST_IMAGES   := $(foreach suffix,$(TEST_SUFFIXES),$(IMG_DIR)/disk-$(suffix).img $(IMG_DIR)/dufs-$(suffix).img) $(IMG_DIR)/disk-ext3-host.img
 TEST_LOGS     := $(foreach suffix,$(TEST_SUFFIXES),$(LOG_DIR)/serial-$(suffix).log $(LOG_DIR)/debugcon-$(suffix).log) \
                  $(LOG_DIR)/ext3wtest.log \
                  $(LOG_DIR)/threadtest.log \
+                 $(LOG_DIR)/qemu-desktop-screenshot.stderr \
+                 $(LOG_DIR)/qemu-desktop-screenshot.monitor \
+                 $(LOG_DIR)/desktop-boot*.ppm \
                  $(LOG_DIR)/ext3-host-readback.txt
 SENTINELS     := .ktest-flag .double-fault-test-flag .klog-debugcon-flag \
                  .mouse-speed-flag .init-program-flag .no-desktop-flag \

@@ -50,3 +50,6 @@ test-halt:
 
 test-threadtest:
 	$(PYTHON) tools/test_arm64_threadtest.py
+
+test-desktop-screenshot:
+	@echo "desktop screenshot test is x86-only until the ARM64 desktop exists"

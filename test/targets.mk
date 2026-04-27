@@ -46,6 +46,9 @@ test-threadtest:
 	! grep -q "THREADTEST FAIL" $(LOG_DIR)/threadtest.log
 	! grep -Eq "unknown syscall|Unhandled syscall" $(LOG_DIR)/debugcon-threadtest.log
 
+test-desktop-screenshot:
+	$(PYTHON) tools/test_desktop_screenshot.py
+
 # `test-ext3-linux-compat` — verify a freshly generated ext3 root with host
 #                            e2fsprogs, then boot Drunix writable ext3 smoke
 #                            tests and fsck the mutated root image.
@@ -79,10 +82,11 @@ test-ext3-host-write-interop:
 	$(PYTHON) tools/check_ext3_linux_compat.py $(IMG_DIR)/disk-ext3-host.img
 	$(E2FSCK) -fn disk-ext3-host.fs
 
-# `test-all` — run every test suite: in-kernel unit tests (KTEST, headless)
-#              followed by all halt-inducing tests.  Exits non-zero if any
-#              suite fails.
+# `test-all` — run every test suite: in-kernel unit tests (KTEST, headless),
+#              the x86 desktop screenshot boot smoke test, and halt-inducing
+#              tests.  Exits non-zero if any suite fails.
 test-all:
 	$(MAKE) test-headless
+	$(MAKE) test-desktop-screenshot
 	$(MAKE) test-threadtest
 	$(MAKE) test-halt
