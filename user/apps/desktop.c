@@ -97,6 +97,8 @@ static uint32_t *g_wallpaper;
 static fbinfo_t g_info;
 static uint32_t g_pitch_pixels;
 static uint32_t g_fb_bytes;
+static int g_clip_enabled;
+static drunix_rect_t g_clip_rect;
 
 static char g_grid[TERM_ROWS][TERM_COLS];
 static int g_cursor_x;
@@ -132,9 +134,39 @@ static uint32_t pack_rgb(uint8_t r, uint8_t g, uint8_t b)
 	       ((uint32_t)b << g_info.blue_pos);
 }
 
+static drunix_rect_t screen_rect(void)
+{
+	return drunix_rect_make(0, 0, (int)g_info.width, (int)g_info.height);
+}
+
+static int point_inside_clip(int x, int y)
+{
+	if (!g_clip_enabled)
+		return 1;
+	return drunix_point_in_rect(x,
+	                            y,
+	                            g_clip_rect.x,
+	                            g_clip_rect.y,
+	                            g_clip_rect.w,
+	                            g_clip_rect.h);
+}
+
+static void begin_clip(drunix_rect_t rect)
+{
+	g_clip_enabled = 1;
+	g_clip_rect = rect;
+}
+
+static void end_clip(void)
+{
+	g_clip_enabled = 0;
+}
+
 static void put_pixel(uint32_t *target, int x, int y, uint32_t color)
 {
 	if (x < 0 || y < 0 || x >= (int)g_info.width || y >= (int)g_info.height)
+		return;
+	if (!point_inside_clip(x, y))
 		return;
 	target[(uint32_t)y * g_pitch_pixels + (uint32_t)x] = color;
 }
@@ -142,19 +174,24 @@ static void put_pixel(uint32_t *target, int x, int y, uint32_t color)
 static void
 fill_rect(uint32_t *target, int x, int y, int w, int h, uint32_t color)
 {
+	drunix_rect_t rect;
+	drunix_rect_t bounds;
+
 	if (w <= 0 || h <= 0)
 		return;
-	for (int j = 0; j < h; j++) {
-		int yy = y + j;
-		if (yy < 0 || yy >= (int)g_info.height)
-			continue;
-		uint32_t *row = target + (uint32_t)yy * g_pitch_pixels;
-		for (int i = 0; i < w; i++) {
-			int xx = x + i;
-			if (xx < 0 || xx >= (int)g_info.width)
-				continue;
-			row[xx] = color;
-		}
+	rect = drunix_rect_make(x, y, w, h);
+	bounds = screen_rect();
+	if (g_clip_enabled)
+		bounds = g_clip_rect;
+	if (!drunix_rect_clip(rect, bounds, &rect))
+		return;
+
+	for (int j = 0; j < rect.h; j++) {
+		uint32_t *row =
+		    target + (uint32_t)(rect.y + j) * g_pitch_pixels + (uint32_t)rect.x;
+
+		for (int i = 0; i < rect.w; i++)
+			row[i] = color;
 	}
 }
 
@@ -177,6 +214,32 @@ static void copy_rect_from_scene(int x, int y, int w, int h)
 			dst[xx] = src[xx];
 		}
 	}
+}
+
+static void copy_wallpaper_rect_to_scene(drunix_rect_t rect)
+{
+	drunix_rect_t clipped;
+
+	if (!g_scene || !g_wallpaper)
+		return;
+	if (!drunix_rect_clip(rect, screen_rect(), &clipped))
+		return;
+
+	for (int j = 0; j < clipped.h; j++) {
+		uint32_t *src = g_wallpaper +
+		    (uint32_t)(clipped.y + j) * g_pitch_pixels + (uint32_t)clipped.x;
+		uint32_t *dst = g_scene +
+		    (uint32_t)(clipped.y + j) * g_pitch_pixels + (uint32_t)clipped.x;
+
+		memcpy(dst, src, (size_t)clipped.w * sizeof(uint32_t));
+	}
+}
+
+static void copy_scene_rect_to_fb(drunix_rect_t rect)
+{
+	if (!drunix_rect_clip(rect, screen_rect(), &rect))
+		return;
+	copy_rect_from_scene(rect.x, rect.y, rect.w, rect.h);
 }
 
 static void
@@ -874,6 +937,8 @@ static void render_taskbar(uint32_t *target)
 }
 
 static void draw_pointer_sprite(void);
+static void render_pointer(void);
+static void present_scene(void);
 
 static void compose_scene(void)
 {
@@ -885,6 +950,55 @@ static void compose_scene(void)
 		render_wallpaper(g_scene);
 	render_windows(g_scene);
 	render_taskbar(g_scene);
+}
+
+static int compose_scene_rect(drunix_rect_t rect)
+{
+	drunix_rect_t clipped;
+
+	if (!g_scene)
+		return 1;
+	if (!drunix_rect_clip(rect, screen_rect(), &clipped))
+		return 1;
+
+	if (!g_wallpaper)
+		return 0;
+	copy_wallpaper_rect_to_scene(clipped);
+
+	begin_clip(clipped);
+	render_windows(g_scene);
+	render_taskbar(g_scene);
+	end_clip();
+	return 1;
+}
+
+static drunix_rect_t pointer_rect_at(int x, int y)
+{
+	return drunix_rect_make(x, y, POINTER_W, POINTER_H);
+}
+
+static void present_dirty_rect(drunix_rect_t rect) __attribute__((unused));
+
+static void present_dirty_rect(drunix_rect_t rect)
+{
+	drunix_rect_t dirty = rect;
+
+	dirty = drunix_rect_union(dirty,
+	                          pointer_rect_at(g_pointer_old_x, g_pointer_old_y));
+	dirty = drunix_rect_union(dirty, pointer_rect_at(g_pointer_x, g_pointer_y));
+	if (!drunix_rect_clip(dirty, screen_rect(), &dirty)) {
+		render_pointer();
+		return;
+	}
+
+	if (!compose_scene_rect(dirty)) {
+		present_scene();
+		return;
+	}
+	copy_scene_rect_to_fb(dirty);
+	draw_pointer_sprite();
+	g_pointer_old_x = g_pointer_x;
+	g_pointer_old_y = g_pointer_y;
 }
 
 static void present_scene(void)
