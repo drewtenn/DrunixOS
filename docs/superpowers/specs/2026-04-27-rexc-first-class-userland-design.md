@@ -50,6 +50,39 @@ and process exit.
 ARM64 Drunix output must be ELF64 AArch64, not Mach-O. The existing
 `arm64-macos` backend behavior remains separate and unchanged.
 
+## Compiler Driver Contract
+
+Rexc should solve Drunix compilation the way `gcc`, `g++`, and `rustc` solve
+compilation for their targets: the build system invokes one compiler driver,
+and that driver owns the source-to-binary pipeline. Make rules should not know
+how to assemble Rexc output, where Rexc runtime objects live, which startup
+object to use, or how to order linker inputs. Those details belong behind the
+Rexc CLI.
+
+For Drunix userland, the supported driver modes are:
+
+- `-S`: parse, type-check, lower, and emit target assembly.
+- `-c`: emit and assemble a relocatable object.
+- executable output: emit, assemble, compile/link Rexc runtime support, apply
+  the Drunix linker script, and write the final ELF executable.
+
+The driver should provide target-aware tool discovery and diagnostics for the
+external tools it invokes. For x86 it should use the `x86_64-elf-*` binutils
+lane; for ARM64 it should use the `aarch64-elf-*` lane. Temporary assembly,
+object, and runtime files are compiler-driver implementation details and should
+be cleaned up on both success and failure.
+
+The Drunix build should call Rexc like a normal compiler:
+
+```make
+$(REXC) user/apps/rexc/hello.rx --target i386-drunix --drunix-root . -o build/user/x86/bin/hello
+$(REXC) user/apps/rexc/hello.rx --target aarch64-drunix --drunix-root . -o build/user/arm64/bin/hello
+```
+
+This keeps Rexc integration similar to the existing C and C++ lanes: Make
+chooses the source file, target, and output path; the compiler decides how to
+produce a valid binary for that target.
+
 ## Build Integration
 
 Rexc app sources will live under `user/apps/rexc/<app>.rx`. The canonical app

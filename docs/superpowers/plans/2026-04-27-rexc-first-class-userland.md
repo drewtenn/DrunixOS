@@ -4,7 +4,7 @@
 
 **Goal:** Make Rexc a first-class Drunix userland compiler for both x86 and ARM64, with canonical `/bin/*` apps buildable from `.rx` sources on both architectures.
 
-**Architecture:** Add distinct Drunix Rexc targets for ELF32 i386 and ELF64 AArch64. Keep Darwin ARM64 separate. Rexc owns target-specific startup/runtime adapters, while Drunix provides the generated user linker scripts under `build/user/<arch>/linker/user.ld`. Drunix build rules select canonical app names that should be built from Rexc sources and fail when those builds fail.
+**Architecture:** Add distinct Drunix Rexc targets for ELF32 i386 and ELF64 AArch64. Keep Darwin ARM64 separate. Rexc acts as the compiler driver, like `gcc`, `g++`, or `rustc`: it owns source compilation, assembly, runtime/startup selection, linker invocation, temporary files, and target diagnostics. Drunix build rules select canonical app names and invoke Rexc with a source file, target, Drunix root, and output path.
 
 **Tech Stack:** C++17 Rexc compiler, GNU Make, x86_64-elf and aarch64-elf binutils, Drunix user runtime/linker scripts, Python/QEMU smoke tests.
 
@@ -15,6 +15,7 @@
 - Modify Rexc target and CLI/linking code in `external/rexc/include/rexc/target.hpp`, `external/rexc/src/target.cpp`, and `external/rexc/src/main.cpp`.
 - Extend ARM64 code generation in `external/rexc/src/codegen_arm64.cpp` without changing `arm64-macos` semantics.
 - Add or extend Drunix runtime adapters under `external/rexc/src/stdlib/sys/`.
+- Keep compiler-driver behavior in Rexc, not in Drunix Make rules: Make should not assemble Rexc output, order Rexc runtime objects, or invoke `ld` directly for Rexc apps.
 - Add Rexc sources under `user/apps/rexc/`.
 - Update x86 userland build rules in `user/Makefile`.
 - Update ARM64 userland build rules in `kernel/arch/arm64/arch.mk`.
@@ -34,6 +35,13 @@
 
 ### Task 2: Fix Drunix Link Layout
 
+- [ ] Treat Rexc as the driver for Drunix userland compilation, not as an assembly emitter that Make finishes manually.
+- [ ] Preserve the normal compiler-driver modes:
+  - `-S` writes target assembly.
+  - `-c` writes a relocatable object.
+  - executable output writes a final Drunix ELF executable.
+- [ ] Keep the assemble/link/runtime flow inside Rexc for executable output, including temporary file creation and cleanup.
+- [ ] Report missing target tools with compiler-style diagnostics that name the missing tool and selected target.
 - [ ] Update Rexc's `--drunix-root` link path to use generated Drunix artifacts:
   - x86 linker script: `build/user/x86/linker/user.ld`
   - ARM64 linker script: `build/user/arm64/linker/user.ld`
@@ -73,8 +81,11 @@
 
 - [ ] Add `user/apps/rexc/`.
 - [ ] Extend `user/programs.mk` with `REXC_PROGS ?= hello echo printenv cat yes`.
-- [ ] Teach `user/Makefile` to build selected x86 canonical names from `user/apps/rexc/<app>.rx` into `build/user/x86/bin/<app>`.
-- [ ] Teach `kernel/arch/arm64/arch.mk` to build selected ARM64 canonical names from the same Rexc sources into `build/user/arm64/bin/<app>`.
+- [ ] Teach `user/Makefile` to build selected x86 canonical names by invoking Rexc once per app, like a normal compiler driver:
+  - `$(REXC) user/apps/rexc/<app>.rx --target i386-drunix --drunix-root .. -o ../build/user/x86/bin/<app>`
+- [ ] Teach `kernel/arch/arm64/arch.mk` to build selected ARM64 canonical names by invoking Rexc once per app:
+  - `$(REXC) user/apps/rexc/<app>.rx --target aarch64-drunix --drunix-root . -o build/user/arm64/bin/<app>`
+- [ ] Do not add Make rules that pipe Rexc assembly into `as` or manually invoke `ld` for Rexc apps; that orchestration belongs in Rexc.
 - [ ] Ensure disk image rules continue to package from `build/user/<arch>/bin/<app>` without knowing which language produced the binary.
 - [ ] Ensure selected Rexc app build failures fail the whole build instead of falling back to C/C++.
 
@@ -121,6 +132,8 @@ Expected results:
 - Both architecture builds produce selected Rexc apps at `build/user/<arch>/bin/<app>`.
 - x86 and ARM64 smoke tests exercise the selected Rexc apps.
 - `readelf` reports ELF32 Intel 80386 for x86 and ELF64 AArch64 for ARM64.
+- Drunix Make rules invoke Rexc as a single compiler driver command for Rexc
+  apps; no Make rule manually assembles or links Rexc output.
 
 ## Assumptions
 
