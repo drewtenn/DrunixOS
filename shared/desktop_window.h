@@ -3,6 +3,8 @@
 #ifndef DRUNIX_DESKTOP_WINDOW_H
 #define DRUNIX_DESKTOP_WINDOW_H
 
+#include <stdint.h>
+
 #define DRUNIX_WINDOW_HIT_NONE 0
 #define DRUNIX_WINDOW_HIT_BODY 1
 #define DRUNIX_WINDOW_HIT_TITLE 2
@@ -94,6 +96,36 @@ static inline int drunix_rect_clip(drunix_rect_t rect,
 
 	*out = drunix_rect_make(left, top, right - left, bottom - top);
 	return 1;
+}
+
+typedef struct {
+	uint8_t buttons;
+	int dx;
+	int dy;
+	int has_mouse;
+} drunix_mouse_coalesce_t;
+
+static inline void drunix_mouse_coalesce_init(drunix_mouse_coalesce_t *pending)
+{
+	if (!pending)
+		return;
+	pending->buttons = 0;
+	pending->dx = 0;
+	pending->dy = 0;
+	pending->has_mouse = 0;
+}
+
+static inline void drunix_mouse_coalesce_add(drunix_mouse_coalesce_t *pending,
+                                             uint8_t buttons,
+                                             int dx,
+                                             int dy)
+{
+	if (!pending)
+		return;
+	pending->buttons = buttons;
+	pending->dx += dx;
+	pending->dy += dy;
+	pending->has_mouse = 1;
 }
 
 #define DRUNIX_TASKBAR_PAD 14

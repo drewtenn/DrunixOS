@@ -268,6 +268,7 @@ X86_ARCH_KTESTS = (
     "test_sched_record_user_fault_preserves_full_fault_addr",
     "test_user_mapping_rejects_direct_map_addresses",
     "test_paging_rejects_direct_user_page_mapping",
+    "test_user_space_inherits_higher_half_kernel_pdes",
 )
 
 

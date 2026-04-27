@@ -93,6 +93,24 @@ static void test_desktop_rect_union_covers_both_inputs(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc, merged.h, 37);
 }
 
+static void test_mouse_coalescer_accumulates_deltas_and_latest_buttons(
+    ktest_case_t *tc)
+{
+	drunix_mouse_coalesce_t pending;
+
+	drunix_mouse_coalesce_init(&pending);
+	KTEST_EXPECT_FALSE(tc, pending.has_mouse);
+
+	drunix_mouse_coalesce_add(&pending, 0x01u, 12, -3);
+	drunix_mouse_coalesce_add(&pending, 0x01u, -5, 7);
+	drunix_mouse_coalesce_add(&pending, 0x00u, 2, 1);
+
+	KTEST_EXPECT_TRUE(tc, pending.has_mouse);
+	KTEST_EXPECT_EQ(tc, pending.buttons, 0u);
+	KTEST_EXPECT_EQ(tc, pending.dx, 9);
+	KTEST_EXPECT_EQ(tc, pending.dy, 5);
+}
+
 static void test_wallpaper_cover_crops_square_source_vertically(ktest_case_t *tc)
 {
 	drunix_wallpaper_sample_t top_left =
@@ -126,6 +144,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_desktop_rect_clip_rejects_empty_and_outside),
     KTEST_CASE(test_desktop_rect_clip_trims_to_bounds),
     KTEST_CASE(test_desktop_rect_union_covers_both_inputs),
+    KTEST_CASE(test_mouse_coalescer_accumulates_deltas_and_latest_buttons),
     KTEST_CASE(test_wallpaper_cover_crops_square_source_vertically),
     KTEST_CASE(test_wallpaper_cover_crops_wide_source_horizontally),
 };

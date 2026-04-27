@@ -1508,7 +1508,7 @@ static void close_window_app(int app)
 		g_dragging_app = DRUNIX_TASKBAR_APP_NONE;
 }
 
-static void handle_mouse_event(uint8_t buttons, int8_t sdx, int8_t sdy)
+static void handle_mouse_event(uint8_t buttons, int sdx, int sdy)
 {
 	uint8_t old_buttons = g_mouse_buttons;
 	int old_x = g_pointer_x;
@@ -1586,6 +1586,14 @@ static void handle_mouse_event(uint8_t buttons, int8_t sdx, int8_t sdy)
 		present_dirty_rect(dirty_rect);
 	else
 		render_pointer();
+}
+
+static void flush_pending_mouse(drunix_mouse_coalesce_t *pending)
+{
+	if (!pending || !pending->has_mouse)
+		return;
+	handle_mouse_event(pending->buttons, pending->dx, pending->dy);
+	drunix_mouse_coalesce_init(pending);
 }
 
 int main(int argc, char **argv)
@@ -1686,6 +1694,9 @@ int main(int argc, char **argv)
 		if (term_poll_idx >= 0 && (pfds[term_poll_idx].revents & SYS_POLLIN))
 			drain_terminal_bytes(g_term_pipe_r);
 
+		drunix_mouse_coalesce_t pending_mouse;
+
+		drunix_mouse_coalesce_init(&pending_mouse);
 		while ((pfds[evt_poll_idx].revents & SYS_POLLIN) ||
 		       fd_has_input(evt_r)) {
 			uint8_t rec[4];
@@ -1713,13 +1724,20 @@ int main(int argc, char **argv)
 				int8_t sdx = (int8_t)rec[2];
 				int8_t sdy = (int8_t)rec[3];
 
-				handle_mouse_event(rec[1], sdx, sdy);
+				if (rec[1] != g_mouse_buttons) {
+					flush_pending_mouse(&pending_mouse);
+					handle_mouse_event(rec[1], (int)sdx, (int)sdy);
+				} else {
+					drunix_mouse_coalesce_add(
+					    &pending_mouse, rec[1], (int)sdx, (int)sdy);
+				}
 				break;
 			}
 			default:
 				break;
 			}
 		}
+		flush_pending_mouse(&pending_mouse);
 	}
 
 	return 0;
