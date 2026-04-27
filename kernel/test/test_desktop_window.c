@@ -56,6 +56,43 @@ static void test_taskbar_hit_tests_all_rendered_apps(ktest_case_t *tc)
 	                DRUNIX_TASKBAR_APP_NONE);
 }
 
+static void test_desktop_rect_clip_rejects_empty_and_outside(ktest_case_t *tc)
+{
+	drunix_rect_t bounds = drunix_rect_make(0, 0, 100, 80);
+	drunix_rect_t empty = drunix_rect_make(10, 10, 0, 5);
+	drunix_rect_t outside = drunix_rect_make(120, 10, 20, 20);
+	drunix_rect_t clipped;
+
+	KTEST_EXPECT_FALSE(tc, drunix_rect_valid(empty));
+	KTEST_EXPECT_FALSE(tc, drunix_rect_clip(empty, bounds, &clipped));
+	KTEST_EXPECT_FALSE(tc, drunix_rect_clip(outside, bounds, &clipped));
+}
+
+static void test_desktop_rect_clip_trims_to_bounds(ktest_case_t *tc)
+{
+	drunix_rect_t bounds = drunix_rect_make(0, 0, 100, 80);
+	drunix_rect_t rect = drunix_rect_make(-10, 70, 30, 20);
+	drunix_rect_t clipped;
+
+	KTEST_EXPECT_TRUE(tc, drunix_rect_clip(rect, bounds, &clipped));
+	KTEST_EXPECT_EQ(tc, clipped.x, 0);
+	KTEST_EXPECT_EQ(tc, clipped.y, 70);
+	KTEST_EXPECT_EQ(tc, clipped.w, 20);
+	KTEST_EXPECT_EQ(tc, clipped.h, 10);
+}
+
+static void test_desktop_rect_union_covers_both_inputs(ktest_case_t *tc)
+{
+	drunix_rect_t a = drunix_rect_make(10, 12, 20, 30);
+	drunix_rect_t b = drunix_rect_make(25, 5, 40, 10);
+	drunix_rect_t merged = drunix_rect_union(a, b);
+
+	KTEST_EXPECT_EQ(tc, merged.x, 10);
+	KTEST_EXPECT_EQ(tc, merged.y, 5);
+	KTEST_EXPECT_EQ(tc, merged.w, 55);
+	KTEST_EXPECT_EQ(tc, merged.h, 37);
+}
+
 static void test_wallpaper_cover_crops_square_source_vertically(ktest_case_t *tc)
 {
 	drunix_wallpaper_sample_t top_left =
@@ -86,6 +123,9 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_terminal_window_hit_tests_title_and_body),
     KTEST_CASE(test_terminal_window_hit_tests_controls),
     KTEST_CASE(test_taskbar_hit_tests_all_rendered_apps),
+    KTEST_CASE(test_desktop_rect_clip_rejects_empty_and_outside),
+    KTEST_CASE(test_desktop_rect_clip_trims_to_bounds),
+    KTEST_CASE(test_desktop_rect_union_covers_both_inputs),
     KTEST_CASE(test_wallpaper_cover_crops_square_source_vertically),
     KTEST_CASE(test_wallpaper_cover_crops_wide_source_horizontally),
 };

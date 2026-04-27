@@ -20,6 +20,82 @@
 #define DRUNIX_TASKBAR_APP_PROCESSES 4
 #define DRUNIX_TASKBAR_APP_HELP 5
 
+typedef struct {
+	int x;
+	int y;
+	int w;
+	int h;
+} drunix_rect_t;
+
+static inline drunix_rect_t drunix_rect_make(int x, int y, int w, int h)
+{
+	drunix_rect_t rect;
+
+	rect.x = x;
+	rect.y = y;
+	rect.w = w;
+	rect.h = h;
+	return rect;
+}
+
+static inline int drunix_rect_valid(drunix_rect_t rect)
+{
+	return rect.w > 0 && rect.h > 0;
+}
+
+static inline int drunix_min_int(int a, int b)
+{
+	return a < b ? a : b;
+}
+
+static inline int drunix_max_int(int a, int b)
+{
+	return a > b ? a : b;
+}
+
+static inline drunix_rect_t
+drunix_rect_union(drunix_rect_t a, drunix_rect_t b)
+{
+	int left;
+	int top;
+	int right;
+	int bottom;
+
+	if (!drunix_rect_valid(a))
+		return b;
+	if (!drunix_rect_valid(b))
+		return a;
+
+	left = drunix_min_int(a.x, b.x);
+	top = drunix_min_int(a.y, b.y);
+	right = drunix_max_int(a.x + a.w, b.x + b.w);
+	bottom = drunix_max_int(a.y + a.h, b.y + b.h);
+	return drunix_rect_make(left, top, right - left, bottom - top);
+}
+
+static inline int drunix_rect_clip(drunix_rect_t rect,
+                                   drunix_rect_t bounds,
+                                   drunix_rect_t *out)
+{
+	int left;
+	int top;
+	int right;
+	int bottom;
+
+	if (!out || !drunix_rect_valid(rect) || !drunix_rect_valid(bounds))
+		return 0;
+
+	left = drunix_max_int(rect.x, bounds.x);
+	top = drunix_max_int(rect.y, bounds.y);
+	right = drunix_min_int(rect.x + rect.w, bounds.x + bounds.w);
+	bottom = drunix_min_int(rect.y + rect.h, bounds.y + bounds.h);
+	if (right <= left || bottom <= top)
+		return 0;
+
+	*out = drunix_rect_make(left, top, right - left, bottom - top);
+	return 1;
+}
+
 #define DRUNIX_TASKBAR_PAD 14
 #define DRUNIX_TASKBAR_ICON_SIZE 30
 #define DRUNIX_TASKBAR_ICON_GAP 10
