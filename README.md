@@ -392,8 +392,8 @@ Exceptions, RTTI, `libstdc++`, and `libsupc++` are not part of the current
 runtime. Code that depends on those features should fail at compile or link
 time instead of pulling in hosted runtime libraries implicitly.
 
-The C smoke binary is `/bin/chello`, built from `user/chello.c`. The C++
-smoke binary is `/bin/cpphello`, built from `user/cpphello.cpp`. The Linux
+The C smoke binary is `/bin/chello`, built from `user/apps/chello.c`. The C++
+smoke binary is `/bin/cpphello`, built from `user/apps/cpphello.cpp`. The Linux
 i386 ABI smoke binary is `/bin/linuxhello`, built from handwritten assembly
 that invokes Linux `write(2)` and `exit(2)` syscall numbers directly.
 `user/programs.mk` keeps the runtime lanes explicit: C programs link the C

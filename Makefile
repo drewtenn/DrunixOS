@@ -294,12 +294,10 @@ kernel-vga.elf: $(KOBJS_VGA) $(KTOBJS)
 	$(LD) -m elf_i386 -o $@ -T kernel/arch/x86/linker.ld $(KOBJS_VGA) $(KTOBJS)
 
 # ─── User programs ───────────────────────────────────────────────────────────
-# Declared phony so make always delegates to the user subdirectory's own
-# dependency tracking — changes to user/apps and user/runtime are picked up
-# without needing a manual clean.
+# Depend on FORCE so make always delegates to the user subdirectory's own
+# dependency tracking while keeping concrete build outputs out of .PHONY.
 ifneq ($(ARCH),arm64)
-.PHONY: $(USER_BINS)
-$(USER_BINS):
+$(USER_BINS): FORCE
 	$(MAKE) -C user USER_ARCH=$(ARCH) USER_LOAD_ADDR=$(X86_USER_LOAD_ADDR) ../$@
 endif
 
@@ -465,7 +463,7 @@ SCAN_USER_C_RUNTIME_OBJS := lib/cxx_init.o lib/syscall.o lib/malloc.o \
                             lib/string.o lib/ctype.o lib/stdlib.o \
                             lib/stdio.o lib/unistd.o lib/time.o
 
-compile_commands.json: tools/generate_compile_commands.py kernel/objects.mk user/programs.mk user/Makefile Makefile
+compile_commands.json: tools/generate_compile_commands.py kernel/objects.mk user/programs.mk user/Makefile Makefile FORCE
 	$(PYTHON) tools/generate_compile_commands.py \
 		--root=. \
 		--output=$@ \
@@ -822,7 +820,7 @@ ARM_SPARSE_CFLAGS := -D__aarch64__ -DDRUNIX_ARM64_VGA=1 \
                      -DDRUNIX_ARM64_SMOKE_FALLBACK=$(ARM64_SMOKE_FALLBACK) \
                      -DDRUNIX_ARM64_HALT_TEST=$(ARM64_HALT_TEST)
 
-compile_commands.json: tools/generate_compile_commands.py kernel/arch/arm64/arch.mk user/programs.mk user/Makefile Makefile
+compile_commands.json: tools/generate_compile_commands.py kernel/arch/arm64/arch.mk user/programs.mk user/Makefile Makefile FORCE
 	$(PYTHON) tools/generate_compile_commands.py \
 		--root=. \
 		--output=$@ \
