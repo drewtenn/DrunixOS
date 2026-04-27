@@ -7,6 +7,7 @@
 #include "arch.h"
 #include "pmm.h"
 #include "kstring.h"
+#include "vfs.h"
 
 #define PF_ERR_PRESENT 0x1u
 #define PF_ERR_WRITE 0x2u
@@ -25,6 +26,16 @@ static int vma_allows_access(const vm_area_t *vma, uint32_t err)
 		return (vma->flags & VMA_FLAG_WRITE) != 0;
 
 	return 1;
+}
+
+static int vma_is_private_file_backed(const vm_area_t *vma)
+{
+	if (!vma)
+		return 0;
+
+	return vma->kind == VMA_KIND_GENERIC &&
+	       (vma->flags & VMA_FLAG_ANON) == 0 &&
+	       (vma->flags & VMA_FLAG_PRIVATE) != 0 && vma->file_ref.mount_id != 0;
 }
 
 static int fault_break_cow(arch_aspace_t aspace, uint32_t fault_page)
@@ -149,6 +160,73 @@ static int fault_handle_lazy_anon_fault(arch_aspace_t aspace,
 	return -1;
 }
 
+int fault_handle_lazy_file_private_fault(arch_aspace_t aspace,
+                                         uint32_t fault_page,
+                                         const vm_area_t *vma)
+{
+	uint32_t phys;
+	uint32_t map_flags =
+	    ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ | ARCH_MM_MAP_USER;
+	void *page;
+	int rc = 0;
+
+	if (!vma || fault_page < vma->start || fault_page >= vma->end)
+		return -1;
+	if (!vma_is_private_file_backed(vma))
+		return -1;
+	if (vma->flags & VMA_FLAG_WRITE)
+		map_flags |= ARCH_MM_MAP_WRITE;
+
+	phys = pmm_alloc_page();
+	if (!phys)
+		return -1;
+
+	page = arch_page_temp_map(phys);
+	if (!page) {
+		pmm_free_page(phys);
+		return -1;
+	}
+
+	k_memset(page, 0, PAGE_SIZE);
+
+	{
+		uint32_t rel = fault_page - vma->start;
+		uint32_t file_offset;
+
+		if (rel > UINT32_MAX - vma->file_offset) {
+			rc = -1;
+		} else {
+			file_offset = vma->file_offset + rel;
+			if (file_offset < vma->file_size) {
+				uint32_t read_len = vma->file_size - file_offset;
+				int n;
+
+				if (read_len > PAGE_SIZE)
+					read_len = PAGE_SIZE;
+				n = vfs_read(vma->file_ref,
+				             file_offset,
+				             (uint8_t *)page,
+				             read_len);
+				if (n < 0)
+					rc = -1;
+			}
+		}
+	}
+
+	arch_page_temp_unmap(page);
+	if (rc != 0) {
+		pmm_free_page(phys);
+		return -1;
+	}
+
+	if (arch_mm_map(aspace, fault_page, phys, map_flags) != 0) {
+		pmm_free_page(phys);
+		return -1;
+	}
+
+	return 0;
+}
+
 int paging_handle_fault(uint32_t pd_phys,
                         uint32_t cr2,
                         uint32_t err,
@@ -168,6 +246,9 @@ int paging_handle_fault(uint32_t pd_phys,
 			return -1;
 		if (!vma_allows_access(vma, err))
 			return -1;
+		if (vma_is_private_file_backed(vma))
+			return fault_handle_lazy_file_private_fault(
+			    aspace, fault_page, vma);
 		return fault_handle_lazy_anon_fault(aspace, cr2, user_esp, cur, vma);
 	}
 
@@ -186,11 +267,15 @@ int paging_handle_fault(uint32_t pd_phys,
 		if (arch_mm_query(aspace, fault_page, &mapping) == 0 &&
 		    (mapping.flags & (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER)) ==
 		        ARCH_MM_MAP_PRESENT &&
-		    (mapping.flags & ARCH_MM_MAP_COW) == 0 &&
-		    (vma->flags & (VMA_FLAG_ANON | VMA_FLAG_PRIVATE)) ==
-		        (VMA_FLAG_ANON | VMA_FLAG_PRIVATE))
-			return fault_handle_lazy_anon_fault(
-			    aspace, cr2, user_esp, cur, vma);
+		    (mapping.flags & ARCH_MM_MAP_COW) == 0) {
+			if (vma_is_private_file_backed(vma))
+				return fault_handle_lazy_file_private_fault(
+				    aspace, fault_page, vma);
+			if ((vma->flags & (VMA_FLAG_ANON | VMA_FLAG_PRIVATE)) ==
+			    (VMA_FLAG_ANON | VMA_FLAG_PRIVATE))
+				return fault_handle_lazy_anon_fault(
+				    aspace, cr2, user_esp, cur, vma);
+		}
 	}
 
 	if ((err & PF_ERR_WRITE) == 0)

@@ -2128,6 +2128,61 @@ test_linux_open_create_append_preserves_flags_and_data(ktest_case_t *tc)
 	vfs_reset();
 }
 
+static void test_linux_private_file_mmap_reserves_without_mapping(ktest_case_t *tc)
+{
+	static const uint8_t contents[] = {'H', 'e', 'l', 'l', 'o'};
+	static process_t seed;
+	process_t *cur;
+	vfs_file_ref_t ref;
+	arch_mm_mapping_t mapping;
+	uint32_t size = 0;
+	uint32_t fd = 3u;
+	uint32_t addr;
+	int ino;
+
+	vfs_reset();
+	dufs_register();
+	KTEST_ASSERT_EQ(tc, (uint32_t)vfs_mount("/", "dufs"), 0u);
+	(void)fs_unlink("_ktmmap_");
+
+	ino = vfs_create("_ktmmap_");
+	KTEST_ASSERT_TRUE(tc, ino > 0);
+	KTEST_ASSERT_EQ(tc, (uint32_t)vfs_open_file("_ktmmap_", &ref, &size), 0u);
+	KTEST_ASSERT_EQ(
+	    tc,
+	    (uint32_t)vfs_write(ref, 0, contents, (uint32_t)sizeof(contents)),
+	    (uint32_t)sizeof(contents));
+	KTEST_ASSERT_EQ(tc, (uint32_t)vfs_open_file("_ktmmap_", &ref, &size), 0u);
+	KTEST_ASSERT_EQ(tc, size, (uint32_t)sizeof(contents));
+
+	cur = start_syscall_test_process(&seed);
+	KTEST_ASSERT_NOT_NULL(tc, cur);
+	cur->files->open_files[fd].type = FD_TYPE_FILE;
+	cur->files->open_files[fd].access_mode = 0u;
+	cur->files->open_files[fd].u.file.ref = ref;
+	cur->files->open_files[fd].u.file.size = size;
+
+	addr = syscall_handler(
+	    SYS_MMAP2, 0, PAGE_SIZE, PROT_READ, MAP_PRIVATE, fd, 0);
+	KTEST_ASSERT_NE(tc, addr, (uint32_t)-1);
+	KTEST_EXPECT_TRUE(tc, vma_find(cur, addr) != 0);
+	KTEST_EXPECT_NE(
+	    tc, (uint32_t)arch_mm_query(cur->pd_phys, addr, &mapping), 0u);
+	KTEST_EXPECT_EQ(tc,
+	                syscall_handler(SYS_MMAP2,
+	                                0,
+	                                2u * PAGE_SIZE,
+	                                PROT_READ,
+	                                MAP_PRIVATE,
+	                                fd,
+	                                UINT32_MAX / PAGE_SIZE),
+	                (uint32_t)-1);
+
+	stop_syscall_test_process(cur);
+	KTEST_ASSERT_EQ(tc, (uint32_t)fs_unlink("_ktmmap_"), 0u);
+	vfs_reset();
+}
+
 static void
 test_process_restore_user_tls_switches_global_gdt_slot(ktest_case_t *tc)
 {
@@ -2281,6 +2336,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_linux_syscalls_support_busybox_identity_and_rt_sigmask),
     KTEST_CASE(test_linux_syscalls_support_busybox_stdio_helpers),
     KTEST_CASE(test_linux_open_create_append_preserves_flags_and_data),
+    KTEST_CASE(test_linux_private_file_mmap_reserves_without_mapping),
     KTEST_CASE(test_process_restore_user_tls_switches_global_gdt_slot),
     KTEST_CASE(test_linux_syscalls_install_tls_and_map_mmap2),
 };

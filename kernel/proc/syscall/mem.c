@@ -202,8 +202,6 @@ static int syscall_mmap_private_file(process_t *cur,
 	uint32_t map_len;
 	uint32_t map_addr = 0;
 	uint32_t vma_flags;
-	uint32_t map_flags;
-	arch_aspace_t aspace;
 
 	if (!cur || !addr_out || fd >= MAX_FDS || length == 0)
 		return -1;
@@ -218,56 +216,22 @@ static int syscall_mmap_private_file(process_t *cur,
 	map_len = (length + PAGE_SIZE - 1u) & ~(PAGE_SIZE - 1u);
 	if (map_len == 0)
 		return -1;
-
-	vma_flags = prot_to_vma_flags(prot) & ~(uint32_t)VMA_FLAG_ANON;
-	if (vma_map_anonymous(cur, hint, map_len, vma_flags, &map_addr) != 0)
+	if (file_offset > UINT32_MAX - (map_len - PAGE_SIZE))
 		return -1;
 
-	aspace = (arch_aspace_t)cur->pd_phys;
-	map_flags = ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ;
-	if (prot_has_user_access(prot))
-		map_flags |= ARCH_MM_MAP_USER;
-	if (prot & LINUX_PROT_WRITE)
-		map_flags |= ARCH_MM_MAP_WRITE;
-
-	for (uint32_t off = 0; off < map_len; off += PAGE_SIZE) {
-		uint32_t phys = pmm_alloc_page();
-		void *page;
-		int n;
-
-		if (!phys)
-			goto fail;
-		if (file_offset > UINT32_MAX - off) {
-			pmm_free_page(phys);
-			goto fail;
-		}
-
-		page = arch_page_temp_map(phys);
-		if (!page) {
-			pmm_free_page(phys);
-			goto fail;
-		}
-		k_memset(page, 0, PAGE_SIZE);
-		n = vfs_read(
-		    fh->u.file.ref, file_offset + off, (uint8_t *)page, PAGE_SIZE);
-		arch_page_temp_unmap(page);
-		if (n < 0) {
-			pmm_free_page(phys);
-			goto fail;
-		}
-		if (arch_mm_map(aspace, map_addr + off, phys, map_flags) != 0) {
-			pmm_free_page(phys);
-			goto fail;
-		}
-	}
+	vma_flags = prot_to_vma_flags(prot) & ~(uint32_t)VMA_FLAG_ANON;
+	if (vma_map_file_private(cur,
+	                         hint,
+	                         map_len,
+	                         vma_flags,
+	                         fh->u.file.ref,
+	                         file_offset,
+	                         fh->u.file.size,
+	                         &map_addr) != 0)
+		return -1;
 
 	*addr_out = map_addr;
 	return 0;
-
-fail:
-	syscall_unmap_user_range(cur, map_addr, map_addr + map_len);
-	(void)vma_unmap_range(cur, map_addr, map_addr + map_len);
-	return -1;
 }
 
 uint32_t SYSCALL_NOINLINE syscall_case_brk(uint32_t ebx)
@@ -404,7 +368,7 @@ uint32_t SYSCALL_NOINLINE syscall_case_mmap2(uint32_t ebx,
          * Linux i386 mmap2:
          *   ebx=addr, ecx=len, edx=prot, esi=flags, edi=fd, ebp=pgoffset.
          *
-         * Drunix supports private anonymous mappings and eager MAP_PRIVATE
+         * Drunix supports private anonymous mappings and lazy MAP_PRIVATE
          * file mappings without MAP_FIXED.
          */
 		process_t *cur = sched_current();

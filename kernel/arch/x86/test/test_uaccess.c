@@ -5,6 +5,7 @@
 
 #include "ktest.h"
 #include "fault.h"
+#include "fs.h"
 #include "uaccess.h"
 #include "paging.h"
 #include "pmm.h"
@@ -15,6 +16,7 @@
 #include "sched.h"
 #include "task_group.h"
 #include "kstring.h"
+#include "vfs.h"
 
 #define TEST_IMAGE_START 0x10000000u
 #define TEST_IMAGE_END 0x10009000u
@@ -274,6 +276,96 @@ static void test_copy_to_user_faults_in_lazy_heap_pages(ktest_case_t *tc)
 	}
 
 	destroy_test_proc(&proc);
+}
+
+static void test_uaccess_faults_in_lazy_private_file_pages(ktest_case_t *tc)
+{
+	static const uint8_t contents[] = {'H', 'e', 'l', 'l', 'o'};
+	static const uint8_t patch[] = {'X'};
+	static process_t proc;
+	uint8_t buf[PAGE_SIZE];
+	uint8_t *page;
+	vfs_file_ref_t ref;
+	uint32_t size = 0;
+	uint32_t read_addr = 0;
+	uint32_t write_addr = 0;
+	int ino;
+
+	vfs_reset();
+	dufs_register();
+	KTEST_ASSERT_EQ(tc, (uint32_t)vfs_mount("/", "dufs"), 0u);
+	(void)fs_unlink("_ktuaccess_mmap_");
+
+	ino = vfs_create("_ktuaccess_mmap_");
+	KTEST_ASSERT_TRUE(tc, ino > 0);
+	KTEST_ASSERT_EQ(
+	    tc, (uint32_t)vfs_open_file("_ktuaccess_mmap_", &ref, &size), 0u);
+	KTEST_ASSERT_EQ(
+	    tc,
+	    (uint32_t)vfs_write(ref, 0, contents, (uint32_t)sizeof(contents)),
+	    (uint32_t)sizeof(contents));
+	KTEST_ASSERT_EQ(
+	    tc, (uint32_t)vfs_open_file("_ktuaccess_mmap_", &ref, &size), 0u);
+	KTEST_ASSERT_EQ(tc, size, (uint32_t)sizeof(contents));
+
+	if (init_test_proc(&proc) != 0) {
+		KTEST_EXPECT_TRUE(tc, 0);
+		goto cleanup_vfs;
+	}
+	proc.brk = TEST_IMAGE_END;
+	proc.stack_low_limit = TEST_STACK_PAGE;
+	KTEST_ASSERT_EQ(tc,
+	                vma_add(&proc,
+	                        USER_STACK_TOP -
+	                            (uint32_t)USER_STACK_MAX_PAGES * PAGE_SIZE,
+	                        USER_STACK_TOP,
+	                        VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_ANON |
+	                            VMA_FLAG_PRIVATE | VMA_FLAG_GROWSDOWN,
+	                        VMA_KIND_STACK),
+	                0u);
+
+	KTEST_ASSERT_EQ(tc,
+	                vma_map_file_private(&proc,
+	                                     0,
+	                                     PAGE_SIZE,
+	                                     VMA_FLAG_READ | VMA_FLAG_PRIVATE,
+	                                     ref,
+	                                     0,
+	                                     size,
+	                                     &read_addr),
+	                0u);
+	KTEST_EXPECT_EQ(
+	    tc, uaccess_copy_from_user(&proc, buf, read_addr, PAGE_SIZE), 0u);
+	KTEST_EXPECT_EQ(tc, k_memcmp(buf, contents, sizeof(contents)), 0u);
+	KTEST_EXPECT_EQ(tc, buf[PAGE_SIZE - 1u], 0u);
+
+	KTEST_ASSERT_EQ(tc,
+	                vma_map_file_private(&proc,
+	                                     0,
+	                                     PAGE_SIZE,
+	                                     VMA_FLAG_READ | VMA_FLAG_WRITE |
+	                                         VMA_FLAG_PRIVATE,
+	                                     ref,
+	                                     0,
+	                                     size,
+	                                     &write_addr),
+	                0u);
+	KTEST_EXPECT_EQ(tc,
+	                uaccess_copy_to_user(
+	                    &proc, write_addr + 1u, patch, sizeof(patch)),
+	                0u);
+	page = mapped_alias(&proc, write_addr);
+	KTEST_ASSERT_NOT_NULL(tc, page);
+	KTEST_EXPECT_EQ(tc, page[0], (uint8_t)'H');
+	KTEST_EXPECT_EQ(tc, page[1], (uint8_t)'X');
+	KTEST_EXPECT_EQ(tc, page[2], (uint8_t)'l');
+	KTEST_EXPECT_EQ(tc, page[PAGE_SIZE - 1u], 0u);
+
+	destroy_test_proc(&proc);
+
+cleanup_vfs:
+	(void)fs_unlink("_ktuaccess_mmap_");
+	vfs_reset();
 }
 
 static void test_copy_string_from_user_spans_pages(ktest_case_t *tc)
@@ -1374,6 +1466,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_copy_from_user_reads_mapped_bytes),
     KTEST_CASE(test_copy_to_user_spans_pages),
     KTEST_CASE(test_copy_to_user_faults_in_lazy_heap_pages),
+    KTEST_CASE(test_uaccess_faults_in_lazy_private_file_pages),
     KTEST_CASE(test_copy_string_from_user_spans_pages),
     KTEST_CASE(test_prepare_rejects_kernel_and_unmapped_ranges),
     KTEST_CASE(test_copy_to_user_breaks_cow_clone),

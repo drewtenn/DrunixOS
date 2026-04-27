@@ -5,6 +5,7 @@
 
 #include "uaccess.h"
 #include "arch.h"
+#include "fault.h"
 #include "pmm.h"
 #include "kstring.h"
 
@@ -129,6 +130,19 @@ static int uaccess_map_lazy_anon(process_t *proc,
 	return 0;
 }
 
+static int uaccess_map_lazy(process_t *proc,
+                            uint32_t fault_page,
+                            const vm_area_t *vma)
+{
+	if (!proc || !vma)
+		return -1;
+	if ((vma->flags & VMA_FLAG_ANON) == 0) {
+		return fault_handle_lazy_file_private_fault(
+		    (arch_aspace_t)proc->pd_phys, fault_page, vma);
+	}
+	return uaccess_map_lazy_anon(proc, fault_page, vma);
+}
+
 static int uaccess_translate(process_t *proc,
                              uint32_t user_addr,
                              int write_access,
@@ -152,16 +166,14 @@ static int uaccess_translate(process_t *proc,
 	aspace = (arch_aspace_t)proc->pd_phys;
 	page_base = user_addr & ~0xFFFu;
 	if (arch_mm_query(aspace, page_base, &mapping) != 0) {
-		if (uaccess_map_lazy_anon(proc, page_base, vma) != 0)
+		if (uaccess_map_lazy(proc, page_base, vma) != 0)
 			return -1;
 		if (arch_mm_query(aspace, page_base, &mapping) != 0)
 			return -1;
 	}
 	if ((mapping.flags & ARCH_MM_MAP_USER) == 0 &&
-	    (mapping.flags & ARCH_MM_MAP_COW) == 0 &&
-	    (vma->flags & (VMA_FLAG_ANON | VMA_FLAG_PRIVATE)) ==
-	        (VMA_FLAG_ANON | VMA_FLAG_PRIVATE)) {
-		if (uaccess_map_lazy_anon(proc, page_base, vma) != 0)
+	    (mapping.flags & ARCH_MM_MAP_COW) == 0) {
+		if (uaccess_map_lazy(proc, page_base, vma) != 0)
 			return -1;
 		if (arch_mm_query(aspace, page_base, &mapping) != 0)
 			return -1;
