@@ -106,6 +106,7 @@ typedef enum {
 	FD_TYPE_SYSFILE = 9,     /* synthetic sysfs file                  */
 	FD_TYPE_PTY_MASTER = 10, /* pseudo-terminal master end           */
 	FD_TYPE_PTY_SLAVE = 11,  /* pseudo-terminal slave end            */
+	FD_TYPE_WM = 12,         /* window-manager broker connection     */
 } fd_type_t;
 
 /*
@@ -157,6 +158,9 @@ typedef struct {
 		struct {
 			uint32_t pty_idx; /* index into pty_pool[]              */
 		} pty;
+		struct {
+			uint32_t conn_id;
+		} wm;
 	} u;
 } file_handle_t;
 

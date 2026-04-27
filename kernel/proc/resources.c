@@ -7,6 +7,7 @@
 #include "pty.h"
 #include "sched.h"
 #include "vfs.h"
+#include "wmdev.h"
 
 static void *alloc_zero(uint32_t size)
 {
@@ -37,6 +38,8 @@ static void proc_fd_table_bump_open_refs(proc_fd_table_t *files)
 			pty_get_master(fh->u.pty.pty_idx);
 		else if (fh->type == FD_TYPE_PTY_SLAVE)
 			pty_get_slave(fh->u.pty.pty_idx);
+		else if (fh->type == FD_TYPE_WM)
+			(void)wmdev_retain(fh->u.wm.conn_id);
 	}
 }
 
@@ -225,6 +228,8 @@ void proc_fd_table_close_all(proc_fd_table_t *files)
 			pty_release_master(fh->u.pty.pty_idx);
 		else if (fh->type == FD_TYPE_PTY_SLAVE)
 			pty_release_slave(fh->u.pty.pty_idx);
+		if (fh->type == FD_TYPE_WM)
+			wmdev_close(fh->u.wm.conn_id);
 
 		fh->type = FD_TYPE_NONE;
 		fh->writable = 0;

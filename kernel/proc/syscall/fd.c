@@ -21,6 +21,7 @@
 #include "tty.h"
 #include "uaccess.h"
 #include "vfs.h"
+#include "wmdev.h"
 #include <stdint.h>
 
 #define TTY_IO_CHUNK                                                           \
@@ -108,6 +109,19 @@ static uint32_t syscall_write_fd(uint32_t fd, uint32_t user_buf, uint32_t count)
 
 	if (fh->type == FD_TYPE_BLOCKDEV)
 		return (uint32_t)-1;
+
+	if (fh->type == FD_TYPE_WM) {
+		uint8_t kbuf[USER_IO_CHUNK];
+
+		if (count > USER_IO_CHUNK)
+			return (uint32_t)-1;
+		if (uaccess_prepare(cur, user_buf, count, 0) != 0)
+			return (uint32_t)-1;
+		if (uaccess_copy_from_user(cur, kbuf, user_buf, count) != 0)
+			return (uint32_t)-1;
+		return (uint32_t)wmdev_write_user_record(
+		    fh->u.wm.conn_id, kbuf, count);
+	}
 
 	if (syscall_fd_is_console_output(fh)) {
 		uint8_t kbuf[USER_IO_CHUNK];
@@ -281,6 +295,7 @@ static uint32_t syscall_read_fd(uint32_t fd, uint32_t user_buf, uint32_t count)
 		case FD_TYPE_SYSFILE:
 		case FD_TYPE_PTY_MASTER:
 		case FD_TYPE_PTY_SLAVE:
+		case FD_TYPE_WM:
 			return 0;
 		default:
 			return (uint32_t)-1;
@@ -289,6 +304,22 @@ static uint32_t syscall_read_fd(uint32_t fd, uint32_t user_buf, uint32_t count)
 
 	if (fh->type == FD_TYPE_BLOCKDEV)
 		return syscall_read_blockdev(cur, fh, user_buf, count);
+
+	if (fh->type == FD_TYPE_WM) {
+		uint8_t kbuf[USER_IO_CHUNK];
+		int n;
+
+		if (count > USER_IO_CHUNK)
+			count = USER_IO_CHUNK;
+		if (uaccess_prepare(cur, user_buf, count, 1) != 0)
+			return (uint32_t)-1;
+		n = wmdev_read_user_record(fh->u.wm.conn_id, kbuf, count);
+		if (n <= 0)
+			return (uint32_t)n;
+		if (uaccess_copy_to_user(cur, user_buf, kbuf, (uint32_t)n) != 0)
+			return (uint32_t)-1;
+		return (uint32_t)n;
+	}
 
 	if (fh->type == FD_TYPE_TTY) {
 		char kbuf[TTY_IO_CHUNK];

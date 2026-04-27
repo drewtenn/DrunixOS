@@ -19,6 +19,7 @@
 #include "uaccess.h"
 #include "vfs.h"
 #include "vma.h"
+#include "wmdev.h"
 
 #define TEST_USER_IMAGE_START ((uint32_t)ARCH_USER_IMAGE_BASE)
 #define TEST_USER_IMAGE_END (TEST_USER_IMAGE_START + 0x00010000u)
@@ -663,6 +664,137 @@ static void test_shared_dup2_bumps_pty_slave_ref(ktest_case_t *tc)
 	shared_stop_syscall_process(cur);
 }
 
+static void test_shared_wmdev_mmap_refs_shared_surface_page(ktest_case_t *tc)
+{
+	static process_t proc;
+	process_t *cur = shared_start_syscall_process(&proc);
+	drwin_surface_info_t surface;
+	arch_mm_mapping_t mapping;
+	uint32_t window = 0;
+	uint32_t phys = 0;
+	uint32_t addr;
+	int server;
+	int client;
+	const uint32_t fd = 4u;
+
+	KTEST_ASSERT_NOT_NULL(tc, cur);
+	wmdev_reset_for_test();
+	server = wmdev_open(10);
+	client = wmdev_open(42);
+	KTEST_ASSERT_TRUE(tc, server >= 0);
+	KTEST_ASSERT_TRUE(tc, client >= 0);
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)wmdev_register_server((uint32_t)server,
+	                                                DRWIN_SERVER_MAGIC),
+	                0u);
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)wmdev_create_window((uint32_t)client,
+	                                              "sysmap",
+	                                              0,
+	                                              0,
+	                                              64,
+	                                              32,
+	                                              &window,
+	                                              &surface),
+	                0u);
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)wmdev_mmap_page((uint32_t)client,
+	                                          surface.map_offset,
+	                                          0,
+	                                          &phys),
+	                0u);
+	KTEST_ASSERT_EQ(tc, pmm_refcount(phys), 1u);
+
+	cur->files->open_files[fd].type = FD_TYPE_WM;
+	cur->files->open_files[fd].writable = 1;
+	cur->files->open_files[fd].access_mode = LINUX_O_RDWR;
+	cur->files->open_files[fd].u.wm.conn_id = (uint32_t)client;
+
+	addr = syscall_case_mmap2(0,
+	                          PAGE_SIZE,
+	                          LINUX_PROT_READ | LINUX_PROT_WRITE,
+	                          LINUX_MAP_SHARED,
+	                          fd,
+	                          surface.map_offset / PAGE_SIZE);
+	KTEST_ASSERT_NE(tc, addr, (uint32_t)-1);
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)arch_mm_query((arch_aspace_t)cur->pd_phys,
+	                                        addr,
+	                                        &mapping),
+	                0u);
+	KTEST_EXPECT_EQ(tc, (uint32_t)mapping.phys_addr, phys);
+	KTEST_EXPECT_TRUE(tc, (mapping.flags & ARCH_MM_MAP_IO) == 0);
+	KTEST_EXPECT_EQ(tc, pmm_refcount(phys), 2u);
+
+	KTEST_EXPECT_EQ(tc, syscall_case_munmap(addr, PAGE_SIZE), 0u);
+	KTEST_EXPECT_EQ(tc, pmm_refcount(phys), 1u);
+
+	fd_close_one(cur, fd);
+	wmdev_close((uint32_t)server);
+	shared_stop_syscall_process(cur);
+}
+
+static void test_shared_dup2_bumps_wmdev_ref(ktest_case_t *tc)
+{
+	static process_t proc;
+	process_t *cur = shared_start_syscall_process(&proc);
+	drwin_surface_info_t surface;
+	drwin_rect_t dirty = {0, 0, 4, 4};
+	uint32_t window = 0;
+	uint32_t page_count;
+	uint32_t free_before_final_close;
+	int server;
+	int client;
+
+	KTEST_ASSERT_NOT_NULL(tc, cur);
+	wmdev_reset_for_test();
+	server = wmdev_open(10);
+	client = wmdev_open(42);
+	KTEST_ASSERT_TRUE(tc, server >= 0);
+	KTEST_ASSERT_TRUE(tc, client >= 0);
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)wmdev_register_server((uint32_t)server,
+	                                                DRWIN_SERVER_MAGIC),
+	                0u);
+	KTEST_ASSERT_EQ(tc,
+	                (uint32_t)wmdev_create_window((uint32_t)client,
+	                                              "dup",
+	                                              0,
+	                                              0,
+	                                              64,
+	                                              32,
+	                                              &window,
+	                                              &surface),
+	                0u);
+
+	cur->files->open_files[4].type = FD_TYPE_WM;
+	cur->files->open_files[4].writable = 1;
+	cur->files->open_files[4].access_mode = LINUX_O_RDWR;
+	cur->files->open_files[4].u.wm.conn_id = (uint32_t)client;
+
+	page_count = wmdev_window_page_count_for_test(window);
+	KTEST_ASSERT_TRUE(tc, page_count > 0);
+	KTEST_ASSERT_EQ(tc, syscall_case_dup2(4u, 0u), 0u);
+	fd_close_one(cur, 4u);
+
+	KTEST_EXPECT_EQ(tc, (uint32_t)wmdev_window_owner_for_test(window), 42u);
+	KTEST_EXPECT_EQ(tc,
+	                (uint32_t)wmdev_present_window((uint32_t)client,
+	                                               window,
+	                                               dirty),
+	                0u);
+
+	free_before_final_close = pmm_free_page_count();
+	fd_close_one(cur, 0u);
+	KTEST_EXPECT_EQ(tc, pmm_free_page_count(),
+	                free_before_final_close + page_count);
+	KTEST_EXPECT_EQ(tc, (uint32_t)wmdev_window_owner_for_test(window),
+	                (uint32_t)-1);
+
+	wmdev_close((uint32_t)server);
+	shared_stop_syscall_process(cur);
+}
+
 static void test_shared_clone_rejects_sighand_without_vm(ktest_case_t *tc)
 {
 	static process_t proc;
@@ -766,6 +898,8 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_shared_syscall_brk_reads_resource_address_space),
     KTEST_CASE(test_shared_rt_sigaction_reads_resource_handlers),
     KTEST_CASE(test_shared_dup2_bumps_pty_slave_ref),
+    KTEST_CASE(test_shared_wmdev_mmap_refs_shared_surface_page),
+    KTEST_CASE(test_shared_dup2_bumps_wmdev_ref),
     KTEST_CASE(test_shared_clone_rejects_sighand_without_vm),
     KTEST_CASE(test_shared_clone_rejects_thread_without_sighand),
     KTEST_CASE(test_shared_clone_thread_shares_group_and_selected_resources),

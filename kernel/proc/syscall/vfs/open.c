@@ -18,6 +18,7 @@
 #include "sched.h"
 #include "uaccess.h"
 #include "vfs.h"
+#include "wmdev.h"
 #include <stdint.h>
 
 int linux_path_exists(process_t *cur, uint32_t user_path)
@@ -155,6 +156,17 @@ static int fd_install_vfs_node(process_t *proc,
 		return fd;
 
 	case VFS_NODE_CHARDEV:
+		if (k_strcmp(node->dev_name, "wm") == 0) {
+			int conn = wmdev_open(proc->pid);
+			if (conn < 0) {
+				proc_fd_entries(proc)[fd].type = FD_TYPE_NONE;
+				return -1;
+			}
+			proc_fd_entries(proc)[fd].type = FD_TYPE_WM;
+			proc_fd_entries(proc)[fd].u.wm.conn_id = (uint32_t)conn;
+			proc_fd_entries(proc)[fd].writable = 1;
+			return fd;
+		}
 		proc_fd_entries(proc)[fd].type = FD_TYPE_CHARDEV;
 		k_strncpy(proc_fd_entries(proc)[fd].u.chardev.name,
 		          node->dev_name,

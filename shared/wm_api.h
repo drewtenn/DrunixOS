@@ -66,6 +66,10 @@ typedef enum {
 	DRWIN_MSG_SERVER_DISCONNECT = 6,
 } drwin_server_msg_type_t;
 
+typedef enum {
+	DRWIN_CLIENT_MSG_CREATE_WINDOW_RESPONSE = 1,
+} drwin_client_msg_type_t;
+
 typedef struct {
 	uint32_t size;
 	uint32_t type;
@@ -115,7 +119,16 @@ typedef struct {
 	uint32_t window;
 	drwin_rect_t rect;
 	drwin_surface_info_t surface;
+	uint32_t visible;
 	char title[DRWIN_MAX_TITLE];
 } drwin_server_msg_t;
+
+typedef struct {
+	uint32_t size;
+	uint32_t type;
+	int32_t status;
+	uint32_t window;
+	drwin_surface_info_t surface;
+} drwin_create_window_response_t;
 
 #endif /* DRUNIX_WM_API_H */

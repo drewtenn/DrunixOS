@@ -20,6 +20,7 @@ const devfs_entry_t devfs_entries[] = {
     {"fb0info", VFS_NODE_CHARDEV, 0, "fb0info"},
     {"kbd", VFS_NODE_CHARDEV, 0, "kbd"},
     {"mouse", VFS_NODE_CHARDEV, 0, "mouse"},
+    {"wm", VFS_NODE_CHARDEV, 0, "wm"},
 };
 const uint32_t devfs_entry_count =
     sizeof(devfs_entries) / sizeof(devfs_entries[0]);

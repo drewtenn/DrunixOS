@@ -267,6 +267,10 @@ X86_DESKTOP_KTESTS = (
 WMDEV_KTESTS = (
     "test_wmdev_registers_single_server",
     "test_wmdev_create_window_tracks_owner_and_surface",
+    "test_wmdev_mmap_page_returns_surface_pages",
+    "test_wmdev_user_record_create_returns_surface_response",
+    "test_wmdev_retain_keeps_connection_until_final_close",
+    "test_wmdev_mmap_page_rejects_non_base_surface_offsets",
     "test_wmdev_rejects_cross_owner_present",
     "test_wmdev_event_queue_round_trips_to_owner",
 )

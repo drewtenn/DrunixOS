@@ -16,6 +16,7 @@
 #include "sched.h"
 #include "uaccess.h"
 #include "vfs.h"
+#include "wmdev.h"
 #include <stdint.h>
 
 static uint32_t linux_poll_revents(process_t *cur, int32_t fd, uint32_t events)
@@ -30,7 +31,8 @@ static uint32_t linux_poll_revents(process_t *cur, int32_t fd, uint32_t events)
 		return 0x0020u; /* POLLNVAL */
 
 	if (events & LINUX_POLLOUT) {
-		if (fh->type == FD_TYPE_PIPE_WRITE || fh->writable)
+		if (fh->type == FD_TYPE_PIPE_WRITE || fh->type == FD_TYPE_WM ||
+		    fh->writable)
 			rev |= LINUX_POLLOUT;
 	}
 
@@ -49,6 +51,10 @@ static uint32_t linux_poll_revents(process_t *cur, int32_t fd, uint32_t events)
 				rev |= LINUX_POLLIN;
 		} else if (fh->type == FD_TYPE_TTY) {
 			if (tty_read_available((int)fh->u.tty.tty_idx) > 0)
+				rev |= LINUX_POLLIN;
+		} else if (fh->type == FD_TYPE_WM) {
+			if (wmdev_event_available(fh->u.wm.conn_id) ||
+			    wmdev_server_msg_available(fh->u.wm.conn_id))
 				rev |= LINUX_POLLIN;
 		}
 	}
@@ -75,6 +81,8 @@ static void fd_bump_open_ref(file_handle_t *fh)
 		pty_get_master(fh->u.pty.pty_idx);
 	else if (fh->type == FD_TYPE_PTY_SLAVE)
 		pty_get_slave(fh->u.pty.pty_idx);
+	else if (fh->type == FD_TYPE_WM)
+		(void)wmdev_retain(fh->u.wm.conn_id);
 }
 
 static int fd_duplicate_from(process_t *proc,
