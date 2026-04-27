@@ -1,5 +1,5 @@
-#include "lib/stdio.h"
-#include "lib/syscall.h"
+#include "stdio.h"
+#include "syscall.h"
 
 static int g_ctor_value = 0;
 

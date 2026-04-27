@@ -3,8 +3,8 @@
  * basename.c — user-space basename utility.
  */
 
-#include "lib/stdio.h"
-#include "lib/string.h"
+#include "stdio.h"
+#include "string.h"
 
 static const char *base_component(char *path)
 {

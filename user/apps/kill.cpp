@@ -3,9 +3,9 @@
  * kill.c — user-space signal-sending utility.
  */
 
-#include "lib/stdio.h"
-#include "lib/string.h"
-#include "lib/syscall.h"
+#include "stdio.h"
+#include "string.h"
+#include "syscall.h"
 
 static int parse_number(const char *s, int *out)
 {

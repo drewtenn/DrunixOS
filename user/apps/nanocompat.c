@@ -3,9 +3,9 @@
  * nanocompat.c - unattended GNU nano/Linux i386 compatibility runner.
  */
 
-#include "lib/stdio.h"
-#include "lib/string.h"
-#include "lib/syscall.h"
+#include "stdio.h"
+#include "string.h"
+#include "syscall.h"
 
 #define OUT_CAP 8192
 

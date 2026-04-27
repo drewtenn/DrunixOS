@@ -3,8 +3,8 @@
  * cmp.c — user-space cmp utility.
  */
 
-#include "lib/stdio.h"
-#include "lib/string.h"
+#include "stdio.h"
+#include "string.h"
 
 static int usage(void)
 {

@@ -17,8 +17,8 @@
  * the double-fault handler is broken.
  */
 
-#include "lib/stdio.h"
-#include "lib/string.h"
+#include "stdio.h"
+#include "string.h"
 
 /* Prevent the compiler from optimising away the faulting operations. */
 static volatile int zero = 0;

@@ -1,7 +1,27 @@
 include programs.mk
-CLEAN_PROGS = $(PROGS)
 
-all: $(PROGS)
+USER_ARCH ?= x86
+USER_LOAD_ADDR ?= 0x08000000
+BUILD_ROOT ?= ../build/user/$(USER_ARCH)
+BIN_DIR := $(BUILD_ROOT)/bin
+OBJ_DIR := $(BUILD_ROOT)/obj
+RUNTIME_DIR := $(BUILD_ROOT)/runtime
+LINKER_DIR := $(BUILD_ROOT)/linker
+APP_SRC_DIR := apps
+RUNTIME_SRC_DIR := runtime
+THIRD_PARTY_SRC_DIR := third_party
+LINKER_SRC_DIR := linker
+
+APP_OBJ_DIR := $(OBJ_DIR)/apps
+RUNTIME_OBJ_DIR := $(OBJ_DIR)/runtime
+THIRD_PARTY_OBJ_DIR := $(OBJ_DIR)/third_party
+NANOJPEG_OBJ_DIR := $(THIRD_PARTY_OBJ_DIR)/nanojpeg
+
+CLEAN_PROGS = $(addprefix $(BIN_DIR)/,$(PROGS))
+
+all: $(CLEAN_PROGS) $(RUNTIME_DIR)/libc.a
+
+.PHONY: all clean print-progs $(PROGS)
 
 print-progs:
 	@printf '%s\n' $(PROGS)
@@ -20,96 +40,96 @@ CXXFLAGS = -m32 -ffreestanding -nostdlib -fno-pie -no-pie \
            -fno-threadsafe-statics -fdebug-prefix-map=$(abspath ..)=.
 NASMFLAGS = -Werror
 CXXLIBS = $(shell $(CXX) -m32 -print-libgcc-file-name)
+USER_INCLUDES = -I $(RUNTIME_SRC_DIR) -I ../shared -I $(APP_SRC_DIR) -I $(THIRD_PARTY_SRC_DIR)/nanojpeg
+DEPFLAGS = -MMD -MP -MF $(@:.o=.d)
 
-C_RUNTIME_OBJS = lib/crt0.o lib/cxx_init.o lib/syscall.o lib/malloc.o \
-                 lib/string.o lib/ctype.o lib/stdlib.o lib/stdio.o \
-                 lib/unistd.o lib/time.o
-C_RUNTIME_LIB_OBJS = $(filter-out lib/crt0.o,$(C_RUNTIME_OBJS))
-CXX_RUNTIME_OBJS = lib/cxxrt.o lib/cxxabi.o
+C_RUNTIME_OBJS = $(RUNTIME_OBJ_DIR)/crt0.o $(RUNTIME_OBJ_DIR)/cxx_init.o $(RUNTIME_OBJ_DIR)/syscall.o $(RUNTIME_OBJ_DIR)/malloc.o \
+                 $(RUNTIME_OBJ_DIR)/string.o $(RUNTIME_OBJ_DIR)/ctype.o $(RUNTIME_OBJ_DIR)/stdlib.o $(RUNTIME_OBJ_DIR)/stdio.o \
+                 $(RUNTIME_OBJ_DIR)/unistd.o $(RUNTIME_OBJ_DIR)/time.o
+C_RUNTIME_LIB_OBJS = $(filter-out $(RUNTIME_OBJ_DIR)/crt0.o,$(C_RUNTIME_OBJS))
+CXX_RUNTIME_OBJS = $(RUNTIME_OBJ_DIR)/cxxrt.o $(RUNTIME_OBJ_DIR)/cxxabi.o
 C_LINK_OBJS = $(C_RUNTIME_OBJS)
 CXX_LINK_OBJS = $(C_RUNTIME_OBJS) $(CXX_RUNTIME_OBJS)
 
-lib/crt0.o: lib/crt0.asm
+C_GENERIC_PROGS = $(filter-out desktop,$(C_PROGS))
+C_BINS = $(addprefix $(BIN_DIR)/,$(C_GENERIC_PROGS))
+CXX_BINS = $(addprefix $(BIN_DIR)/,$(CXX_PROGS))
+C_APP_OBJS = $(addprefix $(APP_OBJ_DIR)/,$(addsuffix .o,$(C_PROGS)))
+CXX_APP_OBJS = $(addprefix $(APP_OBJ_DIR)/,$(addsuffix .o,$(CXX_PROGS)))
+
+$(PROGS): %: $(BIN_DIR)/%
+
+$(LINKER_DIR)/user.ld: $(LINKER_SRC_DIR)/user.ld.in
+	@mkdir -p $(dir $@)
+	sed 's|@USER_LOAD_ADDR@|$(USER_LOAD_ADDR)|' $< > $@
+
+$(RUNTIME_OBJ_DIR)/crt0.o: $(RUNTIME_SRC_DIR)/crt0.asm
+	@mkdir -p $(dir $@)
 	$(NASM) $(NASMFLAGS) -f elf32 -o $@ $<
 
-lib/cxx_init.o: lib/cxx_init.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+$(RUNTIME_OBJ_DIR)/%.o: $(RUNTIME_SRC_DIR)/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(DEPFLAGS) -I $(RUNTIME_SRC_DIR) -c -o $@ $<
 
-lib/syscall.o: lib/syscall.c lib/syscall.h
-	$(CC) $(CFLAGS) -c -o $@ $<
+$(RUNTIME_OBJ_DIR)/%.o: $(RUNTIME_SRC_DIR)/%.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) -I $(RUNTIME_SRC_DIR) -c -o $@ $<
 
-lib/malloc.o: lib/malloc.c lib/malloc.h lib/syscall.h
-	$(CC) $(CFLAGS) -c -o $@ $<
+$(APP_OBJ_DIR)/%.o: $(APP_SRC_DIR)/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(DEPFLAGS) $(USER_INCLUDES) -c -o $@ $<
 
-lib/string.o: lib/string.c lib/string.h lib/malloc.h
-	$(CC) $(CFLAGS) -c -o $@ $<
+$(APP_OBJ_DIR)/%.o: $(APP_SRC_DIR)/%.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(USER_INCLUDES) -c -o $@ $<
 
-lib/ctype.o: lib/ctype.c lib/ctype.h
-	$(CC) $(CFLAGS) -c -o $@ $<
+$(APP_OBJ_DIR)/%.o: $(APP_SRC_DIR)/%.asm
+	@mkdir -p $(dir $@)
+	$(NASM) $(NASMFLAGS) -f elf32 -o $@ $<
 
-lib/stdlib.o: lib/stdlib.c lib/stdlib.h lib/malloc.h lib/syscall.h
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-lib/stdio.o: lib/stdio.c lib/stdio.h lib/string.h lib/stdlib.h lib/syscall.h
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-lib/unistd.o: lib/unistd.c lib/unistd.h lib/syscall.h
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-lib/time.o: lib/time.c lib/time.h lib/syscall.h lib/string.h
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-lib/libc.a: $(C_RUNTIME_LIB_OBJS)
+$(RUNTIME_DIR)/libc.a: $(C_RUNTIME_LIB_OBJS)
+	@mkdir -p $(dir $@)
 	$(AR) rcs $@ $(C_RUNTIME_LIB_OBJS)
 
-# One pattern rule handles every user-program .o target.
-%.o: %.c
-	$(CC) $(CFLAGS) -I../shared -c -o $@ $<
+$(C_BINS): $(BIN_DIR)/%: $(APP_OBJ_DIR)/%.o $(C_LINK_OBJS) $(LINKER_DIR)/user.ld
+	@mkdir -p $(dir $@)
+	$(LD) -m elf_i386 -T $(LINKER_DIR)/user.ld -o $@ $(C_LINK_OBJS) $(APP_OBJ_DIR)/$*.o
 
-lib/cxxrt.o: lib/cxxrt.cpp lib/malloc.h lib/syscall.h
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
+$(CXX_BINS): $(BIN_DIR)/%: $(APP_OBJ_DIR)/%.o $(CXX_LINK_OBJS) $(LINKER_DIR)/user.ld
+	@mkdir -p $(dir $@)
+	$(LD) -m elf_i386 -T $(LINKER_DIR)/user.ld -o $@ $(CXX_LINK_OBJS) $(APP_OBJ_DIR)/$*.o $(CXXLIBS)
 
-lib/cxxabi.o: lib/cxxabi.cpp lib/syscall.h
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
+DESKTOP_NANOJPEG_OBJS = $(NANOJPEG_OBJ_DIR)/nanojpeg.o $(NANOJPEG_OBJ_DIR)/nanojpeg_shim.o
 
-%.o: %.cpp
-	$(CXX) $(CXXFLAGS) -I . -c -o $@ $<
+$(NANOJPEG_OBJ_DIR)/nanojpeg.o: $(THIRD_PARTY_SRC_DIR)/nanojpeg/nanojpeg.c $(THIRD_PARTY_SRC_DIR)/nanojpeg/nanojpeg.h
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(DEPFLAGS) -I $(RUNTIME_SRC_DIR) -DNJ_USE_LIBC=0 '-DNULL=((void*)0)' -Wno-unused-function -Wno-sign-compare -Wno-misleading-indentation -Wno-unused-parameter -Wno-implicit-fallthrough -c -o $@ $<
 
-%.o: %.asm
-	$(NASM) $(NASMFLAGS) -f elf32 -o $@ $<
-
-$(C_PROGS): %: %.o $(C_LINK_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(C_LINK_OBJS) $@.o
-
-$(CXX_PROGS): %: %.o $(CXX_LINK_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(CXX_LINK_OBJS) $@.o $(CXXLIBS)
-
-# desktop carries an embedded bitmap font and a vendored JPEG decoder
-# in separate translation units; override the single-object C link
-# rule to pull all four objects in.  nanojpeg.c stays unmodified
-# under the original KeyJ Research License — the shim provides the
-# allocator hooks the decoder calls when NJ_USE_LIBC is 0.
-DESKTOP_NANOJPEG_OBJS = lib/nanojpeg/nanojpeg.o lib/nanojpeg/nanojpeg_shim.o
-
-lib/nanojpeg/nanojpeg.o: lib/nanojpeg/nanojpeg.c lib/nanojpeg/nanojpeg.h
-	$(CC) $(CFLAGS) -DNJ_USE_LIBC=0 '-DNULL=((void*)0)' -Wno-unused-function -Wno-sign-compare -Wno-misleading-indentation -Wno-unused-parameter -Wno-implicit-fallthrough -c -o $@ $<
-
-lib/nanojpeg/nanojpeg_shim.o: lib/nanojpeg/nanojpeg_shim.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+$(NANOJPEG_OBJ_DIR)/nanojpeg_shim.o: $(THIRD_PARTY_SRC_DIR)/nanojpeg/nanojpeg_shim.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(DEPFLAGS) -I $(RUNTIME_SRC_DIR) -c -o $@ $<
 
 # The keymap source lives at the top-level shared/ directory so the
 # kernel's VT keyboard handler and this user-space compositor build
-# from the exact same translation logic.  We give the compiled object
-# a unique path under the user tree so it doesn't collide with the
-# kernel's build of the same source.
-desktop_kbdmap.o: ../shared/kbdmap.c ../shared/kbdmap.h
-	$(CC) $(CFLAGS) -I../shared -c -o $@ $<
+# from the exact same translation logic.
+$(APP_OBJ_DIR)/desktop_kbdmap.o: ../shared/kbdmap.c ../shared/kbdmap.h
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(DEPFLAGS) -I../shared -c -o $@ $<
 
-desktop: desktop.o desktop_font.o desktop_kbdmap.o $(DESKTOP_NANOJPEG_OBJS) $(C_LINK_OBJS) user.ld
-	$(LD) -m elf_i386 -T user.ld -o $@ $(C_LINK_OBJS) desktop.o desktop_font.o desktop_kbdmap.o $(DESKTOP_NANOJPEG_OBJS)
+$(BIN_DIR)/desktop: $(APP_OBJ_DIR)/desktop.o $(APP_OBJ_DIR)/desktop_font.o $(APP_OBJ_DIR)/desktop_kbdmap.o $(DESKTOP_NANOJPEG_OBJS) $(C_LINK_OBJS) $(LINKER_DIR)/user.ld
+	@mkdir -p $(dir $@)
+	$(LD) -m elf_i386 -T $(LINKER_DIR)/user.ld -o $@ $(C_LINK_OBJS) $(APP_OBJ_DIR)/desktop.o $(APP_OBJ_DIR)/desktop_font.o $(APP_OBJ_DIR)/desktop_kbdmap.o $(DESKTOP_NANOJPEG_OBJS)
 
 clean:
+	rm -rf $(BUILD_ROOT)
 	find . -name '*.o' -delete
 	find . -name '*.elf' -delete
-	$(RM) lib/libc.a
-	$(RM) $(CLEAN_PROGS)
+	$(RM) $(PROGS)
+	$(RM) linuxhello linuxprobe linuxabi readelf objdump gcc gcc-cc1 gcc-as tcc
+	$(RM) user.ld user_arm64.ld lib/libc.a
+
+USER_DEPS = $(C_RUNTIME_OBJS:.o=.d) $(CXX_RUNTIME_OBJS:.o=.d) \
+            $(C_APP_OBJS:.o=.d) $(CXX_APP_OBJS:.o=.d) \
+            $(DESKTOP_NANOJPEG_OBJS:.o=.d) $(APP_OBJ_DIR)/desktop_kbdmap.d
+
+-include $(USER_DEPS)

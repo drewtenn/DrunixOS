@@ -8,7 +8,7 @@
  * the whole program flows through the fd table and respects redirection.
  */
 
-#include "lib/stdio.h"
+#include "stdio.h"
 
 int main(int argc, char **argv)
 {

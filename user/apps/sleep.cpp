@@ -3,8 +3,8 @@
  * sleep.c — user-space sleep utility.
  */
 
-#include "lib/stdio.h"
-#include "lib/unistd.h"
+#include "stdio.h"
+#include "unistd.h"
 
 static int parse_seconds(const char *s, unsigned int *out)
 {

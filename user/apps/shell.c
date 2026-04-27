@@ -3,9 +3,9 @@
  * shell.c — interactive ring-3 shell for the OS.
  */
 
-#include "lib/stdio.h"
-#include "lib/string.h"
-#include "lib/syscall.h"
+#include "stdio.h"
+#include "string.h"
+#include "syscall.h"
 
 #define KEY_PAGE_UP '\x01'   /* Legacy keyboard-driver scroll shortcut. */
 #define KEY_PAGE_DOWN '\x02' /* Legacy keyboard-driver scroll shortcut. */

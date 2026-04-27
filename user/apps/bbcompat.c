@@ -3,10 +3,10 @@
  * bbcompat.c - unattended BusyBox/Linux i386 compatibility runner.
  */
 
-#include "lib/stdio.h"
-#include "lib/stdlib.h"
-#include "lib/string.h"
-#include "lib/syscall.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
+#include "syscall.h"
 
 #define BBCOMPAT_TOTAL 255
 #define BB_OUT_CAP 4096

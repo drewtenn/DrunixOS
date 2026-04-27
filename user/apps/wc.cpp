@@ -3,9 +3,9 @@
  * wc.c — user-space word-count utility.
  */
 
-#include "lib/ctype.h"
-#include "lib/stdio.h"
-#include "lib/string.h"
+#include "ctype.h"
+#include "stdio.h"
+#include "string.h"
 
 typedef struct
 {

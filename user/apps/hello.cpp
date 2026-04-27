@@ -7,7 +7,7 @@
  *   with lib/crt0.o and the rest of the user runtime via user.ld.
  */
 
-#include "lib/stdio.h"
+#include "stdio.h"
 
 int main(int argc, char **argv)
 {

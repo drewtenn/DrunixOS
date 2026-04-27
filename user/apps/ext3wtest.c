@@ -3,8 +3,8 @@
  * ext3wtest.c - smoke test for writable ext3 root support.
  */
 
-#include "lib/string.h"
-#include "lib/syscall.h"
+#include "string.h"
+#include "syscall.h"
 
 static int write_all(int fd, const char *buf, int len)
 {

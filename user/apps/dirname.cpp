@@ -3,8 +3,8 @@
  * dirname.c — user-space dirname utility.
  */
 
-#include "lib/stdio.h"
-#include "lib/string.h"
+#include "stdio.h"
+#include "string.h"
 
 int main(int argc, char **argv)
 {

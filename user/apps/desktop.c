@@ -22,13 +22,13 @@
 #include "cursor_sprite.h"
 #include "desktop_window.h"
 #include "kbdmap.h"
-#include "lib/mman.h"
-#include "lib/nanojpeg/nanojpeg.h"
-#include "lib/stdio.h"
-#include "lib/stdlib.h"
-#include "lib/string.h"
-#include "lib/syscall.h"
-#include "lib/unistd.h"
+#include "mman.h"
+#include "nanojpeg.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
+#include "syscall.h"
+#include "unistd.h"
 
 typedef struct {
 	uint32_t width;

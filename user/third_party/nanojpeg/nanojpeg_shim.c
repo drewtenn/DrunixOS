@@ -8,8 +8,8 @@
  * primitives through DrunixOS's user-space libc.
  */
 
-#include "../malloc.h"
-#include "../string.h"
+#include "malloc.h"
+#include "string.h"
 
 void *njAllocMem(int size)
 {

@@ -3,7 +3,7 @@
  * dufstest.c - headless smoke test for the writable /dufs mount.
  */
 
-#include "lib/syscall.h"
+#include "syscall.h"
 
 static int same_bytes(const char *a, const char *b, int n)
 {

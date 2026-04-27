@@ -3,9 +3,9 @@
  * printenv.c — user-space environment lookup utility.
  */
 
-#include "lib/stdio.h"
-#include "lib/stdlib.h"
-#include "lib/syscall.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "syscall.h"
 
 int main(int argc, char **argv)
 {

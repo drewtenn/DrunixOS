@@ -7,7 +7,7 @@
  */
 
 #include "desktop_font.h"
-#include "lib/stdint.h"
+#include "stdint.h"
 
 static const uint8_t fallback_glyph[16] = {
     0x00,

@@ -3,7 +3,7 @@
  * dmesg.c — dump the retained kernel log from procfs.
  */
 
-#include "lib/stdio.h"
+#include "stdio.h"
 
 int main(int argc, char **argv)
 {
