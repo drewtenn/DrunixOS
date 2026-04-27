@@ -20,7 +20,7 @@ def ktest_summary_lines(text: str) -> list[str]:
 
 
 def main() -> int:
-    harness.build(["KTEST=1"])
+    harness.build(["KTEST=1", "ROOT_FS=dufs"])
 
     serial_log = harness.ROOT / "logs" / "serial-arm64-ktest.log"
     stderr_log = harness.ROOT / "logs" / "qemu-arm64-ktest.stderr"

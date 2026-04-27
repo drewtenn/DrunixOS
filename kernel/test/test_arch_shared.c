@@ -20,11 +20,25 @@
 #include "vfs.h"
 #include "vma.h"
 
+#if defined(__aarch64__)
+#define TEST_USER_IMAGE_START 0x02000000u
+#define TEST_USER_IMAGE_END 0x02010000u
+#define TEST_USER_HEAP_BRK 0x02018000u
+#define TEST_USER_GENERIC_START 0x02410000u
+#define TEST_USER_SYSCALL_PAGE 0x02480000u
+#else
+#define TEST_USER_IMAGE_START 0x08000000u
+#define TEST_USER_IMAGE_END 0x08010000u
+#define TEST_USER_HEAP_BRK 0x08018000u
+#define TEST_USER_GENERIC_START 0x08041000u
+#define TEST_USER_SYSCALL_PAGE 0x08100000u
+#endif
+
 static void shared_init_vma_proc(process_t *proc)
 {
 	k_memset(proc, 0, sizeof(*proc));
-	proc->heap_start = 0x08010000u;
-	proc->brk = 0x08018000u;
+	proc->heap_start = TEST_USER_IMAGE_END;
+	proc->brk = TEST_USER_HEAP_BRK;
 	proc->stack_low_limit =
 	    USER_STACK_TOP - (uint32_t)USER_STACK_PAGES * PAGE_SIZE;
 	vma_init(proc);
@@ -45,8 +59,8 @@ static void shared_init_vma_proc(process_t *proc)
 static void shared_init_fresh_process_layout_proc(process_t *proc)
 {
 	k_memset(proc, 0, sizeof(*proc));
-	proc->image_start = 0x08000000u;
-	proc->image_end = 0x08010000u;
+	proc->image_start = TEST_USER_IMAGE_START;
+	proc->image_end = TEST_USER_IMAGE_END;
 	proc->heap_start = proc->image_end;
 	proc->brk = proc->heap_start;
 	proc->stack_low_limit =
@@ -238,8 +252,11 @@ static void test_shared_vma_unmap_range_rejects_heap_or_stack(ktest_case_t *tc)
 	static process_t proc;
 
 	shared_init_vma_proc(&proc);
-	KTEST_EXPECT_EQ(
-	    tc, vma_unmap_range(&proc, 0x08010000u, 0x08011000u), (uint32_t)-1);
+	KTEST_EXPECT_EQ(tc,
+	                vma_unmap_range(&proc,
+	                                TEST_USER_IMAGE_END,
+	                                TEST_USER_IMAGE_END + 0x1000u),
+	                (uint32_t)-1);
 	KTEST_EXPECT_EQ(tc, proc.vma_count, 2u);
 }
 
@@ -290,8 +307,8 @@ test_shared_mem_forensics_collects_basic_region_totals(ktest_case_t *tc)
 	    (uint32_t)USER_STACK_MAX_PAGES * (uint32_t)PAGE_SIZE;
 
 	shared_init_vma_proc(&proc);
-	proc.image_start = 0x08000000u;
-	proc.image_end = 0x08010000u;
+	proc.image_start = TEST_USER_IMAGE_START;
+	proc.image_end = TEST_USER_IMAGE_END;
 	k_strncpy(proc.name, "shell", sizeof(proc.name) - 1u);
 
 	KTEST_ASSERT_EQ(tc, (uint32_t)mem_forensics_collect(&proc, &report), 0u);
@@ -341,13 +358,13 @@ test_shared_mem_forensics_collects_full_vma_table_with_fallback_image(
 	uint32_t expected_total = 0x00010000u;
 
 	k_memset(&proc, 0, sizeof(proc));
-	proc.image_start = 0x08000000u;
-	proc.image_end = 0x08010000u;
-	proc.brk = 0x08050000u;
+	proc.image_start = TEST_USER_IMAGE_START;
+	proc.image_end = TEST_USER_IMAGE_END;
+	proc.brk = (TEST_USER_IMAGE_END + 0x00040000u);
 	vma_init(&proc);
 
 	for (uint32_t i = 0; i < PROCESS_MAX_VMAS; i++) {
-		uint32_t start = 0x08200000u + i * 0x2000u;
+		uint32_t start = (TEST_USER_GENERIC_START + 0x00100000u) + i * 0x2000u;
 		KTEST_ASSERT_EQ(tc,
 		                vma_add(&proc,
 		                        start,
@@ -435,11 +452,15 @@ static void test_shared_copy_to_user_spans_pages(ktest_case_t *tc)
 {
 	static process_t proc;
 	uint8_t src[200];
-	uint32_t start = 0x08041000u + PAGE_SIZE - 50u;
+	uint32_t start = TEST_USER_GENERIC_START + PAGE_SIZE - 50u;
 
 	KTEST_ASSERT_EQ(tc, shared_init_user_proc(&proc), 0);
-	KTEST_ASSERT_NOT_NULL(tc, shared_map_user_page(&proc, 0x08041000u, 0xAA));
-	KTEST_ASSERT_NOT_NULL(tc, shared_map_user_page(&proc, 0x08042000u, 0xBB));
+	KTEST_ASSERT_NOT_NULL(
+	    tc, shared_map_user_page(&proc, TEST_USER_GENERIC_START, 0xAA));
+	KTEST_ASSERT_NOT_NULL(
+	    tc,
+	    shared_map_user_page(
+	        &proc, (TEST_USER_GENERIC_START + PAGE_SIZE), 0xBB));
 
 	for (uint32_t i = 0; i < sizeof(src); i++)
 		src[i] = (uint8_t)i;
@@ -448,8 +469,14 @@ static void test_shared_copy_to_user_spans_pages(ktest_case_t *tc)
 	    tc, uaccess_copy_to_user(&proc, start, src, sizeof(src)), 0);
 	KTEST_EXPECT_EQ(tc, shared_user_byte(&proc, start), 0u);
 	KTEST_EXPECT_EQ(tc, shared_user_byte(&proc, start + 49u), 49u);
-	KTEST_EXPECT_EQ(tc, shared_user_byte(&proc, 0x08042000u), 50u);
-	KTEST_EXPECT_EQ(tc, shared_user_byte(&proc, 0x08042000u + 149u), 199u);
+	KTEST_EXPECT_EQ(
+	    tc,
+	    shared_user_byte(&proc, (TEST_USER_GENERIC_START + PAGE_SIZE)),
+	    50u);
+	KTEST_EXPECT_EQ(
+	    tc,
+	    shared_user_byte(&proc, (TEST_USER_GENERIC_START + PAGE_SIZE) + 149u),
+	    199u);
 
 	shared_destroy_user_proc(&proc);
 }
@@ -459,11 +486,14 @@ static void test_shared_copy_string_from_user_spans_pages(ktest_case_t *tc)
 	static process_t proc;
 	static const char msg[] = "cross-page";
 	char buf[32];
-	uint32_t start = 0x08041000u + PAGE_SIZE - 6u;
+	uint32_t start = TEST_USER_GENERIC_START + PAGE_SIZE - 6u;
 
 	KTEST_ASSERT_EQ(tc, shared_init_user_proc(&proc), 0);
-	KTEST_ASSERT_NOT_NULL(tc, shared_map_user_page(&proc, 0x08041000u, 0));
-	KTEST_ASSERT_NOT_NULL(tc, shared_map_user_page(&proc, 0x08042000u, 0));
+	KTEST_ASSERT_NOT_NULL(
+	    tc, shared_map_user_page(&proc, TEST_USER_GENERIC_START, 0));
+	KTEST_ASSERT_NOT_NULL(
+	    tc,
+	    shared_map_user_page(&proc, (TEST_USER_GENERIC_START + PAGE_SIZE), 0));
 	KTEST_ASSERT_EQ(
 	    tc, uaccess_copy_to_user(&proc, start, msg, sizeof(msg)), 0);
 
@@ -482,9 +512,16 @@ test_shared_prepare_rejects_kernel_and_unmapped_ranges(ktest_case_t *tc)
 	KTEST_ASSERT_EQ(tc, shared_init_user_proc(&proc), 0);
 
 	KTEST_EXPECT_EQ(tc, uaccess_prepare(&proc, 0x1000u, 1u, 0), (uint32_t)-1);
-	KTEST_ASSERT_NOT_NULL(tc, shared_map_user_page(&proc, 0x08043000u, 0));
+	KTEST_ASSERT_NOT_NULL(
+	    tc,
+	    shared_map_user_page(
+	        &proc, (TEST_USER_GENERIC_START + 2u * PAGE_SIZE), 0));
 	KTEST_EXPECT_EQ(tc,
-	                uaccess_prepare(&proc, 0x08043000u + PAGE_SIZE - 2u, 4u, 0),
+	                uaccess_prepare(&proc,
+	                                (TEST_USER_GENERIC_START + 2u * PAGE_SIZE) +
+	                                    PAGE_SIZE - 2u,
+	                                4u,
+	                                0),
 	                (uint32_t)-1);
 	KTEST_EXPECT_EQ(
 	    tc, uaccess_prepare(&proc, USER_STACK_TOP - 2u, 4u, 0), (uint32_t)-1);
@@ -499,7 +536,9 @@ static void test_shared_syscall_fstat_reads_resource_fd_table(ktest_case_t *tc)
 	KTEST_ASSERT_NOT_NULL(tc, cur);
 
 	cur->files->open_files[1].type = FD_TYPE_NONE;
-	KTEST_EXPECT_EQ(tc, syscall_case_fstat64(1u, 0x08100400u), (uint32_t)-1);
+	KTEST_EXPECT_EQ(tc,
+	                syscall_case_fstat64(1u, (TEST_USER_SYSCALL_PAGE + 0x400u)),
+	                (uint32_t)-1);
 
 	shared_stop_syscall_process(cur);
 }
@@ -510,12 +549,14 @@ static void test_shared_syscall_getcwd_reads_resource_fs_state(ktest_case_t *tc)
 	process_t *cur = shared_start_syscall_process(&proc);
 	uint8_t got[8];
 	KTEST_ASSERT_NOT_NULL(tc, cur);
-	KTEST_ASSERT_NOT_NULL(tc, shared_map_user_page(cur, 0x08100000u, 0));
+	KTEST_ASSERT_NOT_NULL(tc,
+	                      shared_map_user_page(cur, TEST_USER_SYSCALL_PAGE, 0));
 
 	k_strncpy(cur->fs_state->cwd, "home", sizeof(cur->fs_state->cwd) - 1u);
 
-	KTEST_EXPECT_EQ(tc, syscall_case_getcwd(0x08100000u, 64u), 6u);
-	KTEST_EXPECT_EQ(tc, uaccess_copy_from_user(cur, got, 0x08100000u, 6u), 0);
+	KTEST_EXPECT_EQ(tc, syscall_case_getcwd(TEST_USER_SYSCALL_PAGE, 64u), 6u);
+	KTEST_EXPECT_EQ(
+	    tc, uaccess_copy_from_user(cur, got, TEST_USER_SYSCALL_PAGE, 6u), 0);
 	KTEST_EXPECT_EQ(tc, got[0], (uint8_t)'/');
 	KTEST_EXPECT_EQ(tc, got[1], (uint8_t)'h');
 	KTEST_EXPECT_EQ(tc, got[2], (uint8_t)'o');
@@ -540,14 +581,21 @@ test_shared_syscall_chdir_updates_resource_fs_state(ktest_case_t *tc)
 
 	cur = shared_start_syscall_process(&proc);
 	KTEST_ASSERT_NOT_NULL(tc, cur);
-	KTEST_ASSERT_NOT_NULL(tc, shared_map_user_page(cur, 0x08100000u, 0));
+	KTEST_ASSERT_NOT_NULL(tc,
+	                      shared_map_user_page(cur, TEST_USER_SYSCALL_PAGE, 0));
 	KTEST_ASSERT_EQ(
-	    tc, uaccess_copy_to_user(cur, 0x08100000u, path, sizeof(path)), 0);
+	    tc,
+	    uaccess_copy_to_user(cur, TEST_USER_SYSCALL_PAGE, path, sizeof(path)),
+	    0);
 
-	KTEST_ASSERT_EQ(tc, syscall_case_chdir(0x08100000u), 0u);
+	KTEST_ASSERT_EQ(tc, syscall_case_chdir(TEST_USER_SYSCALL_PAGE), 0u);
 	KTEST_EXPECT_TRUE(tc, k_strcmp(cur->fs_state->cwd, "bin") == 0);
-	KTEST_EXPECT_EQ(tc, syscall_case_getcwd(0x08100100u, 64u), 5u);
-	KTEST_EXPECT_EQ(tc, uaccess_copy_from_user(cur, got, 0x08100100u, 5u), 0);
+	KTEST_EXPECT_EQ(
+	    tc, syscall_case_getcwd((TEST_USER_SYSCALL_PAGE + 0x100u), 64u), 5u);
+	KTEST_EXPECT_EQ(
+	    tc,
+	    uaccess_copy_from_user(cur, got, (TEST_USER_SYSCALL_PAGE + 0x100u), 5u),
+	    0);
 	KTEST_EXPECT_TRUE(tc, k_strcmp(got, "/bin") == 0);
 
 	shared_stop_syscall_process(cur);
@@ -574,14 +622,19 @@ static void test_shared_rt_sigaction_reads_resource_handlers(ktest_case_t *tc)
 	process_t *cur = shared_start_syscall_process(&proc);
 	uint8_t got[4];
 	KTEST_ASSERT_NOT_NULL(tc, cur);
-	KTEST_ASSERT_NOT_NULL(tc, shared_map_user_page(cur, 0x08100000u, 0));
+	KTEST_ASSERT_NOT_NULL(tc,
+	                      shared_map_user_page(cur, TEST_USER_SYSCALL_PAGE, 0));
 
 	cur->sig_actions->handlers[SIGTERM] = SIG_IGN;
 
 	KTEST_EXPECT_EQ(
-	    tc, syscall_case_rt_sigaction(SIGTERM, 0, 0x08100000u, 8u), 0u);
+	    tc,
+	    syscall_case_rt_sigaction(SIGTERM, 0, TEST_USER_SYSCALL_PAGE, 8u),
+	    0u);
 	KTEST_EXPECT_EQ(
-	    tc, uaccess_copy_from_user(cur, got, 0x08100000u, sizeof(got)), 0);
+	    tc,
+	    uaccess_copy_from_user(cur, got, TEST_USER_SYSCALL_PAGE, sizeof(got)),
+	    0);
 	KTEST_EXPECT_EQ(tc, got[0], (uint8_t)SIG_IGN);
 
 	shared_stop_syscall_process(cur);

@@ -31,6 +31,7 @@
 
 #define HDR_SIZE 8u
 #define FLAG_USED 1u
+#define FREE_LINK_SIZE ((uint32_t)sizeof(uintptr_t))
 
 typedef struct block_hdr {
 	uint32_t size;
@@ -45,17 +46,18 @@ static block_hdr_t *g_free_list = 0;
 void *sbrk(int increment)
 {
 	if (increment == 0) {
-		unsigned int cur = sys_brk(0);
+		uintptr_t cur = (uintptr_t)sys_brk(0);
 		return (void *)cur;
 	}
 	if (increment < 0)
-		return (void *)(unsigned int)-1; /* shrink not supported */
+		return (void *)(uintptr_t)-1; /* shrink not supported */
 
-	unsigned int old_brk = sys_brk(0);
-	unsigned int new_brk = sys_brk(old_brk + (unsigned int)increment);
+	uintptr_t old_brk = (uintptr_t)sys_brk(0);
+	uintptr_t new_brk =
+	    (uintptr_t)sys_brk((unsigned int)(old_brk + (uintptr_t)increment));
 
 	if (new_brk == old_brk)
-		return (void *)(unsigned int)-1; /* kernel refused: OOM or guard hit */
+		return (void *)(uintptr_t)-1; /* kernel refused: OOM or guard hit */
 
 	return (void *)old_brk; /* pointer to the start of the new region */
 }
@@ -75,24 +77,21 @@ static inline void *payload_of(block_hdr_t *h)
 /* Next free block is stored in the first word of a free block's payload. */
 static inline block_hdr_t *next_free(block_hdr_t *h)
 {
-	block_hdr_t *n;
+	uintptr_t n = 0;
 	uint8_t *p = (uint8_t *)payload_of(h);
 	uint8_t *q = (uint8_t *)&n;
-	q[0] = p[0];
-	q[1] = p[1];
-	q[2] = p[2];
-	q[3] = p[3];
-	return n;
+	for (uint32_t i = 0; i < FREE_LINK_SIZE; i++)
+		q[i] = p[i];
+	return (block_hdr_t *)n;
 }
 
 static inline void set_next_free(block_hdr_t *h, block_hdr_t *next)
 {
 	uint8_t *p = (uint8_t *)payload_of(h);
-	uint8_t *q = (uint8_t *)&next;
-	p[0] = q[0];
-	p[1] = q[1];
-	p[2] = q[2];
-	p[3] = q[3];
+	uintptr_t next_addr = (uintptr_t)next;
+	uint8_t *q = (uint8_t *)&next_addr;
+	for (uint32_t i = 0; i < FREE_LINK_SIZE; i++)
+		p[i] = q[i];
 }
 
 /* ── malloc ───────────────────────────────────────────────────────────────── */
@@ -102,12 +101,14 @@ void *malloc(size_t size)
 	if (size == 0)
 		return 0;
 
-	/* Minimum payload: 4 bytes (must fit the free-list next pointer). */
-	if (size < 4)
-		size = 4;
+	/* Minimum payload: must fit the free-list next pointer. */
+	if (size < FREE_LINK_SIZE)
+		size = FREE_LINK_SIZE;
 
-	/* Align to 4 bytes. */
-	size = (size + 3u) & ~(size_t)3u;
+	/* Align to pointer width. */
+	size = (size + FREE_LINK_SIZE - 1u) & ~(size_t)(FREE_LINK_SIZE - 1u);
+	if (size > UINT32_MAX - HDR_SIZE)
+		return 0;
 
 	/* First-fit scan of the free list. */
 	block_hdr_t *prev = 0;
@@ -117,10 +118,10 @@ void *malloc(size_t size)
 		if (cur->size >= (uint32_t)size) {
 			/*
              * Found a fit.  If there is enough surplus space to carve a new
-             * free block from the tail (header + minimum 4-byte payload),
-             * split it.  Otherwise hand over the entire block.
-             */
-			if (cur->size >= (uint32_t)size + HDR_SIZE + 4u) {
+			 * free block from the tail (header + minimum link payload),
+			 * split it.  Otherwise hand over the entire block.
+			 */
+			if (cur->size >= (uint32_t)size + HDR_SIZE + FREE_LINK_SIZE) {
 				/* Split: new free block starts after the allocated payload. */
 				block_hdr_t *tail =
 				    (block_hdr_t *)((uint8_t *)payload_of(cur) + size);
@@ -154,7 +155,7 @@ void *malloc(size_t size)
 	/* No suitable free block found — extend the heap. */
 	uint32_t need = HDR_SIZE + (uint32_t)size;
 	block_hdr_t *blk = (block_hdr_t *)sbrk((int)need);
-	if (blk == (block_hdr_t *)(unsigned int)-1)
+	if (blk == (block_hdr_t *)(uintptr_t)-1)
 		return 0; /* OOM */
 
 	blk->size = (uint32_t)size;

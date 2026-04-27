@@ -16,7 +16,8 @@ ARM_INC := -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 \
            -I kernel/arch/arm64/mm -I kernel/arch/arm64/proc \
            -I kernel/mm -I kernel/proc -I kernel/fs \
            -I kernel/drivers -I kernel/blk -I kernel/arch/arm64/platform \
-           -I kernel/arch/arm64/platform/raspi3b -I kernel/gui -I kernel/console
+           -I kernel/arch/arm64/platform/raspi3b -I kernel/gui -I kernel/console \
+           -I shared
 
 ARM_KOBJS := kernel/arch/arm64/boot.o \
              kernel/arch/arm64/arch.o \
@@ -77,6 +78,7 @@ ARM_SHARED_KOBJS := kernel/lib/klog.arm64.o \
                     kernel/arch/arm64/proc/core.arm64.o \
                     kernel/proc/mem_forensics.arm64.o \
                     kernel/proc/pipe.arm64.o \
+                    kernel/proc/pty.arm64.o \
                     kernel/proc/init_launch.arm64.o \
                     kernel/fs/fs.arm64.o \
                     kernel/fs/vfs/core.arm64.o \

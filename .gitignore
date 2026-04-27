@@ -37,7 +37,9 @@ venv/
 .no-desktop-flag
 .vga-text-flag
 .disk-sectors-flag
+.disk-layout-flag
 .arm64-smoke-fallback-flag
+.arm64-halt-test-flag
 .x86-serial-console-flag
-logs/*.stderr
 .include-busybox-flag
+logs/*.stderr

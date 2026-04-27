@@ -25,6 +25,16 @@
 #define DRUNIX_DISK_SECTORS 262144u
 #endif
 
+#if defined(__aarch64__)
+#define TEST_PROC_IMAGE_START 0x02000000u
+#define TEST_PROC_IMAGE_END 0x02010000u
+#define TEST_PROC_HEAP_BRK 0x02018000u
+#else
+#define TEST_PROC_IMAGE_START 0x08000000u
+#define TEST_PROC_IMAGE_END 0x08010000u
+#define TEST_PROC_HEAP_BRK 0x08018000u
+#endif
+
 static int has_entry(const char *buf, int n, const char *want)
 {
 	int i = 0;
@@ -304,10 +314,10 @@ static int add_procfs_test_process(void)
 	proc.pgid = 7;
 	proc.sid = 7;
 	proc.tty_id = 0;
-	proc.heap_start = 0x08010000u;
-	proc.brk = 0x08018000u;
-	proc.image_start = 0x08000000u;
-	proc.image_end = 0x08010000u;
+	proc.heap_start = TEST_PROC_IMAGE_END;
+	proc.brk = TEST_PROC_HEAP_BRK;
+	proc.image_start = TEST_PROC_IMAGE_START;
+	proc.image_end = TEST_PROC_IMAGE_END;
 	proc.stack_low_limit = USER_STACK_TOP - 0x4000u;
 	k_strncpy(proc.name, "shell", sizeof(proc.name) - 1);
 	k_strncpy(proc.psargs, "/bin/shell", sizeof(proc.psargs) - 1);
@@ -330,10 +340,10 @@ static void init_procfs_layout_process(process_t *proc, int include_image_vma)
 	proc->pgid = 7;
 	proc->sid = 7;
 	proc->tty_id = 0;
-	proc->image_start = 0x08000000u;
-	proc->image_end = 0x08010000u;
-	proc->heap_start = 0x08010000u;
-	proc->brk = 0x08018000u;
+	proc->image_start = TEST_PROC_IMAGE_START;
+	proc->image_end = TEST_PROC_IMAGE_END;
+	proc->heap_start = TEST_PROC_IMAGE_END;
+	proc->brk = TEST_PROC_HEAP_BRK;
 	proc->stack_low_limit =
 	    USER_STACK_TOP - (uint32_t)USER_STACK_PAGES * 0x1000u;
 	k_strncpy(proc->name, "shell", sizeof(proc->name) - 1);
@@ -839,6 +849,8 @@ test_proc_vmstat_reports_image_totals_and_region_count(ktest_case_t *tc)
 static void test_proc_maps_preserves_mapped_subranges(ktest_case_t *tc)
 {
 	char buf[512];
+	char expected_image[64];
+	char expected_heap[64];
 	char expected_stack[64];
 	int n;
 
@@ -847,8 +859,20 @@ static void test_proc_maps_preserves_mapped_subranges(ktest_case_t *tc)
 
 	n = read_procfs_text_file(PROCFS_FILE_MAPS, 1u, buf, sizeof(buf));
 	KTEST_EXPECT_TRUE(tc, n > 0);
-	KTEST_EXPECT_TRUE(tc, k_strstr(buf, "08000000-08001000 r--p shell") != 0);
-	KTEST_EXPECT_TRUE(tc, k_strstr(buf, "08010000-08011000 rw-p [heap]") != 0);
+	KTEST_ASSERT_TRUE(tc,
+	                  k_snprintf(expected_image,
+	                             sizeof(expected_image),
+	                             "%08x-%08x r--p shell",
+	                             TEST_PROC_IMAGE_START,
+	                             TEST_PROC_IMAGE_START + 0x1000u) > 0);
+	KTEST_ASSERT_TRUE(tc,
+	                  k_snprintf(expected_heap,
+	                             sizeof(expected_heap),
+	                             "%08x-%08x rw-p [heap]",
+	                             TEST_PROC_IMAGE_END,
+	                             TEST_PROC_IMAGE_END + 0x1000u) > 0);
+	KTEST_EXPECT_TRUE(tc, k_strstr(buf, expected_image) != 0);
+	KTEST_EXPECT_TRUE(tc, k_strstr(buf, expected_heap) != 0);
 	KTEST_ASSERT_TRUE(tc,
 	                  k_snprintf(expected_stack,
 	                             sizeof(expected_stack),
@@ -856,7 +880,13 @@ static void test_proc_maps_preserves_mapped_subranges(ktest_case_t *tc)
 	                             USER_STACK_TOP - 0x1000u,
 	                             USER_STACK_TOP) > 0);
 	KTEST_EXPECT_TRUE(tc, k_strstr(buf, expected_stack) != 0);
-	KTEST_EXPECT_TRUE(tc, k_strstr(buf, "08010000-08018000 rw-p [heap]") == 0);
+	KTEST_ASSERT_TRUE(tc,
+	                  k_snprintf(expected_heap,
+	                             sizeof(expected_heap),
+	                             "%08x-%08x rw-p [heap]",
+	                             TEST_PROC_IMAGE_END,
+	                             TEST_PROC_HEAP_BRK) > 0);
+	KTEST_EXPECT_TRUE(tc, k_strstr(buf, expected_heap) == 0);
 	KTEST_EXPECT_TRUE(tc, k_strstr(buf, "4096/32768") == 0);
 	teardown_procfs_test_process(1u);
 }
@@ -892,6 +922,7 @@ static void test_proc_fallback_image_surfaces_stay_visible(ktest_case_t *tc)
 {
 	char vmstat[256];
 	char maps[512];
+	char expected_image[64];
 	int n;
 
 	KTEST_EXPECT_EQ(tc, (uint32_t)setup_mount_tree_with_proc(), 0u);
@@ -904,7 +935,13 @@ static void test_proc_fallback_image_surfaces_stay_visible(ktest_case_t *tc)
 
 	n = read_procfs_text_file(PROCFS_FILE_MAPS, 1u, maps, sizeof(maps));
 	KTEST_EXPECT_TRUE(tc, n > 0);
-	KTEST_EXPECT_TRUE(tc, k_strstr(maps, "08000000-08001000 r--p shell") != 0);
+	KTEST_ASSERT_TRUE(tc,
+	                  k_snprintf(expected_image,
+	                             sizeof(expected_image),
+	                             "%08x-%08x r--p shell",
+	                             TEST_PROC_IMAGE_START,
+	                             TEST_PROC_IMAGE_START + 0x1000u) > 0);
+	KTEST_EXPECT_TRUE(tc, k_strstr(maps, expected_image) != 0);
 	teardown_procfs_test_process(1u);
 }
 
