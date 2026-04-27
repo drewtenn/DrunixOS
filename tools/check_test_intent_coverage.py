@@ -16,7 +16,6 @@ X86_ONLY_KTEST_SOURCES = (
     "kernel/arch/x86/test/test_arch_x86.c",
     "kernel/arch/x86/test/test_process.c",
     "kernel/arch/x86/test/test_uaccess.c",
-    "kernel/arch/x86/test/test_desktop.c",
 )
 ARCH_KTEST_SOURCES = {
     "arm64": ("kernel/arch/arm64/test/test_arch_arm64.c",),

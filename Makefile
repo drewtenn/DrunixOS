@@ -527,6 +527,7 @@ clang-tidy-include-check: compile_commands.json
 	@$(PYTHON) tools/compile_commands_sources.py compile_commands.json --under kernel > build/clang-tidy-sources.txt
 	@$(CLANG_TIDY) -p compile_commands.json --quiet \
 		--checks=-*,misc-include-cleaner \
+		--extra-arg=-Wno-unknown-warning-option \
 		$$(cat build/clang-tidy-sources.txt) > build/clang-tidy-include.log 2>&1 || { \
 		sed -n '1,180p' build/clang-tidy-include.log; \
 		echo "... full clang-tidy include report: build/clang-tidy-include.log"; \

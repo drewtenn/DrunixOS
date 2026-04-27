@@ -215,8 +215,10 @@ class ShellSession:
             self.sock.sendall(data)
             return
         assert self.proc is not None and self.proc.stdin is not None
-        self.proc.stdin.write(data)
-        self.proc.stdin.flush()
+        for byte in data:
+            self.proc.stdin.write(bytes((byte,)))
+            self.proc.stdin.flush()
+            time.sleep(0.002)
 
     def send_line(self, line: str) -> None:
         self.send_bytes(line.encode("utf-8") + b"\n")

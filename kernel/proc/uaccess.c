@@ -64,8 +64,8 @@ static int uaccess_break_cow(process_t *proc, uint32_t fault_page)
 	{
 		void *dst = arch_page_temp_map(new_phys);
 		void *src = arch_page_temp_map(mapping.phys_addr);
-		uint32_t map_flags = (mapping.flags | ARCH_MM_MAP_WRITE) &
-		                     ~(uint32_t)ARCH_MM_MAP_COW;
+		uint32_t map_flags =
+		    (mapping.flags | ARCH_MM_MAP_WRITE) & ~(uint32_t)ARCH_MM_MAP_COW;
 
 		if (!dst || !src) {
 			if (src)
@@ -89,6 +89,46 @@ static int uaccess_break_cow(process_t *proc, uint32_t fault_page)
 	return 0;
 }
 
+static int uaccess_map_lazy_anon(process_t *proc,
+                                 uint32_t fault_page,
+                                 const vm_area_t *vma)
+{
+	arch_aspace_t aspace;
+	uint32_t phys;
+	void *page;
+	uint32_t map_flags =
+	    ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ | ARCH_MM_MAP_USER;
+
+	if (!proc || !vma)
+		return -1;
+	if ((vma->flags & (VMA_FLAG_ANON | VMA_FLAG_PRIVATE)) !=
+	    (VMA_FLAG_ANON | VMA_FLAG_PRIVATE))
+		return -1;
+	if (vma->kind != VMA_KIND_HEAP && vma->kind != VMA_KIND_GENERIC)
+		return -1;
+	if (vma->flags & VMA_FLAG_WRITE)
+		map_flags |= ARCH_MM_MAP_WRITE;
+
+	phys = pmm_alloc_page();
+	if (!phys)
+		return -1;
+
+	page = arch_page_temp_map(phys);
+	if (!page) {
+		pmm_free_page(phys);
+		return -1;
+	}
+	k_memset(page, 0, PAGE_SIZE);
+	arch_page_temp_unmap(page);
+
+	aspace = (arch_aspace_t)proc->pd_phys;
+	if (arch_mm_map(aspace, fault_page, phys, map_flags) != 0) {
+		pmm_free_page(phys);
+		return -1;
+	}
+	return 0;
+}
+
 static int uaccess_translate(process_t *proc,
                              uint32_t user_addr,
                              int write_access,
@@ -97,18 +137,35 @@ static int uaccess_translate(process_t *proc,
 {
 	arch_aspace_t aspace;
 	arch_mm_mapping_t mapping;
+	const vm_area_t *vma;
 	void *page_ptr;
 	uint32_t page_base;
 
 	if (!proc || user_addr >= USER_STACK_TOP)
+		return -1;
+	vma = vma_find_const(proc, user_addr);
+	if (!vma)
 		return -1;
 	if (!uaccess_vma_allows(proc, user_addr, write_access))
 		return -1;
 
 	aspace = (arch_aspace_t)proc->pd_phys;
 	page_base = user_addr & ~0xFFFu;
-	if (arch_mm_query(aspace, page_base, &mapping) != 0)
-		return -1;
+	if (arch_mm_query(aspace, page_base, &mapping) != 0) {
+		if (uaccess_map_lazy_anon(proc, page_base, vma) != 0)
+			return -1;
+		if (arch_mm_query(aspace, page_base, &mapping) != 0)
+			return -1;
+	}
+	if ((mapping.flags & ARCH_MM_MAP_USER) == 0 &&
+	    (mapping.flags & ARCH_MM_MAP_COW) == 0 &&
+	    (vma->flags & (VMA_FLAG_ANON | VMA_FLAG_PRIVATE)) ==
+	        (VMA_FLAG_ANON | VMA_FLAG_PRIVATE)) {
+		if (uaccess_map_lazy_anon(proc, page_base, vma) != 0)
+			return -1;
+		if (arch_mm_query(aspace, page_base, &mapping) != 0)
+			return -1;
+	}
 	if ((mapping.flags & ARCH_MM_MAP_USER) == 0)
 		return -1;
 
@@ -151,7 +208,8 @@ int uaccess_prepare(process_t *proc,
 		if (chunk > len - offset)
 			chunk = len - offset;
 
-		if (uaccess_translate(proc, addr, write_access, &unused, &page_ptr) != 0)
+		if (uaccess_translate(proc, addr, write_access, &unused, &page_ptr) !=
+		    0)
 			return -1;
 		arch_page_temp_unmap(page_ptr);
 

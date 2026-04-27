@@ -41,6 +41,11 @@ X86_PROCESS_KTESTS = (
     "test_process_build_initial_frame_layout",
     "test_process_build_exec_frame_layout",
     "test_elf_machine_validation_is_arch_owned",
+    "test_elf_loader_rejects_direct_map_pt_load",
+    "test_elf_loader_rejects_overlapping_pt_loads",
+    "test_elf_loader_rejects_stack_pt_load",
+    "test_elf_loader_rejects_kernel_pt_load",
+    "test_elf_loader_rejects_overflowing_pt_load",
     "test_sched_add_builds_initial_frame_for_never_run_process",
     "test_process_builds_linux_i386_initial_stack_shape",
     "test_vma_add_keeps_regions_sorted_and_findable",
@@ -55,7 +60,7 @@ X86_PROCESS_KTESTS = (
     "test_mem_forensics_collects_fresh_process_layout",
     "test_mem_forensics_collects_full_vma_table_with_fallback_image",
     "test_mem_forensics_classifies_unmapped_fault",
-    "test_mem_forensics_classifies_lazy_miss_for_shadow_heap_mapping",
+    "test_mem_forensics_classifies_heap_lazy_miss",
     "test_mem_forensics_classifies_cow_write_fault",
     "test_mem_forensics_classifies_protection_fault",
     "test_mem_forensics_classifies_unknown_fault_vector",
@@ -89,12 +94,14 @@ X86_PROCESS_KTESTS = (
 X86_UACCESS_KTESTS = (
     "test_copy_from_user_reads_mapped_bytes",
     "test_copy_to_user_spans_pages",
+    "test_copy_to_user_faults_in_lazy_heap_pages",
     "test_copy_string_from_user_spans_pages",
     "test_prepare_rejects_kernel_and_unmapped_ranges",
     "test_copy_to_user_breaks_cow_clone",
     "test_release_user_space_drops_only_child_cow_reference",
     "test_process_fork_stack_pages_break_cow_on_write_fault",
     "test_process_fork_child_writes_image_data_before_exec",
+    "test_process_fork_preserves_user_io_mappings",
     "test_process_fork_child_survives_parent_exit_and_reuses_last_cow_ref",
     "test_process_fork_child_stack_growth_is_private",
     "test_process_fork_child_gets_fresh_task_group_slot",
@@ -257,6 +264,8 @@ X86_DESKTOP_KTESTS = (
 
 X86_ARCH_KTESTS = (
     "test_sched_record_user_fault_preserves_full_fault_addr",
+    "test_user_mapping_rejects_direct_map_addresses",
+    "test_paging_rejects_direct_user_page_mapping",
 )
 
 
@@ -664,6 +673,7 @@ INTENTS: tuple[TestIntent, ...] = (
                     (
                         "test_copy_from_user_reads_mapped_bytes",
                         "test_copy_to_user_spans_pages",
+                        "test_copy_to_user_faults_in_lazy_heap_pages",
                         "test_copy_string_from_user_spans_pages",
                         "test_prepare_rejects_kernel_and_unmapped_ranges",
                         "test_copy_to_user_breaks_cow_clone",
@@ -840,13 +850,8 @@ INTENTS: tuple[TestIntent, ...] = (
             ),
             "x86": (
                 SourceMarkers(
-                    "kernel/arch/x86/test/test_desktop.c",
-                    (
-                        "test_terminal_write_wraps_and_retains_history",
-                        "test_syscall_console_write_routes_session_output_to_desktop",
-                        "test_tty_ctrl_c_echo_routes_to_desktop_shell_buffer",
-                        "test_keyboard_enter_and_tty_icrnl_match_linux",
-                    ),
+                    "kernel/test/test_console_terminal.c",
+                    ("test_console_terminal_echo_and_backspace",),
                 ),
             ),
         },
@@ -864,13 +869,11 @@ INTENTS: tuple[TestIntent, ...] = (
         sources={
             "x86": (
                 SourceMarkers(
-                    "kernel/arch/x86/test/test_desktop.c",
+                    "kernel/test/test_desktop_window.c",
                     (
-                        "test_gui_display_presents_cells_to_framebuffer",
-                        "test_desktop_files_app_lists_root_entries",
-                        "test_desktop_render_draws_taskbar_and_launcher_label",
-                        "test_framebuffer_info_accepts_1024_768_32_rgb",
-                        "test_framebuffer_pack_rgb_uses_mask_positions",
+                        "test_terminal_window_hit_tests_title_and_body",
+                        "test_terminal_window_hit_tests_controls",
+                        "test_taskbar_hit_tests_all_rendered_apps",
                     ),
                 ),
             ),
@@ -909,7 +912,6 @@ INTENTS: tuple[TestIntent, ...] = (
                 SourceMarkers("kernel/arch/x86/test/test_arch_x86.c", X86_ARCH_KTESTS),
                 SourceMarkers("kernel/arch/x86/test/test_process.c", X86_PROCESS_KTESTS),
                 SourceMarkers("kernel/arch/x86/test/test_uaccess.c", X86_UACCESS_KTESTS),
-                SourceMarkers("kernel/arch/x86/test/test_desktop.c", X86_DESKTOP_KTESTS),
             ),
             "arm64": (
                 SourceMarkers(

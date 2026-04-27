@@ -58,7 +58,6 @@ REQUIRED_ARCH_LOCAL_FILES = (
     ROOT / "kernel/arch/x86/test/test_arch_x86.c",
     ROOT / "kernel/arch/x86/test/test_process.c",
     ROOT / "kernel/arch/x86/test/test_uaccess.c",
-    ROOT / "kernel/arch/x86/test/test_desktop.c",
     X86_PC_PLATFORM / "ata.c",
     X86_PC_PLATFORM / "keyboard.c",
     X86_PC_PLATFORM / "mouse.c",

@@ -25,15 +25,9 @@
 #define DRUNIX_DISK_SECTORS 262144u
 #endif
 
-#if defined(__aarch64__)
-#define TEST_PROC_IMAGE_START 0x02000000u
-#define TEST_PROC_IMAGE_END 0x02010000u
-#define TEST_PROC_HEAP_BRK 0x02018000u
-#else
-#define TEST_PROC_IMAGE_START 0x08000000u
-#define TEST_PROC_IMAGE_END 0x08010000u
-#define TEST_PROC_HEAP_BRK 0x08018000u
-#endif
+#define TEST_PROC_IMAGE_START ((uint32_t)ARCH_USER_IMAGE_BASE)
+#define TEST_PROC_IMAGE_END (TEST_PROC_IMAGE_START + 0x00010000u)
+#define TEST_PROC_HEAP_BRK (TEST_PROC_IMAGE_START + 0x00018000u)
 
 static int has_entry(const char *buf, int n, const char *want)
 {

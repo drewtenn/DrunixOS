@@ -229,6 +229,53 @@ static void test_copy_to_user_spans_pages(ktest_case_t *tc)
 	destroy_test_proc(&proc);
 }
 
+static void test_copy_to_user_faults_in_lazy_heap_pages(ktest_case_t *tc)
+{
+	static process_t proc;
+	static const char msg[] = "lazy-heap";
+	uint32_t start = TEST_IMAGE_END + PAGE_SIZE - 4u;
+	uint8_t *first;
+	uint8_t *second;
+	uint32_t *first_pte = 0;
+	uint32_t *second_pte = 0;
+
+	if (init_test_proc(&proc) != 0) {
+		KTEST_EXPECT_TRUE(tc, 0);
+		return;
+	}
+
+	proc.heap_start = TEST_IMAGE_END;
+	proc.brk = TEST_IMAGE_END + (2u * PAGE_SIZE);
+	if (vma_add(&proc,
+	            proc.heap_start,
+	            proc.brk,
+	            VMA_FLAG_READ | VMA_FLAG_WRITE | VMA_FLAG_ANON |
+	                VMA_FLAG_PRIVATE,
+	            VMA_KIND_HEAP) != 0) {
+		KTEST_EXPECT_TRUE(tc, 0);
+		destroy_test_proc(&proc);
+		return;
+	}
+
+	KTEST_EXPECT_EQ(
+	    tc, uaccess_copy_to_user(&proc, start, msg, sizeof(msg)), 0u);
+	first = mapped_alias(&proc, start);
+	second = mapped_alias(&proc, start + 4u);
+	KTEST_ASSERT_NOT_NULL(tc, first);
+	KTEST_ASSERT_NOT_NULL(tc, second);
+	KTEST_EXPECT_EQ(tc, k_memcmp(first, msg, 4u), 0u);
+	KTEST_EXPECT_EQ(tc, k_memcmp(second, msg + 4u, sizeof(msg) - 4u), 0u);
+	KTEST_EXPECT_EQ(tc, paging_walk(proc.pd_phys, start, &first_pte), 0u);
+	KTEST_EXPECT_EQ(
+	    tc, paging_walk(proc.pd_phys, start + PAGE_SIZE, &second_pte), 0u);
+	if (first_pte && second_pte) {
+		KTEST_EXPECT_TRUE(tc, (*first_pte & PG_USER) != 0);
+		KTEST_EXPECT_TRUE(tc, (*second_pte & PG_USER) != 0);
+	}
+
+	destroy_test_proc(&proc);
+}
+
 static void test_copy_string_from_user_spans_pages(ktest_case_t *tc)
 {
 	static process_t proc;
@@ -1326,6 +1373,7 @@ test_process_fork_rolls_back_when_kstack_alloc_fails(ktest_case_t *tc)
 static ktest_case_t cases[] = {
     KTEST_CASE(test_copy_from_user_reads_mapped_bytes),
     KTEST_CASE(test_copy_to_user_spans_pages),
+    KTEST_CASE(test_copy_to_user_faults_in_lazy_heap_pages),
     KTEST_CASE(test_copy_string_from_user_spans_pages),
     KTEST_CASE(test_prepare_rejects_kernel_and_unmapped_ranges),
     KTEST_CASE(test_copy_to_user_breaks_cow_clone),

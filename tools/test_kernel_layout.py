@@ -93,7 +93,6 @@ class KernelLayoutTest(unittest.TestCase):
             "kernel/arch/x86/test/test_arch_x86.c",
             "kernel/arch/x86/test/test_process.c",
             "kernel/arch/x86/test/test_uaccess.c",
-            "kernel/arch/x86/test/test_desktop.c",
             "kernel/arch/x86/platform/pc/ata.c",
             "kernel/arch/x86/platform/pc/ata.h",
             "kernel/arch/x86/platform/pc/keyboard.c",
