@@ -102,6 +102,8 @@ typedef enum {
 	FD_TYPE_DIR = 7,        /* directory fd for Linux getdents64     */
 	FD_TYPE_BLOCKDEV = 8,   /* read-only block device fd             */
 	FD_TYPE_SYSFILE = 9,    /* synthetic sysfs file                  */
+	FD_TYPE_PTY_MASTER = 10, /* pseudo-terminal master end           */
+	FD_TYPE_PTY_SLAVE = 11,  /* pseudo-terminal slave end            */
 } fd_type_t;
 
 /*
@@ -125,7 +127,8 @@ typedef struct {
 			uint32_t offset;    /* current read/write offset           */
 		} file;
 		struct {
-			char name[12]; /* chardev name (e.g. "stdin")         */
+			char name[12];   /* chardev name (e.g. "stdin")         */
+			uint32_t offset; /* per-fd cursor for positioned reads  */
 		} chardev;
 		struct {
 			char name[VFS_DEV_NAME_MAX]; /* blkdev name (e.g. "sda1") */
@@ -149,6 +152,9 @@ typedef struct {
 			char path[128]; /* VFS path without leading slash       */
 			uint32_t index; /* next directory-entry index           */
 		} dir;
+		struct {
+			uint32_t pty_idx; /* index into pty_pool[]              */
+		} pty;
 	} u;
 } file_handle_t;
 

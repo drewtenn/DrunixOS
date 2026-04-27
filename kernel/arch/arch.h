@@ -26,6 +26,13 @@ typedef struct {
 #define ARCH_MM_MAP_EXEC 0x0008u
 #define ARCH_MM_MAP_USER 0x0010u
 #define ARCH_MM_MAP_COW 0x0020u
+/*
+ * ARCH_MM_MAP_IO marks the underlying physical address as device memory
+ * (for example, a framebuffer aperture). Such pages are not part of the
+ * PMM-tracked free pool, so the unmap path must skip the per-frame
+ * refcount decrement that ordinary user pages receive.
+ */
+#define ARCH_MM_MAP_IO 0x0040u
 
 uint32_t arch_time_unix_seconds(void);
 uint32_t arch_time_uptime_ticks(void);

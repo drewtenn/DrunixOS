@@ -16,6 +16,10 @@ vfs_mount_t vfs_mounts[VFS_MAX_MOUNTS];
 const devfs_entry_t devfs_entries[] = {
     {"stdin", VFS_NODE_TTY, 0, 0},
     {"tty0", VFS_NODE_TTY, 0, 0},
+    {"fb0", VFS_NODE_CHARDEV, 0, "fb0"},
+    {"fb0info", VFS_NODE_CHARDEV, 0, "fb0info"},
+    {"kbd", VFS_NODE_CHARDEV, 0, "kbd"},
+    {"mouse", VFS_NODE_CHARDEV, 0, "mouse"},
 };
 const uint32_t devfs_entry_count =
     sizeof(devfs_entries) / sizeof(devfs_entries[0]);
@@ -246,6 +250,31 @@ void vfs_blockdev_stat(vfs_stat_t *st, uint32_t size)
 	st->mtime = 0;
 }
 
+static int devfs_fill_pty_node(const char *relpath, vfs_node_t *node_out)
+{
+	if (k_strcmp(relpath, "ptmx") == 0) {
+		node_out->type = VFS_NODE_PTYMASTER;
+		return 0;
+	}
+	if (relpath[0] == 'p' && relpath[1] == 't' && relpath[2] == 's') {
+		const char *digits = relpath + 3;
+		uint32_t n = 0;
+
+		if (*digits == '\0')
+			return -1;
+		while (*digits) {
+			if (*digits < '0' || *digits > '9')
+				return -1;
+			n = n * 10u + (uint32_t)(*digits - '0');
+			digits++;
+		}
+		node_out->type = VFS_NODE_PTYSLAVE;
+		node_out->dev_id = n;
+		return 0;
+	}
+	return -1;
+}
+
 int devfs_fill_node(const char *relpath, vfs_node_t *node_out)
 {
 	if (!node_out)
@@ -279,6 +308,9 @@ int devfs_fill_node(const char *relpath, vfs_node_t *node_out)
 		}
 		return 0;
 	}
+
+	if (devfs_fill_pty_node(relpath, node_out) == 0)
+		return 0;
 
 	if (devfs_fill_blockdev_node(relpath, node_out) == 0)
 		return 0;

@@ -64,7 +64,7 @@ lib/libc.a: $(C_RUNTIME_LIB_OBJS)
 
 # One pattern rule handles every user-program .o target.
 %.o: %.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) -I../shared -c -o $@ $<
 
 lib/cxxrt.o: lib/cxxrt.cpp lib/malloc.h lib/syscall.h
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
@@ -83,6 +83,30 @@ $(C_PROGS): %: %.o $(C_LINK_OBJS) user.ld
 
 $(CXX_PROGS): %: %.o $(CXX_LINK_OBJS) user.ld
 	$(LD) -m elf_i386 -T user.ld -o $@ $(CXX_LINK_OBJS) $@.o $(CXXLIBS)
+
+# desktop carries an embedded bitmap font and a vendored JPEG decoder
+# in separate translation units; override the single-object C link
+# rule to pull all four objects in.  nanojpeg.c stays unmodified
+# under the original KeyJ Research License — the shim provides the
+# allocator hooks the decoder calls when NJ_USE_LIBC is 0.
+DESKTOP_NANOJPEG_OBJS = lib/nanojpeg/nanojpeg.o lib/nanojpeg/nanojpeg_shim.o
+
+lib/nanojpeg/nanojpeg.o: lib/nanojpeg/nanojpeg.c lib/nanojpeg/nanojpeg.h
+	$(CC) $(CFLAGS) -DNJ_USE_LIBC=0 '-DNULL=((void*)0)' -Wno-unused-function -Wno-sign-compare -Wno-misleading-indentation -Wno-unused-parameter -Wno-implicit-fallthrough -c -o $@ $<
+
+lib/nanojpeg/nanojpeg_shim.o: lib/nanojpeg/nanojpeg_shim.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# The keymap source lives at the top-level shared/ directory so the
+# kernel's VT keyboard handler and this user-space compositor build
+# from the exact same translation logic.  We give the compiled object
+# a unique path under the user tree so it doesn't collide with the
+# kernel's build of the same source.
+desktop_kbdmap.o: ../shared/kbdmap.c ../shared/kbdmap.h
+	$(CC) $(CFLAGS) -I../shared -c -o $@ $<
+
+desktop: desktop.o desktop_font.o desktop_kbdmap.o $(DESKTOP_NANOJPEG_OBJS) $(C_LINK_OBJS) user.ld
+	$(LD) -m elf_i386 -T user.ld -o $@ $(C_LINK_OBJS) desktop.o desktop_font.o desktop_kbdmap.o $(DESKTOP_NANOJPEG_OBJS)
 
 clean:
 	find . -name '*.o' -delete

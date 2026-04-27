@@ -106,6 +106,7 @@ typedef struct {
 #define PROT_WRITE 0x2u
 #define PROT_EXEC 0x4u
 
+#define MAP_SHARED 0x01u
 #define MAP_PRIVATE 0x02u
 #define MAP_ANONYMOUS 0x20u
 #define MAP_ANON MAP_ANONYMOUS

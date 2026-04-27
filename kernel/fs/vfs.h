@@ -47,6 +47,8 @@ typedef enum {
 	VFS_NODE_SYMLINK = 6,
 	VFS_NODE_BLOCKDEV = 7,
 	VFS_NODE_SYSFILE = 8,
+	VFS_NODE_PTYMASTER = 9,
+	VFS_NODE_PTYSLAVE = 10,
 } vfs_node_type_t;
 
 /*

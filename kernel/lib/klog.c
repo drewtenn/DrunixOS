@@ -9,8 +9,6 @@
 #include "kprintf.h"
 #include "kstring.h"
 
-extern int desktop_console_mirror_enabled(void) __attribute__((weak));
-
 #define KLOG_RING_CAP 96u
 #define KLOG_TAG_CAP 16u
 #define KLOG_MSG_CAP 96u
@@ -37,8 +35,7 @@ static void klog_puts(const char *s)
 {
 	if (!s)
 		return;
-	if (!desktop_console_mirror_enabled || desktop_console_mirror_enabled())
-		arch_console_write(s, k_strlen(s));
+	arch_console_write(s, k_strlen(s));
 	klog_debugcon_puts(s);
 }
 

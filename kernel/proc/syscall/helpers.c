@@ -11,6 +11,7 @@
 #include "console/runtime.h"
 #include "pipe.h"
 #include "process.h"
+#include "pty.h"
 #include "sched.h"
 #include "tty.h"
 #include "vfs.h"
@@ -90,6 +91,11 @@ void fd_close_one(process_t *proc, unsigned fd)
 				pipe_free((int)fh->u.pipe.pipe_idx);
 		}
 	}
+
+	if (fh->type == FD_TYPE_PTY_MASTER)
+		pty_release_master(fh->u.pty.pty_idx);
+	else if (fh->type == FD_TYPE_PTY_SLAVE)
+		pty_release_slave(fh->u.pty.pty_idx);
 
 	fh->type = FD_TYPE_NONE;
 	fh->writable = 0;

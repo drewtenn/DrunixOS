@@ -10,6 +10,9 @@
 #include "arch.h"
 #include "blkdev.h"
 #include "bcache.h"
+#include "fbdev.h"
+#include "framebuffer.h"
+#include "inputdev.h"
 #include "gdt.h"
 #include "idt.h"
 #include "sse.h"
@@ -19,7 +22,7 @@
 #include "fs.h"
 #include "ext3.h"
 #include "vfs.h"
-#include "desktop.h"
+#include "display.h"
 #include "framebuffer.h"
 #include "framebuffer_multiboot.h"
 #include "keyboard.h"
@@ -77,7 +80,6 @@ static framebuffer_info_t boot_framebuffer;
 static uint32_t boot_fb_back_buffer[FB_REQUEST_WIDTH * FB_REQUEST_HEIGHT]
     __attribute__((aligned(16)));
 static gui_display_t boot_display;
-static desktop_state_t boot_desktop;
 static int boot_nodesktop;
 static int boot_vgatext;
 static framebuffer_info_t *legacy_console_fb;
@@ -518,6 +520,16 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
 		klog("BOOT", "framebuffer map failed, using VGA fallback");
 		have_boot_framebuffer = 0;
 	}
+	if (have_boot_framebuffer) {
+		if (fbdev_init(&boot_framebuffer) == 0)
+			klog("BOOT", "/dev/fb0 published");
+		else
+			klog("BOOT", "fbdev_init failed");
+	}
+	if (kbdev_init() == 0)
+		klog("BOOT", "/dev/kbd published");
+	if (mousedev_init() == 0)
+		klog("BOOT", "/dev/mouse published");
 	kheap_init();
 	klog_uint("HEAP", "after kheap_init", kheap_free_bytes());
 	scrollback_init();
@@ -633,7 +645,13 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
 	sched_init();
 	klog("BOOT", "scheduler ready");
 
-	klog("BOOT", "initializing desktop");
+	/*
+	 * The desktop now lives in user space (bin/desktop, launched as
+	 * INIT_PROGRAM below).  Here we only set up the legacy text
+	 * console so early boot logs and any pre-init failure messages
+	 * have somewhere to go before the user-space compositor starts
+	 * mapping /dev/fb0.
+	 */
 	gui_cell_t *cells = boot_vga_cells;
 	int cols = MAX_COLS;
 	int rows = MAX_ROWS;
@@ -646,68 +664,19 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
 	}
 
 	gui_display_init(&boot_display, cells, cols, rows, WHITE_ON_BLACK);
-#ifdef DRUNIX_NO_DESKTOP
-	int desktop_requested = 0;
-#else
-	int desktop_requested = !boot_nodesktop;
-#endif
 
-	if (!desktop_requested && have_boot_framebuffer) {
+	if (have_boot_framebuffer) {
 		legacy_console_set_framebuffer(&boot_framebuffer);
 		klog("BOOT", "legacy console framebuffer enabled");
 		klog_uint("BOOT", "framebuffer console cols", (uint32_t)console_cols);
 		klog_uint("BOOT", "framebuffer console rows", (uint32_t)console_rows);
 	}
-
-#ifdef DRUNIX_NO_DESKTOP
-	klog("BOOT", "desktop disabled at build time (DRUNIX_NO_DESKTOP)");
-#else
-	if (boot_nodesktop)
-		klog("BOOT", "desktop disabled via cmdline (nodesktop)");
-#endif
 #ifdef DRUNIX_VGA_TEXT
 	klog("BOOT", "VGA text console forced at build time (DRUNIX_VGA_TEXT)");
 #else
 	if (boot_vgatext)
 		klog("BOOT", "VGA text console forced via cmdline (vgatext)");
 #endif
-	if (desktop_requested)
-		desktop_init(&boot_desktop, &boot_display);
-	if (desktop_requested && desktop_is_active()) {
-		if (!have_boot_framebuffer) {
-			desktop_set_presentation_target(&boot_desktop, VIDEO_ADDRESS);
-			klog("BOOT", "desktop VGA fallback enabled");
-		} else {
-			desktop_set_framebuffer_target(&boot_desktop, &boot_framebuffer);
-			/*
-             * Attach the off-screen back buffer. The framebuffer primitives
-             * will transparently draw into it and we'll flush dirty rects
-             * to the visible framebuffer via framebuffer_present_rect().
-             * If the firmware gave us a framebuffer larger than we reserved
-             * space for, attach fails and we fall back to direct drawing —
-             * which still works but without the flicker-free guarantees.
-             */
-			if (framebuffer_attach_back_buffer(&boot_framebuffer,
-			                                   boot_fb_back_buffer,
-			                                   FB_REQUEST_WIDTH * 4u,
-			                                   sizeof(boot_fb_back_buffer)) ==
-			    0) {
-				klog("BOOT", "desktop framebuffer back buffer attached");
-			} else {
-				klog("BOOT",
-				     "desktop framebuffer back buffer unavailable, "
-				     "drawing direct");
-			}
-			klog("BOOT", "desktop framebuffer enabled");
-			klog_uint("BOOT", "framebuffer desktop cols", (uint32_t)cols);
-			klog_uint("BOOT", "framebuffer desktop rows", (uint32_t)rows);
-		}
-		desktop_open_shell_window(&boot_desktop);
-		desktop_render(&boot_desktop);
-		klog("BOOT", "desktop enabled");
-	} else {
-		klog("BOOT", "desktop unavailable, using legacy console");
-	}
 
 #ifndef DRUNIX_INIT_PROGRAM
 #define DRUNIX_INIT_PROGRAM "bin/shell"
@@ -722,7 +691,7 @@ void start_kernel(uint32_t magic, multiboot_info_t *mbi)
 	int init_pid = boot_launch_init_process(DRUNIX_INIT_PROGRAM,
 	                                        DRUNIX_INIT_ARG0,
 	                                        DRUNIX_INIT_ENV0,
-	                                        BOOT_LAUNCH_INIT_ATTACH_DESKTOP);
+	                                        BOOT_LAUNCH_INIT_STANDALONE);
 	if (init_pid < 0) {
 		klog("PROC", "boot_launch_init_process failed");
 		for (;;)

@@ -5,95 +5,20 @@
 #include "kheap.h"
 #include "kprintf.h"
 #include "klog.h"
-#include "desktop.h"
 #include "process.h"
 #include "sched.h"
 #include "vfs.h"
-
-int __attribute__((weak)) desktop_is_active(void)
-{
-	return 0;
-}
-
-desktop_state_t *__attribute__((weak)) desktop_global(void)
-{
-	return 0;
-}
-
-void __attribute__((weak)) desktop_attach_shell_pid(desktop_state_t *desktop,
-                                                   uint32_t pid)
-{
-	(void)desktop;
-	(void)pid;
-}
-
-void __attribute__((weak)) desktop_render(desktop_state_t *desktop)
-{
-	(void)desktop;
-}
-
-uint32_t __attribute__((weak)) desktop_shell_pid(const desktop_state_t *desktop)
-{
-	(void)desktop;
-	return 0;
-}
-
-int __attribute__((weak)) desktop_process_owns_shell(desktop_state_t *desktop,
-                                                     uint32_t pid,
-                                                     uint32_t pgid)
-{
-	(void)desktop;
-	(void)pid;
-	(void)pgid;
-	return 0;
-}
-
-int __attribute__((weak)) desktop_write_console_output(desktop_state_t *desktop,
-                                                       const char *buf,
-                                                       uint32_t len)
-{
-	(void)desktop;
-	(void)buf;
-	(void)len;
-	return 0;
-}
-
-void __attribute__((weak)) desktop_begin_console_batch(desktop_state_t *desktop)
-{
-	(void)desktop;
-}
-
-void __attribute__((weak)) desktop_end_console_batch(desktop_state_t *desktop)
-{
-	(void)desktop;
-}
-
-int __attribute__((weak)) desktop_clear_console(desktop_state_t *desktop)
-{
-	(void)desktop;
-	return 0;
-}
-
-int __attribute__((weak)) desktop_scroll_console(desktop_state_t *desktop,
-                                                int rows)
-{
-	(void)desktop;
-	(void)rows;
-	return 0;
-}
-
-int __attribute__((weak)) desktop_console_mirror_enabled(void)
-{
-	return 1;
-}
 
 static process_t boot_init_proc;
 
 static const char *boot_launch_kind_label(int launch_mode_flag)
 {
-	/* The flag controls whether the helper attaches the launched PID to the
-	 * active desktop after PID creation. */
-	return launch_mode_flag ? "desktop-attached" : "standalone";
+	/*
+	 * Historically the flag selected desktop attachment after PID
+	 * creation; with the desktop in user space the launcher just
+	 * starts the binary and the label is informational.
+	 */
+	return launch_mode_flag ? "desktop-launcher" : "standalone";
 }
 
 int boot_launch_init_process(const char *path,
@@ -137,14 +62,6 @@ int boot_launch_init_process(const char *path,
 		k_snprintf(log_line, sizeof(log_line), "%s launch: sched_add failed", launch_kind);
 		klog("PROC", log_line);
 		return BOOT_LAUNCH_INIT_ERR_SCHED_ADD;
-	}
-	if (launch_mode_flag && desktop_is_active()) {
-		desktop_state_t *desktop = desktop_global();
-
-		if (desktop) {
-			desktop_attach_shell_pid(desktop, (uint32_t)boot_init_proc.pid);
-			desktop_render(desktop);
-		}
 	}
 	return (int)boot_init_proc.pid;
 }

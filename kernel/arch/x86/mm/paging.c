@@ -352,7 +352,11 @@ int paging_unmap_page(uint32_t pd_phys, uint32_t virt)
 	if (paging_lookup_slot(pd_phys, virt, &pte) != 0 || (*pte & PG_PRESENT) == 0)
 		return -1;
 
-	if ((pd[pdi] & PG_USER) && (*pte & PG_USER))
+	/*
+	 * Device-mapped (PG_IO) frames are not part of the PMM free pool;
+	 * decref'ing them would corrupt the PMM's per-frame refcounts.
+	 */
+	if ((pd[pdi] & PG_USER) && (*pte & PG_USER) && (*pte & PG_IO) == 0)
 		pmm_decref(paging_entry_addr(*pte));
 
 	*pte = 0;

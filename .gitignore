@@ -13,6 +13,7 @@ iso/boot/grub/grub.cfg
 compile_commands.json
 user/lib/libc.a
 .worktrees/
+user/desktop
 user/date
 user/cat
 user/chello

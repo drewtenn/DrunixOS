@@ -28,21 +28,33 @@ DUMPE2FS ?= $(if $(wildcard $(E2FSPROGS_SBIN)/dumpe2fs),$(E2FSPROGS_SBIN)/dumpe2
 DEBUGFS ?= $(if $(wildcard $(E2FSPROGS_SBIN)/debugfs),$(E2FSPROGS_SBIN)/debugfs,debugfs)
 -include kernel/arch/$(ARCH)/arch.mk
 CFLAGS  := -m32 -g -ffreestanding -mno-sse -mno-sse2 -mno-mmx -msoft-float -Wstack-usage=1024 -Werror
-INC     := -I kernel -I kernel/arch -I kernel/arch/$(ARCH) -I kernel/arch/$(ARCH)/boot -I kernel/arch/$(ARCH)/mm -I kernel/arch/$(ARCH)/proc -I kernel/arch/x86/platform/pc -I kernel/mm -I kernel/drivers -I kernel/blk -I kernel/proc -I kernel/fs -I kernel/lib -I kernel/gui
+INC     := -I kernel -I kernel/arch -I kernel/arch/$(ARCH) -I kernel/arch/$(ARCH)/boot -I kernel/arch/$(ARCH)/mm -I kernel/arch/$(ARCH)/proc -I kernel/arch/x86/platform/pc -I kernel/mm -I kernel/drivers -I kernel/blk -I kernel/proc -I kernel/fs -I kernel/lib -I kernel/gui -I shared
 DEPFLAGS := -MMD -MP
 MOUSE_SPEED ?= 4
 ARM64_SMOKE_FALLBACK ?= 0
 ARM64_HALT_TEST ?= 0
 X86_SERIAL_CONSOLE ?= 0
-ifeq ($(ARCH),arm64)
+
+#Build with NO_DESKTOP = 1 to skip desktop init entirely and boot straight to
+#the legacy console.The runtime "nodesktop" cmdline flag(set via grub) is
+#still honored even when the desktop is compiled in.
+ifneq ($(origin no_desktop),undefined)
+NO_DESKTOP ?= $(no_desktop)
+endif
+NO_DESKTOP ?= 1
+
+ifeq ($(NO_DESKTOP),1)
 INIT_PROGRAM ?= bin/shell
 INIT_ARG0 ?= shell
+INIT_ENV0 ?= PATH=/bin
+else
+INIT_PROGRAM ?= bin/desktop
+INIT_ARG0 ?= desktop
 INIT_ENV0 ?= PATH=/usr/bin:/i686-linux-musl/bin:/bin
+endif
+ifeq ($(ARCH),arm64)
 ROOT_FS ?= ext3
 else
-INIT_PROGRAM ?= bin/shell
-INIT_ARG0 ?= shell
-INIT_ENV0 ?= PATH=/usr/bin:/i686-linux-musl/bin:/bin
 ROOT_FS ?= ext3
 endif
 CFLAGS += -DMOUSE_FRAMEBUFFER_PIXEL_SCALE=$(MOUSE_SPEED)
@@ -66,14 +78,6 @@ ARM_CFLAGS += -DDRUNIX_ARM64_HALT_TEST=$(ARM64_HALT_TEST)
 ARM_CFLAGS += -DDRUNIX_ARM64_VGA=1
 endif
 NASMFLAGS := -Werror
-
-#Build with NO_DESKTOP = 1 to skip desktop init entirely and boot straight to
-#the legacy console.The runtime "nodesktop" cmdline flag(set via grub) is
-#still honored even when the desktop is compiled in.
-ifneq ($(origin no_desktop),undefined)
-NO_DESKTOP ?= $(no_desktop)
-endif
-NO_DESKTOP ?= 1
 ifeq ($(NO_DESKTOP),1)
 CFLAGS += -DDRUNIX_NO_DESKTOP
 endif
@@ -174,9 +178,13 @@ endif
 endif
 USER_PROGS    := $(PROGS)
 USER_BINS     := $(addprefix user/,$(USER_PROGS))
+# bin/desktop is the user-space compositor.  Even though it is listed in
+# $(PROGS) the foreach below already drops it on the disk at /bin/desktop;
+# no separate disk-files entry is required.
 DISK_FILES    := $(foreach prog,$(USER_PROGS),user/$(prog) bin/$(prog)) \
                  tools/hello.txt hello.txt \
                  tools/readme.txt readme.txt \
+                 tools/wallpaper.jpg etc/wallpaper.jpg \
                  $(BUSYBOX_DISK_FILES) \
                  $(EXTRA_DISK_FILES)
 LOG_DIR       := logs
@@ -308,24 +316,24 @@ user/lib/libc.a user/lib/tcc_crt0.o:
 # as DUFS instead.
 ifeq ($(ARCH),arm64)
 ifeq ($(ROOT_FS),dufs)
-disk.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf $(ARM_BUSYBOX_ROOTFS_DEPS) tools/hello.txt tools/readme.txt tools/mkfs.py .disk-sectors-flag .include-busybox-flag
+disk.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf $(ARM_BUSYBOX_ROOTFS_DEPS) tools/hello.txt tools/readme.txt tools/wallpaper.jpg tools/mkfs.py .disk-sectors-flag .include-busybox-flag
 	$(PYTHON) tools/mkfs.py $@ $(FS_SECTORS) $(ARM_USER_ROOTFS_FILES)
 $(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
 	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0xDA
 else
-disk.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf $(ARM_BUSYBOX_ROOTFS_DEPS) tools/hello.txt tools/readme.txt tools/mkext3.py .disk-sectors-flag .include-busybox-flag
+disk.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf $(ARM_BUSYBOX_ROOTFS_DEPS) tools/hello.txt tools/readme.txt tools/wallpaper.jpg tools/mkext3.py .disk-sectors-flag .include-busybox-flag
 	$(PYTHON) tools/mkext3.py $@ $(FS_SECTORS) $(ARM_USER_ROOTFS_FILES)
 $(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
 	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0x83
 endif
 else
 ifeq ($(ROOT_FS),dufs)
-disk.fs: $(USER_BINS) $(BUSYBOX_DISK_DEPS) tools/hello.txt tools/readme.txt tools/mkfs.py .disk-sectors-flag .include-busybox-flag
+disk.fs: $(USER_BINS) $(BUSYBOX_DISK_DEPS) tools/hello.txt tools/readme.txt tools/wallpaper.jpg tools/mkfs.py .disk-sectors-flag .include-busybox-flag
 	$(PYTHON) tools/mkfs.py $@ $(FS_SECTORS) $(DISK_FILES)
 $(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
 	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0xDA
 else
-disk.fs: $(USER_BINS) $(BUSYBOX_DISK_DEPS) tools/hello.txt tools/readme.txt tools/mkext3.py .disk-sectors-flag .include-busybox-flag
+disk.fs: $(USER_BINS) $(BUSYBOX_DISK_DEPS) tools/hello.txt tools/readme.txt tools/wallpaper.jpg tools/mkext3.py .disk-sectors-flag .include-busybox-flag
 	$(PYTHON) tools/mkext3.py $@ $(FS_SECTORS) $(DISK_FILES)
 $(ROOT_DISK_IMG): disk.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
 	$(PYTHON) tools/wrap_mbr.py disk.fs $@ $(PARTITION_START) $(DISK_SECTORS) 0x83

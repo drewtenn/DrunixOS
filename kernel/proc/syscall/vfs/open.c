@@ -14,6 +14,7 @@
 #include "klog.h"
 #include "kstring.h"
 #include "process.h"
+#include "pty.h"
 #include "sched.h"
 #include "uaccess.h"
 #include "vfs.h"
@@ -161,6 +162,28 @@ static int fd_install_vfs_node(process_t *proc,
 		proc_fd_entries(proc)[fd]
 		    .u.chardev
 		    .name[sizeof(proc_fd_entries(proc)[fd].u.chardev.name) - 1] = '\0';
+		proc_fd_entries(proc)[fd].u.chardev.offset = 0;
+		return fd;
+
+	case VFS_NODE_PTYMASTER: {
+		int idx = pty_alloc_master();
+
+		if (idx < 0) {
+			proc_fd_entries(proc)[fd].type = FD_TYPE_NONE;
+			return -1;
+		}
+		proc_fd_entries(proc)[fd].type = FD_TYPE_PTY_MASTER;
+		proc_fd_entries(proc)[fd].u.pty.pty_idx = (uint32_t)idx;
+		return fd;
+	}
+
+	case VFS_NODE_PTYSLAVE:
+		if (pty_open_slave(node->dev_id) != 0) {
+			proc_fd_entries(proc)[fd].type = FD_TYPE_NONE;
+			return -1;
+		}
+		proc_fd_entries(proc)[fd].type = FD_TYPE_PTY_SLAVE;
+		proc_fd_entries(proc)[fd].u.pty.pty_idx = node->dev_id;
 		return fd;
 
 	default:
@@ -231,7 +254,8 @@ syscall_open_resolved_path(process_t *cur, const char *rpath, uint32_t flags)
 	if (node.type != VFS_NODE_FILE && node.type != VFS_NODE_DIR &&
 	    node.type != VFS_NODE_BLOCKDEV && node.type != VFS_NODE_SYSFILE &&
 	    node.type != VFS_NODE_PROCFILE && node.type != VFS_NODE_TTY &&
-	    node.type != VFS_NODE_CHARDEV)
+	    node.type != VFS_NODE_CHARDEV && node.type != VFS_NODE_PTYMASTER &&
+	    node.type != VFS_NODE_PTYSLAVE)
 		return -1;
 
 	if ((flags & LINUX_O_DIRECTORY) && node.type != VFS_NODE_DIR)

@@ -16,6 +16,7 @@
 #include "pipe.h"
 #include "process.h"
 #include "procfs.h"
+#include "pty.h"
 #include "sched.h"
 #include "tty.h"
 #include "uaccess.h"
@@ -134,6 +135,37 @@ static uint32_t syscall_write_fd(uint32_t fd, uint32_t user_buf, uint32_t count)
 		return written;
 	}
 
+	if (fh->type == FD_TYPE_PTY_MASTER || fh->type == FD_TYPE_PTY_SLAVE) {
+		uint8_t kbuf[USER_IO_CHUNK];
+		uint32_t written = 0;
+
+		if (count == 0)
+			return 0;
+		if (uaccess_prepare(cur, user_buf, count, 0) != 0)
+			return (uint32_t)-1;
+
+		while (written < count) {
+			uint32_t chunk = count - written;
+			int n;
+
+			if (chunk > USER_IO_CHUNK)
+				chunk = USER_IO_CHUNK;
+			if (uaccess_copy_from_user(
+			        cur, kbuf, user_buf + written, chunk) != 0)
+				return written ? written : (uint32_t)-1;
+			if (fh->type == FD_TYPE_PTY_MASTER)
+				n = pty_master_write(fh->u.pty.pty_idx, kbuf, chunk);
+			else
+				n = pty_slave_write(fh->u.pty.pty_idx, kbuf, chunk);
+			if (n <= 0)
+				return written ? written : (uint32_t)-1;
+			written += (uint32_t)n;
+			if ((uint32_t)n < chunk)
+				break;
+		}
+		return written;
+	}
+
 	if (fh->type == FD_TYPE_PIPE_WRITE) {
 		pipe_buf_t *pb = pipe_get((int)fh->u.pipe.pipe_idx);
 		uint8_t kbuf[USER_IO_CHUNK];
@@ -247,6 +279,8 @@ static uint32_t syscall_read_fd(uint32_t fd, uint32_t user_buf, uint32_t count)
 		case FD_TYPE_PIPE_READ:
 		case FD_TYPE_FILE:
 		case FD_TYPE_SYSFILE:
+		case FD_TYPE_PTY_MASTER:
+		case FD_TYPE_PTY_SLAVE:
 			return 0;
 		default:
 			return (uint32_t)-1;
@@ -272,17 +306,57 @@ static uint32_t syscall_read_fd(uint32_t fd, uint32_t user_buf, uint32_t count)
 
 	if (fh->type == FD_TYPE_CHARDEV) {
 		const chardev_ops_t *dev = chardev_get(fh->u.chardev.name);
-		char c = 0;
 
 		if (!dev)
 			return (uint32_t)-1;
-		if (uaccess_prepare(cur, user_buf, 1, 1) != 0)
+
+		if (dev->read) {
+			uint8_t kbuf[USER_IO_CHUNK];
+			uint32_t chunk = count > USER_IO_CHUNK ? USER_IO_CHUNK : count;
+			int n;
+
+			if (uaccess_prepare(cur, user_buf, chunk, 1) != 0)
+				return (uint32_t)-1;
+			n = dev->read(fh->u.chardev.offset, kbuf, chunk);
+			if (n <= 0)
+				return (uint32_t)n;
+			if (uaccess_copy_to_user(cur, user_buf, kbuf, (uint32_t)n) != 0)
+				return (uint32_t)-1;
+			fh->u.chardev.offset += (uint32_t)n;
+			return (uint32_t)n;
+		}
+
+		if (dev->read_char) {
+			char c = 0;
+
+			if (uaccess_prepare(cur, user_buf, 1, 1) != 0)
+				return (uint32_t)-1;
+			while ((c = dev->read_char()) == 0)
+				arch_idle_wait();
+			if (uaccess_copy_to_user(cur, user_buf, &c, 1) != 0)
+				return (uint32_t)-1;
+			return 1;
+		}
+
+		return (uint32_t)-1;
+	}
+
+	if (fh->type == FD_TYPE_PTY_MASTER || fh->type == FD_TYPE_PTY_SLAVE) {
+		uint8_t kbuf[USER_IO_CHUNK];
+		uint32_t chunk = count > USER_IO_CHUNK ? USER_IO_CHUNK : count;
+		int n;
+
+		if (uaccess_prepare(cur, user_buf, chunk, 1) != 0)
 			return (uint32_t)-1;
-		while ((c = dev->read_char()) == 0)
-			arch_idle_wait();
-		if (uaccess_copy_to_user(cur, user_buf, &c, 1) != 0)
+		if (fh->type == FD_TYPE_PTY_MASTER)
+			n = pty_master_read(fh->u.pty.pty_idx, kbuf, chunk);
+		else
+			n = pty_slave_read(fh->u.pty.pty_idx, kbuf, chunk);
+		if (n <= 0)
+			return (uint32_t)n;
+		if (uaccess_copy_to_user(cur, user_buf, kbuf, (uint32_t)n) != 0)
 			return (uint32_t)-1;
-		return 1;
+		return (uint32_t)n;
 	}
 
 	if (fh->type == FD_TYPE_PIPE_READ) {

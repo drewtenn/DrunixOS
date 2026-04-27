@@ -18,6 +18,12 @@
 #define PG_PCD 0x10
 #define PG_PAT_4K 0x80 /* Bit 7 on a 4 KB PTE selects the upper PAT half */
 #define PG_COW (1u << 9)
+/*
+ * PG_IO marks an entry whose physical frame is device memory (MMIO),
+ * not a PMM-managed page. paging_unmap_page() must not decref such
+ * frames. Stored in one of the OS-available bits (10) of the PTE.
+ */
+#define PG_IO (1u << 10)
 
 #define PG_ENTRY_ADDR_MASK 0xFFFFF000u
 #define PG_ENTRY_FLAGS_MASK 0x00000FFFu

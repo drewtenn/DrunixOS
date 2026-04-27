@@ -9,6 +9,7 @@
 #include "syscall_internal.h"
 #include "syscall_linux.h"
 #include "arch.h"
+#include "chardev.h"
 #include "kheap.h"
 #include "klog.h"
 #include "kstring.h"
@@ -119,6 +120,74 @@ static void syscall_apply_mprotect(process_t *proc,
 
 		(void)arch_mm_map(aspace, page, mapping.phys_addr, desired_flags);
 	}
+}
+
+static int syscall_mmap_chardev(process_t *cur,
+                                uint32_t hint,
+                                uint32_t length,
+                                uint32_t prot,
+                                uint32_t fd,
+                                uint32_t file_offset,
+                                uint32_t *addr_out)
+{
+	file_handle_t *fh;
+	const chardev_ops_t *dev;
+	uint32_t map_len;
+	uint32_t map_addr = 0;
+	uint64_t base_phys = 0;
+	uint32_t vma_flags;
+	uint32_t map_flags;
+	arch_aspace_t aspace;
+
+	if (!cur || !addr_out || fd >= MAX_FDS || length == 0)
+		return -1;
+	if (file_offset & (PAGE_SIZE - 1u))
+		return -1;
+
+	fh = &proc_fd_entries(cur)[fd];
+	if (fh->type != FD_TYPE_CHARDEV)
+		return -1;
+
+	dev = chardev_get(fh->u.chardev.name);
+	if (!dev || !dev->mmap_phys)
+		return -1;
+
+	map_len = (length + PAGE_SIZE - 1u) & ~(PAGE_SIZE - 1u);
+	if (map_len == 0)
+		return -1;
+
+	if (dev->mmap_phys(file_offset, map_len, prot, &base_phys) != 0)
+		return -1;
+	if (base_phys & (PAGE_SIZE - 1u))
+		return -1;
+
+	vma_flags = prot_to_vma_flags(prot) & ~(uint32_t)VMA_FLAG_ANON;
+	if (vma_map_anonymous(cur, hint, map_len, vma_flags, &map_addr) != 0)
+		return -1;
+
+	aspace = (arch_aspace_t)cur->pd_phys;
+	map_flags = ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ | ARCH_MM_MAP_IO;
+	if (prot_has_user_access(prot))
+		map_flags |= ARCH_MM_MAP_USER;
+	if (prot & LINUX_PROT_WRITE)
+		map_flags |= ARCH_MM_MAP_WRITE;
+
+	for (uint32_t off = 0; off < map_len; off += PAGE_SIZE) {
+		uint64_t phys = base_phys + off;
+
+		if (phys > UINT32_MAX)
+			goto fail;
+		if (arch_mm_map(aspace, map_addr + off, phys, map_flags) != 0)
+			goto fail;
+	}
+
+	*addr_out = map_addr;
+	return 0;
+
+fail:
+	syscall_unmap_user_range(cur, map_addr, map_addr + map_len);
+	(void)vma_unmap_range(cur, map_addr, map_addr + map_len);
+	return -1;
 }
 
 static int syscall_mmap_private_file(process_t *cur,
@@ -285,17 +354,39 @@ uint32_t SYSCALL_NOINLINE syscall_case_mmap(uint32_t ebx)
 			                      &map_addr) != 0)
 				return (uint32_t)-1;
 		} else {
-			if ((args.flags & ~LINUX_MAP_PRIVATE) != 0 ||
-			    (args.flags & LINUX_MAP_PRIVATE) == 0)
+			file_handle_t *fh;
+			int is_chardev;
+
+			if (args.fd >= MAX_FDS)
 				return (uint32_t)-1;
-			if (syscall_mmap_private_file(cur,
-			                              args.addr,
-			                              args.length,
-			                              args.prot,
-			                              args.fd,
-			                              args.offset,
-			                              &map_addr) != 0)
-				return (uint32_t)-1;
+			fh = &proc_fd_entries(cur)[args.fd];
+			is_chardev = (fh->type == FD_TYPE_CHARDEV);
+
+			if (is_chardev) {
+				if ((args.flags & ~LINUX_MAP_SHARED) != 0 ||
+				    (args.flags & LINUX_MAP_SHARED) == 0)
+					return (uint32_t)-1;
+				if (syscall_mmap_chardev(cur,
+				                         args.addr,
+				                         args.length,
+				                         args.prot,
+				                         args.fd,
+				                         args.offset,
+				                         &map_addr) != 0)
+					return (uint32_t)-1;
+			} else {
+				if ((args.flags & ~LINUX_MAP_PRIVATE) != 0 ||
+				    (args.flags & LINUX_MAP_PRIVATE) == 0)
+					return (uint32_t)-1;
+				if (syscall_mmap_private_file(cur,
+				                              args.addr,
+				                              args.length,
+				                              args.prot,
+				                              args.fd,
+				                              args.offset,
+				                              &map_addr) != 0)
+					return (uint32_t)-1;
+			}
 		}
 		return map_addr;
 	}
@@ -335,14 +426,41 @@ uint32_t SYSCALL_NOINLINE syscall_case_mmap2(uint32_t ebx,
 			        cur, ebx, ecx, prot_to_vma_flags(edx), &map_addr) != 0)
 				return (uint32_t)-1;
 		} else {
-			if ((esi & ~LINUX_MAP_PRIVATE) != 0 ||
-			    (esi & LINUX_MAP_PRIVATE) == 0)
+			file_handle_t *fh;
+			int is_chardev;
+
+			if (edi >= MAX_FDS)
 				return (uint32_t)-1;
+			fh = &proc_fd_entries(cur)[edi];
+			is_chardev = (fh->type == FD_TYPE_CHARDEV);
 			if (ebp > UINT32_MAX / PAGE_SIZE)
 				return (uint32_t)-1;
-			if (syscall_mmap_private_file(
-			        cur, ebx, ecx, edx, edi, ebp * PAGE_SIZE, &map_addr) != 0)
-				return (uint32_t)-1;
+
+			if (is_chardev) {
+				if ((esi & ~LINUX_MAP_SHARED) != 0 ||
+				    (esi & LINUX_MAP_SHARED) == 0)
+					return (uint32_t)-1;
+				if (syscall_mmap_chardev(cur,
+				                         ebx,
+				                         ecx,
+				                         edx,
+				                         edi,
+				                         ebp * PAGE_SIZE,
+				                         &map_addr) != 0)
+					return (uint32_t)-1;
+			} else {
+				if ((esi & ~LINUX_MAP_PRIVATE) != 0 ||
+				    (esi & LINUX_MAP_PRIVATE) == 0)
+					return (uint32_t)-1;
+				if (syscall_mmap_private_file(cur,
+				                              ebx,
+				                              ecx,
+				                              edx,
+				                              edi,
+				                              ebp * PAGE_SIZE,
+				                              &map_addr) != 0)
+					return (uint32_t)-1;
+			}
 		}
 		return map_addr;
 	}

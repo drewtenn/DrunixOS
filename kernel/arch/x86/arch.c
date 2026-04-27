@@ -73,6 +73,8 @@ static uint32_t arch_mm_to_paging_flags(uint32_t flags)
 		paging_flags |= PG_USER;
 	if (flags & ARCH_MM_MAP_COW)
 		paging_flags |= PG_COW;
+	if (flags & ARCH_MM_MAP_IO)
+		paging_flags |= PG_IO;
 
 	return paging_flags;
 }

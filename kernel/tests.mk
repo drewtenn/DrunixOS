@@ -11,8 +11,7 @@ KTEST_SHARED_OBJS = kernel/test/ktest.o \
 KTEST_X86_OBJS = kernel/arch/x86/test/test_pmm.o \
                  kernel/arch/x86/test/test_arch_x86.o \
                  kernel/arch/x86/test/test_process.o \
-                 kernel/arch/x86/test/test_uaccess.o \
-                 kernel/arch/x86/test/test_desktop.o
+                 kernel/arch/x86/test/test_uaccess.o
 
 KTEST_ARM64_OBJS = kernel/arch/arm64/test/test_arch_arm64.o
 
