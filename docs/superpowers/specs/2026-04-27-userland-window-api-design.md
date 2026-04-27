@@ -7,8 +7,11 @@ should be able to create a desktop window, map a pixel surface for that
 window, draw into it, present dirty rectangles, and receive input and lifecycle
 events without owning the real framebuffer or keyboard and mouse devices.
 
-The desktop remains the compositor and policy owner. The kernel only brokers
-connections, ownership, event queues, and mmap-able window backing pages.
+The desktop remains the compositor, launcher, taskbar, and window policy owner.
+The kernel only brokers connections, ownership, event queues, and mmap-able
+window backing pages. Desktop applications, including Terminal, Files,
+Processes, and Help, run as separate client processes using the same public
+window API as third-party apps.
 
 ## Architecture
 
@@ -25,10 +28,11 @@ The kernel broker is responsible for:
 - forwarding desktop events to the owning client
 - cleaning up a client's windows when its file descriptor or process exits
 
-The broker does not draw title bars, choose focus, manage z-order, or composite
-pixels into `/dev/fb0`. Those decisions stay in `user/apps/desktop.c`, where
-the current taskbar, focus, drag, minimize, close, input routing, and
-framebuffer presentation policy already lives.
+The broker does not draw title bars, choose focus, manage z-order, launch apps,
+or composite pixels into `/dev/fb0`. Those decisions stay in
+`user/apps/desktop.c`, where the taskbar, launcher, focus, drag, minimize,
+close, input routing, and framebuffer presentation policy belongs. Application
+content does not live in `desktop`; every app window is client-owned.
 
 ## Public API
 
@@ -183,35 +187,50 @@ Failure cases:
 ## Integration With The Existing Desktop
 
 The current desktop has hard-coded built-in windows for Terminal, Files,
-Processes, and Help. The implementation should introduce a shared managed
-window table that can represent both built-in desktop windows and client-owned
-windows. Built-ins can keep their current render paths, while client windows
-render by copying from their mapped backing stores.
+Processes, and Help. The implementation should remove those built-in window
+paths. Desktop-owned UI is limited to compositor chrome, pointer rendering,
+taskbar, clock, and launcher behavior. Terminal, Files, Processes, and Help
+become normal userland apps that connect to `/dev/wm`, create windows, draw
+into mapped buffers, and receive input through their own event queues.
 
-The taskbar should show client windows after the existing built-ins. Z-order and
-focus should be unified so clicking a client window raises it, routes keyboard
-events to it, and draws it above lower windows.
+The taskbar should launch `/bin/terminal`, `/bin/files`, `/bin/processes`, and
+`/bin/help` as separate processes. Each launched app owns its window. Z-order
+and focus should apply only to client windows, so clicking a window raises it,
+routes keyboard events to its owner process, and draws it above lower windows.
 
-The terminal remains a special built-in window backed by a pseudo-terminal. It
-does not need to move to the public `drwin` API in the first implementation.
+The Terminal app owns the pseudo-terminal session and terminal emulator. It
+uses the public `drwin` API for its window and maps keyboard events from the
+desktop into the pty master. The desktop no longer starts the shell directly or
+contains terminal grid/rendering state.
+
+If this conversion needs OS functionality that is missing, such as reliable app
+launch from the compositor, event polling on `/dev/wm`, or per-window buffer
+mapping, the implementation adds that functionality first. It must not bypass
+the framework with private desktop-only paths.
 
 ## Testing
 
-The first implementation should be test-driven around the broker data model and
-the user-facing API. Kernel tests should cover handle allocation, ownership
-checks, event queue delivery, server exclusivity, cleanup on close, and mmap
-metadata. Userland policy tests should ensure the runtime exposes the public
-header and that sample apps build against it.
+The first implementation should be test-driven around the broker data model,
+the user-facing API, and the removal of built-in desktop windows. Kernel tests
+should cover handle allocation, ownership checks, event queue delivery, server
+exclusivity, cleanup on close, and mmap metadata. Userland policy tests should
+ensure the runtime exposes the public header, client apps build against it, and
+`desktop.c` no longer contains Terminal, Files, Processes, or Help rendering
+paths.
 
 Targeted validation should include:
 
 - a failing-then-passing broker unit test for client window creation
 - a failing-then-passing ownership test for cross-process handle rejection
 - a failing-then-passing event queue test for close and key events
-- a failing-then-passing desktop framework policy check for client-window paths
+- a failing-then-passing desktop policy check proving built-in app window paths
+  are gone
+- a failing-then-passing build check for `/bin/terminal`, `/bin/files`,
+  `/bin/processes`, and `/bin/help` as `drwin` client apps
 - `make -C user print-progs`
 - `python3 tools/test_user_desktop_window_framework.py`
 - `python3 tools/check_userland_runtime_lanes.py`
 
-Full graphical boot testing can follow once the broker, runtime wrapper, and a
-minimal sample app are wired together.
+Full graphical boot testing can follow once the broker, runtime wrapper,
+desktop server, and client-owned Terminal, Files, Processes, and Help apps are
+wired together.
