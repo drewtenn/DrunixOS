@@ -1,0 +1,4 @@
+[submodule "external/rexc"]
+	path = external/rexc
+	url = https://github.com/drewtenn/rexc.git
+	branch = main
