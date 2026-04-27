@@ -1683,6 +1683,10 @@ static void test_memory_and_time(void)
 			fail("mmap private file page succeeds", addr, 0);
 		if (!is_linux_error(addr)) {
 			char *p = (char *)(uintptr_t)(uint32_t)addr;
+			check_ok("mmap private file first byte lazy fault",
+			         ((volatile char *)addr)[0] == 'H' ? 1 : -1);
+			check_ok("mmap private file zero fill beyond eof",
+			         ((volatile char *)addr)[4095] == 0 ? 1 : -1);
 			if (memeq(p, "Hello", 5))
 				pass("mmap private file contents");
 			else

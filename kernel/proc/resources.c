@@ -59,7 +59,18 @@ int proc_resource_init_fresh(process_t *proc)
 		return -1;
 	}
 
+	proc->as->vma_capacity = 32u;
+	proc->as->vmas =
+	    (vm_area_t *)alloc_zero(sizeof(vm_area_t) * proc->as->vma_capacity);
+	if (!proc->as->vmas) {
+		proc_resource_put_all(proc);
+		return -1;
+	}
+
 	proc->as->refs = 1;
+	proc->as->rlimit_as = VM_TASK_SIZE;
+	proc->as->rlimit_data = 64u * 1024u * 1024u;
+	proc->as->committed_pages = 0;
 	proc->files->refs = 1;
 	proc->fs_state->refs = 1;
 	proc->sig_actions->refs = 1;
@@ -80,8 +91,13 @@ void proc_resource_mirror_from_process(process_t *proc)
 		proc->as->image_start = proc->image_start;
 		proc->as->image_end = proc->image_end;
 		proc->as->stack_low_limit = proc->stack_low_limit;
-		proc->as->vma_count = proc->vma_count;
-		k_memcpy(proc->as->vmas, proc->vmas, sizeof(proc->vmas));
+		if (proc->vma_count > 0 && proc->as->vma_count == 0 &&
+		    proc->as->vma_capacity >= proc->vma_count) {
+			proc->as->vma_count = proc->vma_count;
+			k_memcpy(proc->as->vmas,
+			         proc->vmas,
+			         sizeof(proc->vmas[0]) * proc->vma_count);
+		}
 		k_memcpy(proc->as->name, proc->name, sizeof(proc->name));
 		k_memcpy(proc->as->psargs, proc->psargs, sizeof(proc->psargs));
 	}
@@ -162,7 +178,35 @@ int proc_resource_clone_for_fork(process_t *child, const process_t *parent)
 	if (!child->as)
 		return -1;
 
+	uint32_t parent_count = parent->as->vma_count;
+	uint32_t child_capacity = parent->as->vma_capacity;
+	vm_area_t *child_vmas;
+
+	if (parent_count > 0 && !parent->as->vmas) {
+		kfree(child->as);
+		child->as = 0;
+		return -1;
+	}
+
+	if (child_capacity < parent_count)
+		child_capacity = parent_count;
+	if (child_capacity == 0)
+		child_capacity = 32u;
+
+	child_vmas = (vm_area_t *)alloc_zero(sizeof(vm_area_t) * child_capacity);
+	if (!child_vmas) {
+		kfree(child->as);
+		child->as = 0;
+		return -1;
+	}
+
 	k_memcpy(child->as, parent->as, sizeof(*child->as));
+	child->as->vmas = child_vmas;
+	child->as->vma_capacity = child_capacity;
+	if (parent_count > 0 && parent->as->vmas)
+		k_memcpy(child->as->vmas,
+		         parent->as->vmas,
+		         sizeof(child->as->vmas[0]) * parent_count);
 	child->as->refs = 1;
 	child->as->pd_phys = child->pd_phys;
 
@@ -250,6 +294,7 @@ void proc_resource_put_all(process_t *proc)
 		if (as->refs == 0) {
 			if (proc->pd_phys == as->pd_phys)
 				process_release_user_space(proc);
+			kfree(as->vmas);
 			kfree(as);
 			proc->as = 0;
 		}
@@ -339,8 +384,10 @@ void proc_resource_put_exec_nonfiles(process_t *proc)
 		proc_address_space_t *as = proc->as;
 		if (as->refs > 0)
 			as->refs--;
-		if (as->refs == 0)
+		if (as->refs == 0) {
+			kfree(as->vmas);
 			kfree(as);
+		}
 		proc->as = 0;
 	}
 

@@ -57,6 +57,7 @@ typedef struct {
 	uint32_t region_count;
 	uint32_t total_reserved_bytes;
 	uint32_t total_mapped_bytes;
+	uint32_t total_committed_bytes;
 	uint32_t image_reserved_bytes;
 	uint32_t image_mapped_bytes;
 	uint32_t heap_reserved_bytes;

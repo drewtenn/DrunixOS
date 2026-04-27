@@ -47,7 +47,7 @@ test_sched_record_user_fault_preserves_full_fault_addr(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc, running->crash.frame.vector, frame.vector);
 }
 
-static void test_user_mapping_rejects_direct_map_addresses(ktest_case_t *tc)
+static void test_user_mapping_accepts_low_user_addresses(ktest_case_t *tc)
 {
 	arch_aspace_t aspace;
 	uint32_t phys;
@@ -59,12 +59,22 @@ static void test_user_mapping_rejects_direct_map_addresses(ktest_case_t *tc)
 	KTEST_ASSERT_NE(tc, phys, 0u);
 	KTEST_EXPECT_EQ(tc,
 	                arch_mm_map(aspace,
-	                            0x01000000u,
+	                            0x00008000u,
 	                            phys,
 	                            ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ |
 	                                ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER),
 	                (uint32_t)-1);
 	pmm_free_page(phys);
+
+	phys = pmm_alloc_page();
+	KTEST_ASSERT_NE(tc, phys, 0u);
+	KTEST_EXPECT_EQ(tc,
+	                arch_mm_map(aspace,
+	                            0x01000000u,
+	                            phys,
+	                            ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ |
+	                                ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER),
+	                0u);
 
 	phys = pmm_alloc_page();
 	KTEST_ASSERT_NE(tc, phys, 0u);
@@ -79,7 +89,7 @@ static void test_user_mapping_rejects_direct_map_addresses(ktest_case_t *tc)
 	arch_aspace_destroy(aspace);
 }
 
-static void test_paging_rejects_direct_user_page_mapping(ktest_case_t *tc)
+static void test_paging_accepts_low_user_page_mapping(ktest_case_t *tc)
 {
 	uint32_t pd_phys;
 	uint32_t phys;
@@ -92,9 +102,54 @@ static void test_paging_rejects_direct_user_page_mapping(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(
 	    tc,
 	    paging_map_page(
-	        pd_phys, 0x01000000u, phys, PG_PRESENT | PG_WRITABLE | PG_USER),
+	        pd_phys, 0x00008000u, phys, PG_PRESENT | PG_WRITABLE | PG_USER),
 	    (uint32_t)-1);
 	pmm_free_page(phys);
+
+	phys = pmm_alloc_page();
+	KTEST_ASSERT_NE(tc, phys, 0u);
+	KTEST_EXPECT_EQ(
+	    tc,
+	    paging_map_page(
+	        pd_phys, 0x01000000u, phys, PG_PRESENT | PG_WRITABLE | PG_USER),
+	    0u);
+
+	paging_destroy_user_space(pd_phys);
+}
+
+static void test_user_mapping_cannot_replace_inherited_kernel_pte(ktest_case_t *tc)
+{
+	uint32_t pd_phys;
+	uint32_t phys;
+	uint32_t *pte;
+	uint32_t before;
+	uint32_t after;
+
+	pd_phys = paging_create_user_space();
+	KTEST_ASSERT_NE(tc, pd_phys, 0u);
+
+	KTEST_ASSERT_EQ(
+	    tc, paging_walk(pd_phys, (uint32_t)ARCH_HEAP_START, &pte), 0u);
+	KTEST_ASSERT_TRUE(tc, (*pte & PG_PRESENT) != 0);
+	KTEST_ASSERT_TRUE(tc, (*pte & PG_USER) == 0);
+	before = *pte;
+
+	phys = pmm_alloc_page();
+	KTEST_ASSERT_NE(tc, phys, 0u);
+	KTEST_EXPECT_EQ(tc,
+	                paging_map_page(pd_phys,
+	                                (uint32_t)ARCH_HEAP_START,
+	                                phys,
+	                                PG_PRESENT | PG_WRITABLE | PG_USER),
+	                (uint32_t)-1);
+	pmm_free_page(phys);
+
+	KTEST_ASSERT_EQ(
+	    tc, paging_walk(pd_phys, (uint32_t)ARCH_HEAP_START, &pte), 0u);
+	after = *pte;
+	KTEST_EXPECT_EQ(tc, paging_entry_addr(after), paging_entry_addr(before));
+	KTEST_EXPECT_TRUE(tc, (after & PG_PRESENT) != 0);
+	KTEST_EXPECT_TRUE(tc, (after & PG_USER) == 0);
 
 	paging_destroy_user_space(pd_phys);
 }
@@ -121,6 +176,7 @@ static void test_user_space_inherits_higher_half_kernel_pdes(ktest_case_t *tc)
 		KTEST_EXPECT_TRUE(tc, (pde & PG_PRESENT) != 0);
 		KTEST_EXPECT_TRUE(tc, (pde & PG_USER) == 0);
 	}
+	KTEST_EXPECT_TRUE(tc, (pd[0x01000000u >> 22] & PG_PRESENT) == 0);
 
 	phys = pmm_alloc_page();
 	KTEST_ASSERT_NE(tc, phys, 0u);
@@ -140,11 +196,135 @@ static void test_user_space_inherits_higher_half_kernel_pdes(ktest_case_t *tc)
 	paging_destroy_user_space(pd_phys);
 }
 
+static void test_identity_map_preserves_higher_half_direct_pte(ktest_case_t *tc)
+{
+	uint32_t high_virt = (uint32_t)ARCH_KERNEL_VIRT_BASE + PAGE_SIZE;
+	uint32_t *pte;
+	uint32_t before;
+
+	KTEST_ASSERT_EQ(tc, paging_walk(PAGE_DIR_ADDR, high_virt, &pte), 0u);
+	before = *pte;
+	KTEST_ASSERT_EQ(tc, paging_entry_addr(before), PAGE_SIZE);
+
+	KTEST_EXPECT_EQ(
+	    tc,
+	    paging_identity_map_kernel_range(high_virt, PAGE_SIZE, PG_WRITABLE),
+	    (uint32_t)-1);
+	KTEST_EXPECT_EQ(tc, *pte, before);
+}
+
+static void test_kernel_device_map_accepts_high_physical_framebuffer(ktest_case_t *tc)
+{
+	uint32_t device_virt = (uint32_t)ARCH_KERNEL_DEVICE_MAP_BASE;
+	uint32_t framebuffer_phys = 0xFD000000u;
+	uint32_t pd_phys;
+	uint32_t *pd;
+	uint32_t *pte;
+	uint32_t device_pde = device_virt >> 22;
+
+	KTEST_EXPECT_NE(tc,
+	                paging_map_kernel_range(ARCH_KERNEL_DIRECT_MAP_END,
+	                                        framebuffer_phys,
+	                                        PAGE_SIZE,
+	                                        PG_PRESENT | PG_WRITABLE),
+	                0);
+	KTEST_EXPECT_EQ(tc,
+	                paging_map_kernel_range(device_virt,
+	                                        framebuffer_phys,
+	                                        PAGE_SIZE,
+	                                        PG_PRESENT | PG_WRITABLE |
+	                                            PG_USER),
+	                0);
+	KTEST_ASSERT_EQ(tc, paging_walk(PAGE_DIR_ADDR, device_virt, &pte), 0u);
+	KTEST_EXPECT_EQ(tc, paging_entry_addr(*pte), framebuffer_phys);
+	KTEST_EXPECT_TRUE(tc, (*pte & PG_PRESENT) != 0);
+	KTEST_EXPECT_TRUE(tc, (*pte & PG_WRITABLE) != 0);
+	KTEST_EXPECT_TRUE(tc, (*pte & PG_USER) == 0);
+
+	pd_phys = paging_create_user_space();
+	KTEST_ASSERT_NE(tc, pd_phys, 0u);
+	pd = (uint32_t *)paging_temp_map(pd_phys);
+	KTEST_ASSERT_NOT_NULL(tc, pd);
+	KTEST_EXPECT_TRUE(tc, (pd[device_pde] & PG_PRESENT) != 0);
+	KTEST_EXPECT_TRUE(tc, (pd[device_pde] & PG_USER) == 0);
+	paging_temp_unmap(pd);
+	paging_destroy_user_space(pd_phys);
+}
+
+static void test_guard_page_updates_higher_half_alias(ktest_case_t *tc)
+{
+	uint32_t phys;
+	uint32_t high_virt;
+	uint32_t *low_pte;
+	uint32_t *high_pte;
+
+	phys = pmm_alloc_page();
+	KTEST_ASSERT_NE(tc, phys, 0u);
+	KTEST_ASSERT_TRUE(tc, phys < (uint32_t)ARCH_KERNEL_DIRECT_MAP_END);
+	high_virt = (uint32_t)ARCH_KERNEL_PHYS_TO_VIRT(phys);
+
+	KTEST_ASSERT_EQ(tc, paging_walk(PAGE_DIR_ADDR, phys, &low_pte), 0u);
+	KTEST_ASSERT_EQ(tc, paging_walk(PAGE_DIR_ADDR, high_virt, &high_pte), 0u);
+	KTEST_ASSERT_TRUE(tc, (*low_pte & PG_PRESENT) != 0);
+	KTEST_ASSERT_TRUE(tc, (*high_pte & PG_PRESENT) != 0);
+
+	paging_guard_page(phys);
+	KTEST_EXPECT_TRUE(tc, (*low_pte & PG_PRESENT) == 0);
+	KTEST_EXPECT_TRUE(tc, (*high_pte & PG_PRESENT) == 0);
+
+	paging_unguard_page(phys);
+	KTEST_EXPECT_TRUE(tc, (*low_pte & (PG_PRESENT | PG_WRITABLE)) ==
+	                          (PG_PRESENT | PG_WRITABLE));
+	KTEST_EXPECT_TRUE(tc, (*high_pte & (PG_PRESENT | PG_WRITABLE)) ==
+	                          (PG_PRESENT | PG_WRITABLE));
+
+	pmm_free_page(phys);
+}
+
+static void test_write_combining_updates_higher_half_alias(ktest_case_t *tc)
+{
+	uint32_t phys;
+	uint32_t high_virt;
+	uint32_t *low_pte;
+	uint32_t *high_pte;
+	uint32_t low_before;
+	uint32_t high_before;
+	int rc;
+
+	phys = pmm_alloc_page();
+	KTEST_ASSERT_NE(tc, phys, 0u);
+	KTEST_ASSERT_TRUE(tc, phys < (uint32_t)ARCH_KERNEL_DIRECT_PHYS_MAX);
+	high_virt = (uint32_t)ARCH_KERNEL_PHYS_TO_VIRT(phys);
+
+	KTEST_ASSERT_EQ(tc, paging_walk(PAGE_DIR_ADDR, phys, &low_pte), 0u);
+	KTEST_ASSERT_EQ(tc, paging_walk(PAGE_DIR_ADDR, high_virt, &high_pte), 0u);
+	low_before = *low_pte;
+	high_before = *high_pte;
+
+	rc = paging_mark_range_write_combining(phys, PAGE_SIZE);
+	KTEST_EXPECT_EQ(tc, rc, 0);
+	KTEST_EXPECT_TRUE(tc, (*low_pte & PG_PAT_4K) != 0);
+	KTEST_EXPECT_TRUE(tc, (*high_pte & PG_PAT_4K) != 0);
+	KTEST_EXPECT_TRUE(tc, (*low_pte & (PG_PCD | PG_PWT)) == 0);
+	KTEST_EXPECT_TRUE(tc, (*high_pte & (PG_PCD | PG_PWT)) == 0);
+
+	*low_pte = low_before;
+	*high_pte = high_before;
+	paging_invalidate_page(phys);
+	paging_invalidate_page(high_virt);
+	pmm_free_page(phys);
+}
+
 static ktest_case_t cases[] = {
     KTEST_CASE(test_sched_record_user_fault_preserves_full_fault_addr),
-    KTEST_CASE(test_user_mapping_rejects_direct_map_addresses),
-    KTEST_CASE(test_paging_rejects_direct_user_page_mapping),
+    KTEST_CASE(test_user_mapping_accepts_low_user_addresses),
+    KTEST_CASE(test_paging_accepts_low_user_page_mapping),
+    KTEST_CASE(test_user_mapping_cannot_replace_inherited_kernel_pte),
     KTEST_CASE(test_user_space_inherits_higher_half_kernel_pdes),
+    KTEST_CASE(test_identity_map_preserves_higher_half_direct_pte),
+    KTEST_CASE(test_kernel_device_map_accepts_high_physical_framebuffer),
+    KTEST_CASE(test_guard_page_updates_higher_half_alias),
+    KTEST_CASE(test_write_combining_updates_higher_half_alias),
 };
 
 static ktest_suite_t suite = KTEST_SUITE("arch-x86", cases);

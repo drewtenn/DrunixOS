@@ -150,11 +150,16 @@ static void boot_register_block_devices(void)
 		blkdev_scan_mbr((uint32_t)sdb_idx);
 }
 
-static int boot_map_framebuffer(const framebuffer_info_t *fb)
+static int boot_map_framebuffer(framebuffer_info_t *fb)
 {
 	uint64_t visible_row_bytes;
 	uint64_t last_row_offset;
 	uint64_t byte_len;
+	uint32_t phys_start;
+	uint32_t phys_page;
+	uint32_t page_offset;
+	uint32_t map_len;
+	uint32_t virt_start = (uint32_t)ARCH_KERNEL_DEVICE_MAP_BASE;
 
 	if (!fb || fb->height == 0)
 		return -1;
@@ -165,10 +170,19 @@ static int boot_map_framebuffer(const framebuffer_info_t *fb)
 	if (byte_len == 0 || byte_len > UINT32_MAX)
 		return -1;
 
-	if (paging_identity_map_kernel_range((uint32_t)fb->address,
-	                                     (uint32_t)byte_len,
-	                                     PG_PRESENT | PG_WRITABLE) != 0)
+	phys_start = (uint32_t)fb->phys_address;
+	phys_page = phys_start & ~0xFFFu;
+	page_offset = phys_start - phys_page;
+	if (byte_len > UINT32_MAX - page_offset)
 		return -1;
+	map_len = (uint32_t)byte_len + page_offset;
+
+	if (paging_map_kernel_range(virt_start,
+	                            phys_page,
+	                            map_len,
+	                            PG_PRESENT | PG_WRITABLE) != 0)
+		return -1;
+	fb->address = (uintptr_t)virt_start + page_offset;
 
 	/*
      * Mark the visible framebuffer as write-combining so back→front
@@ -177,8 +191,8 @@ static int boot_map_framebuffer(const framebuffer_info_t *fb)
      * drawing still works, just more slowly. We don't treat that as a
      * fatal error.
      */
-	if (paging_mark_range_write_combining((uint32_t)fb->address,
-	                                      (uint32_t)byte_len) == 0)
+	if (paging_mark_kernel_range_write_combining((uint32_t)fb->address,
+	                                             (uint32_t)byte_len) == 0)
 		klog("BOOT", "framebuffer mapped write-combining");
 	else
 		klog("BOOT", "framebuffer WC mapping unavailable");

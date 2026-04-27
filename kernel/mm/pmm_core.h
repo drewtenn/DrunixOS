@@ -6,7 +6,6 @@
 #include <stdint.h>
 
 #define PAGE_SIZE 4096u
-#define PMM_MAX_PAGES 65536u
 
 typedef struct {
 	uint32_t base;
@@ -14,9 +13,17 @@ typedef struct {
 } pmm_range_t;
 
 typedef struct {
-	uint8_t opaque[(PMM_MAX_PAGES / 8u) + PMM_MAX_PAGES];
+	uint8_t *bitmap;
+	uint8_t *refcounts;
+	uint32_t max_pages;
 } pmm_core_state_t;
 
+void pmm_core_bind_storage(pmm_core_state_t *state,
+                           void *bitmap,
+                           void *refcounts,
+                           uint32_t max_pages);
+uint32_t pmm_core_bitmap_bytes(uint32_t max_pages);
+uint32_t pmm_core_refcount_bytes(uint32_t max_pages);
 void pmm_core_init(pmm_core_state_t *state,
                    const pmm_range_t *usable,
                    uint32_t usable_count,

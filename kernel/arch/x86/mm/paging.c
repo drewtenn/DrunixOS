@@ -30,6 +30,7 @@ static uint32_t g_paging_present_saved_cr3;
 static uint32_t g_kernel_high_page_tables[ARCH_KERNEL_DIRECT_PHYS_MAX /
                                           0x400000u][1024]
     __attribute__((aligned(PAGE_SIZE)));
+extern char _kernel_end;
 
 #define X86_KERNEL_DIRECT_MAP_PDES \
 	((uint32_t)ARCH_KERNEL_DIRECT_MAP_END / 0x400000u)
@@ -41,6 +42,13 @@ static void *paging_phys_ptr(uint32_t phys)
 	if (phys >= (uint32_t)ARCH_KERNEL_DIRECT_PHYS_MAX)
 		return 0;
 	return (void *)ARCH_KERNEL_PHYS_TO_VIRT(phys);
+}
+
+static int paging_identity_virtual_range_allowed(uint32_t start, uint32_t end)
+{
+	/* The higher-half window is reserved for ARCH_KERNEL_PHYS_TO_VIRT(). */
+	return start < (uint32_t)ARCH_KERNEL_VIRT_BASE &&
+	       end <= (uint32_t)ARCH_KERNEL_VIRT_BASE;
 }
 
 static uint32_t paging_read_cr3(void)
@@ -137,6 +145,30 @@ static int paging_prepare_wc_slot(void)
 	return 0;
 }
 
+static int paging_mark_pte_write_combining(uint32_t virt)
+{
+	uint32_t *pte;
+	uint32_t entry;
+	uint32_t flags;
+
+	if (paging_lookup_slot(PAGE_DIR_ADDR, virt, &pte) != 0)
+		return -2;
+	entry = *pte;
+	if (!(entry & PG_PRESENT))
+		return -2;
+
+	/*
+	 * PAT=1, PCD=0, PWT=0 selects PA4, which paging_prepare_wc_slot()
+	 * programs to WC. Clear PCD/PWT explicitly in case firmware gave the
+	 * range UC defaults.
+	 */
+	flags = paging_entry_flags(entry);
+	flags = (flags & ~(uint32_t)(PG_PCD | PG_PWT)) | PG_PAT_4K;
+	*pte = paging_entry_build(entry, flags);
+	paging_invlpg(virt);
+	return 0;
+}
+
 int paging_mark_range_write_combining(uint32_t phys_start, uint32_t byte_len)
 {
 	uint32_t *pd = (uint32_t *)paging_phys_ptr(PAGE_DIR_ADDR);
@@ -158,31 +190,45 @@ int paging_mark_range_write_combining(uint32_t phys_start, uint32_t byte_len)
 	if (end64 > UINT32_MAX)
 		return -1;
 	end = (uint32_t)end64;
+	if (!paging_identity_virtual_range_allowed(start, end))
+		return -2;
 
 	for (uint32_t virt = start; virt < end; virt += 0x1000u) {
-		uint32_t pdi = virt >> 22;
-		uint32_t pti = (virt >> 12) & 0x3FFu;
-		uint32_t *pt;
-		uint32_t pte;
-		uint32_t flags;
+		if (paging_mark_pte_write_combining(virt) != 0)
+			return -2;
+		if (virt < (uint32_t)ARCH_KERNEL_DIRECT_PHYS_MAX &&
+		    paging_mark_pte_write_combining(
+		        (uint32_t)ARCH_KERNEL_PHYS_TO_VIRT(virt)) != 0)
+			return -2;
+	}
+	return 0;
+}
 
-		if (!(pd[pdi] & PG_PRESENT))
+int paging_mark_kernel_range_write_combining(uint32_t virt_start,
+                                             uint32_t byte_len)
+{
+	uint32_t start;
+	uint64_t end64;
+	uint32_t end;
+
+	if (byte_len == 0)
+		return 0;
+	if (paging_prepare_wc_slot() != 0)
+		return -1;
+	if (virt_start > UINT32_MAX - (byte_len - 1u))
+		return -1;
+
+	start = virt_start & ~0xFFFu;
+	end64 = ((uint64_t)virt_start + byte_len + 0xFFFu) & ~0xFFFull;
+	if (end64 > UINT32_MAX)
+		return -1;
+	end = (uint32_t)end64;
+	if (end <= start)
+		return -1;
+
+	for (uint32_t virt = start; virt < end; virt += 0x1000u) {
+		if (paging_mark_pte_write_combining(virt) != 0)
 			return -2;
-		pt = (uint32_t *)paging_phys_ptr(paging_entry_addr(pd[pdi]));
-		if (!pt)
-			return -2;
-		pte = pt[pti];
-		if (!(pte & PG_PRESENT))
-			return -2;
-		/*
-         * PAT=1, PCD=0, PWT=0 selects PA4, which we just programmed to
-         * WC. Clear PCD/PWT explicitly in case the BIOS set them for the
-         * framebuffer range (common for UC defaults).
-         */
-		flags = paging_entry_flags(pte);
-		flags = (flags & ~(PG_PCD | PG_PWT)) | PG_PAT_4K;
-		pt[pti] = paging_entry_build(pte, flags);
-		paging_invlpg(virt);
 	}
 	return 0;
 }
@@ -257,6 +303,8 @@ int paging_identity_map_kernel_range(uint32_t phys_start,
 	if (end64 > UINT32_MAX)
 		return -1;
 	end = (uint32_t)end64;
+	if (!paging_identity_virtual_range_allowed(start, end))
+		return -1;
 
 	page_flags = (flags | PG_PRESENT) & ~(uint32_t)PG_USER;
 	for (uint32_t virt = start; virt < end; virt += 0x1000u) {
@@ -289,9 +337,77 @@ int paging_identity_map_kernel_range(uint32_t phys_start,
 	return 0;
 }
 
+int paging_map_kernel_range(uint32_t virt_start,
+                            uint32_t phys_start,
+                            uint32_t byte_len,
+                            uint32_t flags)
+{
+	uint32_t *pd = (uint32_t *)paging_phys_ptr(PAGE_DIR_ADDR);
+	uint32_t virt = virt_start & ~0xFFFu;
+	uint32_t phys = phys_start & ~0xFFFu;
+	uint32_t offset = phys_start - phys;
+	uint64_t end64;
+	uint32_t end;
+	uint32_t page_flags;
+
+	if (byte_len == 0)
+		return 0;
+	if (!pd)
+		return -1;
+	if (virt_start < (uint32_t)ARCH_KERNEL_DEVICE_MAP_BASE)
+		return -1;
+	if (virt_start >= (uint32_t)ARCH_KERNEL_DEVICE_MAP_END)
+		return -1;
+	if (phys_start > UINT32_MAX - (byte_len - 1u))
+		return -1;
+
+	end64 = ((uint64_t)virt_start + offset + byte_len + 0xFFFu) & ~0xFFFull;
+	if (end64 > (uint32_t)ARCH_KERNEL_DEVICE_MAP_END)
+		return -1;
+	end = (uint32_t)end64;
+	if (end <= virt)
+		return -1;
+
+	page_flags = (flags | PG_PRESENT) & ~(uint32_t)PG_USER;
+	for (; virt < end; virt += 0x1000u, phys += 0x1000u) {
+		uint32_t pdi = virt >> 22;
+		uint32_t pti = (virt >> 12) & 0x3FFu;
+		uint32_t *pt;
+
+		if (!(pd[pdi] & PG_PRESENT)) {
+			uint32_t pt_phys = pmm_alloc_page();
+			if (!pt_phys)
+				return -1;
+
+			pt = (uint32_t *)paging_phys_ptr(pt_phys);
+			if (!pt) {
+				pmm_free_page(pt_phys);
+				return -1;
+			}
+			for (int i = 0; i < 1024; i++)
+				pt[i] = 0;
+			pd[pdi] = paging_entry_build(pt_phys, PG_PRESENT | PG_WRITABLE);
+		} else {
+			pt = (uint32_t *)paging_phys_ptr(paging_entry_addr(pd[pdi]));
+			if (!pt)
+				return -1;
+		}
+
+		pt[pti] = paging_entry_build(phys, page_flags);
+		paging_invlpg(virt);
+	}
+	return 0;
+}
+
 uint32_t paging_create_user_space(void)
 {
 	uint32_t pd_phys = pmm_alloc_page();
+	uint32_t low_kernel_pdes =
+	    (((uint32_t)(uintptr_t)&_kernel_end) + 0x3FFFFFu) >> 22;
+	uint32_t first_device_pde = (uint32_t)ARCH_KERNEL_DEVICE_MAP_BASE >> 22;
+	uint32_t first_after_device_pde =
+	    ((uint32_t)ARCH_KERNEL_DEVICE_MAP_END + 0x3FFFFFu) >> 22;
+	uint32_t first_high_pde = (uint32_t)ARCH_KERNEL_VIRT_BASE >> 22;
 	if (!pd_phys)
 		return 0;
 
@@ -307,12 +423,19 @@ uint32_t paging_create_user_space(void)
 		new_pd[i] = 0;
 
 	/*
-     * Copy every supervisor-only kernel PDE, including device mappings added
-     * after paging_init(). These entries do NOT have PG_USER set, so ring-3
-     * code cannot read or write kernel memory even though supervisor code can
-     * still use the mappings while running on a process page directory.
-     */
-	for (int i = 0; i < 1024; i++) {
+	 * Copy the low PDEs still needed by the low-linked kernel image, the
+	 * supervisor-only device aperture, and the higher-half aliases. Do not
+	 * inherit the rest of the low direct map: those addresses are now legal
+	 * user space.
+	 */
+	for (uint32_t i = 0; i < 1024; i++) {
+		int is_low_kernel = i < low_kernel_pdes;
+		int is_device =
+		    i >= first_device_pde && i < first_after_device_pde;
+		int is_high_kernel = i >= first_high_pde;
+
+		if (!is_low_kernel && !is_device && !is_high_kernel)
+			continue;
 		if ((kernel_pd[i] & (PG_PRESENT | PG_USER)) == PG_PRESENT)
 			new_pd[i] = kernel_pd[i];
 	}
@@ -411,6 +534,10 @@ int paging_map_page(uint32_t pd_phys,
 			pmm_free_page(pt_phys);
 			return -1;
 		}
+		if ((old_pt[pti] & PG_PRESENT) && !(old_pt[pti] & PG_USER)) {
+			pmm_free_page(pt_phys);
+			return -1;
+		}
 		for (int i = 0; i < 1024; i++)
 			pt[i] = old_pt[i];
 
@@ -419,6 +546,9 @@ int paging_map_page(uint32_t pd_phys,
 	} else {
 		pt = (uint32_t *)paging_phys_ptr(paging_entry_addr(pd[pdi]));
 		if (!pt)
+			return -1;
+		if ((flags & PG_USER) && (pt[pti] & PG_PRESENT) &&
+		    !(pt[pti] & PG_USER))
 			return -1;
 		if (flags & PG_USER)
 			pd[pdi] |= PG_USER;
@@ -566,20 +696,26 @@ void paging_switch_directory(uint32_t pd_phys)
 
 /*
  * paging_guard_page: mark a kernel-heap page non-present in the shared
- * kernel page tables so any access to it causes a page fault.
+ * kernel page tables so any access through either kernel direct-map alias
+ * causes a page fault.
  *
  * Used to create a no-access guard page at the bottom of each per-process
- * kernel stack.  All kernel page tables live at the fixed addresses set up
- * by paging_init(), so the PTE is reached by direct index arithmetic rather
- * than a PDE walk.  Only valid for addresses in the 0–128 MB identity map
- * (PDE index 0–31).
+ * kernel stack. Only valid for addresses in the low identity map backed by
+ * the transitional higher-half direct map.
  */
 void paging_guard_page(uint32_t virt)
 {
-	uint32_t pde_idx = virt >> 22;
-	uint32_t pte_idx = (virt >> 12) & 0x3FF;
-	uint32_t *pt = (uint32_t *)(PAGE_TAB_BASE + pde_idx * 0x1000);
-	pt[pte_idx] &= ~(uint32_t)PG_PRESENT;
+	uint32_t high_virt;
+	uint32_t *pte;
+
+	if (paging_lookup_slot(PAGE_DIR_ADDR, virt, &pte) == 0)
+		*pte &= ~(uint32_t)PG_PRESENT;
+	if (virt < (uint32_t)ARCH_KERNEL_DIRECT_PHYS_MAX) {
+		high_virt = (uint32_t)ARCH_KERNEL_PHYS_TO_VIRT(virt);
+		if (paging_lookup_slot(PAGE_DIR_ADDR, high_virt, &pte) == 0)
+			*pte &= ~(uint32_t)PG_PRESENT;
+		paging_invlpg(high_virt);
+	}
 	paging_invlpg(virt);
 }
 
@@ -592,10 +728,17 @@ void paging_guard_page(uint32_t virt)
  */
 void paging_unguard_page(uint32_t virt)
 {
-	uint32_t pde_idx = virt >> 22;
-	uint32_t pte_idx = (virt >> 12) & 0x3FF;
-	uint32_t *pt = (uint32_t *)(PAGE_TAB_BASE + pde_idx * 0x1000);
-	pt[pte_idx] |= PG_PRESENT | PG_WRITABLE;
+	uint32_t high_virt;
+	uint32_t *pte;
+
+	if (paging_lookup_slot(PAGE_DIR_ADDR, virt, &pte) == 0)
+		*pte |= PG_PRESENT | PG_WRITABLE;
+	if (virt < (uint32_t)ARCH_KERNEL_DIRECT_PHYS_MAX) {
+		high_virt = (uint32_t)ARCH_KERNEL_PHYS_TO_VIRT(virt);
+		if (paging_lookup_slot(PAGE_DIR_ADDR, high_virt, &pte) == 0)
+			*pte |= PG_PRESENT | PG_WRITABLE;
+		paging_invlpg(high_virt);
+	}
 	paging_invlpg(virt);
 }
 

@@ -107,6 +107,9 @@ static void process_release_inline_open_files(process_t *proc)
 static int process_clone_duplicate_as(process_t *child_out,
                                       const process_t *parent)
 {
+	vm_area_t *child_vmas;
+	uint32_t child_capacity;
+	uint32_t parent_count;
 	uint32_t new_pd =
 	    (uint32_t)arch_aspace_clone((arch_aspace_t)parent->pd_phys);
 	if (!new_pd) {
@@ -121,7 +124,41 @@ static int process_clone_duplicate_as(process_t *child_out,
 		return -1;
 	}
 
+	parent_count = parent->as->vma_count;
+	child_capacity = parent->as->vma_capacity;
+	if (parent_count > 0 && !parent->as->vmas) {
+		kfree(child_out->as);
+		child_out->as = 0;
+		process_release_user_space(child_out);
+		return -1;
+	}
+	if (child_capacity < parent_count)
+		child_capacity = parent_count;
+	if (child_capacity == 0)
+		child_capacity = 32u;
+	if (child_capacity > 0xFFFFFFFFu / sizeof(vm_area_t)) {
+		kfree(child_out->as);
+		child_out->as = 0;
+		process_release_user_space(child_out);
+		return -1;
+	}
+
+	child_vmas = (vm_area_t *)kmalloc(sizeof(vm_area_t) * child_capacity);
+	if (!child_vmas) {
+		kfree(child_out->as);
+		child_out->as = 0;
+		process_release_user_space(child_out);
+		return -1;
+	}
+	k_memset(child_vmas, 0, sizeof(vm_area_t) * child_capacity);
+
 	k_memcpy(child_out->as, parent->as, sizeof(*child_out->as));
+	child_out->as->vmas = child_vmas;
+	child_out->as->vma_capacity = child_capacity;
+	if (parent_count > 0)
+		k_memcpy(child_out->as->vmas,
+		         parent->as->vmas,
+		         sizeof(child_out->as->vmas[0]) * parent_count);
 	child_out->as->refs = 1;
 	child_out->as->pd_phys = new_pd;
 	return 0;

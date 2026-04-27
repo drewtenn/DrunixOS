@@ -114,6 +114,7 @@ int framebuffer_info_from_rgb(uintptr_t address,
 		return -9;
 
 	k_memset(out, 0, sizeof(*out));
+	out->phys_address = address;
 	out->address = address;
 	out->pitch = pitch;
 	out->width = width;
