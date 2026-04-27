@@ -4,6 +4,7 @@
 #include "kheap.h"
 #include "kstring.h"
 #include "pipe.h"
+#include "pty.h"
 #include "sched.h"
 #include "vfs.h"
 
@@ -15,7 +16,7 @@ static void *alloc_zero(uint32_t size)
 	return ptr;
 }
 
-static void proc_fd_table_bump_pipe_refs(proc_fd_table_t *files)
+static void proc_fd_table_bump_open_refs(proc_fd_table_t *files)
 {
 	if (!files)
 		return;
@@ -32,6 +33,10 @@ static void proc_fd_table_bump_pipe_refs(proc_fd_table_t *files)
 			if (pb)
 				pb->write_open++;
 		}
+		if (fh->type == FD_TYPE_PTY_MASTER)
+			pty_get_master(fh->u.pty.pty_idx);
+		else if (fh->type == FD_TYPE_PTY_SLAVE)
+			pty_get_slave(fh->u.pty.pty_idx);
 	}
 }
 
@@ -105,7 +110,7 @@ int proc_fd_table_dup(proc_fd_table_t **out, const proc_fd_table_t *src)
 
 	k_memcpy(dup, src, sizeof(*dup));
 	dup->refs = 1;
-	proc_fd_table_bump_pipe_refs(dup);
+	proc_fd_table_bump_open_refs(dup);
 	*out = dup;
 	return 0;
 }
@@ -216,6 +221,10 @@ void proc_fd_table_close_all(proc_fd_table_t *files)
 					pipe_free((int)fh->u.pipe.pipe_idx);
 			}
 		}
+		if (fh->type == FD_TYPE_PTY_MASTER)
+			pty_release_master(fh->u.pty.pty_idx);
+		else if (fh->type == FD_TYPE_PTY_SLAVE)
+			pty_release_slave(fh->u.pty.pty_idx);
 
 		fh->type = FD_TYPE_NONE;
 		fh->writable = 0;

@@ -62,8 +62,7 @@ static uint32_t *arch_x86_build_launch_isr_frame(uint32_t *ksp,
 
 static uint32_t arch_x86_elf_segment_flags(uint32_t p_flags)
 {
-	uint32_t flags = ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER |
-	                 ARCH_MM_MAP_WRITE;
+	uint32_t flags = ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_USER | ARCH_MM_MAP_WRITE;
 
 	if (p_flags & PF_R)
 		flags |= ARCH_MM_MAP_READ;
@@ -120,8 +119,8 @@ int arch_process_build_user_stack(arch_aspace_t aspace,
 
 		vaddr = USER_STACK_TOP - (uint32_t)(i + 1) * PAGE_SIZE;
 		if (arch_mm_query(aspace, vaddr, &existing) == 0) {
-			if ((existing.flags &
-			     (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER)) ==
+			if ((existing.flags & (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_WRITE |
+			                       ARCH_MM_MAP_USER)) ==
 			    (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_WRITE | ARCH_MM_MAP_USER))
 				continue;
 			return -1;
@@ -167,8 +166,7 @@ int arch_process_build_user_stack(arch_aspace_t aspace,
 
 	strings_off = argv_strbytes + env_strbytes;
 	pad = (4u - (strings_off & 3u)) & 3u;
-	stack_words =
-	    1u + (uint32_t)argc + 1u + (uint32_t)envc + 1u + aux_words;
+	stack_words = 1u + (uint32_t)argc + 1u + (uint32_t)envc + 1u + aux_words;
 	frame_off = strings_off + pad + stack_words * 4u;
 	if (frame_off > PAGE_SIZE)
 		return -1;
@@ -234,6 +232,96 @@ int arch_elf_machine_supported(elf_class_t elf_class, uint16_t machine)
 	return elf_class == ELF_CLASS_32 && machine == EM_386;
 }
 
+static int arch_x86_read_elf_phdr(vfs_file_ref_t file_ref,
+                                  const Elf32_Ehdr *ehdr,
+                                  uint16_t index,
+                                  Elf32_Phdr *phdr_out)
+{
+	uint64_t phdr_off;
+
+	if (!ehdr || !phdr_out || ehdr->e_phentsize != sizeof(*phdr_out))
+		return -1;
+
+	phdr_off =
+	    (uint64_t)ehdr->e_phoff + (uint64_t)index * (uint64_t)ehdr->e_phentsize;
+	if (phdr_off > UINT32_MAX)
+		return -1;
+	if (vfs_read(file_ref,
+	             (uint32_t)phdr_off,
+	             (uint8_t *)phdr_out,
+	             sizeof(*phdr_out)) != (int)sizeof(*phdr_out))
+		return -1;
+	return 0;
+}
+
+static int arch_x86_elf_load_range(const Elf32_Phdr *phdr,
+                                   uint32_t *start_out,
+                                   uint32_t *end_out)
+{
+	uint32_t start;
+	uint64_t mem_end;
+	uint64_t page_end;
+
+	if (!phdr || !start_out || !end_out)
+		return -1;
+	if (phdr->p_filesz > phdr->p_memsz)
+		return -1;
+	if (phdr->p_filesz != 0 && phdr->p_offset > UINT32_MAX - phdr->p_filesz)
+		return -1;
+
+	start = phdr->p_vaddr & ~0xFFFu;
+	mem_end = (uint64_t)phdr->p_vaddr + (uint64_t)phdr->p_memsz;
+	page_end = (mem_end + 0xFFFu) & ~0xFFFull;
+	if (mem_end > UINT32_MAX || page_end > UINT32_MAX)
+		return -1;
+
+	*start_out = start;
+	*end_out = (uint32_t)page_end;
+	if (*end_out <= *start_out)
+		return -1;
+	return 0;
+}
+
+static int arch_x86_ranges_overlap(uint32_t start,
+                                   uint32_t end,
+                                   uint32_t other_start,
+                                   uint32_t other_end)
+{
+	return start < other_end && end > other_start;
+}
+
+static int arch_x86_validate_elf_load_range(vfs_file_ref_t file_ref,
+                                            const Elf32_Ehdr *ehdr,
+                                            uint16_t index,
+                                            uint32_t start,
+                                            uint32_t end)
+{
+	if (start < (uint32_t)ARCH_KERNEL_DIRECT_MAP_END)
+		return -1;
+	if (start < (uint32_t)ARCH_USER_VADDR_MIN ||
+	    end > (uint32_t)ARCH_USER_VADDR_MAX)
+		return -1;
+	if (arch_x86_ranges_overlap(start, end, USER_STACK_BASE, USER_STACK_TOP))
+		return -1;
+
+	for (uint16_t prev_idx = 0; prev_idx < index; prev_idx++) {
+		Elf32_Phdr prev;
+		uint32_t prev_start;
+		uint32_t prev_end;
+
+		if (arch_x86_read_elf_phdr(file_ref, ehdr, prev_idx, &prev) != 0)
+			return -1;
+		if (prev.p_type != PT_LOAD || prev.p_memsz == 0)
+			continue;
+		if (arch_x86_elf_load_range(&prev, &prev_start, &prev_end) != 0)
+			return -1;
+		if (arch_x86_ranges_overlap(start, end, prev_start, prev_end))
+			return -1;
+	}
+
+	return 0;
+}
+
 int arch_elf_load_user_image(vfs_file_ref_t file_ref,
                              arch_aspace_t aspace,
                              uintptr_t *entry_out,
@@ -256,35 +344,55 @@ int arch_elf_load_user_image(vfs_file_ref_t file_ref,
 	if (!arch_elf_machine_supported((elf_class_t)ehdr.e_ident[EI_CLASS],
 	                                ehdr.e_machine))
 		return -4;
-	if (ehdr.e_phnum == 0)
+	if (ehdr.e_phnum == 0 || ehdr.e_phentsize != sizeof(Elf32_Phdr))
 		return -5;
 
 	*entry_out = ehdr.e_entry;
 
 	for (uint16_t i = 0; i < ehdr.e_phnum; i++) {
 		Elf32_Phdr phdr;
-		uint32_t phdr_off = ehdr.e_phoff + (uint32_t)i * ehdr.e_phentsize;
-		uint32_t seg_flags;
+		uint32_t vaddr;
+		uint32_t vend;
 
-		if (vfs_read(file_ref, phdr_off, (uint8_t *)&phdr, sizeof(phdr)) !=
-		    (int)sizeof(phdr))
+		if (arch_x86_read_elf_phdr(file_ref, &ehdr, i, &phdr) != 0)
 			return -6;
 		if (phdr.p_type != PT_LOAD || phdr.p_memsz == 0)
 			continue;
-		if (phdr.p_filesz > phdr.p_memsz)
+		if (arch_x86_elf_load_range(&phdr, &vaddr, &vend) != 0)
+			return -6;
+		if (arch_x86_validate_elf_load_range(file_ref, &ehdr, i, vaddr, vend) !=
+		    0)
 			return -6;
 
-		{
-			uint32_t vaddr = phdr.p_vaddr & ~0xFFFu;
-			uint32_t vend =
-			    (phdr.p_vaddr + phdr.p_memsz + 0xFFFu) & ~0xFFFu;
-			uint32_t npages = (vend - vaddr) / 0x1000u;
+		if (vaddr < min_vaddr)
+			min_vaddr = vaddr;
+		if (vend > max_vend)
+			max_vend = vend;
+		loaded_segment = 1;
+	}
 
-			if (vaddr < min_vaddr)
-				min_vaddr = vaddr;
-			if (vend > max_vend)
-				max_vend = vend;
-			loaded_segment = 1;
+	if (!loaded_segment)
+		return -5;
+	if (ehdr.e_entry < min_vaddr || ehdr.e_entry >= max_vend)
+		return -6;
+
+	for (uint16_t i = 0; i < ehdr.e_phnum; i++) {
+		Elf32_Phdr phdr;
+		uint32_t seg_flags;
+
+		if (arch_x86_read_elf_phdr(file_ref, &ehdr, i, &phdr) != 0)
+			return -6;
+		if (phdr.p_type != PT_LOAD || phdr.p_memsz == 0)
+			continue;
+
+		{
+			uint32_t vaddr;
+			uint32_t vend;
+			uint32_t npages;
+
+			if (arch_x86_elf_load_range(&phdr, &vaddr, &vend) != 0)
+				return -6;
+			npages = (vend - vaddr) / 0x1000u;
 
 			seg_flags = arch_x86_elf_segment_flags(phdr.p_flags);
 			for (uint32_t p = 0; p < npages; p++) {
@@ -343,8 +451,6 @@ int arch_elf_load_user_image(vfs_file_ref_t file_ref,
 		}
 	}
 
-	if (!loaded_segment)
-		return -5;
 	*image_start_out = (min_vaddr == 0xFFFFFFFFu) ? 0u : min_vaddr;
 	*heap_start_out = max_vend;
 	return 0;
@@ -472,7 +578,8 @@ void arch_context_switch(arch_context_t *old_ctx,
                          arch_context_t new_ctx,
                          arch_aspace_t new_aspace)
 {
-	switch_context((uint32_t *)old_ctx, (uint32_t)new_ctx, (uint32_t)new_aspace);
+	switch_context(
+	    (uint32_t *)old_ctx, (uint32_t)new_ctx, (uint32_t)new_aspace);
 }
 
 void arch_idle_wait(void)
@@ -580,7 +687,8 @@ uint64_t arch_trap_frame_fault_addr(const arch_trap_frame_t *frame)
 	return cr2;
 }
 
-void arch_core_fill_prstatus_regs(uint32_t *gregs, const arch_trap_frame_t *frame)
+void arch_core_fill_prstatus_regs(uint32_t *gregs,
+                                  const arch_trap_frame_t *frame)
 {
 	if (!gregs || !frame)
 		return;

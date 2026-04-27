@@ -4,6 +4,7 @@
  */
 
 #include "paging.h"
+#include "arch_layout.h"
 #include "pmm.h"
 #include "kstring.h"
 #include <stdint.h>
@@ -35,12 +36,22 @@ static uint32_t paging_read_cr3(void)
 	return cr3;
 }
 
+static int paging_user_page_allowed(uint32_t virt)
+{
+	if (virt < (uint32_t)ARCH_USER_VADDR_MIN)
+		return 0;
+	if (virt > (uint32_t)ARCH_USER_VADDR_MAX - 0x1000u)
+		return 0;
+	return 1;
+}
+
 static void paging_invlpg(uint32_t virt)
 {
 	__asm__ volatile("invlpg (%0)" ::"r"(virt) : "memory");
 }
 
-static int paging_lookup_slot(uint32_t pd_phys, uint32_t virt, uint32_t **pte_out)
+static int
+paging_lookup_slot(uint32_t pd_phys, uint32_t virt, uint32_t **pte_out)
 {
 	uint32_t *pd = (uint32_t *)pd_phys;
 	uint32_t pdi = virt >> 22;
@@ -297,6 +308,9 @@ int paging_map_page(uint32_t pd_phys,
 
 	uint32_t *pt;
 
+	if ((flags & PG_USER) && !paging_user_page_allowed(virt))
+		return -1;
+
 	if (!(pd[pdi] & PG_PRESENT)) {
 		/* No page table yet for this PDE — allocate one */
 		uint32_t pt_phys = pmm_alloc_page();
@@ -349,7 +363,8 @@ int paging_unmap_page(uint32_t pd_phys, uint32_t virt)
 	uint32_t pdi = virt >> 22;
 	uint32_t *pte;
 
-	if (paging_lookup_slot(pd_phys, virt, &pte) != 0 || (*pte & PG_PRESENT) == 0)
+	if (paging_lookup_slot(pd_phys, virt, &pte) != 0 ||
+	    (*pte & PG_PRESENT) == 0)
 		return -1;
 
 	/*
@@ -406,9 +421,8 @@ int paging_update_page(uint32_t pd_phys,
 		return -1;
 
 	unsupported = clear_flags | set_flags;
-	if (unsupported &
-	    (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ | ARCH_MM_MAP_EXEC |
-	     ARCH_MM_MAP_USER))
+	if (unsupported & (ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ |
+	                   ARCH_MM_MAP_EXEC | ARCH_MM_MAP_USER))
 		return -1;
 
 	entry = *pte;
@@ -464,8 +478,7 @@ void paging_present_end(uint32_t flags)
 {
 	if (g_paging_present_depth > 0)
 		g_paging_present_depth--;
-	if (g_paging_present_depth == 0 &&
-	    g_paging_present_saved_cr3 != 0 &&
+	if (g_paging_present_depth == 0 && g_paging_present_saved_cr3 != 0 &&
 	    g_paging_present_saved_cr3 != PAGE_DIR_ADDR)
 		paging_load_cr3(g_paging_present_saved_cr3);
 	if (flags & (1u << 9))

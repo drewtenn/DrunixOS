@@ -111,9 +111,11 @@ void ktest_run_suite_counts(ktest_suite_t *suite,
 /* ── Top-level runner ───────────────────────────────────────────────────── */
 
 extern ktest_suite_t *ktest_suite_console_terminal(void);
+extern ktest_suite_t *ktest_suite_console_runtime(void);
 extern ktest_suite_t *ktest_suite_arch_shared(void);
 extern ktest_suite_t *ktest_suite_pmm_core(void);
 extern ktest_suite_t *ktest_suite_kheap(void);
+extern ktest_suite_t *ktest_suite_pty(void);
 extern ktest_suite_t *ktest_suite_vfs(void);
 extern ktest_suite_t *ktest_suite_sched(void);
 extern ktest_suite_t *ktest_suite_fs(void);
@@ -147,7 +149,9 @@ void ktest_run_all(void)
 	if (ktest_suite_arch_x86)
 		run_and_tally(ktest_suite_arch_x86(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_arch_shared(), &total_pass, &total_fail);
+	run_and_tally(ktest_suite_console_runtime(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_console_terminal(), &total_pass, &total_fail);
+	run_and_tally(ktest_suite_pty(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_pmm_core(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_kheap(), &total_pass, &total_fail);
 	run_and_tally(ktest_suite_vfs(), &total_pass, &total_fail);

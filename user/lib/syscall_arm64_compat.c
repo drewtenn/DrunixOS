@@ -24,6 +24,7 @@
 #define SYS_DRUNIX_TCSETPGRP 4006
 #define SYS_DRUNIX_TCGETPGRP 4007
 #define SYS_DRUNIX_GETDENTS_PATH 4008
+#define SYS_DRUNIX_DISPLAY_CLAIM 4009
 
 char **environ = 0;
 
@@ -90,7 +91,8 @@ int sys_exec(const char *filename, char **argv, int argc)
 
 int sys_execve(const char *filename, char **argv, char **envp)
 {
-	return (int)syscall3(ARM64_SYS_EXECVE, (long)filename, (long)argv, (long)envp);
+	return (int)syscall3(
+	    ARM64_SYS_EXECVE, (long)filename, (long)argv, (long)envp);
 }
 
 int sys_wait(int pid)
@@ -101,6 +103,19 @@ int sys_wait(int pid)
 void sys_clear(void)
 {
 	(void)syscall0(SYS_DRUNIX_CLEAR);
+}
+
+int sys_display_claim(void)
+{
+	return (int)syscall0(SYS_DRUNIX_DISPLAY_CLAIM);
+}
+
+int sys_poll(sys_pollfd_t *fds, unsigned int nfds, int timeout)
+{
+	(void)fds;
+	(void)nfds;
+	(void)timeout;
+	return -1;
 }
 
 int sys_getdents(const char *path, char *buf, int size)
@@ -233,8 +248,11 @@ int sys_sigaction(int signum, void (*handler)(int), void (**old)(int))
 
 int sys_sigprocmask(int how, unsigned int *set, unsigned int *oldset)
 {
-	return (int)syscall4(
-	    ARM64_SYS_RT_SIGPROCMASK, how, (long)set, (long)oldset, sizeof(unsigned int));
+	return (int)syscall4(ARM64_SYS_RT_SIGPROCMASK,
+	                     how,
+	                     (long)set,
+	                     (long)oldset,
+	                     sizeof(unsigned int));
 }
 
 void sys_scroll_up(int rows)

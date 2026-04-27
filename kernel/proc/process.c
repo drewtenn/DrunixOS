@@ -8,6 +8,7 @@
 #include "resources.h"
 #include "sched.h"
 #include "pipe.h"
+#include "pty.h"
 #include "elf.h"
 #include "pmm.h"
 #include "kheap.h"
@@ -88,6 +89,10 @@ static void process_release_inline_open_files(process_t *proc)
 					pipe_free((int)fh->u.pipe.pipe_idx);
 			}
 		}
+		if (fh->type == FD_TYPE_PTY_MASTER)
+			pty_release_master(fh->u.pty.pty_idx);
+		else if (fh->type == FD_TYPE_PTY_SLAVE)
+			pty_release_slave(fh->u.pty.pty_idx);
 
 		fh->type = FD_TYPE_NONE;
 		fh->writable = 0;
@@ -178,8 +183,7 @@ static int process_clone_kernel_stack(process_t *child_out,
 		return -1;
 	}
 
-	uint8_t *kguard =
-	    (uint8_t *)process_page_align_up((uintptr_t)kstack_raw);
+	uint8_t *kguard = (uint8_t *)process_page_align_up((uintptr_t)kstack_raw);
 	arch_kstack_guard((uintptr_t)kguard);
 	child_out->kstack_bottom = process_kernel_ptr32(kstack_raw);
 	child_out->kstack_top =
@@ -231,7 +235,8 @@ int process_create_file(process_t *proc,
 	uintptr_t entry = 0;
 	uintptr_t image_start = 0;
 	uintptr_t heap_start = 0;
-	if (elf_load_file(file_ref, aspace, &entry, &image_start, &heap_start) != 0) {
+	if (elf_load_file(file_ref, aspace, &entry, &image_start, &heap_start) !=
+	    0) {
 		rc = -2;
 		goto fail_user_space;
 	}
@@ -271,8 +276,7 @@ int process_create_file(process_t *proc,
 		rc = -5;
 		goto fail_user_space;
 	}
-	uint8_t *kguard =
-	    (uint8_t *)process_page_align_up((uintptr_t)kstack_raw);
+	uint8_t *kguard = (uint8_t *)process_page_align_up((uintptr_t)kstack_raw);
 	arch_kstack_guard((uintptr_t)kguard);
 
 	proc->pd_phys = pd_phys;
@@ -286,7 +290,8 @@ int process_create_file(process_t *proc,
 	proc->stack_low_limit = (uint32_t)PROCESS_USER_STACK_LOW;
 	proc->kstack_bottom = process_kernel_ptr32(kstack_raw);
 	proc->kstack_top = process_kernel_ptr32(kguard + 0x1000u + KSTACK_SIZE);
-	proc->arch_state.context = 0; /* scheduler builds the initial switch frame */
+	proc->arch_state.context =
+	    0;                     /* scheduler builds the initial switch frame */
 	proc->pid = 0;             /* assigned by sched_add() */
 	proc->state = PROC_UNUSED; /* sched_add() sets to PROC_READY */
 	proc->wait_queue = 0;
@@ -374,9 +379,9 @@ int process_create_file(process_t *proc,
 	proc->crash.fault_addr = 0;
 
 	if (inherit_fds) {
-		/* Inherit the calling process's fd table, bumping pipe refcounts so
-         * fd_close_one() in either process does not prematurely free a shared
-         * pipe buffer.  This is the Linux exec(2) behaviour: open file
+		/* Inherit the calling process's fd table, bumping endpoint refcounts
+         * so fd_close_one() in either process does not prematurely close a
+         * shared pipe or pty.  This is the Linux exec(2) behaviour: open file
          * descriptors survive across exec unless marked O_CLOEXEC. */
 		for (unsigned i = 0; i < MAX_FDS; i++) {
 			proc->open_files[i] = inherit_fds[i];
@@ -389,6 +394,10 @@ int process_create_file(process_t *proc,
 				if (pb)
 					pb->write_open++;
 			}
+			if (inherit_fds[i].type == FD_TYPE_PTY_MASTER)
+				pty_get_master(inherit_fds[i].u.pty.pty_idx);
+			else if (inherit_fds[i].type == FD_TYPE_PTY_SLAVE)
+				pty_get_slave(inherit_fds[i].u.pty.pty_idx);
 		}
 		copied_inherit_fds = 1;
 	} else {
@@ -511,8 +520,7 @@ int process_fork(process_t *child_out, process_t *parent)
 		process_fork_rollback_child(child_out);
 		return -1;
 	}
-	uint8_t *kguard =
-	    (uint8_t *)process_page_align_up((uintptr_t)kstack_raw);
+	uint8_t *kguard = (uint8_t *)process_page_align_up((uintptr_t)kstack_raw);
 	arch_kstack_guard((uintptr_t)kguard);
 	child_out->kstack_bottom = process_kernel_ptr32(kstack_raw);
 	child_out->kstack_top =

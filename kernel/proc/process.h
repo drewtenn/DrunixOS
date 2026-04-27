@@ -15,7 +15,9 @@
  * Virtual address layout for user processes.
  *
  * Code and data are loaded at whatever address the ELF specifies
- * (0x01000000 for x86 user executables built by the top-level Makefile).
+ * (0x08000000 for x86 user executables built by the top-level Makefile).
+ * On x86, user mappings must stay above the low 128 MB kernel direct map
+ * until the kernel moves to a higher-half layout.
  *
  * Heap: begins at the page-rounded end of the BSS segment and grows upward
  *   via SYS_BRK.  May not grow into the user stack region.
@@ -92,16 +94,16 @@
  * fd_type_t — what kind of resource an fd refers to.
  */
 typedef enum {
-	FD_TYPE_NONE = 0,       /* slot is free                          */
-	FD_TYPE_FILE = 1,       /* VFS-backed regular file               */
-	FD_TYPE_CHARDEV = 2,    /* character device (e.g. keyboard)      */
-	FD_TYPE_PIPE_READ = 3,  /* read end of a kernel pipe             */
-	FD_TYPE_PIPE_WRITE = 4, /* write end of a kernel pipe            */
-	FD_TYPE_TTY = 5,        /* controlling terminal fd               */
-	FD_TYPE_PROCFILE = 6,   /* synthetic procfs file                 */
-	FD_TYPE_DIR = 7,        /* directory fd for Linux getdents64     */
-	FD_TYPE_BLOCKDEV = 8,   /* read-only block device fd             */
-	FD_TYPE_SYSFILE = 9,    /* synthetic sysfs file                  */
+	FD_TYPE_NONE = 0,        /* slot is free                          */
+	FD_TYPE_FILE = 1,        /* VFS-backed regular file               */
+	FD_TYPE_CHARDEV = 2,     /* character device (e.g. keyboard)      */
+	FD_TYPE_PIPE_READ = 3,   /* read end of a kernel pipe             */
+	FD_TYPE_PIPE_WRITE = 4,  /* write end of a kernel pipe            */
+	FD_TYPE_TTY = 5,         /* controlling terminal fd               */
+	FD_TYPE_PROCFILE = 6,    /* synthetic procfs file                 */
+	FD_TYPE_DIR = 7,         /* directory fd for Linux getdents64     */
+	FD_TYPE_BLOCKDEV = 8,    /* read-only block device fd             */
+	FD_TYPE_SYSFILE = 9,     /* synthetic sysfs file                  */
 	FD_TYPE_PTY_MASTER = 10, /* pseudo-terminal master end           */
 	FD_TYPE_PTY_SLAVE = 11,  /* pseudo-terminal slave end            */
 } fd_type_t;
@@ -206,9 +208,9 @@ typedef enum {
  * the default fatal action.
  */
 typedef struct {
-	uint32_t valid;     /* 1 if a fault context is present */
-	uint32_t signum;    /* signal generated for the fault */
-	uint64_t fault_addr; /* faulting address captured by the active arch */
+	uint32_t valid;          /* 1 if a fault context is present */
+	uint32_t signum;         /* signal generated for the fault */
+	uint64_t fault_addr;     /* faulting address captured by the active arch */
 	arch_trap_frame_t frame; /* arch-owned saved register frame */
 } crash_info_t;
 
@@ -222,9 +224,10 @@ typedef struct process {
 	uint32_t user_stack;    /* user stack top (initial ESP, grows down) */
 	uint32_t kstack_top;    /* top of the per-process kernel stack (TSS.ESP0) */
 	uint32_t kstack_bottom; /* base of the heap-allocated kernel stack block */
-	arch_process_state_t arch_state; /* arch-owned saved context and TLS/FPU state */
-	uint32_t tid;       /* scheduler task ID */
-	uint32_t tgid;      /* thread-group ID returned by getpid */
+	arch_process_state_t
+	    arch_state;      /* arch-owned saved context and TLS/FPU state */
+	uint32_t tid;        /* scheduler task ID */
+	uint32_t tgid;       /* thread-group ID returned by getpid */
 	task_group_t *group; /* owning thread group */
 	uint32_t pid;        /* process ID (1-based, assigned by scheduler) */
 	uint32_t state; /* proc_state_t — uint32_t to keep struct size aligned */
@@ -243,9 +246,9 @@ typedef struct process {
 	uint32_t pgid;   /* process group ID (0 filled in by sched_add → pid) */
 	uint32_t sid;    /* session ID (0 filled in by sched_add → pid)       */
 	uint32_t tty_id; /* controlling TTY index attached to this process     */
-	uint32_t parent_pid;     /* PID of the process that created this one  */
-	uint32_t exit_status;    /* exit code from SYS_EXIT, read by waiter   */
-	uint32_t umask;          /* Linux umask(2), inherited across fork/exec */
+	uint32_t parent_pid;        /* PID of the process that created this one  */
+	uint32_t exit_status;       /* exit code from SYS_EXIT, read by waiter   */
+	uint32_t umask;             /* Linux umask(2), inherited across fork/exec */
 	uint32_t clear_child_tid;   /* user address cleared on thread exit */
 	wait_queue_t state_waiters; /* waitpid waiters for exit/stop transitions */
 	vm_area_t vmas[PROCESS_MAX_VMAS]; /* sorted by ascending start address */

@@ -5,6 +5,7 @@
 
 #include "klog.h"
 #include "arch.h"
+#include "console/runtime.h"
 #include "sched.h"
 #include "kprintf.h"
 #include "kstring.h"
@@ -35,7 +36,7 @@ static void klog_puts(const char *s)
 {
 	if (!s)
 		return;
-	arch_console_write(s, k_strlen(s));
+	(void)console_runtime_write_kernel_output(s, k_strlen(s));
 	klog_debugcon_puts(s);
 }
 

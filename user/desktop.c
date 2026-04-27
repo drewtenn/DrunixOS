@@ -3,17 +3,16 @@
  *
  * Maps /dev/fb0, runs a shell on a freshly-allocated pty pair, and
  * renders the slave-side output into a windowed terminal on top of
- * a procedural / JPEG wallpaper.  Three forked helpers stream events
- * into a shared pipe so the parent can multiplex without poll(2):
+ * a procedural / JPEG wallpaper.  Forked helpers stream input through
+ * small pipes so the parent can poll for whichever source is ready:
  *
  *   - keyboard helper:  /dev/kbd → 'K' tagged events
- *   - terminal helper:  pty master → 'T' tagged events
+ *   - terminal helper:  pty master → byte stream
  *   - mouse helper:     /dev/mouse → 'M' tagged 3-byte packets
  *
- * The parent reads 4-byte event records from the pipe, forwards
- * keystrokes to the pty master, feeds terminal bytes through a
- * minimal ANSI consumer, and tracks the pointer position so the
- * cursor sprite follows the mouse.
+ * The parent forwards keystrokes to the pty master, feeds terminal
+ * bytes through a minimal ANSI consumer in batches, and tracks the
+ * pointer position so the cursor sprite follows the mouse.
  *
  * Framebuffer geometry comes from /dev/fb0info at startup; nothing
  * about the screen is hard-coded.
@@ -53,6 +52,12 @@ typedef struct {
 #define COLOR_TITLEBAR_FG 0x00f0f0f0u
 #define COLOR_CURSOR 0x00ffffffu
 #define COLOR_CURSOR_SHADOW 0x00202020u
+#define COLOR_TASKBAR 0x0009121fu
+#define COLOR_TASKBAR_EDGE 0x001d3147u
+#define COLOR_TASKBAR_BUTTON 0x00172436u
+#define COLOR_TASKBAR_BUTTON_ACTIVE 0x00294a65u
+#define COLOR_TASKBAR_ICON 0x0060d6ffu
+#define COLOR_TASKBAR_CLOCK 0x00f4f7fbu
 
 #define TERM_COLS 80
 #define TERM_ROWS 24
@@ -63,17 +68,23 @@ typedef struct {
 #define TERM_X 64
 #define TERM_Y 64
 
-#define POINTER_W 8
-#define POINTER_H 12
+#define TASKBAR_H 48
+#define TASKBAR_PAD 14
+#define TASKBAR_ICON_SIZE 30
+#define TASKBAR_ICON_GAP 10
 
-#define EVT_TERM 'T'
+#define POINTER_W 13
+#define POINTER_H 20
+
 #define EVT_KEY 'K'
 #define EVT_MOUSE 'M'
 
 static uint32_t *g_fb;
+static uint32_t *g_scene;
 static uint32_t *g_wallpaper;
 static fbinfo_t g_info;
 static uint32_t g_pitch_pixels;
+static uint32_t g_fb_bytes;
 
 static char g_grid[TERM_ROWS][TERM_COLS];
 static int g_cursor_x;
@@ -87,8 +98,7 @@ static int g_pointer_old_y;
 
 static uint32_t pack_rgb(uint8_t r, uint8_t g, uint8_t b)
 {
-	return ((uint32_t)r << g_info.red_pos) |
-	       ((uint32_t)g << g_info.green_pos) |
+	return ((uint32_t)r << g_info.red_pos) | ((uint32_t)g << g_info.green_pos) |
 	       ((uint32_t)b << g_info.blue_pos);
 }
 
@@ -118,10 +128,9 @@ fill_rect(uint32_t *target, int x, int y, int w, int h, uint32_t color)
 	}
 }
 
-static void
-copy_rect_from_wallpaper(int x, int y, int w, int h)
+static void copy_rect_from_scene(int x, int y, int w, int h)
 {
-	if (!g_wallpaper)
+	if (!g_scene)
 		return;
 	if (w <= 0 || h <= 0)
 		return;
@@ -129,7 +138,7 @@ copy_rect_from_wallpaper(int x, int y, int w, int h)
 		int yy = y + j;
 		if (yy < 0 || yy >= (int)g_info.height)
 			continue;
-		uint32_t *src = g_wallpaper + (uint32_t)yy * g_pitch_pixels;
+		uint32_t *src = g_scene + (uint32_t)yy * g_pitch_pixels;
 		uint32_t *dst = g_fb + (uint32_t)yy * g_pitch_pixels;
 		for (int i = 0; i < w; i++) {
 			int xx = x + i;
@@ -148,14 +157,14 @@ draw_glyph(uint32_t *target, int x, int y, char ch, uint32_t fg, uint32_t bg)
 	for (int row = 0; row < TERM_GLYPH_H; row++) {
 		uint8_t bits = gly[row];
 		for (int col = 0; col < TERM_GLYPH_W; col++) {
-			uint32_t color = (bits & (0x80u >> col)) ? fg : bg;
+			uint32_t color = (bits & (1u << col)) ? fg : bg;
 			put_pixel(target, x + col, y + row, color);
 		}
 	}
 }
 
-static void
-draw_text(uint32_t *target, int x, int y, const char *s, uint32_t fg, uint32_t bg)
+static void draw_text(
+    uint32_t *target, int x, int y, const char *s, uint32_t fg, uint32_t bg)
 {
 	while (*s) {
 		draw_glyph(target, x, y, *s, fg, bg);
@@ -254,8 +263,7 @@ static int try_load_wallpaper_jpeg(const char *path, uint32_t *target)
 
 	for (uint32_t y = 0; y < g_info.height; y++) {
 		uint32_t sy = (y * (uint32_t)src_h) / g_info.height;
-		const uint8_t *srow =
-		    rgb + sy * (uint32_t)src_w * (color ? 3u : 1u);
+		const uint8_t *srow = rgb + sy * (uint32_t)src_w * (color ? 3u : 1u);
 		uint32_t *drow = target + y * g_pitch_pixels;
 
 		for (uint32_t x = 0; x < g_info.width; x++) {
@@ -360,16 +368,30 @@ static void term_putchar(char ch)
 	}
 }
 
-static void render_terminal(void)
+static int terminal_window_w(void)
 {
-	int win_w = TERM_COLS * TERM_GLYPH_W + 2 * TERM_PAD;
-	int win_h = TERM_ROWS * TERM_GLYPH_H + 2 * TERM_PAD + TITLE_H;
+	return TERM_COLS * TERM_GLYPH_W + 2 * TERM_PAD;
+}
 
-	fill_rect(g_fb, TERM_X, TERM_Y, win_w, TITLE_H, COLOR_TITLEBAR);
-	draw_text(
-	    g_fb, TERM_X + 8, TERM_Y + 2, "Shell", COLOR_TITLEBAR_FG, COLOR_TITLEBAR);
+static int terminal_window_h(void)
+{
+	return TERM_ROWS * TERM_GLYPH_H + 2 * TERM_PAD + TITLE_H;
+}
 
-	fill_rect(g_fb,
+static void render_terminal(uint32_t *target)
+{
+	int win_w = terminal_window_w();
+	int win_h = terminal_window_h();
+
+	fill_rect(target, TERM_X, TERM_Y, win_w, TITLE_H, COLOR_TITLEBAR);
+	draw_text(target,
+	          TERM_X + 8,
+	          TERM_Y + 2,
+	          "Terminal",
+	          COLOR_TITLEBAR_FG,
+	          COLOR_TITLEBAR);
+
+	fill_rect(target,
 	          TERM_X,
 	          TERM_Y + TITLE_H,
 	          win_w,
@@ -380,7 +402,7 @@ static void render_terminal(void)
 	int gy = TERM_Y + TITLE_H + TERM_PAD;
 	for (int r = 0; r < TERM_ROWS; r++) {
 		for (int c = 0; c < TERM_COLS; c++) {
-			draw_glyph(g_fb,
+			draw_glyph(target,
 			           gx + c * TERM_GLYPH_W,
 			           gy + r * TERM_GLYPH_H,
 			           g_grid[r][c],
@@ -391,33 +413,160 @@ static void render_terminal(void)
 
 	int cx = gx + g_cursor_x * TERM_GLYPH_W;
 	int cy = gy + g_cursor_y * TERM_GLYPH_H;
-	fill_rect(g_fb, cx, cy + TERM_GLYPH_H - 2, TERM_GLYPH_W, 2, COLOR_TERM_FG);
+	fill_rect(
+	    target, cx, cy + TERM_GLYPH_H - 2, TERM_GLYPH_W, 2, COLOR_TERM_FG);
 }
 
-static void render_pointer(void)
+static void draw_taskbar_icon_terminal(uint32_t *target, int x, int y)
+{
+	fill_rect(target, x + 5, y + 6, 20, 16, COLOR_TASKBAR_ICON);
+	fill_rect(target, x + 7, y + 8, 16, 12, COLOR_TASKBAR_BUTTON);
+	draw_text(
+	    target, x + 9, y + 7, ">", COLOR_TASKBAR_ICON, COLOR_TASKBAR_BUTTON);
+	fill_rect(target, x + 17, y + 19, 7, 2, COLOR_TASKBAR_ICON);
+}
+
+static void draw_taskbar_icon_file(uint32_t *target, int x, int y)
+{
+	fill_rect(target, x + 7, y + 8, 17, 16, 0x00d9eef4u);
+	fill_rect(target, x + 19, y + 8, 5, 5, 0x008cb8c9u);
+	fill_rect(target, x + 10, y + 14, 11, 2, 0x00688fa1u);
+	fill_rect(target, x + 10, y + 18, 11, 2, 0x00688fa1u);
+}
+
+static void draw_taskbar_icon_gear(uint32_t *target, int x, int y)
+{
+	int cx = x + TASKBAR_ICON_SIZE / 2;
+	int cy = y + TASKBAR_ICON_SIZE / 2;
+
+	fill_rect(target, cx - 2, y + 5, 4, 20, COLOR_TASKBAR_ICON);
+	fill_rect(target, x + 5, cy - 2, 20, 4, COLOR_TASKBAR_ICON);
+	fill_rect(target, x + 8, y + 8, 14, 14, COLOR_TASKBAR_ICON);
+	fill_rect(target, x + 11, y + 11, 8, 8, COLOR_TASKBAR_BUTTON);
+}
+
+static void draw_taskbar_icon_browser(uint32_t *target, int x, int y)
+{
+	fill_rect(target, x + 7, y + 7, 16, 16, 0x0017b6d8u);
+	fill_rect(target, x + 10, y + 10, 10, 10, COLOR_TASKBAR_BUTTON);
+	fill_rect(target, x + 14, y + 5, 7, 5, 0x0037d29au);
+	fill_rect(target, x + 8, y + 19, 13, 4, 0x0057cfffu);
+}
+
+static void draw_taskbar_icon_logo(uint32_t *target, int x, int y)
+{
+	fill_rect(target, x + 7, y + 6, 5, 18, 0x0047d36du);
+	fill_rect(target, x + 12, y + 6, 9, 5, 0x0047d36du);
+	fill_rect(target, x + 12, y + 14, 8, 4, 0x001e91ffu);
+	fill_rect(target, x + 19, y + 18, 4, 6, 0x001e91ffu);
+}
+
+static void draw_taskbar_button(uint32_t *target,
+                                int x,
+                                int y,
+                                int active,
+                                void (*icon)(uint32_t *, int, int))
+{
+	fill_rect(target,
+	          x,
+	          y,
+	          TASKBAR_ICON_SIZE,
+	          TASKBAR_ICON_SIZE,
+	          active ? COLOR_TASKBAR_BUTTON_ACTIVE : COLOR_TASKBAR_BUTTON);
+	icon(target, x, y);
+	if (active)
+		fill_rect(target,
+		          x + TASKBAR_ICON_SIZE / 2 - 5,
+		          y + TASKBAR_ICON_SIZE + 3,
+		          10,
+		          2,
+		          COLOR_TASKBAR_ICON);
+}
+
+static void format_clock(char *buf, int bufsz)
+{
+	sys_timespec_t ts;
+
+	if (bufsz <= 0)
+		return;
+	if (sys_clock_gettime(0, &ts) != 0) {
+		snprintf(buf, (size_t)bufsz, "--:--");
+		return;
+	}
+	int minutes = (int)((ts.tv_sec / 60) % 60);
+	int hours = (int)((ts.tv_sec / 3600) % 24);
+	snprintf(buf, (size_t)bufsz, "%02d:%02d", hours, minutes);
+}
+
+static void render_taskbar(uint32_t *target)
+{
+	int y = (int)g_info.height - TASKBAR_H;
+	int icon_y = y + 8;
+	int x = TASKBAR_PAD;
+	char clock[8];
+	int clock_x;
+
+	if (y < 0)
+		return;
+	fill_rect(target, 0, y, (int)g_info.width, TASKBAR_H, COLOR_TASKBAR);
+	fill_rect(target, 0, y, (int)g_info.width, 1, COLOR_TASKBAR_EDGE);
+
+	draw_taskbar_button(target, x, icon_y, 0, draw_taskbar_icon_logo);
+	x += TASKBAR_ICON_SIZE + TASKBAR_ICON_GAP * 2;
+	draw_taskbar_button(target, x, icon_y, 1, draw_taskbar_icon_terminal);
+	x += TASKBAR_ICON_SIZE + TASKBAR_ICON_GAP;
+	draw_taskbar_button(target, x, icon_y, 0, draw_taskbar_icon_file);
+	x += TASKBAR_ICON_SIZE + TASKBAR_ICON_GAP;
+	draw_taskbar_button(target, x, icon_y, 0, draw_taskbar_icon_gear);
+	x += TASKBAR_ICON_SIZE + TASKBAR_ICON_GAP;
+	draw_taskbar_button(target, x, icon_y, 0, draw_taskbar_icon_browser);
+
+	format_clock(clock, (int)sizeof(clock));
+	clock_x = (int)g_info.width - TASKBAR_PAD - 5 * TERM_GLYPH_W;
+	draw_text(
+	    target, clock_x, y + 16, clock, COLOR_TASKBAR_CLOCK, COLOR_TASKBAR);
+}
+
+static void compose_scene(void)
+{
+	if (!g_scene)
+		return;
+	if (g_wallpaper)
+		memcpy(g_scene, g_wallpaper, g_fb_bytes);
+	else
+		render_wallpaper(g_scene);
+	render_terminal(g_scene);
+	render_taskbar(g_scene);
+}
+
+static void draw_pointer_sprite(void)
 {
 	/*
-	 * A trivial pointed cursor: a vertical white wedge with a darker
-	 * shadow column.  Cleared by repainting the rectangle from the
-	 * cached wallpaper buffer before the new draw, so motion does not
-	 * smear over the wallpaper.
+	 * Pointer overlay is drawn only into the live framebuffer.  The scene
+	 * buffer keeps the desktop/window pixels underneath it.
 	 */
-	if (g_pointer_old_x != g_pointer_x || g_pointer_old_y != g_pointer_y)
-		copy_rect_from_wallpaper(
-		    g_pointer_old_x, g_pointer_old_y, POINTER_W, POINTER_H);
-
 	for (int j = 0; j < POINTER_H; j++) {
-		int row_w = POINTER_W - j / 2;
-		if (row_w <= 0)
-			break;
+		int row_w = j < 12 ? 1 + j / 2 : 7 - (j - 12) / 2;
+		if (row_w < 2)
+			row_w = 2;
+		if (row_w > POINTER_W - 2)
+			row_w = POINTER_W - 2;
 		fill_rect(g_fb, g_pointer_x, g_pointer_y + j, row_w, 1, COLOR_CURSOR);
 		fill_rect(g_fb,
 		          g_pointer_x + row_w,
 		          g_pointer_y + j,
-		          1,
+		          2,
 		          1,
 		          COLOR_CURSOR_SHADOW);
 	}
+}
+
+static void render_pointer(void)
+{
+	if (g_pointer_old_x != g_pointer_x || g_pointer_old_y != g_pointer_y)
+		copy_rect_from_scene(
+		    g_pointer_old_x, g_pointer_old_y, POINTER_W, POINTER_H);
+	draw_pointer_sprite();
 	g_pointer_old_x = g_pointer_x;
 	g_pointer_old_y = g_pointer_y;
 }
@@ -432,9 +581,8 @@ static int read_fb_info(void)
 	if (fd < 0)
 		return -1;
 	while (read_total < (int)sizeof(g_info)) {
-		n = sys_read(fd,
-		             (char *)&g_info + read_total,
-		             (int)sizeof(g_info) - read_total);
+		n = sys_read(
+		    fd, (char *)&g_info + read_total, (int)sizeof(g_info) - read_total);
 		if (n <= 0)
 			break;
 		read_total += n;
@@ -449,8 +597,7 @@ static int read_fb_info(void)
 	return 0;
 }
 
-static void
-spawn_shell(int slave_fd, char *const *argv, char *const *envp)
+static void spawn_shell(int slave_fd, char *const *argv, char *const *envp)
 {
 	int pid = sys_fork();
 
@@ -484,6 +631,53 @@ static void emit_event(int pipe_w, char tag, uint8_t a, uint8_t b, uint8_t c)
 	rec[2] = b;
 	rec[3] = c;
 	sys_fwrite(pipe_w, (const char *)rec, (int)sizeof(rec));
+}
+
+static int fd_has_input(int fd)
+{
+	sys_pollfd_t pfd;
+
+	pfd.fd = fd;
+	pfd.events = SYS_POLLIN;
+	pfd.revents = 0;
+	return sys_poll(&pfd, 1, 0) > 0 && (pfd.revents & SYS_POLLIN);
+}
+
+static int read_event_record(int fd, uint8_t rec[4])
+{
+	int got = 0;
+
+	while (got < 4) {
+		int n = sys_read(fd, (char *)(rec + got), 4 - got);
+		if (n <= 0)
+			return -1;
+		got += n;
+	}
+	return 0;
+}
+
+static void drain_terminal_bytes(int fd)
+{
+	uint8_t buf[512];
+	int rendered = 0;
+
+	for (;;) {
+		int n = sys_read(fd, (char *)buf, (int)sizeof(buf));
+		if (n <= 0)
+			break;
+		for (int i = 0; i < n; i++)
+			term_putchar((char)buf[i]);
+		rendered = 1;
+		if (!fd_has_input(fd))
+			break;
+	}
+
+	if (rendered) {
+		render_terminal(g_scene);
+		copy_rect_from_scene(
+		    TERM_X, TERM_Y, terminal_window_w(), terminal_window_h());
+		render_pointer();
+	}
 }
 
 static void run_kbd_helper(int pipe_w)
@@ -520,8 +714,7 @@ static void run_kbd_helper(int pipe_w)
 			produced = kbdmap_translate(
 			    &kstate, e->code, e->value, cooked, (int)sizeof(cooked));
 			for (int j = 0; j < produced; j++)
-				emit_event(
-				    pipe_w, EVT_KEY, (uint8_t)cooked[j], 0, 0);
+				emit_event(pipe_w, EVT_KEY, (uint8_t)cooked[j], 0, 0);
 		}
 	}
 }
@@ -534,8 +727,7 @@ static void run_term_helper(int pipe_w, int master_fd)
 		int n = sys_read(master_fd, (char *)buf, (int)sizeof(buf));
 		if (n <= 0)
 			continue;
-		for (int i = 0; i < n; i++)
-			emit_event(pipe_w, EVT_TERM, buf[i], 0, 0);
+		sys_fwrite(pipe_w, (const char *)buf, n);
 	}
 }
 
@@ -670,15 +862,25 @@ int main(int argc, char **argv)
 		sys_write("desktop: cannot open /dev/fb0\n");
 		return 1;
 	}
-	uint32_t fb_bytes = g_info.pitch * g_info.height;
+	g_fb_bytes = g_info.pitch * g_info.height;
 	g_fb = (uint32_t *)mmap(
-	    0, fb_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
+	    0, g_fb_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
 	if (g_fb == MAP_FAILED) {
 		sys_write("desktop: framebuffer mmap failed\n");
 		return 1;
 	}
+	if (sys_display_claim() != 0) {
+		sys_write("desktop: cannot claim display\n");
+		return 1;
+	}
 
-	g_wallpaper = (uint32_t *)malloc(fb_bytes);
+	g_scene = (uint32_t *)malloc(g_fb_bytes);
+	if (!g_scene) {
+		sys_write("desktop: scene allocation failed\n");
+		return 1;
+	}
+
+	g_wallpaper = (uint32_t *)malloc(g_fb_bytes);
 	if (g_wallpaper)
 		render_wallpaper(g_wallpaper);
 
@@ -703,13 +905,22 @@ int main(int argc, char **argv)
 		sys_write("desktop: pipe failed\n");
 		return 1;
 	}
+	int term_fds[2];
+	if (sys_pipe(term_fds) != 0) {
+		sys_write("desktop: pipe failed\n");
+		return 1;
+	}
 
 	int evt_r = evt_fds[0];
 	int evt_w = evt_fds[1];
+	int term_r = term_fds[0];
+	int term_w = term_fds[1];
 
 	(void)spawn_helper_child(wrap_kbd, evt_w, 0);
-	(void)spawn_helper_child(wrap_term, evt_w, ptmx);
+	(void)spawn_helper_child(wrap_term, term_w, ptmx);
 	(void)spawn_helper_child(wrap_mouse, evt_w, 0);
+	sys_close(evt_w);
+	sys_close(term_w);
 
 	g_pointer_x = (int)g_info.width / 2;
 	g_pointer_y = (int)g_info.height / 2;
@@ -717,66 +928,69 @@ int main(int argc, char **argv)
 	g_pointer_old_y = g_pointer_y;
 
 	term_clear();
-	if (g_wallpaper)
-		memcpy(g_fb, g_wallpaper, fb_bytes);
-	else
-		render_wallpaper(g_fb);
-	render_terminal();
-	render_pointer();
+	compose_scene();
+	memcpy(g_fb, g_scene, g_fb_bytes);
+	draw_pointer_sprite();
 
 	for (;;) {
-		uint8_t rec[4];
-		int got = 0;
+		sys_pollfd_t pfds[2];
 
-		while (got < 4) {
-			int n = sys_read(evt_r, (char *)(rec + got), 4 - got);
-			if (n <= 0) {
-				got = 0;
+		pfds[0].fd = term_r;
+		pfds[0].events = SYS_POLLIN;
+		pfds[0].revents = 0;
+		pfds[1].fd = evt_r;
+		pfds[1].events = SYS_POLLIN;
+		pfds[1].revents = 0;
+
+		if (sys_poll(pfds, 2, -1) <= 0) {
+			sys_yield();
+			continue;
+		}
+
+		if (pfds[0].revents & SYS_POLLIN)
+			drain_terminal_bytes(term_r);
+
+		while ((pfds[1].revents & SYS_POLLIN) || fd_has_input(evt_r)) {
+			uint8_t rec[4];
+
+			pfds[1].revents = 0;
+			if (read_event_record(evt_r, rec) != 0)
+				break;
+
+			switch (rec[0]) {
+			case EVT_KEY:
+				sys_fwrite(ptmx, (const char *)&rec[1], 1);
+				break;
+			case EVT_MOUSE: {
+				/*
+				 * Coalesced report from the mouse helper:
+				 *   rec[1] = current button mask (low 3 bits),
+				 *   rec[2] = signed dx (REL_X, positive = right),
+				 *   rec[3] = signed dy (REL_Y, positive = down).
+				 *
+				 * REL_Y is already in screen orientation (the kernel
+				 * driver flips the PS/2 wire convention before
+				 * publishing), so we just add it directly.
+				 */
+				int8_t sdx = (int8_t)rec[2];
+				int8_t sdy = (int8_t)rec[3];
+
+				g_pointer_x += sdx;
+				g_pointer_y += sdy;
+				if (g_pointer_x < 0)
+					g_pointer_x = 0;
+				if (g_pointer_y < 0)
+					g_pointer_y = 0;
+				if (g_pointer_x > (int)g_info.width - POINTER_W)
+					g_pointer_x = (int)g_info.width - POINTER_W;
+				if (g_pointer_y > (int)g_info.height - POINTER_H)
+					g_pointer_y = (int)g_info.height - POINTER_H;
+				render_pointer();
 				break;
 			}
-			got += n;
-		}
-		if (got != 4)
-			continue;
-
-		switch (rec[0]) {
-		case EVT_TERM:
-			term_putchar((char)rec[1]);
-			render_terminal();
-			render_pointer();
-			break;
-		case EVT_KEY:
-			sys_fwrite(ptmx, (const char *)&rec[1], 1);
-			break;
-		case EVT_MOUSE: {
-			/*
-			 * Coalesced report from the mouse helper:
-			 *   rec[1] = current button mask (low 3 bits),
-			 *   rec[2] = signed dx (REL_X, positive = right),
-			 *   rec[3] = signed dy (REL_Y, positive = down).
-			 *
-			 * REL_Y is already in screen orientation (the kernel
-			 * driver flips the PS/2 wire convention before
-			 * publishing), so we just add it directly.
-			 */
-			int8_t sdx = (int8_t)rec[2];
-			int8_t sdy = (int8_t)rec[3];
-
-			g_pointer_x += sdx;
-			g_pointer_y += sdy;
-			if (g_pointer_x < 0)
-				g_pointer_x = 0;
-			if (g_pointer_y < 0)
-				g_pointer_y = 0;
-			if (g_pointer_x > (int)g_info.width - POINTER_W)
-				g_pointer_x = (int)g_info.width - POINTER_W;
-			if (g_pointer_y > (int)g_info.height - POINTER_H)
-				g_pointer_y = (int)g_info.height - POINTER_H;
-			render_pointer();
-			break;
-		}
-		default:
-			break;
+			default:
+				break;
+			}
 		}
 	}
 

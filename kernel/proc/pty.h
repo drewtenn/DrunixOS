@@ -27,6 +27,8 @@
 
 int pty_alloc_master(void);
 int pty_open_slave(uint32_t pty_idx);
+void pty_get_master(uint32_t pty_idx);
+void pty_get_slave(uint32_t pty_idx);
 void pty_release_master(uint32_t pty_idx);
 void pty_release_slave(uint32_t pty_idx);
 

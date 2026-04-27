@@ -57,6 +57,15 @@ uint32_t SYSCALL_NOINLINE syscall_case_drunix_scroll_down(uint32_t ebx)
 	return 0;
 }
 
+uint32_t SYSCALL_NOINLINE syscall_case_drunix_display_claim(void)
+{
+	process_t *cur = sched_current();
+
+	if (!cur)
+		return (uint32_t)-1;
+	return console_runtime_claim_display(cur->pid) == 0 ? 0u : (uint32_t)-1;
+}
+
 uint32_t SYSCALL_NOINLINE syscall_case_yield(void)
 {
 

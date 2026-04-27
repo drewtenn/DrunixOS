@@ -22,7 +22,7 @@ typedef struct {
 	uint32_t in_use;
 	uint32_t master_open;
 	uint32_t slave_open;
-	pty_ring_t to_slave; /* master writes, slave reads */
+	pty_ring_t to_slave;  /* master writes, slave reads */
 	pty_ring_t to_master; /* slave writes, master reads */
 } pty_t;
 
@@ -113,6 +113,28 @@ int pty_open_slave(uint32_t pty_idx)
 	return 0;
 }
 
+void pty_get_master(uint32_t pty_idx)
+{
+	pty_t *p;
+
+	if (pty_idx >= PTY_MAX)
+		return;
+	p = &pty_pool[pty_idx];
+	if (p->in_use && p->master_open > 0)
+		p->master_open++;
+}
+
+void pty_get_slave(uint32_t pty_idx)
+{
+	pty_t *p;
+
+	if (pty_idx >= PTY_MAX)
+		return;
+	p = &pty_pool[pty_idx];
+	if (p->in_use && p->slave_open > 0)
+		p->slave_open++;
+}
+
 void pty_release_master(uint32_t pty_idx)
 {
 	pty_t *p;
@@ -123,11 +145,14 @@ void pty_release_master(uint32_t pty_idx)
 	if (!p->in_use)
 		return;
 
-	p->master_open = 0;
-	p->to_slave.closed = 1;
-	p->to_master.closed = 1;
-	sched_wake_all(&p->to_slave.waiters);
-	sched_wake_all(&p->to_master.waiters);
+	if (p->master_open > 0)
+		p->master_open--;
+	if (p->master_open == 0) {
+		p->to_slave.closed = 1;
+		p->to_master.closed = 1;
+		sched_wake_all(&p->to_slave.waiters);
+		sched_wake_all(&p->to_master.waiters);
+	}
 
 	if (!p->slave_open)
 		p->in_use = 0;
@@ -143,11 +168,14 @@ void pty_release_slave(uint32_t pty_idx)
 	if (!p->in_use)
 		return;
 
-	p->slave_open = 0;
-	p->to_slave.closed = 1;
-	p->to_master.closed = 1;
-	sched_wake_all(&p->to_slave.waiters);
-	sched_wake_all(&p->to_master.waiters);
+	if (p->slave_open > 0)
+		p->slave_open--;
+	if (p->slave_open == 0) {
+		p->to_slave.closed = 1;
+		p->to_master.closed = 1;
+		sched_wake_all(&p->to_slave.waiters);
+		sched_wake_all(&p->to_master.waiters);
+	}
 
 	if (!p->master_open)
 		p->in_use = 0;

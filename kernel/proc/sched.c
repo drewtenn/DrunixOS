@@ -6,6 +6,7 @@
 #include "sched.h"
 #include "process.h"
 #include "arch.h"
+#include "console/runtime.h"
 #include "resources.h"
 #include "kheap.h"
 #include "klog.h"
@@ -397,9 +398,9 @@ void sched_exec_current(process_t *replacement)
 	g_current->state = PROC_RUNNING;
 
 	arch_context_prepare(g_current);
-	arch_context_switch(
-	    (arch_context_t *)0, (arch_context_t)g_current->arch_state.context,
-	    g_current->pd_phys);
+	arch_context_switch((arch_context_t *)0,
+	                    (arch_context_t)g_current->arch_state.context,
+	                    g_current->pd_phys);
 
 	for (;;)
 		arch_idle_wait();
@@ -450,6 +451,7 @@ void sched_mark_exit(void)
 	if (g_current->clear_child_tid != 0)
 		(void)uaccess_copy_to_user(
 		    g_current, g_current->clear_child_tid, &zero, sizeof(zero));
+	console_runtime_release_process(g_current);
 	proc_resource_put_files(g_current);
 	task_group_remove_task(group);
 	if (group && task_group_live_count(group) == 0) {
@@ -643,10 +645,9 @@ void schedule(void)
 
 	/* Swap kernel stacks + page directory.
      * For zombies, pass NULL to skip saving (their stack is abandoned). */
-	arch_context_t *save_ptr =
-	    (prev && prev->state != PROC_ZOMBIE)
-	        ? &prev->arch_state.context
-	        : (arch_context_t *)0;
+	arch_context_t *save_ptr = (prev && prev->state != PROC_ZOMBIE)
+	                               ? &prev->arch_state.context
+	                               : (arch_context_t *)0;
 	arch_context_switch(
 	    save_ptr, (arch_context_t)next->arch_state.context, next->pd_phys);
 	/* Execution resumes here when this process is rescheduled. */
@@ -1027,8 +1028,7 @@ uintptr_t sched_signal_check(uintptr_t frame_ctx)
      */
 	if (signum == SIGCONT) {
 		if (handler > SIG_IGN) {
-			if (arch_signal_setup_frame(g_current, frame, signum, handler) !=
-			    0)
+			if (arch_signal_setup_frame(g_current, frame, signum, handler) != 0)
 				goto bad_signal_frame;
 		}
 		return frame_ctx;

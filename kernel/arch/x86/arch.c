@@ -4,6 +4,7 @@
  */
 
 #include "../arch.h"
+#include "arch_layout.h"
 #include "clock.h"
 #include "idt.h"
 #include "io.h"
@@ -77,6 +78,15 @@ static uint32_t arch_mm_to_paging_flags(uint32_t flags)
 		paging_flags |= PG_IO;
 
 	return paging_flags;
+}
+
+static int arch_x86_user_page_allowed(uintptr_t virt)
+{
+	if (virt < ARCH_USER_VADDR_MIN)
+		return 0;
+	if (virt > ARCH_USER_VADDR_MAX - 0x1000u)
+		return 0;
+	return 1;
 }
 
 static void x86_timer_tick(void)
@@ -221,9 +231,14 @@ void arch_user_sync_to_active(void)
 {
 }
 
-int arch_mm_map(arch_aspace_t aspace, uintptr_t virt, uint64_t phys, uint32_t flags)
+int arch_mm_map(arch_aspace_t aspace,
+                uintptr_t virt,
+                uint64_t phys,
+                uint32_t flags)
 {
 	if (phys > UINT32_MAX)
+		return -1;
+	if ((flags & ARCH_MM_MAP_USER) && !arch_x86_user_page_allowed(virt))
 		return -1;
 
 	return paging_map_page((uint32_t)aspace,

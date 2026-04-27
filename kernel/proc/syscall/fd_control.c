@@ -12,6 +12,7 @@
 #include "pipe.h"
 #include "process.h"
 #include "procfs.h"
+#include "pty.h"
 #include "sched.h"
 #include "uaccess.h"
 #include "vfs.h"
@@ -55,7 +56,7 @@ static uint32_t linux_poll_revents(process_t *cur, int32_t fd, uint32_t events)
 	return rev;
 }
 
-static void fd_bump_pipe_ref(file_handle_t *fh)
+static void fd_bump_open_ref(file_handle_t *fh)
 {
 	pipe_buf_t *pb;
 
@@ -70,6 +71,10 @@ static void fd_bump_pipe_ref(file_handle_t *fh)
 		if (pb)
 			pb->write_open++;
 	}
+	if (fh->type == FD_TYPE_PTY_MASTER)
+		pty_get_master(fh->u.pty.pty_idx);
+	else if (fh->type == FD_TYPE_PTY_SLAVE)
+		pty_get_slave(fh->u.pty.pty_idx);
 }
 
 static int fd_duplicate_from(process_t *proc,
@@ -88,7 +93,7 @@ static int fd_duplicate_from(process_t *proc,
 		if (proc_fd_entries(proc)[fd].type == FD_TYPE_NONE) {
 			proc_fd_entries(proc)[fd] = proc_fd_entries(proc)[oldfd];
 			proc_fd_entries(proc)[fd].cloexec = cloexec ? 1u : 0u;
-			fd_bump_pipe_ref(&proc_fd_entries(proc)[fd]);
+			fd_bump_open_ref(&proc_fd_entries(proc)[fd]);
 			return (int)fd;
 		}
 	}
@@ -461,7 +466,7 @@ uint32_t SYSCALL_NOINLINE syscall_case_dup2(uint32_t ebx, uint32_t ecx)
          * ebx = old_fd, ecx = new_fd.
          *
          * Duplicates old_fd to new_fd.  If new_fd is already open it is
-         * closed first.  Both ends of a pipe have their refcount bumped.
+         * closed first.  The duplicated open resource refcount is bumped.
          * If old_fd == new_fd returns new_fd immediately (no-op).
          *
          * Returns new_fd on success, -1 on error.
@@ -487,18 +492,7 @@ uint32_t SYSCALL_NOINLINE syscall_case_dup2(uint32_t ebx, uint32_t ecx)
 		proc_fd_entries(cur)[ecx] = proc_fd_entries(cur)[ebx];
 		proc_fd_entries(cur)[ecx].cloexec = 0;
 
-		/* Bump the pipe refcount for the duplicated end. */
-		if (proc_fd_entries(cur)[ecx].type == FD_TYPE_PIPE_READ) {
-			pipe_buf_t *pb =
-			    pipe_get((int)proc_fd_entries(cur)[ecx].u.pipe.pipe_idx);
-			if (pb)
-				pb->read_open++;
-		} else if (proc_fd_entries(cur)[ecx].type == FD_TYPE_PIPE_WRITE) {
-			pipe_buf_t *pb =
-			    pipe_get((int)proc_fd_entries(cur)[ecx].u.pipe.pipe_idx);
-			if (pb)
-				pb->write_open++;
-		}
+		fd_bump_open_ref(&proc_fd_entries(cur)[ecx]);
 
 		return ecx;
 	}

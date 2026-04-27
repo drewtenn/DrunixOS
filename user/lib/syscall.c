@@ -133,6 +133,23 @@ void sys_clear(void)
 	__asm__ volatile("int $0x80" : "=a"(dummy) : "a"(4000) : "memory");
 }
 
+int sys_display_claim(void)
+{
+	int r;
+	__asm__ volatile("int $0x80" : "=a"(r) : "a"(4009) : "memory");
+	return r;
+}
+
+int sys_poll(sys_pollfd_t *fds, unsigned int nfds, int timeout)
+{
+	int r;
+	__asm__ volatile("int $0x80"
+	                 : "=a"(r)
+	                 : "a"(168), "b"(fds), "c"(nfds), "d"(timeout)
+	                 : "memory");
+	return r;
+}
+
 int sys_getdents(const char *path, char *buf, int size)
 {
 	int r;

@@ -99,6 +99,15 @@ typedef struct {
 	long tv_nsec;
 } sys_timespec_t;
 
+typedef struct {
+	int fd;
+	short events;
+	short revents;
+} sys_pollfd_t;
+
+#define SYS_POLLIN 0x0001
+#define SYS_POLLOUT 0x0004
+
 /* ── Memory mapping ───────────────────────────────────────────────────── */
 
 #define PROT_NONE 0x0u
@@ -198,6 +207,8 @@ int sys_wait(int pid);
 
 /* Clear the active console or desktop shell. */
 void sys_clear(void);
+int sys_display_claim(void);
+int sys_poll(sys_pollfd_t *fds, unsigned int nfds, int timeout);
 
 /*
  * Enumerate entries in path (NULL = root) into buf.

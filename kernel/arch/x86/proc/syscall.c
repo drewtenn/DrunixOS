@@ -189,6 +189,9 @@ uint32_t syscall_handler(uint32_t eax,
 	case SYS_DRUNIX_SCROLL_DOWN:
 		return syscall_case_drunix_scroll_down(ebx);
 
+	case SYS_DRUNIX_DISPLAY_CLAIM:
+		return syscall_case_drunix_display_claim();
+
 	case SYS_YIELD:
 		return syscall_case_yield();
 

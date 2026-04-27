@@ -136,14 +136,14 @@ void tty_input_char(int tty_idx, char c)
 			if (tty->canon_len > 0) {
 				tty->canon_len--;
 				if (tty->termios.c_lflag & ECHOE) {
-					arch_console_write("\b \b", 3u);
+					tty_feedback("\b \b", 3u);
 				}
 			}
 		} else {
 			if (tty->canon_len < TTY_CANON_BUF_SIZE - 1) {
 				tty->canon_buf[tty->canon_len++] = c;
 				if (tty->termios.c_lflag & ECHO) {
-					arch_console_write(&c, 1u);
+					tty_feedback(&c, 1u);
 				}
 			}
 			if (c == '\n') {

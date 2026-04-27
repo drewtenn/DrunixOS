@@ -296,17 +296,18 @@ static int add_procfs_test_process(void)
 
 	sched_init();
 	k_memset(&proc, 0, sizeof(proc));
-	proc.arch_state.context = 1; /* skip initial-frame synthesis in sched_add() */
+	proc.arch_state.context =
+	    1; /* skip initial-frame synthesis in sched_add() */
 	proc.state = PROC_UNUSED;
 	proc.pid = 0;
 	proc.parent_pid = 42;
 	proc.pgid = 7;
 	proc.sid = 7;
 	proc.tty_id = 0;
-	proc.heap_start = 0x00410000u;
-	proc.brk = 0x00418000u;
-	proc.image_start = 0x00400000u;
-	proc.image_end = 0x00410000u;
+	proc.heap_start = 0x08010000u;
+	proc.brk = 0x08018000u;
+	proc.image_start = 0x08000000u;
+	proc.image_end = 0x08010000u;
 	proc.stack_low_limit = USER_STACK_TOP - 0x4000u;
 	k_strncpy(proc.name, "shell", sizeof(proc.name) - 1);
 	k_strncpy(proc.psargs, "/bin/shell", sizeof(proc.psargs) - 1);
@@ -321,17 +322,18 @@ static int add_procfs_test_process(void)
 static void init_procfs_layout_process(process_t *proc, int include_image_vma)
 {
 	k_memset(proc, 0, sizeof(*proc));
-	proc->arch_state.context = 1; /* skip initial-frame synthesis in sched_add() */
+	proc->arch_state.context =
+	    1; /* skip initial-frame synthesis in sched_add() */
 	proc->state = PROC_UNUSED;
 	proc->pid = 0;
 	proc->parent_pid = 42;
 	proc->pgid = 7;
 	proc->sid = 7;
 	proc->tty_id = 0;
-	proc->image_start = 0x00400000u;
-	proc->image_end = 0x00410000u;
-	proc->heap_start = 0x00410000u;
-	proc->brk = 0x00418000u;
+	proc->image_start = 0x08000000u;
+	proc->image_end = 0x08010000u;
+	proc->heap_start = 0x08010000u;
+	proc->brk = 0x08018000u;
 	proc->stack_low_limit =
 	    USER_STACK_TOP - (uint32_t)USER_STACK_PAGES * 0x1000u;
 	k_strncpy(proc->name, "shell", sizeof(proc->name) - 1);
@@ -845,8 +847,8 @@ static void test_proc_maps_preserves_mapped_subranges(ktest_case_t *tc)
 
 	n = read_procfs_text_file(PROCFS_FILE_MAPS, 1u, buf, sizeof(buf));
 	KTEST_EXPECT_TRUE(tc, n > 0);
-	KTEST_EXPECT_TRUE(tc, k_strstr(buf, "00400000-00401000 r--p shell") != 0);
-	KTEST_EXPECT_TRUE(tc, k_strstr(buf, "00410000-00411000 rw-p [heap]") != 0);
+	KTEST_EXPECT_TRUE(tc, k_strstr(buf, "08000000-08001000 r--p shell") != 0);
+	KTEST_EXPECT_TRUE(tc, k_strstr(buf, "08010000-08011000 rw-p [heap]") != 0);
 	KTEST_ASSERT_TRUE(tc,
 	                  k_snprintf(expected_stack,
 	                             sizeof(expected_stack),
@@ -854,7 +856,7 @@ static void test_proc_maps_preserves_mapped_subranges(ktest_case_t *tc)
 	                             USER_STACK_TOP - 0x1000u,
 	                             USER_STACK_TOP) > 0);
 	KTEST_EXPECT_TRUE(tc, k_strstr(buf, expected_stack) != 0);
-	KTEST_EXPECT_TRUE(tc, k_strstr(buf, "00410000-00418000 rw-p [heap]") == 0);
+	KTEST_EXPECT_TRUE(tc, k_strstr(buf, "08010000-08018000 rw-p [heap]") == 0);
 	KTEST_EXPECT_TRUE(tc, k_strstr(buf, "4096/32768") == 0);
 	teardown_procfs_test_process(1u);
 }
@@ -902,7 +904,7 @@ static void test_proc_fallback_image_surfaces_stay_visible(ktest_case_t *tc)
 
 	n = read_procfs_text_file(PROCFS_FILE_MAPS, 1u, maps, sizeof(maps));
 	KTEST_EXPECT_TRUE(tc, n > 0);
-	KTEST_EXPECT_TRUE(tc, k_strstr(maps, "00400000-00401000 r--p shell") != 0);
+	KTEST_EXPECT_TRUE(tc, k_strstr(maps, "08000000-08001000 r--p shell") != 0);
 	teardown_procfs_test_process(1u);
 }
 

@@ -91,7 +91,7 @@ With just a physical memory manager, we can allocate pages, but the CPU still ha
 
 This enables three critical capabilities:
 
-- **Memory isolation between processes.** Each process has its own lookup table, so process A's pointer to `0x400000` resolves to a different physical page than process B's pointer to `0x400000`. Neither process can reach the other's memory.
+- **Memory isolation between processes.** Each process has its own lookup table, so process A's pointer to `0x08040000` resolves to a different physical page than process B's pointer to `0x08040000`. Neither process can reach the other's memory.
 - **Read-only regions.** The lookup-table entries include permission bits. The kernel's code can be mapped read-only so that a stray write cannot modify it.
 - **On-demand mapping.** A page can be marked "not present", and the CPU will fault when it is touched. The fault handler can allocate a physical page, update the table, and retry the instruction.
 
@@ -140,9 +140,9 @@ After every page table is filled in, the kernel loads the page directory's physi
 
 #### Private Page Tables for User Processes
 
-If processes shared a page table, writes from one would overwrite another — process A's mapping of `0x400000` would replace process B's the moment A ran. Every process therefore needs its own page table for the regions it uses.
+If processes shared a page table, writes from one would overwrite another — process A's mapping of `0x08040000` would replace process B's the moment A ran. Every process therefore needs its own page table for the regions it uses.
 
-When an x86 user program is loaded at virtual address `0x01000000` (which falls in PDE index 4), it lands inside a region that every new process initially inherits from the kernel. The page tables covering the 0–128 MB identity mapping are **shared** among all processes: every process's page directory points to the same physical page tables for PDEs 0–31.
+When an x86 user program is loaded at virtual address `0x08000000` (the first page above the low 128 MB identity map), it lands outside the virtual range the kernel still uses as a direct physical-memory map. The page tables covering the 0–128 MB identity mapping are **shared** among all processes: every process's page directory points to the same physical page tables for PDEs 0–31, and user mappings are rejected in that range so they cannot shadow kernel/direct-map addresses.
 
 If the kernel simply wrote a new user PTE into one of those shared page tables, every later process would overwrite the previous process's mappings. When the earlier process resumed and `CR3` was reloaded (flushing the **TLB**, the CPU's cache of recent translations), it would execute the new process's physical pages instead of its own — a guaranteed crash.
 

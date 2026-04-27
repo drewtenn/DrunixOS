@@ -108,8 +108,10 @@ void paging_destroy_user_space(uint32_t pd_phys);
  * phys:    physical address to map to (must be 4 KB aligned).
  * flags:   combination of PG_PRESENT, PG_WRITABLE, PG_USER, etc.
  *
+ * PG_USER mappings are accepted only inside the x86 user virtual range.
  * Allocates a new page table via pmm_alloc_page() if the PDE is not yet present.
- * Returns 0 on success, -1 if a page table could not be allocated.
+ * Returns 0 on success, -1 if the address is invalid or a page table could not
+ * be allocated.
  */
 int paging_map_page(uint32_t pd_phys,
                     uint32_t virt,

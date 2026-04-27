@@ -21,6 +21,7 @@
 
 #include <stdint.h>
 #include "arch.h"
+#include "console/runtime.h"
 #include "io.h"
 #include "inputdev.h"
 #include "kbdmap.h"
@@ -65,10 +66,15 @@ void keyboard_handler(void)
 	kbdev_push_key(keymap_code, press ? 1 : 0);
 
 	/* VT console: cooked bytes for tty0 via the shared keymap. */
-	produced = kbdmap_translate(
-	    &vt_kbd_state, keymap_code, press ? 1 : 0, cooked, (int)sizeof(cooked));
-	for (int i = 0; i < produced; i++)
-		tty_input_char(0, cooked[i]);
+	if (console_runtime_legacy_input_enabled()) {
+		produced = kbdmap_translate(&vt_kbd_state,
+		                            keymap_code,
+		                            press ? 1 : 0,
+		                            cooked,
+		                            (int)sizeof(cooked));
+		for (int i = 0; i < produced; i++)
+			tty_input_char(0, cooked[i]);
+	}
 
 reset_prefix:
 	e0_prefix = 0;

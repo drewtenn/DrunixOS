@@ -60,6 +60,7 @@ uint32_t syscall_case_uname(uint32_t ebx);
 uint32_t syscall_case_drunix_clear(void);
 uint32_t syscall_case_drunix_scroll_up(uint32_t ebx);
 uint32_t syscall_case_drunix_scroll_down(uint32_t ebx);
+uint32_t syscall_case_drunix_display_claim(void);
 uint32_t syscall_case_yield(void);
 uint32_t syscall_case_kill(uint32_t ebx, uint32_t ecx);
 uint32_t syscall_case_sigaction(uint32_t ebx, uint32_t ecx, uint32_t edx);
@@ -156,11 +157,10 @@ syscall_case_stat64_lstat64(uint32_t nofollow, uint32_t ebx, uint32_t ecx);
 uint32_t
 syscall_case_fstatat64(uint32_t ebx, uint32_t ecx, uint32_t edx, uint32_t esi);
 uint32_t syscall_case_fstat64(uint32_t ebx, uint32_t ecx);
-uint32_t
-syscall_case_fstatat_arm64(uint32_t ebx,
-                           uint32_t ecx,
-                           uint32_t edx,
-                           uint32_t esi);
+uint32_t syscall_case_fstatat_arm64(uint32_t ebx,
+                                    uint32_t ecx,
+                                    uint32_t edx,
+                                    uint32_t esi);
 uint32_t syscall_case_fstat_arm64(uint32_t ebx, uint32_t ecx);
 uint32_t syscall_case_statx(
     uint32_t ebx, uint32_t ecx, uint32_t edx, uint32_t esi, uint32_t edi);
