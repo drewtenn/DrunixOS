@@ -177,17 +177,19 @@ BUSYBOX_DISK_FILES := $(BUSYBOX_X86_BIN) bin/busybox
 BUSYBOX_DISK_DEPS := $(BUSYBOX_X86_BIN)
 endif
 endif
-USER_PROGS    := $(PROGS)
-USER_BINS     := $(addprefix user/,$(USER_PROGS))
+USER_PROGS := $(PROGS)
+USER_BUILD_ROOT := build/user/$(ARCH)
+USER_BIN_DIR := $(USER_BUILD_ROOT)/bin
+USER_BINS := $(addprefix $(USER_BIN_DIR)/,$(USER_PROGS))
 # bin/desktop is the user-space compositor.  Even though it is listed in
 # $(PROGS) the foreach below already drops it on the disk at /bin/desktop;
 # no separate disk-files entry is required.
-DISK_FILES    := $(foreach prog,$(USER_PROGS),user/$(prog) bin/$(prog)) \
-                 tools/hello.txt hello.txt \
-                 tools/readme.txt readme.txt \
-                 tools/wallpaper.jpg etc/wallpaper.jpg \
-                 $(BUSYBOX_DISK_FILES) \
-                 $(EXTRA_DISK_FILES)
+DISK_FILES := $(foreach prog,$(USER_PROGS),$(USER_BIN_DIR)/$(prog) bin/$(prog))
+DISK_FILES += tools/hello.txt hello.txt
+DISK_FILES += tools/readme.txt readme.txt
+DISK_FILES += tools/wallpaper.jpg etc/wallpaper.jpg
+DISK_FILES += $(BUSYBOX_DISK_FILES)
+DISK_FILES += $(EXTRA_DISK_FILES)
 LOG_DIR       := logs
 IMG_DIR       := img
 ROOT_DISK_IMG := $(IMG_DIR)/disk.img
@@ -296,19 +298,8 @@ kernel-vga.elf: $(KOBJS_VGA) $(KTOBJS)
 # dependency tracking — changes to user/*.c or user/lib/* are picked up
 # without needing a manual clean.
 .PHONY: $(USER_BINS)
-$(USER_BINS): user/user.ld
-	$(MAKE) -C user $(@F)
-
-# Generated linker scripts.  user/user.ld.in is the single source of truth;
-# the two arches differ only in load address.
-user/user.ld: user/user.ld.in Makefile
-	sed 's|@USER_LOAD_ADDR@|$(X86_USER_LOAD_ADDR)|' $< > $@
-
-user/user_arm64.ld: user/user.ld.in Makefile
-	sed 's|@USER_LOAD_ADDR@|0x02000000|' $< > $@
-
-user/lib/libc.a user/lib/tcc_crt0.o:
-	$(MAKE) -C user $(@F:%=lib/%)
+$(USER_BINS):
+	$(MAKE) -C user USER_ARCH=$(ARCH) USER_LOAD_ADDR=$(X86_USER_LOAD_ADDR) ../$@
 
 # ─── Hard-disk images ────────────────────────────────────────────────────────
 # disk.img is the primary root disk.  On x86 it is the ATA master; on arm64 it
@@ -481,7 +472,8 @@ compile_commands.json: tools/generate_compile_commands.py kernel/objects.mk user
 		--kernel-cflags="$(CFLAGS)" \
 		--kernel-inc="$(INC)" \
 		--user-cc="$(CC)" \
-		--user-cflags="-m32 -ffreestanding -nostdlib -fno-pie -no-pie -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall -Werror" \
+		--user-cflags="-m32 -ffreestanding -nostdlib -fno-pie -no-pie -fno-stack-protector -fno-omit-frame-pointer -g -Og -Wall -Werror -I user/runtime -I shared -I user/apps" \
+		--user-build-root="$(USER_BUILD_ROOT)" \
 		--linux-cc="$(LINUX_I386_CC)" \
 		--linux-cflags="$(LINUX_CFLAGS)" \
 		--user-c-runtime-objs="$(SCAN_USER_C_RUNTIME_OBJS)" \
@@ -572,17 +564,17 @@ debug: os.iso $(DUFS_IMG)
 
 # `debug-user` — like `debug` but also loads symbols for a user-space program
 #                so you can set breakpoints and step through user code.
-#                The binary is expected at user/$(APP); symbols are added at the
+#                The binary is expected at $(USER_BIN_DIR)/$(APP); symbols are added at the
 #                ELF preferred load address (offset 0).
 #
 #                Usage:  make debug-user APP=shell
 #
 #                If the program is loaded at a non-default address by the kernel
-#                ELF loader, adjust with GDB's `add-symbol-file user/<app> <addr>`
+#                ELF loader, adjust with GDB's `add-symbol-file $(USER_BIN_DIR)/<app> <addr>`
 #                after connecting.
 debug-user: os.iso $(DUFS_IMG)
 	@test -n "$(APP)" || (echo "Usage: make debug-user APP=<program name>  (e.g. APP=shell)"; exit 1)
-	$(call qemu_debug,-ex "add-symbol-file user/$(APP) $(X86_USER_LOAD_ADDR)")
+	$(call qemu_debug,-ex "add-symbol-file $(USER_BIN_DIR)/$(APP) $(X86_USER_LOAD_ADDR)")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RUN + FRESH FILESYSTEM  (rebuild img/disk.img before booting)
@@ -623,7 +615,7 @@ clean:
 	find kernel -name '*.d' -delete
 	$(RM) *.elf kernel8.img core.* disk.fs dufs.fs disk-ext3w.fs disk-ext3-host.fs $(ROOT_DISK_IMG) $(DUFS_IMG) $(TEST_IMAGES) os.iso $(ISO_KERNEL) $(ISO_KERNEL_VGA) iso/boot/grub/grub.cfg "$(PDF)" "$(EPUB)" $(SENTINELS) $(ARM_SERIAL_LOG)
 	$(RM) build/arm64init.o build/crt0_arm64.o build/syscall_arm64.o build/arm64init.elf build/arm64-root.fs build/arm64-rootfs-empty
-	$(RM) user/user.ld user/user_arm64.ld
+	rm -rf build/user
 	$(RM) $(RUN_LOGS) $(TEST_LOGS) build/ext3-host.txt
 	rm -rf build/busybox
 	rm -rf build/tcc
@@ -908,7 +900,7 @@ clean:
 	find kernel -name '*.d' -delete
 	$(RM) *.elf kernel8.img core.* disk.fs dufs.fs disk-ext3w.fs disk-ext3-host.fs $(ROOT_DISK_IMG) $(DUFS_IMG) $(TEST_IMAGES) os.iso $(ISO_KERNEL) $(ISO_KERNEL_VGA) iso/boot/grub/grub.cfg "$(PDF)" "$(EPUB)" $(SENTINELS) $(ARM_SERIAL_LOG)
 	$(RM) build/arm64init.o build/crt0_arm64.o build/syscall_arm64.o build/arm64init.elf build/arm64-root.fs build/arm64-rootfs-empty
-	$(RM) user/user.ld user/user_arm64.ld
+	rm -rf build/user
 	$(RM) $(RUN_LOGS) $(TEST_LOGS) build/ext3-host.txt
 	rm -rf build/busybox
 	rm -rf build/tcc
