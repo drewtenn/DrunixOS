@@ -491,7 +491,7 @@ INTENTS: tuple[TestIntent, ...] = (
         sources={
             "arm64": (
                 SourceMarkers(
-                    "user/arm64init.c",
+                    "user/apps/arm64init.c",
                     (
                         "ARM64 init: entered",
                         "ARM64 syscall: process ok",
@@ -636,7 +636,7 @@ INTENTS: tuple[TestIntent, ...] = (
         sources={
             "arm64": (
                 SourceMarkers(
-                    "user/arm64init.c",
+                    "user/apps/arm64init.c",
                     (
                         "ARM64 syscall: memory ok",
                         "ARM64 syscall: clone/wait ok",
@@ -683,7 +683,7 @@ INTENTS: tuple[TestIntent, ...] = (
         sources={
             "arm64": (
                 SourceMarkers(
-                    "user/arm64init.c",
+                    "user/apps/arm64init.c",
                     ("ARM64 syscall: clone/wait ok",),
                 ),
                 SourceMarkers(
@@ -731,7 +731,7 @@ INTENTS: tuple[TestIntent, ...] = (
         sources={
             "arm64": (
                 SourceMarkers(
-                    "user/arm64init.c",
+                    "user/apps/arm64init.c",
                     (
                         "ARM64 syscall: fd/path ok",
                         "ARM64 syscall: signal ok",
@@ -788,7 +788,7 @@ INTENTS: tuple[TestIntent, ...] = (
                     ("BBCOMPAT SUMMARY passed", "build/busybox/x86/busybox"),
                 ),
                 SourceMarkers(
-                    "user/bbcompat.c",
+                    "user/apps/bbcompat.c",
                     ("BBCOMPAT SUMMARY", "sys_execve(\"/bin/busybox\""),
                 ),
             ),
@@ -802,7 +802,7 @@ INTENTS: tuple[TestIntent, ...] = (
 					),
 				),
                 SourceMarkers(
-                    "user/bbcompat.c",
+                    "user/apps/bbcompat.c",
                     ("BBCOMPAT SUMMARY", "sys_execve(\"/bin/busybox\""),
                 ),
             ),
@@ -935,7 +935,7 @@ INTENTS: tuple[TestIntent, ...] = (
                     ),
                 ),
                 SourceMarkers(
-                    "user/arm64init.c",
+                    "user/apps/arm64init.c",
                     (
                         "ARM64 syscall: memory ok",
                         "ARM64 syscall: fd/path ok",

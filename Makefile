@@ -10,7 +10,7 @@ CLANG_FORMAT ?= clang-format
 CLANG_TIDY ?= clang-tidy
 CPPCHECK ?= cppcheck
 SPARSE ?= sparse
-SPARSEFLAGS ?= -Wno-non-pointer-null -nostdinc -I tools/sparse-include -I user/lib
+SPARSEFLAGS ?= -Wno-non-pointer-null -nostdinc -I tools/sparse-include -I user/runtime
 SCAN_FAIL ?= 1
 LINUX_I386_CC ?= i486-linux-musl-gcc
 LINUX_I386_CROSS_COMPILE ?= i486-linux-musl-
@@ -295,7 +295,7 @@ kernel-vga.elf: $(KOBJS_VGA) $(KTOBJS)
 
 # ─── User programs ───────────────────────────────────────────────────────────
 # Declared phony so make always delegates to the user subdirectory's own
-# dependency tracking — changes to user/*.c or user/lib/* are picked up
+# dependency tracking — changes to user/apps and user/runtime are picked up
 # without needing a manual clean.
 ifneq ($(ARCH),arm64)
 .PHONY: $(USER_BINS)

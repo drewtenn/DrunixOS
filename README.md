@@ -381,7 +381,7 @@ aliases `no_desktop=1` and `vga_text=1` are also accepted.
 
 User programs can be written in C or in a freestanding C++ subset. C programs
 continue to compile with `x86_64-elf-gcc`; C++ programs compile with
-`x86_64-elf-g++` and link against the repo-owned user runtime in `user/lib`.
+`x86_64-elf-g++` and link against the repo-owned user runtime in `user/runtime`.
 
 The current C++ userland supports global constructors and destructors,
 classes, virtual dispatch, `new`, `delete`, `new[]`, and `delete[]`.
