@@ -1,0 +1,126 @@
+static mut HEAD_BUFFER: [u8; 1];
+
+fn usage() -> i32 {
+	println("usage: head [-n lines] [file...]");
+	return 2;
+}
+
+fn parse_count(value: str) -> i32 {
+	if str_is_empty(value) {
+		return -1;
+	}
+	let mut result: i32 = 0;
+	let mut index: i32 = 0;
+	while value[index] != 0 {
+		let byte: u8 = value[index];
+		if byte < 48 || byte > 57 {
+			return -1;
+		}
+		result = result * 10 + ((byte as i32) - 48);
+		index = index + 1;
+	}
+	return result;
+}
+
+fn parse_dash_count(value: str) -> i32 {
+	if value[0] != 45 {
+		return -1;
+	}
+	return parse_count((value + 1) as str);
+}
+
+fn put_byte(byte: i32) -> i32 {
+	*(HEAD_BUFFER + 0) = byte as u8;
+	return std::io::write(1, HEAD_BUFFER + 0, 1);
+}
+
+fn print_head(fd: i32, max_lines: i32) -> i32 {
+	let mut lines: i32 = 0;
+	while lines < max_lines {
+		let count: i32 = std::fs::read(fd, HEAD_BUFFER + 0, 1);
+		if count <= 0 {
+			break;
+		}
+		let byte: i32 = HEAD_BUFFER[0] as i32;
+		put_byte(byte);
+		if byte == 10 {
+			lines = lines + 1;
+		}
+	}
+	return 0;
+}
+
+fn open_input(path: str) -> i32 {
+	if str_eq(path, "-") {
+		return 0;
+	}
+	return std::fs::open_read(path);
+}
+
+fn close_input(fd: i32) -> i32 {
+	if fd != 0 {
+		return std::fs::close(fd);
+	}
+	return 0;
+}
+
+fn print_header(path: str, first_file: bool) -> i32 {
+	if !first_file {
+		println("");
+	}
+	print("==> ");
+	print(path);
+	println(" <==");
+	return 0;
+}
+
+fn main() -> i32 {
+	let count: i32 = std::process::args_len();
+	let mut max_lines: i32 = 10;
+	let mut first: i32 = 1;
+	let mut rc: i32 = 0;
+
+	if count > 1 && str_eq(std::process::arg_at(1), "-n") {
+		if count < 3 {
+			return usage();
+		}
+		max_lines = parse_count(std::process::arg_at(2));
+		if max_lines < 0 {
+			return usage();
+		}
+		first = 3;
+	} else if count > 1 && std::process::arg_at(1)[0] == 45 &&
+	          std::process::arg_at(1)[1] >= 48 && std::process::arg_at(1)[1] <= 57 {
+		max_lines = parse_dash_count(std::process::arg_at(1));
+		if max_lines < 0 {
+			return usage();
+		}
+		first = 2;
+	}
+
+	if first == count {
+		print_head(0, max_lines);
+		return 0;
+	}
+
+	let multiple: bool = count - first > 1;
+	let mut index: i32 = first;
+	while index < count {
+		let path: str = std::process::arg_at(index);
+		let fd: i32 = open_input(path);
+		if fd < 0 {
+			print("head: cannot open: ");
+			println(path);
+			rc = 1;
+		} else {
+			if multiple {
+				print_header(path, index == first);
+			}
+			print_head(fd, max_lines);
+			close_input(fd);
+		}
+		index = index + 1;
+	}
+
+	return rc;
+}
