@@ -1,0 +1,26 @@
+fn print_arguments(count: i32) -> i32 {
+	let mut index: i32 = 1;
+	while index < count {
+		if index > 1 {
+			print(" ");
+		}
+		print(std::process::arg_at(index));
+		index = index + 1;
+	}
+	print("\n");
+	return 0;
+}
+
+fn main() -> i32 {
+	let count: i32 = std::process::args_len();
+
+	while true {
+		if count == 1 {
+			println("y");
+		} else {
+			print_arguments(count);
+		}
+	}
+
+	return 0;
+}
