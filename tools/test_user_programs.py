@@ -21,6 +21,7 @@ SMOKES = (
     ("chello", "Hello from C userland!"),
     ("hello", "Hello from ring 3!"),
     ("/bin/echo rexy echo smoke", "rexy echo smoke"),
+    ("/bin/printenv PATH", "/bin"),
     ("cpphello", "new[] sum=6"),
 )
 
