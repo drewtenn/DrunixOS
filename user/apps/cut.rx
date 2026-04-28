@@ -29,7 +29,7 @@ fn parse_uint_part(spec: str, start: i32, end: i32) -> i32 {
 	return value;
 }
 
-fn add_range(first: i32, last: i32) -> i32 {
+unsafe fn add_range(first: i32, last: i32) -> i32 {
 	if first <= 0 || (last != 0 && last < first) || CUT_RANGE_COUNT >= 64 {
 		return -1;
 	}
@@ -112,7 +112,7 @@ fn selected(pos: i32) -> bool {
 	return false;
 }
 
-fn put_byte(byte: u8) -> i32 {
+unsafe fn put_byte(byte: u8) -> i32 {
 	*(CUT_BYTE + 0) = byte;
 	return std::io::write(1, CUT_BYTE + 0, 1);
 }
@@ -204,7 +204,7 @@ fn process_line(len: i32, mode: i32, delim: u8, suppress: bool) -> i32 {
 	return cut_chars(len);
 }
 
-fn process_stream(fd: i32, mode: i32, delim: u8, suppress: bool) -> i32 {
+unsafe fn process_stream(fd: i32, mode: i32, delim: u8, suppress: bool) -> i32 {
 	let mut len: i32 = 0;
 	while true {
 		let count: i32 = std::fs::read(fd, CUT_BYTE + 0, 1);

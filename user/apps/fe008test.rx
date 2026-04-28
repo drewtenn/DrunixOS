@@ -1,0 +1,30 @@
+fn sum_values(values: &[i32]) -> i32 {
+	let mut sum: i32 = 0;
+	for let mut index: i32 = 0; index < len(values); index++ {
+		sum = sum + values[index];
+	}
+	return sum;
+}
+
+fn write_result(message: str) -> i32 {
+	let fd: i32 = std::fs::create_write("/dufs/fe008.log");
+	if fd < 0 {
+		return 1;
+	}
+	std::io::write_str(fd, message);
+	std::fs::close(fd);
+	return 0;
+}
+
+fn main() -> i32 {
+	std::alloc::reset();
+	let values: vec<i32> = std::alloc::vec_i32_new(3);
+	std::alloc::vec_i32_push(values, 1);
+	std::alloc::vec_i32_push(values, 2);
+	std::alloc::vec_i32_push(values, 3);
+	let slice: &[i32] = values as &[i32];
+	if len(slice) == 3 && slice[0] == 1 && slice[2] == 3 && sum_values(slice) == 6 {
+		return write_result("FE008 PASS\n");
+	}
+	return write_result("FE008 FAIL\n");
+}

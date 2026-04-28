@@ -17,7 +17,7 @@ fn do_divzero() -> i32 {
 	return CRASH_RESULT;
 }
 
-fn do_nullptr() -> i32 {
+unsafe fn do_nullptr() -> i32 {
 	let p: *i32 = 0 as *i32;
 	println("crash: dereferencing NULL pointer...");
 	CRASH_RESULT = p[0];
@@ -25,7 +25,7 @@ fn do_nullptr() -> i32 {
 	return CRASH_RESULT;
 }
 
-fn do_badptr() -> i32 {
+unsafe fn do_badptr() -> i32 {
 	let p: *i32 = (-559038737) as *i32;
 	println("crash: writing to unmapped address 0xDEADBEEF...");
 	*(p + 0) = 2989;
@@ -33,14 +33,14 @@ fn do_badptr() -> i32 {
 	return 0;
 }
 
-fn do_ud2() -> i32 {
+unsafe fn do_ud2() -> i32 {
 	println("crash: executing invalid opcode (UD2)...");
 	sys_trap_ud2();
 	println("crash: ERROR - should not reach here");
 	return 0;
 }
 
-fn do_gpfault() -> i32 {
+unsafe fn do_gpfault() -> i32 {
 	println("crash: loading null selector into %ds to force #GP...");
 	sys_trap_gpfault();
 	println("crash: ERROR - should not reach here");

@@ -23,7 +23,7 @@ fn sysfs_path(name: str, parent: str, leaf: str) -> str {
 	return path;
 }
 
-fn read_file(path: str, buf: *u8, cap: i32) -> i32 {
+unsafe fn read_file(path: str, buf: *u8, cap: i32) -> i32 {
 	let fd: i32 = std::fs::open_read(path);
 	if fd < 0 {
 		*(buf + 0) = 0;
@@ -57,7 +57,7 @@ fn size_mb(sectors: i32) -> i32 {
 	return (sectors + 2047) / 2048;
 }
 
-fn strip_dir_suffix(name: str) -> i32 {
+unsafe fn strip_dir_suffix(name: str) -> i32 {
 	let len: i32 = strlen(name);
 	if len > 0 && name[len - 1] == 47 {
 		*((name + len - 1) as *u8) = 0;

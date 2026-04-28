@@ -1,0 +1,93 @@
+// Phase 1 exit-gate demo (PRD §7).
+//
+// Exercises every Phase 1 feature in safe code — no raw pointer deref,
+// no extern fn calls, no `unsafe` blocks needed:
+//
+//   FE-001..003  struct Point { x, y } — declared, constructed, accessed
+//   FE-004..006  payload-bearing enum Magnitude { Zero, Value(i32) }
+//   FE-009/010   match destructures `Value(n)`; arms are exhaustive
+//   FE-011       Result<i32> as a compiler-recognized prelude type
+//   FE-012       `?` propagates Err through classify_translated()
+//   FE-013       no `unsafe` needed (stays entirely in the safe subset)
+//   FE-014       any error here would carry a span (diagnostics floor)
+//   FE-015       i386 aggregate ABI (≤ 8 bytes via EDX:EAX) — Magnitude
+//                returns and small struct/tuple by-value now work on Drunix
+
+struct Point { x: i32, y: i32 }
+
+enum Magnitude { Zero, Value(i32) }
+
+fn quadrant_code(x: i32, y: i32) -> i32 {
+	if x == 0 && y == 0 { return 0; }
+	if x == 0 || y == 0 { return -1; }
+	if x > 0 && y > 0 { return 1; }
+	if x < 0 && y > 0 { return 2; }
+	if x < 0 && y < 0 { return 3; }
+	return 4;
+}
+
+// Err on degenerate (origin / on-axis); Ok(1..4) for proper quadrants.
+fn classify(x: i32, y: i32) -> Result<i32> {
+	let code: i32 = quadrant_code(x, y);
+	if code <= 0 { return std::alloc::result_i32_err(code - 100); }
+	return std::alloc::result_i32_ok(code);
+}
+
+// Translate, then classify — `?` short-circuits on degenerate input.
+fn classify_translated(x: i32, y: i32, dx: i32, dy: i32) -> Result<i32> {
+	let code: i32 = classify(x + dx, y + dy)?;
+	return std::alloc::result_i32_ok(code);
+}
+
+fn abs_i32(n: i32) -> i32 {
+	if n < 0 { return -n; }
+	return n;
+}
+
+fn manhattan(x: i32, y: i32) -> Magnitude {
+	let sum: i32 = abs_i32(x) + abs_i32(y);
+	if sum == 0 { return Zero(); }
+	return Value(sum);
+}
+
+fn write_log(message: str) -> i32 {
+	let fd: i32 = std::fs::create_write("/dufs/phase1.log");
+	if fd < 0 { return 1; }
+	std::io::write_str(fd, message);
+	std::fs::close(fd);
+	return 0;
+}
+
+fn main() -> i32 {
+	std::alloc::reset();
+
+	// FE-001..003: struct declaration, literal, and field access.
+	let p: Point = Point { x: 3, y: 5 };
+
+	// FE-011 + FE-012: Result + `?`. Happy path through translate->classify.
+	let happy: Result<i32> = classify_translated(p.x, p.y, 0, 0);
+	if std::alloc::result_i32_is_err(happy) {
+		return write_log("PHASE1 FAIL: happy was Err\n");
+	}
+	if std::alloc::result_i32_value_or(happy, -1) != 1 {
+		return write_log("PHASE1 FAIL: wrong quadrant\n");
+	}
+
+	// `?` propagates Err on degenerate input — translate (3,5) onto origin.
+	let degen: Result<i32> = classify_translated(p.x, p.y, -3, -5);
+	if std::alloc::result_i32_is_ok(degen) {
+		return write_log("PHASE1 FAIL: origin not Err\n");
+	}
+
+	// FE-004..006 + FE-009/010: payload-bearing enum + match destructuring.
+	let mut dist: i32 = -1;
+	match manhattan(p.x, p.y) {
+		Zero() => { dist = 0; }
+		Value(n) => { dist = n; }
+	}
+	if dist != 8 {
+		return write_log("PHASE1 FAIL: manhattan != 8\n");
+	}
+
+	return write_log("PHASE1 PASS\n");
+}

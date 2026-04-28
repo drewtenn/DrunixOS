@@ -3,7 +3,7 @@ static mut UNIQ_LINE: [u8; 512];
 static mut UNIQ_BYTE: [u8; 1];
 static mut UNIQ_DIGITS: [u8; 12];
 
-fn read_input_line(fd: i32) -> i32 {
+unsafe fn read_input_line(fd: i32) -> i32 {
 	let mut len: i32 = 0;
 	while true {
 		let count: i32 = std::fs::read(fd, UNIQ_BYTE + 0, 1);
@@ -26,7 +26,7 @@ fn read_input_line(fd: i32) -> i32 {
 	return len;
 }
 
-fn copy_current_to_prev(len: i32) -> i32 {
+unsafe fn copy_current_to_prev(len: i32) -> i32 {
 	for let mut index: i32 = 0; index < len; index++ {
 		*(UNIQ_PREV + index) = UNIQ_LINE[index];
 	}
@@ -46,7 +46,7 @@ fn same_as_prev(len: i32, prev_len: i32) -> bool {
 	return true;
 }
 
-fn write_number(fd: i32, value: i32) -> i32 {
+unsafe fn write_number(fd: i32, value: i32) -> i32 {
 	let mut count: i32 = value;
 	let mut digits: i32 = 0;
 	if count == 0 {

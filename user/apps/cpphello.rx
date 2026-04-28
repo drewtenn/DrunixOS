@@ -1,7 +1,7 @@
-fn sum_values(values: slice<i32>) -> i32 {
+fn sum_values(values: &[i32]) -> i32 {
 	let mut sum: i32 = 0;
-	for let mut index: i32 = 0; index < std::alloc::slice_i32_len(values); index++ {
-		sum = sum + std::alloc::slice_i32_get_or(values, index, 0);
+	for let mut index: i32 = 0; index < len(values); index++ {
+		sum = sum + values[index];
 	}
 	return sum;
 }
@@ -21,7 +21,7 @@ fn main() -> i32 {
 	std::alloc::vec_i32_push(values, 1);
 	std::alloc::vec_i32_push(values, 2);
 	std::alloc::vec_i32_push(values, 3);
-	let sum: i32 = sum_values(values as slice<i32>);
+	let sum: i32 = sum_values(values as &[i32]);
 	print("new[] sum=");
 	println_i32(sum);
 

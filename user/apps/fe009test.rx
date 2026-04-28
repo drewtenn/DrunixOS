@@ -1,0 +1,38 @@
+enum Option { None, Some(i32) }
+
+fn write_result(message: str) -> i32 {
+	let fd: i32 = std::fs::create_write("/dufs/fe009.log");
+	if fd < 0 {
+		return 1;
+	}
+	std::io::write_str(fd, message);
+	std::fs::close(fd);
+	return 0;
+}
+
+fn main() -> i32 {
+	let value: Option = Some(42);
+	let empty: Option = None();
+	let mut some_value: i32 = 0;
+	let mut none_value: i32 = 0;
+	match value {
+		Some(x) => {
+			some_value = x;
+		}
+		_ => {
+			some_value = -1;
+		}
+	}
+	match empty {
+		Some(x) => {
+			none_value = x;
+		}
+		_ => {
+			none_value = 7;
+		}
+	}
+	if some_value == 42 && none_value == 7 {
+		return write_result("FE009 PASS\n");
+	}
+	return write_result("FE009 FAIL\n");
+}

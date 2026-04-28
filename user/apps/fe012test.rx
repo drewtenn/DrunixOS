@@ -1,0 +1,41 @@
+// FE-012: ? result propagation operator.
+//
+// `parse_step` returns Result<i32>. `add_two` calls it twice with `?`, which
+// means: if either inner call returns Err, propagate that Err immediately;
+// otherwise extract the Ok payload and continue.
+
+fn parse_step(value: i32) -> Result<i32> {
+	if value < 0 {
+		// stdlib convention: error codes are negative; result_i32_is_err is `raw[0] < 0`.
+		return std::alloc::result_i32_err(-1);
+	}
+	return std::alloc::result_i32_ok(value);
+}
+
+fn add_two(a: i32, b: i32) -> Result<i32> {
+	let first: i32 = parse_step(a)?;
+	let second: i32 = parse_step(b)?;
+	return std::alloc::result_i32_ok(first + second);
+}
+
+fn write_result(message: str) -> i32 {
+	let fd: i32 = std::fs::create_write("/dufs/fe012.log");
+	if fd < 0 {
+		return 1;
+	}
+	std::io::write_str(fd, message);
+	std::fs::close(fd);
+	return 0;
+}
+
+fn main() -> i32 {
+	std::alloc::reset();
+	let happy: Result<i32> = add_two(3, 4);
+	let sad: Result<i32> = add_two(-1, 4);
+	if std::alloc::result_i32_is_ok(happy) &&
+	   std::alloc::result_i32_value_or(happy, -1) == 7 &&
+	   std::alloc::result_i32_is_err(sad) {
+		return write_result("FE012 PASS\n");
+	}
+	return write_result("FE012 FAIL\n");
+}

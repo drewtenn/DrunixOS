@@ -1,7 +1,7 @@
 static mut TEE_BUFFER: [u8; 256];
 static mut TEE_FDS: [i32; 8];
 
-fn main() -> i32 {
+unsafe fn main() -> i32 {
 	let count: i32 = std::process::args_len();
 	let mut first: i32 = 1;
 	let mut rc: i32 = 0;

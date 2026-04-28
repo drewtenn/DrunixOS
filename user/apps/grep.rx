@@ -69,7 +69,7 @@ fn process_line(line_len: i32, name: str, pattern: str, ignore_case: bool,
 	return true;
 }
 
-fn grep_stream(fd: i32, name: str, pattern: str, ignore_case: bool,
+unsafe fn grep_stream(fd: i32, name: str, pattern: str, ignore_case: bool,
                show_line_numbers: bool, invert: bool, show_filename: bool) -> bool {
 	let mut line_len: i32 = 0;
 	let mut line_no: i32 = 0;

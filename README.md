@@ -2,9 +2,9 @@
 
 ## Project Summary
 
-Drunix is a hobby operating system with a feature-rich 32-bit x86 mainline and a newer AArch64 bring-up path. The mainline x86 kernel boots through GRUB2 with the Multiboot1 protocol and provides protected-mode interrupt handling, paging, a physical and heap allocator, ATA disk I/O, a DUFS filesystem, a mount-tree VFS with synthetic `/dev`, `/proc`, and `/sys` namespaces, preemptive scheduling built around generic wait queues, Linux-style `clone` user threads, ref-counted process resources for address spaces, file descriptors, filesystem state, and signal actions, a TTY subsystem with job control, an ELF user-program loader, and per-process virtual-memory bookkeeping for demand-paged heaps, grow-down stacks, copy-on-write fork, and anonymous `mmap` regions. User programs can be written in C or in a small freestanding C++ subset backed by the repo-owned user runtime.
+Drunix is a hobby operating system with a feature-rich 32-bit x86 mainline and a newer AArch64 bring-up path. The mainline x86 kernel boots through GRUB2 with the Multiboot1 protocol and provides protected-mode interrupt handling, paging, a physical and heap allocator, ATA disk I/O, a DUFS filesystem, a mount-tree VFS with synthetic `/dev`, `/proc`, and `/sys` namespaces, preemptive scheduling built around generic wait queues, Linux-style `clone` user threads, ref-counted process resources for address spaces, file descriptors, filesystem state, and signal actions, a TTY subsystem with job control, an ELF user-program loader, and per-process virtual-memory bookkeeping for demand-paged heaps, grow-down stacks, copy-on-write fork, and anonymous `mmap` regions. User programs can be written in C, Rexy, or in a small freestanding C++ subset backed by the repo-owned user runtime.
 
-The x86 desktop build asks GRUB for a 1024x768x32 linear framebuffer and starts a simple GUI desktop. The boot shell is opened as the main desktop app inside that GUI shell, with keyboard input, PS/2 mouse pointer support, a dark wallpapered desktop, icon-only taskbar, clock, framebuffer text rendering, scene-buffered compositing with an overlay mouse cursor drawn from a shared sprite mask, and a VGA text-mode fallback when a suitable framebuffer is unavailable. The disk image includes a small mixed-language userland: the shell and `chello` exercise the C runtime path, while the utility programs exercise the C++ runtime path.
+The x86 desktop build asks GRUB for a 1024x768x32 linear framebuffer and starts a simple GUI desktop. The boot shell is opened as the main desktop app inside that GUI shell, with keyboard input, PS/2 mouse pointer support, a dark wallpapered desktop, icon-only taskbar, clock, framebuffer text rendering, scene-buffered compositing with an overlay mouse cursor drawn from a shared sprite mask, and a VGA text-mode fallback when a suitable framebuffer is unavailable. The disk image includes a small mixed-language userland: the shell, desktop, and low-level smoke tests exercise the C runtime path, while the command-line utility set is built from Rexy sources through the in-tree `rexc` compiler.
 
 The AArch64 path now boots the Raspberry Pi 3 / `qemu-system-aarch64` target through EL1 setup, mini-UART, exception vectors, timer IRQs, MMU and heap setup, an initramfs-backed user program, and the same graphical-by-default workflow shape as x86. `make ARCH=arm64 run` opens the QEMU display and mirrors the ARM64 console into a framebuffer text terminal.
 
@@ -12,7 +12,7 @@ The AArch64 path now boots the Raspberry Pi 3 / `qemu-system-aarch64` target thr
 
 ## Status
 
-- x86 remains the mainline Drunix target: desktop boot, ext3 and DUFS disk images, process and signal support, Linux ABI smoke coverage, copy-on-write fork, demand paging, and the freestanding C/C++ userland are all part of the regular workflow.
+- x86 remains the mainline Drunix target: desktop boot, ext3 and DUFS disk images, process and signal support, Linux ABI smoke coverage, copy-on-write fork, demand paging, and the freestanding C/Rexy/C++ userland are all part of the regular workflow.
 - AArch64 is now in-tree as a smaller but usable second target: `ARCH=arm64` builds and boots on the QEMU `raspi3b` machine, initializes the BCM2835 mini-UART and framebuffer console, brings up MMU-backed kernel services, loads an initramfs user program, and runs the console prompt. Keyboard input and the desktop are tracked as later ARM64 phases.
 
 ## Dependencies
@@ -21,6 +21,8 @@ Required:
 
 - `make`
 - `python3`
+- `cmake`
+- a Java runtime for Rexy's ANTLR-based parser generation
 - `nasm`
 - `qemu-system-i386`
 - `x86_64-elf-gcc`
@@ -52,7 +54,7 @@ Optional:
 Install Homebrew first, then:
 
 ```sh
-brew install make nasm python qemu x86_64-elf-gcc i686-elf-grub xorriso
+brew install make cmake openjdk nasm python qemu x86_64-elf-gcc i686-elf-grub xorriso
 brew install i386-elf-gdb pandoc typst
 brew install clang-format llvm cppcheck sparse
 brew install librsvg
@@ -93,7 +95,7 @@ The simplest supported setup is WSL2 with Ubuntu. Inside the WSL shell:
 
 ```sh
 sudo apt update
-sudo apt install -y build-essential python3 curl nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl librsvg2-bin clang-format clang-tidy cppcheck sparse
+sudo apt install -y build-essential cmake default-jre python3 curl nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl librsvg2-bin clang-format clang-tidy cppcheck sparse
 ```
 
 You still need an `x86_64-elf` cross toolchain and `i386-elf-gdb` on your `PATH`. If your package set does not provide them directly, build and install the usual OSDev cross toolchain, then verify these commands exist:
@@ -128,19 +130,19 @@ Ubuntu / Debian:
 
 ```sh
 sudo apt update
-sudo apt install -y build-essential python3 curl nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl librsvg2-bin clang-format clang-tidy cppcheck sparse
+sudo apt install -y build-essential cmake default-jre python3 curl nasm qemu-system-x86 xorriso grub-pc-bin mtools pandoc typst zip unzip perl librsvg2-bin clang-format clang-tidy cppcheck sparse
 ```
 
 Fedora:
 
 ```sh
-sudo dnf install -y make python3 curl nasm qemu-system-i386 xorriso grub2-tools-extra mtools pandoc typst zip unzip perl librsvg2-tools clang-tools-extra cppcheck sparse
+sudo dnf install -y make cmake gcc-c++ java-21-openjdk python3 curl nasm qemu-system-i386 xorriso grub2-tools-extra mtools pandoc typst zip unzip perl librsvg2-tools clang-tools-extra cppcheck sparse
 ```
 
 Arch:
 
 ```sh
-sudo pacman -S --needed make python curl nasm qemu-desktop xorriso grub mtools pandoc typst zip unzip perl librsvg clang cppcheck sparse
+sudo pacman -S --needed make cmake jre-openjdk python curl nasm qemu-desktop xorriso grub mtools pandoc typst zip unzip perl librsvg clang cppcheck sparse
 ```
 
 As on Windows, make sure the `x86_64-elf` cross compiler/linker and optional `i386-elf-gdb` are installed and visible on `PATH`.
@@ -169,13 +171,13 @@ If your distro installs `grub-mkrescue` but not `i686-elf-grub-mkrescue`, add a 
 
 ## Build And Run
 
-For a clean first x86 desktop boot, build the kernel, ISO, disk image, and launch QEMU with the desktop enabled:
+For a clean first x86 desktop boot, build the kernel, ISO, disk image, and launch QEMU:
 
 ```sh
-make NO_DESKTOP=0 run-fresh
+make run-fresh
 ```
 
-The shorter `make fresh` target is still available, but the default x86 build keeps the desktop disabled unless `NO_DESKTOP=0` is passed.
+The shorter `make fresh` target is still available. The default x86 build compiles and launches the desktop; pass `NO_DESKTOP=1` only when you want a text-console-only build.
 
 To rebuild the desktop image without launching QEMU, use:
 
@@ -342,10 +344,10 @@ updates.
 
 When adding a user program to the disk image, update `user/programs.mk` and add
 the build rule or source file in `user/Makefile` as needed. Native Drunix C
-programs go in `C_PROGS`, native Drunix C++ programs go in `CXX_PROGS`, and
-static Linux/i386 compatibility programs go in `LINUX_PROGS`. The root
-Makefile derives disk image contents from `PROGS`, so it does not need another
-per-program edit.
+programs go in `C_PROGS`, Rexy programs go in `REXC_PROGS`, native Drunix C++
+programs go in `CXX_PROGS`, and static Linux/i386 compatibility programs go in
+`LINUX_PROGS`. The root Makefile derives disk image contents from `PROGS`, so
+it does not need another per-program edit.
 
 ### Root filesystem selection
 
@@ -415,11 +417,14 @@ make VGA_TEXT=1 run-fresh
 kernel ignores a Multiboot framebuffer even if one is reported. Lowercase
 aliases `no_desktop=1` and `vga_text=1` are also accepted.
 
-### Userland C++ Support
+### Userland Languages
 
-User programs can be written in C or in a freestanding C++ subset. C programs
-continue to compile with `x86_64-elf-gcc`; C++ programs compile with
-`x86_64-elf-g++` and link against the repo-owned user runtime in `user/runtime`.
+User programs can be written in C, Rexy, or in a freestanding C++ subset. C
+programs continue to compile with `x86_64-elf-gcc`. Rexy programs compile
+through `external/rexc` with `--target i386-drunix` and link against the same
+Drunix user runtime and linker script. C++ programs compile with
+`x86_64-elf-g++` and link against the repo-owned C and C++ runtime objects in
+`user/runtime`.
 
 The current C++ userland supports global constructors and destructors,
 classes, virtual dispatch, `new`, `delete`, `new[]`, and `delete[]`.
@@ -430,14 +435,17 @@ Exceptions, RTTI, `libstdc++`, and `libsupc++` are not part of the current
 runtime. Code that depends on those features should fail at compile or link
 time instead of pulling in hosted runtime libraries implicitly.
 
-The C smoke binary is `/bin/chello`, built from `user/apps/chello.c`. The C++
-smoke binary is `/bin/cpphello`, built from `user/apps/cpphello.cpp`. The Linux
-i386 ABI smoke binary is `/bin/linuxhello`, built from handwritten assembly
-that invokes Linux `write(2)` and `exit(2)` syscall numbers directly.
-`user/programs.mk` keeps the runtime lanes explicit: C programs link the C
-runtime objects, C++ programs link those same C runtime objects plus the C++
-runtime objects, and Linux compatibility binaries link no Drunix runtime at all.
-The book-level walkthrough is Chapter 30, `docs/ch30-cpp-userland.md`.
+The C smoke binary is `/bin/chello`, built from `user/apps/chello.c`. The Rexy
+hello binary is `/bin/hello`, built from `user/apps/hello.rx`, and the default
+utility set includes Rexy ports such as `cat`, `grep`, `sort`, `lsblk`, and
+`cpphello`. The Linux i386 ABI smoke binary is `/bin/linuxhello`, built from
+handwritten assembly that invokes Linux `write(2)` and `exit(2)` syscall
+numbers directly. `user/programs.mk` keeps the runtime lanes explicit: C
+programs link the C runtime objects, Rexy programs are compiled and linked by
+`rexc`, C++ programs link the C runtime objects plus the C++ runtime objects,
+and Linux compatibility binaries link no Drunix runtime at all. The book-level
+C++ walkthrough is Chapter 30, `docs/ch30-cpp-userland.md`; Rexy contribution
+policy lives in `docs/contributing/rexy-porting.md`.
 
 ## Debugging
 

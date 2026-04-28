@@ -27,14 +27,14 @@ fn parse_dash_count(value: str) -> i32 {
 	return parse_count((value + 1) as str);
 }
 
-fn copy_into(dest: *u8, offset: i32, len: i32) -> i32 {
+unsafe fn copy_into(dest: *u8, offset: i32, len: i32) -> i32 {
 	for let mut index: i32 = 0; index < len; index++ {
 		*(dest + offset + index) = TAIL_READ_BUFFER[index];
 	}
 	return len;
 }
 
-fn tail_start(buffer: *u8, total: i32, max_lines: i32) -> i32 {
+unsafe fn tail_start(buffer: *u8, total: i32, max_lines: i32) -> i32 {
 	if max_lines <= 0 {
 		return total;
 	}
@@ -60,7 +60,7 @@ fn tail_start(buffer: *u8, total: i32, max_lines: i32) -> i32 {
 	return 0;
 }
 
-fn print_tail(fd: i32, max_lines: i32) -> i32 {
+unsafe fn print_tail(fd: i32, max_lines: i32) -> i32 {
 	std::alloc::reset();
 	let capacity: i32 = std::alloc::remaining();
 	let buffer: *u8 = std::alloc::bytes(capacity);

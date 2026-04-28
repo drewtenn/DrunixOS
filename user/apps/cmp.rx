@@ -37,7 +37,7 @@ fn read_b(fd: i32) -> i32 {
 	return CMP_B_BUFFER[0] as i32;
 }
 
-fn octal_byte(value: i32) -> str {
+unsafe fn octal_byte(value: i32) -> str {
 	*(CMP_OCTAL_BUFFER + 0) = ((value / 64) + 48) as u8;
 	*(CMP_OCTAL_BUFFER + 1) = (((value / 8) % 8) + 48) as u8;
 	*(CMP_OCTAL_BUFFER + 2) = ((value % 8) + 48) as u8;

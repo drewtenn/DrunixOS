@@ -27,7 +27,7 @@ fn parse_dash_count(value: str) -> i32 {
 	return parse_count((value + 1) as str);
 }
 
-fn put_byte(byte: i32) -> i32 {
+unsafe fn put_byte(byte: i32) -> i32 {
 	*(HEAD_BUFFER + 0) = byte as u8;
 	return std::io::write(1, HEAD_BUFFER + 0, 1);
 }

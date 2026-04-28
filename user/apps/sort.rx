@@ -26,11 +26,11 @@ fn str_compare(left: str, right: str) -> i32 {
 	return 1;
 }
 
-fn line_at(storage: *u8, index: i32) -> str {
+unsafe fn line_at(storage: *u8, index: i32) -> str {
 	return (storage + SORT_OFFSETS[index]) as str;
 }
 
-fn line_compare(storage: *u8, left_index: i32, right_index: i32, reverse: bool) -> i32 {
+unsafe fn line_compare(storage: *u8, left_index: i32, right_index: i32, reverse: bool) -> i32 {
 	let result: i32 = str_compare(line_at(storage, left_index), line_at(storage, right_index));
 	if reverse {
 		return 0 - result;
@@ -38,14 +38,14 @@ fn line_compare(storage: *u8, left_index: i32, right_index: i32, reverse: bool) 
 	return result;
 }
 
-fn swap_offsets(left: i32, right: i32) -> i32 {
+unsafe fn swap_offsets(left: i32, right: i32) -> i32 {
 	let temp: i32 = SORT_OFFSETS[left];
 	*(SORT_OFFSETS + left) = SORT_OFFSETS[right];
 	*(SORT_OFFSETS + right) = temp;
 	return 0;
 }
 
-fn sort_lines(storage: *u8, line_count: i32, reverse: bool) -> i32 {
+unsafe fn sort_lines(storage: *u8, line_count: i32, reverse: bool) -> i32 {
 	for let mut outer: i32 = 0; outer < line_count; outer++ {
 		for let mut inner: i32 = outer + 1; inner < line_count; inner++ {
 			if line_compare(storage, outer, inner, reverse) > 0 {
@@ -56,7 +56,7 @@ fn sort_lines(storage: *u8, line_count: i32, reverse: bool) -> i32 {
 	return 0;
 }
 
-fn append_line(storage: *u8, used: i32, line_start: i32, line_len: i32,
+unsafe fn append_line(storage: *u8, used: i32, line_start: i32, line_len: i32,
                line_count: i32) -> i32 {
 	if line_count >= 256 {
 		return -1;
@@ -66,7 +66,7 @@ fn append_line(storage: *u8, used: i32, line_start: i32, line_len: i32,
 	return 0;
 }
 
-fn read_stream(fd: i32, storage: *u8, capacity: i32, line_count_in: i32) -> i32 {
+unsafe fn read_stream(fd: i32, storage: *u8, capacity: i32, line_count_in: i32) -> i32 {
 	let mut used: i32 = SORT_USED;
 	let mut line_start: i32 = used;
 	let mut line_len: i32 = 0;
@@ -128,7 +128,7 @@ fn close_input(fd: i32) -> i32 {
 	return 0;
 }
 
-fn print_sorted(storage: *u8, line_count: i32, unique: bool) -> i32 {
+unsafe fn print_sorted(storage: *u8, line_count: i32, unique: bool) -> i32 {
 	for let mut index: i32 = 0; index < line_count; index++ {
 		if !unique || index == 0 ||
 		   str_compare(line_at(storage, index), line_at(storage, index - 1)) != 0 {
@@ -138,7 +138,7 @@ fn print_sorted(storage: *u8, line_count: i32, unique: bool) -> i32 {
 	return 0;
 }
 
-fn main() -> i32 {
+unsafe fn main() -> i32 {
 	let count: i32 = std::process::args_len();
 	let mut reverse: bool = false;
 	let mut unique: bool = false;

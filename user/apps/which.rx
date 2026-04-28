@@ -18,7 +18,7 @@ fn is_file(path: str) -> bool {
 	return true;
 }
 
-fn copy_path_segment(path: str, start: i32, dir_len: i32) -> i32 {
+unsafe fn copy_path_segment(path: str, start: i32, dir_len: i32) -> i32 {
 	let mut index: i32 = 0;
 	for index = 0; index < dir_len && index < 127; index++ {
 		*(WHICH_PATH_BUFFER + index) = path[start + index];
