@@ -1,6 +1,5 @@
 static mut LS_DENTS: [u8; 512];
 static mut LS_CHILD_DENTS: [u8; 512];
-static mut LS_PATH: [u8; 128];
 static mut LS_TEXT: [u8; 64];
 static mut LS_MAJMIN: [u8; 24];
 static mut LS_TYPE: [u8; 16];
@@ -9,38 +8,19 @@ fn streq(a: str, b: str) -> bool {
 	return str_eq(a, b);
 }
 
-fn copy_to(buf: *u8, cap: i32, value: str) -> i32 {
-	let mut index: i32 = 0;
-	while value[index] != 0 && index < cap - 1 {
-		*(buf + index) = value[index];
-		index++;
-	}
-	*(buf + index) = 0;
-	return index;
-}
-
-fn append_to(buf: *u8, cap: i32, offset: i32, value: str) -> i32 {
-	let mut out: i32 = offset;
-	let mut index: i32 = 0;
-	while value[index] != 0 && out < cap - 1 {
-		*(buf + out) = value[index];
-		out++;
-		index++;
-	}
-	*(buf + out) = 0;
-	return out;
-}
-
 fn sysfs_path(name: str, parent: str, leaf: str) -> str {
-	let mut out: i32 = copy_to(LS_PATH + 0, 128, "/sys/block/");
+	std::alloc::reset();
+	let mut path: str = "/sys/block";
 	if !str_is_empty(parent) {
-		out = append_to(LS_PATH + 0, 128, out, parent);
-		out = append_to(LS_PATH + 0, 128, out, "/");
+		path = std::path::join(path, parent);
 	}
-	out = append_to(LS_PATH + 0, 128, out, name);
-	out = append_to(LS_PATH + 0, 128, out, "/");
-	append_to(LS_PATH + 0, 128, out, leaf);
-	return LS_PATH;
+	if !str_is_empty(name) {
+		path = std::path::join(path, name);
+	}
+	if !str_is_empty(leaf) {
+		path = std::path::join(path, leaf);
+	}
+	return path;
 }
 
 fn read_file(path: str, buf: *u8, cap: i32) -> i32 {

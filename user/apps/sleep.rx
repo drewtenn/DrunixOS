@@ -1,17 +1,17 @@
-fn parse_seconds_arg(value: str) -> i32 {
+fn parse_seconds_arg(value: str) -> Result<i32> {
 	if str_is_empty(value) {
-		return -1;
+		return std::alloc::result_i32_err(-1);
 	}
 
 	let mut result: i32 = 0;
 	for let mut index: i32 = 0; value[index] != 0; index++ {
 		let byte: u8 = value[index];
 		if byte < 48 || byte > 57 {
-			return -1;
+			return std::alloc::result_i32_err(-1);
 		}
 		result = result * 10 + ((byte as i32) - 48);
 	}
-	return result;
+	return std::alloc::result_i32_ok(result);
 }
 
 fn main() -> i32 {
@@ -21,12 +21,13 @@ fn main() -> i32 {
 		return 2;
 	}
 
-	let mut seconds: i32 = parse_seconds_arg(std::process::arg_at(1));
-	if seconds < 0 {
+	let parsed: Result<i32> = parse_seconds_arg(std::process::arg_at(1));
+	if std::alloc::result_i32_is_err(parsed) {
 		println("usage: sleep seconds");
 		return 2;
 	}
 
+	let mut seconds: i32 = std::alloc::result_i32_value_or(parsed, 0);
 	while seconds > 0 {
 		seconds = std::time::sleep(seconds);
 	}

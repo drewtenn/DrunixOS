@@ -18,47 +18,13 @@ fn is_file(path: str) -> bool {
 	return true;
 }
 
-fn copy_name(name: str) -> i32 {
+fn copy_path_segment(path: str, start: i32, dir_len: i32) -> i32 {
 	let mut index: i32 = 0;
-	for index = 0; index < 127 && name[index] != 0; index++ {
-		*(WHICH_PATH_BUFFER + index) = name[index];
+	for index = 0; index < dir_len && index < 127; index++ {
+		*(WHICH_PATH_BUFFER + index) = path[start + index];
 	}
 	*(WHICH_PATH_BUFFER + index) = 0;
-	if name[index] != 0 {
-		return -1;
-	}
-	return 0;
-}
-
-fn build_path(path: str, start: i32, dir_len: i32, name: str) -> i32 {
-	let mut out: i32 = 0;
-	let mut dir_index: i32 = 0;
-
-	if dir_len == 0 {
-		return copy_name(name);
-	}
-
-	for dir_index = 0; dir_index < dir_len && out < 127; dir_index++ {
-		*(WHICH_PATH_BUFFER + out) = path[start + dir_index];
-		out++;
-	}
-	if dir_index < dir_len {
-		*(WHICH_PATH_BUFFER + out) = 0;
-		return -1;
-	}
-
-	if out > 0 && WHICH_PATH_BUFFER[out - 1] != 47 && out < 127 {
-		*(WHICH_PATH_BUFFER + out) = 47;
-		out++;
-	}
-
-	let mut name_index: i32 = 0;
-	for name_index = 0; name[name_index] != 0 && out < 127; name_index++ {
-		*(WHICH_PATH_BUFFER + out) = name[name_index];
-		out++;
-	}
-	*(WHICH_PATH_BUFFER + out) = 0;
-	if name[name_index] != 0 {
+	if index < dir_len {
 		return -1;
 	}
 	return 0;
@@ -80,17 +46,21 @@ fn which_one(name: str, all: bool) -> i32 {
 
 	let mut found: bool = false;
 	let mut start: i32 = 0;
+	std::alloc::reset();
 	while true {
 		let mut end: i32 = start;
 		while path[end] != 0 && path[end] != 58 {
 			end++;
 		}
 
-		if build_path(path, start, end - start, name) == 0 && is_file(WHICH_PATH_BUFFER) {
-			println(WHICH_PATH_BUFFER);
-			found = true;
-			if !all {
-				return 0;
+		if copy_path_segment(path, start, end - start) == 0 {
+			let candidate: str = std::path::join(WHICH_PATH_BUFFER, name);
+			if is_file(candidate) {
+				println(candidate);
+				found = true;
+				if !all {
+					return 0;
+				}
 			}
 		}
 

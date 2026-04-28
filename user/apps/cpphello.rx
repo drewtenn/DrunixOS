@@ -1,7 +1,7 @@
-fn sum_array(values: *i32, count: i32) -> i32 {
+fn sum_values(values: slice<i32>) -> i32 {
 	let mut sum: i32 = 0;
-	for let mut index: i32 = 0; index < count; index++ {
-		sum = sum + values[index];
+	for let mut index: i32 = 0; index < std::alloc::slice_i32_len(values); index++ {
+		sum = sum + std::alloc::slice_i32_get_or(values, index, 0);
 	}
 	return sum;
 }
@@ -17,11 +17,11 @@ fn main() -> i32 {
 	println("global constructor value=42");
 	println("virtual dispatch works");
 
-	let values: *i32 = std::alloc::bytes(12) as *i32;
-	*(values + 0) = 1;
-	*(values + 1) = 2;
-	*(values + 2) = 3;
-	let sum: i32 = sum_array(values, 3);
+	let values: vec<i32> = std::alloc::vec_i32_new(3);
+	std::alloc::vec_i32_push(values, 1);
+	std::alloc::vec_i32_push(values, 2);
+	std::alloc::vec_i32_push(values, 3);
+	let sum: i32 = sum_values(values as slice<i32>);
 	print("new[] sum=");
 	println_i32(sum);
 
