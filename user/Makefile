@@ -11,6 +11,7 @@ APP_SRC_DIR := apps
 RUNTIME_SRC_DIR := runtime
 THIRD_PARTY_SRC_DIR := third_party
 LINKER_SRC_DIR := linker
+REXC_SRC_DIR := apps
 
 APP_OBJ_DIR := $(OBJ_DIR)/apps
 RUNTIME_OBJ_DIR := $(OBJ_DIR)/runtime
@@ -31,6 +32,8 @@ CXX    = x86_64-elf-g++
 LD     = x86_64-elf-ld
 AR     = x86_64-elf-ar
 NASM   = nasm
+REXC_BUILD_DIR ?= ../external/rexc/build
+REXC  ?= $(REXC_BUILD_DIR)/rexc
 BUILD_MODE ?= production
 ifeq ($(BUILD_MODE),debug)
 BUILD_OPT ?= -Og
@@ -61,12 +64,18 @@ C_LINK_OBJS = $(C_RUNTIME_OBJS)
 CXX_LINK_OBJS = $(C_RUNTIME_OBJS) $(CXX_RUNTIME_OBJS)
 
 C_GENERIC_PROGS = $(filter-out desktop,$(C_PROGS))
+CXX_NATIVE_PROGS = $(filter-out $(REXC_PROGS),$(CXX_PROGS))
 C_BINS = $(addprefix $(BIN_DIR)/,$(C_GENERIC_PROGS))
-CXX_BINS = $(addprefix $(BIN_DIR)/,$(CXX_PROGS))
+REXC_BINS = $(addprefix $(BIN_DIR)/,$(REXC_PROGS))
+CXX_BINS = $(addprefix $(BIN_DIR)/,$(CXX_NATIVE_PROGS))
 C_APP_OBJS = $(addprefix $(APP_OBJ_DIR)/,$(addsuffix .o,$(C_PROGS)))
-CXX_APP_OBJS = $(addprefix $(APP_OBJ_DIR)/,$(addsuffix .o,$(CXX_PROGS)))
+CXX_APP_OBJS = $(addprefix $(APP_OBJ_DIR)/,$(addsuffix .o,$(CXX_NATIVE_PROGS)))
 
 $(PROGS): %: $(BIN_DIR)/%
+
+$(REXC):
+	cmake -S ../external/rexc -B $(REXC_BUILD_DIR)
+	cmake --build $(REXC_BUILD_DIR) --target rexc
 
 $(LINKER_DIR)/user.ld: $(LINKER_SRC_DIR)/user.ld.in
 	@mkdir -p $(dir $@)
@@ -109,6 +118,10 @@ $(RUNTIME_DIR)/libc.a: $(C_RUNTIME_LIB_OBJS)
 $(C_BINS): $(BIN_DIR)/%: $(APP_OBJ_DIR)/%.o $(C_LINK_OBJS) $(LINKER_DIR)/user.ld
 	@mkdir -p $(dir $@)
 	$(LD) -m elf_i386 -T $(LINKER_DIR)/user.ld -o $@ $(C_LINK_OBJS) $(APP_OBJ_DIR)/$*.o
+
+$(REXC_BINS): $(BIN_DIR)/%: $(REXC_SRC_DIR)/%.rx $(REXC) $(LINKER_DIR)/user.ld
+	@mkdir -p $(dir $@)
+	$(REXC) $< --target i386-drunix --drunix-root .. -o $@
 
 $(CXX_BINS): $(BIN_DIR)/%: $(APP_OBJ_DIR)/%.o $(CXX_LINK_OBJS) $(LINKER_DIR)/user.ld
 	@mkdir -p $(dir $@)

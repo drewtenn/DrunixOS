@@ -17,14 +17,14 @@ ROOT_MAKEFILE = ROOT / "Makefile"
 
 
 def make_var(text, name):
-    match = re.search(rf"^{re.escape(name)}[ \t]*=[ \t]*(.*)$", text, re.MULTILINE)
+    match = re.search(rf"^{re.escape(name)}[ \t]*(?:\?|:)?=[ \t]*(.*)$", text, re.MULTILINE)
     if not match:
         return None
     return match.group(1).split()
 
 
 def scalar_make_var(text, name):
-    match = re.search(rf"^{re.escape(name)}[ \t]*=[ \t]*(.*)$", text, re.MULTILINE)
+    match = re.search(rf"^{re.escape(name)}[ \t]*(?:\?|:)?=[ \t]*(.*)$", text, re.MULTILINE)
     if not match:
         return None
     return match.group(1).strip()
@@ -43,6 +43,7 @@ def main():
     progs = make_var(text, "PROGS")
     c_progs = make_var(text, "C_PROGS")
     cxx_progs = make_var(text, "CXX_PROGS")
+    rexc_progs = make_var(text, "REXC_PROGS")
     linux_progs = make_var(text, "LINUX_PROGS")
     c_runtime = make_var(text, "C_RUNTIME_OBJS")
     cxx_runtime = make_var(text, "CXX_RUNTIME_OBJS")
@@ -58,6 +59,9 @@ def main():
     if cxx_progs is None:
         add_failure(failures, "user/Makefile must define CXX_PROGS")
         cxx_progs = []
+    if rexc_progs is None:
+        add_failure(failures, "user/Makefile must define REXC_PROGS")
+        rexc_progs = []
     if linux_progs is None:
         add_failure(failures, "user/Makefile must define LINUX_PROGS")
         linux_progs = []
@@ -76,6 +80,7 @@ def main():
 
     c_set = set(c_progs)
     cxx_set = set(cxx_progs)
+    rexc_set = set(rexc_progs)
     linux_set = set(linux_progs)
     prog_set = set(progs)
 
@@ -83,17 +88,26 @@ def main():
         add_failure(failures, "C_PROGS contains duplicate entries")
     if len(cxx_progs) != len(cxx_set):
         add_failure(failures, "CXX_PROGS contains duplicate entries")
+    if len(rexc_progs) != len(rexc_set):
+        add_failure(failures, "REXC_PROGS contains duplicate entries")
     if len(linux_progs) != len(linux_set):
         add_failure(failures, "LINUX_PROGS contains duplicate entries")
 
-    overlap = sorted((c_set & cxx_set) | (c_set & linux_set) | (cxx_set & linux_set))
+    overlap = sorted(
+        (c_set & cxx_set)
+        | (c_set & rexc_set)
+        | (c_set & linux_set)
+        | (cxx_set & rexc_set)
+        | (cxx_set & linux_set)
+        | (rexc_set & linux_set)
+    )
     if overlap:
         add_failure(failures, "programs listed in more than one userland lane: " + " ".join(overlap))
 
-    missing = sorted(prog_set - (c_set | cxx_set | linux_set))
-    extra = sorted((c_set | cxx_set | linux_set) - prog_set)
+    missing = sorted(prog_set - (c_set | cxx_set | rexc_set | linux_set))
+    extra = sorted((c_set | cxx_set | rexc_set | linux_set) - prog_set)
     if missing:
-        add_failure(failures, "programs missing from C_PROGS/CXX_PROGS/LINUX_PROGS: " + " ".join(missing))
+        add_failure(failures, "programs missing from C_PROGS/CXX_PROGS/REXC_PROGS/LINUX_PROGS: " + " ".join(missing))
     if extra:
         add_failure(failures, "lane program not listed in PROGS: " + " ".join(extra))
 
@@ -107,6 +121,14 @@ def main():
 
     if "include programs.mk" not in makefile_text:
         add_failure(failures, "user/Makefile must include user/programs.mk as the shared user program manifest")
+    if "REXC_PROGS ?= hello" not in text:
+        add_failure(failures, "user/programs.mk must list hello in REXC_PROGS")
+    if not re.search(r"^REXC_BUILD_DIR[ \t]*\?=[ \t]*\.\./external/rexc/build[ \t]*$", makefile_text, re.MULTILINE):
+        add_failure(failures, "user/Makefile must define REXC_BUILD_DIR for the local Rexc build")
+    if not re.search(r"^REXC[ \t]*\?=[ \t]*\$\(REXC_BUILD_DIR\)/rexc[ \t]*$", makefile_text, re.MULTILINE):
+        add_failure(failures, "user/Makefile must define REXC as the Rexc compiler driver")
+    if "cmake --build $(REXC_BUILD_DIR) --target rexc" not in makefile_text:
+        add_failure(failures, "user/Makefile must know how to build the local Rexc compiler driver")
     if not re.search(r"^include\s+user/programs\.mk$", root_text, re.MULTILINE):
         add_failure(failures, "top-level Makefile must include user/programs.mk for disk image packing")
     if not re.search(r"USER_PROGS\s*:?\=\s*\$\(PROGS\)", root_text):
@@ -181,6 +203,14 @@ def main():
         if (APPS / f"{prog}.c").exists():
             add_failure(failures, f"C++ program must not also have C source: user/apps/{prog}.c")
 
+    for prog in rexc_progs:
+        if not (APPS / f"{prog}.rx").exists():
+            add_failure(failures, f"Rexc program missing Rexc source: user/apps/{prog}.rx")
+        if (APPS / f"{prog}.c").exists():
+            add_failure(failures, f"Rexc program must not also have C source: user/apps/{prog}.c")
+        if (APPS / f"{prog}.cpp").exists():
+            add_failure(failures, f"Rexc program must not also have C++ source: user/apps/{prog}.cpp")
+
     for prog in linux_progs:
         if (APPS / f"{prog}.cpp").exists():
             add_failure(failures, f"Linux i386 smoke program must not use Drunix C++ runtime sources: user/apps/{prog}.cpp")
@@ -190,7 +220,7 @@ def main():
             print(failure)
         return 1
 
-    print("native userland C and C++ runtime lanes are explicit and complete")
+    print("native userland runtime lanes are explicit and complete")
     return 0
 
 
