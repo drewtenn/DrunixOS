@@ -29,6 +29,11 @@ venv/
 *.swp
 *.swo
 .vscode/
+
+# Agent/session planning artifacts
+.claude/
+docs/superpowers/
+
 .double-fault-test-flag
 .klog-debugcon-flag
 .ktest-flag
