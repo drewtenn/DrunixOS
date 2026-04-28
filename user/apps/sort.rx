@@ -1,0 +1,216 @@
+static mut SORT_READ_BUFFER: [u8; 1];
+static mut SORT_OFFSETS: [i32; 256];
+static mut SORT_USED: i32 = 0;
+
+fn usage() -> i32 {
+	println("usage: sort [-ru] [file...]");
+	return 2;
+}
+
+fn str_compare(left: str, right: str) -> i32 {
+	let mut index: i32 = 0;
+	while left[index] != 0 && right[index] != 0 {
+		if left[index] < right[index] {
+			return -1;
+		}
+		if left[index] > right[index] {
+			return 1;
+		}
+		index = index + 1;
+	}
+	if left[index] == 0 && right[index] == 0 {
+		return 0;
+	}
+	if left[index] == 0 {
+		return -1;
+	}
+	return 1;
+}
+
+fn line_at(storage: *u8, index: i32) -> str {
+	return (storage + SORT_OFFSETS[index]) as str;
+}
+
+fn line_compare(storage: *u8, left_index: i32, right_index: i32, reverse: bool) -> i32 {
+	let result: i32 = str_compare(line_at(storage, left_index), line_at(storage, right_index));
+	if reverse {
+		return 0 - result;
+	}
+	return result;
+}
+
+fn swap_offsets(left: i32, right: i32) -> i32 {
+	let temp: i32 = SORT_OFFSETS[left];
+	*(SORT_OFFSETS + left) = SORT_OFFSETS[right];
+	*(SORT_OFFSETS + right) = temp;
+	return 0;
+}
+
+fn sort_lines(storage: *u8, line_count: i32, reverse: bool) -> i32 {
+	let mut outer: i32 = 0;
+	while outer < line_count {
+		let mut inner: i32 = outer + 1;
+		while inner < line_count {
+			if line_compare(storage, outer, inner, reverse) > 0 {
+				swap_offsets(outer, inner);
+			}
+			inner = inner + 1;
+		}
+		outer = outer + 1;
+	}
+	return 0;
+}
+
+fn append_line(storage: *u8, used: i32, line_start: i32, line_len: i32,
+               line_count: i32) -> i32 {
+	if line_count >= 256 {
+		return -1;
+	}
+	*(storage + used) = 0;
+	*(SORT_OFFSETS + line_count) = line_start;
+	return 0;
+}
+
+fn read_stream(fd: i32, storage: *u8, capacity: i32, line_count_in: i32) -> i32 {
+	let mut used: i32 = SORT_USED;
+	let mut line_start: i32 = used;
+	let mut line_len: i32 = 0;
+	let mut line_count: i32 = line_count_in;
+
+	while true {
+		let count: i32 = std::fs::read(fd, SORT_READ_BUFFER + 0, 1);
+		if count < 0 {
+			return -1;
+		}
+		if count == 0 {
+			break;
+		}
+		if SORT_READ_BUFFER[0] == 10 {
+			if used >= capacity {
+				return -1;
+			}
+			if append_line(storage, used, line_start, line_len, line_count) != 0 {
+				return -1;
+			}
+			used = used + 1;
+			line_count = line_count + 1;
+			line_start = used;
+			line_len = 0;
+		} else {
+			if used >= capacity {
+				return -1;
+			}
+			*(storage + used) = SORT_READ_BUFFER[0];
+			used = used + 1;
+			line_len = line_len + 1;
+		}
+	}
+
+	if line_len > 0 {
+		if used >= capacity {
+			return -1;
+		}
+		if append_line(storage, used, line_start, line_len, line_count) != 0 {
+			return -1;
+		}
+		line_count = line_count + 1;
+	}
+	SORT_USED = used;
+	return line_count;
+}
+
+fn open_input(path: str) -> i32 {
+	if str_eq(path, "-") {
+		return 0;
+	}
+	return std::fs::open_read(path);
+}
+
+fn close_input(fd: i32) -> i32 {
+	if fd != 0 {
+		return std::fs::close(fd);
+	}
+	return 0;
+}
+
+fn print_sorted(storage: *u8, line_count: i32, unique: bool) -> i32 {
+	let mut index: i32 = 0;
+	while index < line_count {
+		if !unique || index == 0 ||
+		   str_compare(line_at(storage, index), line_at(storage, index - 1)) != 0 {
+			println(line_at(storage, index));
+		}
+		index = index + 1;
+	}
+	return 0;
+}
+
+fn main() -> i32 {
+	let count: i32 = std::process::args_len();
+	let mut reverse: bool = false;
+	let mut unique: bool = false;
+	let mut first: i32 = 1;
+	let mut rc: i32 = 0;
+
+	while first < count && std::process::arg_at(first)[0] == 45 &&
+	      std::process::arg_at(first)[1] != 0 {
+		let option: str = std::process::arg_at(first);
+		if str_eq(option, "--") {
+			first = first + 1;
+			break;
+		}
+		let mut index: i32 = 1;
+		while option[index] != 0 {
+			if option[index] == 114 {
+				reverse = true;
+			} else if option[index] == 117 {
+				unique = true;
+			} else {
+				print("sort: invalid option: ");
+				println(option);
+				return 2;
+			}
+			index = index + 1;
+		}
+		first = first + 1;
+	}
+
+	std::alloc::reset();
+	let capacity: i32 = std::alloc::remaining();
+	let storage: *u8 = std::alloc::bytes(capacity);
+	SORT_USED = 0;
+	let mut line_count: i32 = 0;
+
+	if first == count {
+		line_count = read_stream(0, storage, capacity, 0);
+		if line_count < 0 {
+			println("sort: out of memory");
+			return 2;
+		}
+	} else {
+		let mut file_index: i32 = first;
+		while file_index < count {
+			let path: str = std::process::arg_at(file_index);
+			let fd: i32 = open_input(path);
+			if fd < 0 {
+				print("sort: cannot open: ");
+				println(path);
+				rc = 2;
+			} else {
+				let next_count: i32 = read_stream(fd, storage, capacity, line_count);
+				if next_count < 0 {
+					println("sort: out of memory");
+					rc = 2;
+				} else {
+					line_count = next_count;
+				}
+				close_input(fd);
+			}
+			file_index = file_index + 1;
+		}
+	}
+
+	sort_lines(storage, line_count, reverse);
+	print_sorted(storage, line_count, unique);
+	return rc;
+}
