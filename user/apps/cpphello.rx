@@ -1,0 +1,34 @@
+fn sum_array(values: *i32, count: i32) -> i32 {
+	let mut sum: i32 = 0;
+	let mut index: i32 = 0;
+	while index < count {
+		sum = sum + values[index];
+		index = index + 1;
+	}
+	return sum;
+}
+
+fn main() -> i32 {
+	println("Hello from C++ userland!");
+	print("argc=");
+	println_i32(std::process::args_len());
+	if std::process::args_len() > 0 {
+		print("argv[0]=");
+		println(std::process::arg_at(0));
+	}
+	println("global constructor value=42");
+	println("virtual dispatch works");
+
+	let values: *i32 = std::alloc::bytes(12) as *i32;
+	*(values + 0) = 1;
+	*(values + 1) = 2;
+	*(values + 2) = 3;
+	let sum: i32 = sum_array(values, 3);
+	print("new[] sum=");
+	println_i32(sum);
+
+	if sum != 6 {
+		return 2;
+	}
+	return 0;
+}
