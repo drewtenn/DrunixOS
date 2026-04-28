@@ -57,7 +57,7 @@ fn read_file(path: str, buf: *u8, cap: i32) -> i32 {
 	}
 	*(buf + count) = 0;
 	while count > 0 && (buf[count - 1] == 10 || buf[count - 1] == 13) {
-		count = count - 1;
+		--count;
 		*(buf + count) = 0;
 	}
 	return count;

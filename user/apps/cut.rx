@@ -122,7 +122,7 @@ fn cut_chars(len: i32) -> i32 {
 	let mut body_len: i32 = len;
 	if body_len > 0 && CUT_LINE[body_len - 1] == 10 {
 		had_newline = true;
-		body_len = body_len - 1;
+		--body_len;
 	}
 
 	let mut pos: i32 = 1;
@@ -159,7 +159,7 @@ fn cut_fields(len: i32, delim: u8, suppress: bool) -> i32 {
 	let mut body_len: i32 = len;
 	if body_len > 0 && CUT_LINE[body_len - 1] == 10 {
 		had_newline = true;
-		body_len = body_len - 1;
+		--body_len;
 	}
 	if !line_has_delim(body_len, delim) {
 		if !suppress {

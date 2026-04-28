@@ -13,7 +13,7 @@ fn copy_range(value: str, start: i32, end: i32) -> str {
 fn trim_trailing_slashes(value: str, len: i32) -> i32 {
 	let mut end: i32 = len;
 	while end > 1 && value[end - 1] == 47 {
-		end = end - 1;
+		--end;
 	}
 	return end;
 }
@@ -24,7 +24,7 @@ fn basename_start(value: str, end: i32) -> i32 {
 		if value[index] == 47 {
 			return index + 1;
 		}
-		index = index - 1;
+		--index;
 	}
 	return 0;
 }

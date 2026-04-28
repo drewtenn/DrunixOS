@@ -44,7 +44,7 @@ fn tail_start(buffer: *u8, total: i32, max_lines: i32) -> i32 {
 
 	let mut index: i32 = total - 1;
 	if buffer[index] == 10 {
-		index = index - 1;
+		--index;
 	}
 
 	let mut lines: i32 = 0;
@@ -55,7 +55,7 @@ fn tail_start(buffer: *u8, total: i32, max_lines: i32) -> i32 {
 				return index + 1;
 			}
 		}
-		index = index - 1;
+		--index;
 	}
 	return 0;
 }

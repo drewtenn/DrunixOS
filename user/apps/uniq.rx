@@ -61,10 +61,10 @@ fn write_number(fd: i32, value: i32) -> i32 {
 		}
 	}
 
-	for let mut spaces: i32 = 7 - digits; spaces > 0; spaces = spaces - 1 {
+	for let mut spaces: i32 = 7 - digits; spaces > 0; --spaces {
 		std::io::write_str(fd, " ");
 	}
-	for let mut index: i32 = digits - 1; index >= 0; index = index - 1 {
+	for let mut index: i32 = digits - 1; index >= 0; --index {
 		std::io::write(fd, UNIQ_DIGITS + index, 1);
 	}
 	return digits;

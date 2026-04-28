@@ -13,7 +13,7 @@ fn copy_range(value: str, start: i32, end: i32) -> str {
 fn trim_trailing_slashes(value: str, len: i32) -> i32 {
 	let mut end: i32 = len;
 	while end > 1 && value[end - 1] == 47 {
-		end = end - 1;
+		--end;
 	}
 	return end;
 }
@@ -24,7 +24,7 @@ fn last_slash_before(value: str, end: i32) -> i32 {
 		if value[index] == 47 {
 			return index;
 		}
-		index = index - 1;
+		--index;
 	}
 	return -1;
 }
@@ -32,7 +32,7 @@ fn last_slash_before(value: str, end: i32) -> i32 {
 fn trim_dir_slashes(value: str, end: i32) -> i32 {
 	let mut dir_end: i32 = end;
 	while dir_end > 1 && value[dir_end - 1] == 47 {
-		dir_end = dir_end - 1;
+		--dir_end;
 	}
 	return dir_end;
 }
