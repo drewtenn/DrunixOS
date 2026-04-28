@@ -1,3 +1,9 @@
+static SIGNAL_NAMES: [str; 14] = [
+	"HUP", "INT", "ILL", "TRAP", "ABRT", "FPE", "KILL",
+	"SEGV", "PIPE", "TERM", "CHLD", "CONT", "STOP", "TSTP",
+];
+static SIGNAL_NUMBERS: [i32; 14] = [1, 2, 4, 5, 6, 8, 9, 11, 13, 15, 17, 18, 19, 20];
+
 fn parse_number(value: str) -> i32 {
 	if str_is_empty(value) {
 		return -2147483648;
@@ -22,28 +28,19 @@ fn parse_number(value: str) -> i32 {
 			return -2147483648;
 		}
 		result = result * 10 + ((byte as i32) - 48);
-		index = index + 1;
+		index++;
 	}
 	return result * sign;
 }
 
 fn signal_number(name: str) -> i32 {
-	if str_eq(name, "HUP") { return 1; }
-	if str_eq(name, "INT") { return 2; }
-	if str_eq(name, "ILL") { return 4; }
-	if str_eq(name, "TRAP") { return 5; }
-	if str_eq(name, "ABRT") { return 6; }
-	if str_eq(name, "FPE") { return 8; }
-	if str_eq(name, "KILL") { return 9; }
-	if str_eq(name, "SEGV") { return 11; }
-	if str_eq(name, "PIPE") { return 13; }
-	if str_eq(name, "TERM") { return 15; }
-	if str_eq(name, "CHLD") { return 17; }
-	if str_eq(name, "CONT") { return 18; }
-	if str_eq(name, "STOP") { return 19; }
-	if str_eq(name, "TSTP") { return 20; }
 	if str_starts_with(name, "SIG") {
 		return signal_number((name + 3) as str);
+	}
+	for let mut index: i32 = 0; index < 14; index++ {
+		if str_eq(name, SIGNAL_NAMES[index]) {
+			return SIGNAL_NUMBERS[index];
+		}
 	}
 	let parsed: i32 = parse_number(name);
 	if parsed != -2147483648 {
@@ -53,20 +50,12 @@ fn signal_number(name: str) -> i32 {
 }
 
 fn print_signal_name(signal: i32) -> bool {
-	if signal == 1 { println("HUP"); return true; }
-	if signal == 2 { println("INT"); return true; }
-	if signal == 4 { println("ILL"); return true; }
-	if signal == 5 { println("TRAP"); return true; }
-	if signal == 6 { println("ABRT"); return true; }
-	if signal == 8 { println("FPE"); return true; }
-	if signal == 9 { println("KILL"); return true; }
-	if signal == 11 { println("SEGV"); return true; }
-	if signal == 13 { println("PIPE"); return true; }
-	if signal == 15 { println("TERM"); return true; }
-	if signal == 17 { println("CHLD"); return true; }
-	if signal == 18 { println("CONT"); return true; }
-	if signal == 19 { println("STOP"); return true; }
-	if signal == 20 { println("TSTP"); return true; }
+	for let mut index: i32 = 0; index < 14; index++ {
+		if SIGNAL_NUMBERS[index] == signal {
+			println(SIGNAL_NAMES[index]);
+			return true;
+		}
+	}
 	return false;
 }
 
@@ -94,7 +83,7 @@ fn main() -> i32 {
 		if count == 2 {
 			return list_signals();
 		}
-		for let mut index: i32 = 2; index < count; index = index + 1 {
+		for let mut index: i32 = 2; index < count; index++ {
 			let number: i32 = parse_number(std::process::arg_at(index));
 			if number == -2147483648 {
 				return 2;
@@ -122,7 +111,7 @@ fn main() -> i32 {
 		return 2;
 	}
 
-	for let mut index: i32 = first_pid; index < count; index = index + 1 {
+	for let mut index: i32 = first_pid; index < count; index++ {
 		let pid: i32 = parse_number(std::process::arg_at(index));
 		if pid == -2147483648 || pid == 0 {
 			print("kill: invalid pid: ");

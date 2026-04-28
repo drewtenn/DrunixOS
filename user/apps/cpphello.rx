@@ -1,6 +1,6 @@
 fn sum_array(values: *i32, count: i32) -> i32 {
 	let mut sum: i32 = 0;
-	for let mut index: i32 = 0; index < count; index = index + 1 {
+	for let mut index: i32 = 0; index < count; index++ {
 		sum = sum + values[index];
 	}
 	return sum;

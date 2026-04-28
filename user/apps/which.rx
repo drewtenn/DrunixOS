@@ -1,7 +1,7 @@
 static mut WHICH_PATH_BUFFER: [u8; 128];
 
 fn has_slash(value: str) -> bool {
-	for let mut index: i32 = 0; value[index] != 0; index = index + 1 {
+	for let mut index: i32 = 0; value[index] != 0; index++ {
 		if value[index] == 47 {
 			return true;
 		}
@@ -20,7 +20,7 @@ fn is_file(path: str) -> bool {
 
 fn copy_name(name: str) -> i32 {
 	let mut index: i32 = 0;
-	for index = 0; index < 127 && name[index] != 0; index = index + 1 {
+	for index = 0; index < 127 && name[index] != 0; index++ {
 		*(WHICH_PATH_BUFFER + index) = name[index];
 	}
 	*(WHICH_PATH_BUFFER + index) = 0;
@@ -38,9 +38,9 @@ fn build_path(path: str, start: i32, dir_len: i32, name: str) -> i32 {
 		return copy_name(name);
 	}
 
-	for dir_index = 0; dir_index < dir_len && out < 127; dir_index = dir_index + 1 {
+	for dir_index = 0; dir_index < dir_len && out < 127; dir_index++ {
 		*(WHICH_PATH_BUFFER + out) = path[start + dir_index];
-		out = out + 1;
+		out++;
 	}
 	if dir_index < dir_len {
 		*(WHICH_PATH_BUFFER + out) = 0;
@@ -49,13 +49,13 @@ fn build_path(path: str, start: i32, dir_len: i32, name: str) -> i32 {
 
 	if out > 0 && WHICH_PATH_BUFFER[out - 1] != 47 && out < 127 {
 		*(WHICH_PATH_BUFFER + out) = 47;
-		out = out + 1;
+		out++;
 	}
 
 	let mut name_index: i32 = 0;
-	for name_index = 0; name[name_index] != 0 && out < 127; name_index = name_index + 1 {
+	for name_index = 0; name[name_index] != 0 && out < 127; name_index++ {
 		*(WHICH_PATH_BUFFER + out) = name[name_index];
-		out = out + 1;
+		out++;
 	}
 	*(WHICH_PATH_BUFFER + out) = 0;
 	if name[name_index] != 0 {
@@ -83,7 +83,7 @@ fn which_one(name: str, all: bool) -> i32 {
 	while true {
 		let mut end: i32 = start;
 		while path[end] != 0 && path[end] != 58 {
-			end = end + 1;
+			end++;
 		}
 
 		if build_path(path, start, end - start, name) == 0 && is_file(WHICH_PATH_BUFFER) {
@@ -130,7 +130,7 @@ fn main() -> i32 {
 		return usage();
 	}
 
-	for let mut index: i32 = first; index < count; index = index + 1 {
+	for let mut index: i32 = first; index < count; index++ {
 		if which_one(std::process::arg_at(index), all) != 0 {
 			rc = 1;
 		}

@@ -16,7 +16,7 @@ fn parse_uint_part(spec: str, start: i32, end: i32) -> i32 {
 		return -1;
 	}
 	let mut value: i32 = 0;
-	for let mut index: i32 = start; index < end; index = index + 1 {
+	for let mut index: i32 = start; index < end; index++ {
 		let byte: u8 = spec[index];
 		if byte < 48 || byte > 57 {
 			return -1;
@@ -35,7 +35,7 @@ fn add_range(first: i32, last: i32) -> i32 {
 	}
 	*(CUT_FIRST + CUT_RANGE_COUNT) = first;
 	*(CUT_LAST + CUT_RANGE_COUNT) = last;
-	CUT_RANGE_COUNT = CUT_RANGE_COUNT + 1;
+	CUT_RANGE_COUNT++;
 	return 0;
 }
 
@@ -55,7 +55,7 @@ fn parse_list(spec: str) -> i32 {
 				}
 				dash = index;
 			}
-			index = index + 1;
+			index++;
 		}
 
 		let end: i32 = index;
@@ -96,14 +96,14 @@ fn parse_list(spec: str) -> i32 {
 		if spec[index] == 0 {
 			break;
 		}
-		index = index + 1;
+		index++;
 		start = index;
 	}
 	return 0;
 }
 
 fn selected(pos: i32) -> bool {
-	for let mut index: i32 = 0; index < CUT_RANGE_COUNT; index = index + 1 {
+	for let mut index: i32 = 0; index < CUT_RANGE_COUNT; index++ {
 		if pos >= CUT_FIRST[index] &&
 		   (CUT_LAST[index] == 0 || pos <= CUT_LAST[index]) {
 			return true;
@@ -126,11 +126,11 @@ fn cut_chars(len: i32) -> i32 {
 	}
 
 	let mut pos: i32 = 1;
-	for let mut index: i32 = 0; index < body_len; index = index + 1 {
+	for let mut index: i32 = 0; index < body_len; index++ {
 		if selected(pos) {
 			put_byte(CUT_LINE[index]);
 		}
-		pos = pos + 1;
+		pos++;
 	}
 	if had_newline {
 		put_byte(10 as u8);
@@ -139,7 +139,7 @@ fn cut_chars(len: i32) -> i32 {
 }
 
 fn line_has_delim(len: i32, delim: u8) -> bool {
-	for let mut index: i32 = 0; index < len; index = index + 1 {
+	for let mut index: i32 = 0; index < len; index++ {
 		if CUT_LINE[index] == delim {
 			return true;
 		}
@@ -148,7 +148,7 @@ fn line_has_delim(len: i32, delim: u8) -> bool {
 }
 
 fn print_range(start: i32, end: i32) -> i32 {
-	for let mut index: i32 = start; index < end; index = index + 1 {
+	for let mut index: i32 = start; index < end; index++ {
 		put_byte(CUT_LINE[index]);
 	}
 	return 0;
@@ -177,7 +177,7 @@ fn cut_fields(len: i32, delim: u8, suppress: bool) -> i32 {
 	let mut printed: bool = false;
 	while index <= body_len {
 		if index < body_len && CUT_LINE[index] != delim {
-			index = index + 1;
+			index++;
 			continue;
 		}
 		if selected(field) {
@@ -188,8 +188,8 @@ fn cut_fields(len: i32, delim: u8, suppress: bool) -> i32 {
 			printed = true;
 		}
 		start = index + 1;
-		field = field + 1;
-		index = index + 1;
+		field++;
+		index++;
 	}
 	if had_newline {
 		put_byte(10 as u8);
@@ -216,7 +216,7 @@ fn process_stream(fd: i32, mode: i32, delim: u8, suppress: bool) -> i32 {
 		}
 		if len < 1024 {
 			*(CUT_LINE + len) = CUT_BYTE[0];
-			len = len + 1;
+			len++;
 		}
 		if CUT_BYTE[0] == 10 {
 			process_line(len, mode, delim, suppress);
@@ -265,7 +265,7 @@ fn main() -> i32 {
 	      std::process::arg_at(first)[1] != 0 {
 		let arg: str = std::process::arg_at(first);
 		if str_eq(arg, "--") {
-			first = first + 1;
+			first++;
 			break;
 		}
 		if arg[1] == 98 || arg[1] == 99 || arg[1] == 102 {
@@ -277,7 +277,7 @@ fn main() -> i32 {
 				return usage();
 			}
 			if arg[2] == 0 {
-				first = first + 1;
+				first++;
 			}
 			if arg[1] == 102 {
 				mode = 2;
@@ -291,7 +291,7 @@ fn main() -> i32 {
 			}
 			delim = value[0];
 			if arg[2] == 0 {
-				first = first + 1;
+				first++;
 			}
 		} else if str_eq(arg, "-s") {
 			suppress = true;
@@ -299,7 +299,7 @@ fn main() -> i32 {
 		} else {
 			return usage();
 		}
-		first = first + 1;
+		first++;
 	}
 
 	if mode == 0 || (suppress && mode != 2) {
@@ -312,7 +312,7 @@ fn main() -> i32 {
 		return 1;
 	}
 
-	for let mut index: i32 = first; index < argc; index = index + 1 {
+	for let mut index: i32 = first; index < argc; index++ {
 		let path: str = std::process::arg_at(index);
 		let fd: i32 = open_input(path);
 		if fd < 0 {

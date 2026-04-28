@@ -9,7 +9,7 @@ fn usage() -> i32 {
 
 fn str_compare(left: str, right: str) -> i32 {
 	let mut index: i32 = 0;
-	for index = 0; left[index] != 0 && right[index] != 0; index = index + 1 {
+	for index = 0; left[index] != 0 && right[index] != 0; index++ {
 		if left[index] < right[index] {
 			return -1;
 		}
@@ -46,8 +46,8 @@ fn swap_offsets(left: i32, right: i32) -> i32 {
 }
 
 fn sort_lines(storage: *u8, line_count: i32, reverse: bool) -> i32 {
-	for let mut outer: i32 = 0; outer < line_count; outer = outer + 1 {
-		for let mut inner: i32 = outer + 1; inner < line_count; inner = inner + 1 {
+	for let mut outer: i32 = 0; outer < line_count; outer++ {
+		for let mut inner: i32 = outer + 1; inner < line_count; inner++ {
 			if line_compare(storage, outer, inner, reverse) > 0 {
 				swap_offsets(outer, inner);
 			}
@@ -87,8 +87,8 @@ fn read_stream(fd: i32, storage: *u8, capacity: i32, line_count_in: i32) -> i32 
 			if append_line(storage, used, line_start, line_len, line_count) != 0 {
 				return -1;
 			}
-			used = used + 1;
-			line_count = line_count + 1;
+			used++;
+			line_count++;
 			line_start = used;
 			line_len = 0;
 		} else {
@@ -96,8 +96,8 @@ fn read_stream(fd: i32, storage: *u8, capacity: i32, line_count_in: i32) -> i32 
 				return -1;
 			}
 			*(storage + used) = SORT_READ_BUFFER[0];
-			used = used + 1;
-			line_len = line_len + 1;
+			used++;
+			line_len++;
 		}
 	}
 
@@ -108,7 +108,7 @@ fn read_stream(fd: i32, storage: *u8, capacity: i32, line_count_in: i32) -> i32 
 		if append_line(storage, used, line_start, line_len, line_count) != 0 {
 			return -1;
 		}
-		line_count = line_count + 1;
+		line_count++;
 	}
 	SORT_USED = used;
 	return line_count;
@@ -129,7 +129,7 @@ fn close_input(fd: i32) -> i32 {
 }
 
 fn print_sorted(storage: *u8, line_count: i32, unique: bool) -> i32 {
-	for let mut index: i32 = 0; index < line_count; index = index + 1 {
+	for let mut index: i32 = 0; index < line_count; index++ {
 		if !unique || index == 0 ||
 		   str_compare(line_at(storage, index), line_at(storage, index - 1)) != 0 {
 			println(line_at(storage, index));
@@ -149,10 +149,10 @@ fn main() -> i32 {
 	      std::process::arg_at(first)[1] != 0 {
 		let option: str = std::process::arg_at(first);
 		if str_eq(option, "--") {
-			first = first + 1;
+			first++;
 			break;
 		}
-		for let mut index: i32 = 1; option[index] != 0; index = index + 1 {
+		for let mut index: i32 = 1; option[index] != 0; index++ {
 			if option[index] == 114 {
 				reverse = true;
 			} else if option[index] == 117 {
@@ -163,7 +163,7 @@ fn main() -> i32 {
 				return 2;
 			}
 		}
-		first = first + 1;
+		first++;
 	}
 
 	std::alloc::reset();
@@ -179,7 +179,7 @@ fn main() -> i32 {
 			return 2;
 		}
 	} else {
-		for let mut file_index: i32 = first; file_index < count; file_index = file_index + 1 {
+		for let mut file_index: i32 = first; file_index < count; file_index++ {
 			let path: str = std::process::arg_at(file_index);
 			let fd: i32 = open_input(path);
 			if fd < 0 {

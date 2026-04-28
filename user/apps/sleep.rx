@@ -4,7 +4,7 @@ fn parse_seconds_arg(value: str) -> i32 {
 	}
 
 	let mut result: i32 = 0;
-	for let mut index: i32 = 0; value[index] != 0; index = index + 1 {
+	for let mut index: i32 = 0; value[index] != 0; index++ {
 		let byte: u8 = value[index];
 		if byte < 48 || byte > 57 {
 			return -1;

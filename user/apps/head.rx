@@ -10,7 +10,7 @@ fn parse_count(value: str) -> i32 {
 		return -1;
 	}
 	let mut result: i32 = 0;
-	for let mut index: i32 = 0; value[index] != 0; index = index + 1 {
+	for let mut index: i32 = 0; value[index] != 0; index++ {
 		let byte: u8 = value[index];
 		if byte < 48 || byte > 57 {
 			return -1;
@@ -42,7 +42,7 @@ fn print_head(fd: i32, max_lines: i32) -> i32 {
 		let byte: i32 = HEAD_BUFFER[0] as i32;
 		put_byte(byte);
 		if byte == 10 {
-			lines = lines + 1;
+			lines++;
 		}
 	}
 	return 0;
@@ -102,7 +102,7 @@ fn main() -> i32 {
 	}
 
 	let multiple: bool = count - first > 1;
-	for let mut index: i32 = first; index < count; index = index + 1 {
+	for let mut index: i32 = first; index < count; index++ {
 		let path: str = std::process::arg_at(index);
 		let fd: i32 = open_input(path);
 		if fd < 0 {

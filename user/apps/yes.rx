@@ -1,5 +1,5 @@
 fn print_arguments(count: i32) -> i32 {
-	for let mut index: i32 = 1; index < count; index = index + 1 {
+	for let mut index: i32 = 1; index < count; index++ {
 		if index > 1 {
 			print(" ");
 		}

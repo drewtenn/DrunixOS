@@ -15,7 +15,7 @@ fn main() -> i32 {
 		first = 2;
 	}
 
-	for let mut index: i32 = first; index < count && file_count < 8; index = index + 1 {
+	for let mut index: i32 = first; index < count && file_count < 8; index++ {
 		let path: str = std::process::arg_at(index);
 		let fd: i32 = std::fs::create_write(path);
 		if fd < 0 {
@@ -24,7 +24,7 @@ fn main() -> i32 {
 			rc = 1;
 		} else {
 			*(TEE_FDS + file_count) = fd;
-			file_count = file_count + 1;
+			file_count++;
 		}
 	}
 
@@ -39,12 +39,12 @@ fn main() -> i32 {
 			break;
 		}
 		std::io::write(1, TEE_BUFFER + 0, bytes);
-		for let mut out: i32 = 0; out < file_count; out = out + 1 {
+		for let mut out: i32 = 0; out < file_count; out++ {
 			std::io::write(TEE_FDS[out], TEE_BUFFER + 0, bytes);
 		}
 	}
 
-	for let mut out: i32 = 0; out < file_count; out = out + 1 {
+	for let mut out: i32 = 0; out < file_count; out++ {
 		std::fs::close(TEE_FDS[out]);
 	}
 

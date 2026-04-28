@@ -13,7 +13,7 @@ fn copy_to(buf: *u8, cap: i32, value: str) -> i32 {
 	let mut index: i32 = 0;
 	while value[index] != 0 && index < cap - 1 {
 		*(buf + index) = value[index];
-		index = index + 1;
+		index++;
 	}
 	*(buf + index) = 0;
 	return index;
@@ -24,8 +24,8 @@ fn append_to(buf: *u8, cap: i32, offset: i32, value: str) -> i32 {
 	let mut index: i32 = 0;
 	while value[index] != 0 && out < cap - 1 {
 		*(buf + out) = value[index];
-		out = out + 1;
-		index = index + 1;
+		out++;
+		index++;
 	}
 	*(buf + out) = 0;
 	return out;
@@ -68,7 +68,7 @@ fn parse_uint(value: str) -> i32 {
 	let mut index: i32 = 0;
 	while value[index] >= 48 && value[index] <= 57 {
 		result = result * 10 + ((value[index] as i32) - 48);
-		index = index + 1;
+		index++;
 	}
 	return result;
 }

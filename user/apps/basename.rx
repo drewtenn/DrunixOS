@@ -2,9 +2,9 @@ static mut BASENAME_BUFFER: [u8; 512];
 
 fn copy_range(value: str, start: i32, end: i32) -> str {
 	let mut out: i32 = 0;
-	for let mut index: i32 = start; index < end && out < 511; index = index + 1 {
+	for let mut index: i32 = start; index < end && out < 511; index++ {
 		*(BASENAME_BUFFER + out) = value[index];
-		out = out + 1;
+		out++;
 	}
 	*(BASENAME_BUFFER + out) = 0;
 	return BASENAME_BUFFER;
@@ -35,7 +35,7 @@ fn suffix_matches(value: str, value_len: i32, suffix: str, suffix_len: i32) -> b
 	}
 
 	let start: i32 = value_len - suffix_len;
-	for let mut index: i32 = 0; index < suffix_len; index = index + 1 {
+	for let mut index: i32 = 0; index < suffix_len; index++ {
 		if value[start + index] != suffix[index] {
 			return false;
 		}

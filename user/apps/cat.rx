@@ -21,7 +21,7 @@ fn main() -> i32 {
 	}
 
 	let mut rc: i32 = 0;
-	for let mut index: i32 = 1; index < count; index = index + 1 {
+	for let mut index: i32 = 1; index < count; index++ {
 		let path: str = std::process::arg_at(index);
 		if str_eq(path, "-") {
 			if cat_stream(0) != 0 {

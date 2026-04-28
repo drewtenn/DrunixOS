@@ -1,5 +1,5 @@
 fn main() -> i32 {
-	for let mut index: i32 = 1; index <= 100; index = index + 1 {
+	for let mut index: i32 = 1; index <= 100; index++ {
 		print("[sleeper] ");
 		println_i32(index);
 		std::time::sleep(1);

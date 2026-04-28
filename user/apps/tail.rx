@@ -10,7 +10,7 @@ fn parse_count(value: str) -> i32 {
 		return -1;
 	}
 	let mut result: i32 = 0;
-	for let mut index: i32 = 0; value[index] != 0; index = index + 1 {
+	for let mut index: i32 = 0; value[index] != 0; index++ {
 		let byte: u8 = value[index];
 		if byte < 48 || byte > 57 {
 			return -1;
@@ -28,7 +28,7 @@ fn parse_dash_count(value: str) -> i32 {
 }
 
 fn copy_into(dest: *u8, offset: i32, len: i32) -> i32 {
-	for let mut index: i32 = 0; index < len; index = index + 1 {
+	for let mut index: i32 = 0; index < len; index++ {
 		*(dest + offset + index) = TAIL_READ_BUFFER[index];
 	}
 	return len;
@@ -50,7 +50,7 @@ fn tail_start(buffer: *u8, total: i32, max_lines: i32) -> i32 {
 	let mut lines: i32 = 0;
 	while index >= 0 {
 		if buffer[index] == 10 {
-			lines = lines + 1;
+			lines++;
 			if lines == max_lines {
 				return index + 1;
 			}
@@ -144,7 +144,7 @@ fn main() -> i32 {
 	}
 
 	let multiple: bool = count - first > 1;
-	for let mut index: i32 = first; index < count; index = index + 1 {
+	for let mut index: i32 = first; index < count; index++ {
 		let path: str = std::process::arg_at(index);
 		let fd: i32 = open_input(path);
 		if fd < 0 {

@@ -24,9 +24,9 @@ fn contains_pattern(line_len: i32, pattern: str, ignore_case: bool) -> bool {
 		return false;
 	}
 
-	for let mut index: i32 = 0; index <= line_len - plen; index = index + 1 {
+	for let mut index: i32 = 0; index <= line_len - plen; index++ {
 		let mut matched: bool = true;
-		for let mut pindex: i32 = 0; pindex < plen; pindex = pindex + 1 {
+		for let mut pindex: i32 = 0; pindex < plen; pindex++ {
 			if !char_eq(GREP_LINE[index + pindex], pattern[pindex], ignore_case) {
 				matched = false;
 				break;
@@ -82,10 +82,10 @@ fn grep_stream(fd: i32, name: str, pattern: str, ignore_case: bool,
 		}
 		if line_len < 511 {
 			*(GREP_LINE + line_len) = GREP_BYTE[0];
-			line_len = line_len + 1;
+			line_len++;
 		}
 		if GREP_BYTE[0] == 10 {
-			line_no = line_no + 1;
+			line_no++;
 			if process_line(line_len, name, pattern, ignore_case, show_line_numbers,
 			                invert, show_filename, line_no) {
 				matched = true;
@@ -95,7 +95,7 @@ fn grep_stream(fd: i32, name: str, pattern: str, ignore_case: bool,
 	}
 
 	if line_len > 0 {
-		line_no = line_no + 1;
+		line_no++;
 		if process_line(line_len, name, pattern, ignore_case, show_line_numbers,
 		                invert, show_filename, line_no) {
 			matched = true;
@@ -130,10 +130,10 @@ fn main() -> i32 {
 	      std::process::arg_at(first)[1] != 0 {
 		let option: str = std::process::arg_at(first);
 		if str_eq(option, "--") {
-			first = first + 1;
+			first++;
 			break;
 		}
-		for let mut index: i32 = 1; option[index] != 0; index = index + 1 {
+		for let mut index: i32 = 1; option[index] != 0; index++ {
 			if option[index] == 105 {
 				ignore_case = true;
 			} else if option[index] == 110 {
@@ -146,7 +146,7 @@ fn main() -> i32 {
 				return 2;
 			}
 		}
-		first = first + 1;
+		first++;
 	}
 
 	if first >= count {
@@ -155,7 +155,7 @@ fn main() -> i32 {
 	}
 
 	let pattern: str = std::process::arg_at(first);
-	first = first + 1;
+	first++;
 	if first == count {
 		if grep_stream(0, "", pattern, ignore_case, show_line_numbers, invert, false) {
 			return 0;
@@ -164,7 +164,7 @@ fn main() -> i32 {
 	}
 
 	let show_filename: bool = count - first > 1;
-	for let mut file_index: i32 = first; file_index < count; file_index = file_index + 1 {
+	for let mut file_index: i32 = first; file_index < count; file_index++ {
 		let path: str = std::process::arg_at(file_index);
 		let fd: i32 = open_input(path);
 		if fd < 0 {
