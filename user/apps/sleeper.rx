@@ -1,0 +1,10 @@
+fn main() -> i32 {
+	let mut index: i32 = 1;
+	while index <= 100 {
+		print("[sleeper] ");
+		println_i32(index);
+		std::time::sleep(1);
+		index = index + 1;
+	}
+	return 0;
+}
