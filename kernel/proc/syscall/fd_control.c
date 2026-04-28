@@ -52,6 +52,14 @@ static uint32_t linux_poll_revents(process_t *cur, int32_t fd, uint32_t events)
 		} else if (fh->type == FD_TYPE_TTY) {
 			if (tty_read_available((int)fh->u.tty.tty_idx) > 0)
 				rev |= LINUX_POLLIN;
+		} else if (fh->type == FD_TYPE_PTY_MASTER) {
+			if (pty_master_read_available(fh->u.pty.pty_idx) > 0 ||
+			    pty_master_read_closed(fh->u.pty.pty_idx))
+				rev |= LINUX_POLLIN;
+		} else if (fh->type == FD_TYPE_PTY_SLAVE) {
+			if (pty_slave_read_available(fh->u.pty.pty_idx) > 0 ||
+			    pty_slave_read_closed(fh->u.pty.pty_idx))
+				rev |= LINUX_POLLIN;
 		} else if (fh->type == FD_TYPE_WM) {
 			if (wmdev_event_available(fh->u.wm.conn_id) ||
 			    wmdev_server_msg_available(fh->u.wm.conn_id))

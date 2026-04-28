@@ -108,6 +108,8 @@ typedef struct {
 #define SYS_POLLIN 0x0001
 #define SYS_POLLOUT 0x0004
 
+#define SYS_TIOCGPTN 0x80045430u
+
 /* ── Memory mapping ───────────────────────────────────────────────────── */
 
 #define PROT_NONE 0x0u
@@ -184,6 +186,7 @@ int sys_fwrite(int fd, const char *buf, int count);
 
 /* Close a file descriptor previously returned by sys_open. Returns 0 or -1. */
 int sys_close(int fd);
+int sys_ioctl(int fd, unsigned int request, void *arg);
 
 /*
  * Current process environment, initialized by crt0 from the kernel-provided

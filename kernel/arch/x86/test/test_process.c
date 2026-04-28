@@ -10,6 +10,7 @@
 #include "fs.h"
 #include "kheap.h"
 #include "process.h"
+#include "pty.h"
 #include "resources.h"
 #include "sched.h"
 #include "gdt.h"
@@ -45,6 +46,7 @@ extern void syscall_poll_set_wait_hook_for_test(void (*hook)(uint32_t deadline_t
 #define TEST_LINUX_TCSETS 0x5402u
 #define TEST_LINUX_TIOCGWINSZ 0x5413u
 #define TEST_LINUX_FIONREAD 0x541Bu
+#define TEST_LINUX_TIOCGPTN 0x80045430u
 #define TEST_LINUX_O_WRONLY 01u
 #define TEST_LINUX_O_RDWR 02u
 #define TEST_LINUX_O_CREAT 0100u
@@ -2529,6 +2531,67 @@ static void test_linux_poll_and_select_wait_for_tty_input(ktest_case_t *tc)
 	stop_syscall_test_process(cur);
 }
 
+static void test_linux_poll_reports_pty_readiness(ktest_case_t *tc)
+{
+	static process_t seed;
+	process_t *cur;
+	uint8_t *page;
+	uint8_t *poll_base;
+	uint32_t *ptn;
+	int pty_idx = pty_alloc_master();
+	uint8_t ch = 'p';
+
+	KTEST_ASSERT_NE(tc, (uint32_t)pty_idx, (uint32_t)-1);
+	KTEST_ASSERT_EQ(tc, pty_open_slave((uint32_t)pty_idx), 0);
+
+	cur = start_syscall_test_process(&seed);
+	KTEST_ASSERT_NOT_NULL(tc, cur);
+	KTEST_ASSERT_EQ(tc, map_test_user_page(cur, 0x10100000u), 0u);
+	page = mapped_alias(cur, 0x10100000u);
+	KTEST_ASSERT_NOT_NULL(tc, page);
+
+	cur->files->open_files[0].type = FD_TYPE_PTY_MASTER;
+	cur->files->open_files[0].writable = 1;
+	cur->files->open_files[0].u.pty.pty_idx = (uint32_t)pty_idx;
+	cur->files->open_files[1].type = FD_TYPE_PTY_SLAVE;
+	cur->files->open_files[1].writable = 1;
+	cur->files->open_files[1].u.pty.pty_idx = (uint32_t)pty_idx;
+
+	ptn = (uint32_t *)(page + 0x80u);
+	*ptn = 0;
+	KTEST_EXPECT_EQ(tc,
+	                syscall_handler(SYS_IOCTL,
+	                                0u,
+	                                TEST_LINUX_TIOCGPTN,
+	                                0x10100080u,
+	                                0,
+	                                0,
+	                                0),
+	                0u);
+	KTEST_EXPECT_EQ(tc, *ptn, (uint32_t)pty_idx);
+
+	poll_base = page + 0x100u;
+	((uint32_t *)poll_base)[0] = 0u;
+	((uint32_t *)poll_base)[1] = TEST_LINUX_POLLIN;
+	KTEST_EXPECT_EQ(
+	    tc, syscall_handler(SYS_POLL, 0x10100100u, 1u, 0u, 0, 0, 0), 0u);
+
+	KTEST_EXPECT_EQ(tc, pty_slave_write((uint32_t)pty_idx, &ch, 1u), 1);
+	((uint32_t *)poll_base)[1] = TEST_LINUX_POLLIN;
+	KTEST_EXPECT_EQ(
+	    tc, syscall_handler(SYS_POLL, 0x10100100u, 1u, 0u, 0, 0, 0), 1u);
+	KTEST_EXPECT_EQ(tc, ((uint32_t *)poll_base)[1] >> 16, TEST_LINUX_POLLIN);
+
+	((uint32_t *)poll_base)[0] = 1u;
+	((uint32_t *)poll_base)[1] = TEST_LINUX_POLLIN;
+	KTEST_EXPECT_EQ(tc, pty_master_write((uint32_t)pty_idx, &ch, 1u), 1);
+	KTEST_EXPECT_EQ(
+	    tc, syscall_handler(SYS_POLL, 0x10100100u, 1u, 0u, 0, 0, 0), 1u);
+	KTEST_EXPECT_EQ(tc, ((uint32_t *)poll_base)[1] >> 16, TEST_LINUX_POLLIN);
+
+	stop_syscall_test_process(cur);
+}
+
 static void poll_timeout_tick_hook(uint32_t deadline_tick)
 {
 	while ((int32_t)(sched_ticks() - deadline_tick) < 0)
@@ -3015,6 +3078,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_linux_syscalls_fill_uname_time_and_fstat64),
     KTEST_CASE(test_linux_syscalls_cover_blockdev_fd_path),
     KTEST_CASE(test_linux_poll_and_select_wait_for_tty_input),
+    KTEST_CASE(test_linux_poll_reports_pty_readiness),
     KTEST_CASE(test_linux_poll_timeout_modes),
     KTEST_CASE(test_linux_termios_on_stdout_controls_foreground_tty),
     KTEST_CASE(test_linux_syscalls_support_busybox_identity_and_rt_sigmask),

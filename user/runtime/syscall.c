@@ -106,6 +106,16 @@ int sys_close(int fd)
 	return r;
 }
 
+int sys_ioctl(int fd, unsigned int request, void *arg)
+{
+	int r;
+	__asm__ volatile("int $0x80"
+	                 : "=a"(r)
+	                 : "a"(54), "b"(fd), "c"(request), "d"(arg)
+	                 : "memory");
+	return r;
+}
+
 int sys_exec(const char *filename, char **argv, int argc)
 {
 	(void)argc;

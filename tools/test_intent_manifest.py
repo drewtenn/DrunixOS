@@ -103,6 +103,7 @@ X86_PROCESS_KTESTS = (
     "test_linux_syscalls_fill_uname_time_and_fstat64",
     "test_linux_syscalls_cover_blockdev_fd_path",
     "test_linux_poll_and_select_wait_for_tty_input",
+    "test_linux_poll_reports_pty_readiness",
     "test_linux_poll_timeout_modes",
     "test_linux_termios_on_stdout_controls_foreground_tty",
     "test_linux_syscalls_support_busybox_identity_and_rt_sigmask",

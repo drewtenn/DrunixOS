@@ -83,6 +83,11 @@ int sys_close(int fd)
 	return (int)syscall1(ARM64_SYS_CLOSE, fd);
 }
 
+int sys_ioctl(int fd, unsigned int request, void *arg)
+{
+	return (int)syscall3(ARM64_SYS_IOCTL, fd, request, (long)arg);
+}
+
 int sys_exec(const char *filename, char **argv, int argc)
 {
 	(void)argc;

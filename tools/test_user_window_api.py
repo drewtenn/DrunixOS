@@ -71,6 +71,7 @@ def main() -> int:
     arm64_kernel = (ROOT / "kernel" / "arch" / "arm64" / "proc" / "syscall.c").read_text()
     user_makefile = (ROOT / "user" / "Makefile").read_text()
     arm64_makefile = (ROOT / "kernel" / "arch" / "arm64" / "arch.mk").read_text()
+    programs = (ROOT / "user" / "programs.mk").read_text()
     x86_process_tests = (
         ROOT / "kernel" / "arch" / "x86" / "test" / "test_process.c"
     ).read_text()
@@ -118,6 +119,8 @@ def main() -> int:
         or "poll_wait_until" not in fd_control
     ):
         behavior_failures.append("kernel poll must accept the timeout argument")
+    if "FD_TYPE_PTY_MASTER" not in fd_control or "pty_master_read_available" not in fd_control:
+        behavior_failures.append("kernel poll must report pty master/slave readability")
     if "syscall_case_poll(ebx, ecx, edx)" not in x86_syscall:
         behavior_failures.append("x86 syscall dispatcher must pass poll timeout")
     if "ARM64_SYS_PPOLL" not in arm64_nr:
@@ -136,6 +139,29 @@ def main() -> int:
         behavior_failures.append("x86 poll tests must cover finite timeout dispatch")
     if "(uint32_t)-1" not in x86_process_tests:
         behavior_failures.append("x86 poll tests must cover infinite timeout dispatch")
+    for app_name in ("terminal", "files", "processes", "help"):
+        app = ROOT / "user" / "apps" / f"{app_name}.c"
+
+        if not app.exists():
+            behavior_failures.append(f"user/apps/{app_name}.c client app is required")
+            continue
+        if app_name not in programs:
+            behavior_failures.append(f"user/programs.mk must include {app_name}")
+        if "drwin_create_window" not in app.read_text():
+            behavior_failures.append(f"{app_name} must create a drwin window")
+    terminal_source = (ROOT / "user" / "apps" / "terminal.c").read_text()
+    if "sys_open_flags(\"/dev/pts0\"" in terminal_source:
+        behavior_failures.append("terminal must discover the allocated pty slave")
+    if "sys_close(g_ptmx)" not in terminal_source or "sys_close(wm_fd)" not in terminal_source:
+        behavior_failures.append("terminal child must close inherited wm and pty master fds")
+    if "if (n == 0)\n\t\t\treturn -1;" not in terminal_source:
+        behavior_failures.append("terminal must exit its event loop when the pty reaches EOF")
+    if "sys_waitpid(g_shell_pid, 0)" not in terminal_source:
+        behavior_failures.append("terminal must reap its shell child")
+    if 'sys_execve("/bin/shell"' not in terminal_source:
+        behavior_failures.append("terminal must exec the shell with an absolute path")
+    if "event_byte" not in terminal_source or "event->value >= 32" in terminal_source:
+        behavior_failures.append("terminal must preserve non-NUL key bytes for the pty")
     if behavior_failures:
         print("user window runtime behavior is incomplete:")
         for failure in behavior_failures:

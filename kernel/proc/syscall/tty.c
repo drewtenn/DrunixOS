@@ -13,6 +13,7 @@
 #include "pipe.h"
 #include "process.h"
 #include "procfs.h"
+#include "pty.h"
 #include "sched.h"
 #include "tty.h"
 #include "uaccess.h"
@@ -179,8 +180,22 @@ static uint32_t syscall_ioctl(uint32_t fd, uint32_t request, uint32_t argp)
 				available = size - fh->u.proc.offset;
 		} else if (fh->type == FD_TYPE_TTY) {
 			available = tty_read_available((int)fh->u.tty.tty_idx);
+		} else if (fh->type == FD_TYPE_PTY_MASTER) {
+			available = pty_master_read_available(fh->u.pty.pty_idx);
+		} else if (fh->type == FD_TYPE_PTY_SLAVE) {
+			available = pty_slave_read_available(fh->u.pty.pty_idx);
 		}
 		if (uaccess_copy_to_user(cur, argp, &available, sizeof(available)) != 0)
+			return (uint32_t)-1;
+		return 0;
+	}
+	case LINUX_TIOCGPTN: {
+		uint32_t pty_idx;
+
+		if (argp == 0 || fh->type != FD_TYPE_PTY_MASTER)
+			return (uint32_t)-1;
+		pty_idx = fh->u.pty.pty_idx;
+		if (uaccess_copy_to_user(cur, argp, &pty_idx, sizeof(pty_idx)) != 0)
 			return (uint32_t)-1;
 		return 0;
 	}
