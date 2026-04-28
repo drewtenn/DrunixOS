@@ -23,6 +23,7 @@ SMOKES = (
     ("/bin/echo rexy echo smoke", "rexy echo smoke"),
     ("/bin/printenv PATH", "/bin"),
     ("/bin/cat hello.txt", "Hello from the filesystem!"),
+    ("/bin/basename /usr/bin/leaf.txt .txt", "leaf\r\n"),
     ("cpphello", "new[] sum=6"),
 )
 

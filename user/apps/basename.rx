@@ -1,0 +1,82 @@
+static mut BASENAME_BUFFER: [u8; 512];
+
+fn copy_range(value: str, start: i32, end: i32) -> str {
+	let mut out: i32 = 0;
+	let mut index: i32 = start;
+	while index < end && out < 511 {
+		*(BASENAME_BUFFER + out) = value[index];
+		index = index + 1;
+		out = out + 1;
+	}
+	*(BASENAME_BUFFER + out) = 0;
+	return BASENAME_BUFFER;
+}
+
+fn trim_trailing_slashes(value: str, len: i32) -> i32 {
+	let mut end: i32 = len;
+	while end > 1 && value[end - 1] == 47 {
+		end = end - 1;
+	}
+	return end;
+}
+
+fn basename_start(value: str, end: i32) -> i32 {
+	let mut index: i32 = end - 1;
+	while index >= 0 {
+		if value[index] == 47 {
+			return index + 1;
+		}
+		index = index - 1;
+	}
+	return 0;
+}
+
+fn suffix_matches(value: str, value_len: i32, suffix: str, suffix_len: i32) -> bool {
+	if suffix_len <= 0 || suffix_len >= value_len {
+		return false;
+	}
+
+	let start: i32 = value_len - suffix_len;
+	let mut index: i32 = 0;
+	while index < suffix_len {
+		if value[start + index] != suffix[index] {
+			return false;
+		}
+		index = index + 1;
+	}
+	return true;
+}
+
+fn main() -> i32 {
+	let count: i32 = std::process::args_len();
+	if count < 2 || count > 3 {
+		println("usage: basename string [suffix]");
+		return 2;
+	}
+
+	let path: str = std::process::arg_at(1);
+	if str_is_empty(path) {
+		println(".");
+		return 0;
+	}
+
+	let end: i32 = trim_trailing_slashes(path, strlen(path));
+	if end == 1 && path[0] == 47 {
+		println("/");
+		return 0;
+	}
+
+	let start: i32 = basename_start(path, end);
+	let mut base_end: i32 = end;
+	if count == 3 {
+		let suffix: str = std::process::arg_at(2);
+		let base_len: i32 = end - start;
+		let suffix_len: i32 = strlen(suffix);
+		if suffix_matches((path + start) as str, base_len, suffix, suffix_len) {
+			base_end = end - suffix_len;
+		}
+	}
+
+	println(copy_range(path, start, base_end));
+	return 0;
+}

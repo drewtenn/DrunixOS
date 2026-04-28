@@ -1,5 +1,5 @@
 PROGS = chello shell bbcompat dufstest redirtest ext3wtest threadtest tcccompat nanocompat hello writer reader sleeper date which cat echo wc grep head tail tee sleep env printenv basename dirname cmp yes sort uniq cut kill crash dmesg cpphello lsblk desktop
 C_PROGS = chello shell bbcompat dufstest redirtest ext3wtest threadtest tcccompat nanocompat desktop
-CXX_PROGS = writer reader sleeper date which wc grep head tail tee sleep env basename dirname cmp sort uniq cut kill crash dmesg cpphello lsblk
-REXC_PROGS ?= hello echo printenv cat yes
+CXX_PROGS = writer reader sleeper date which wc grep head tail tee sleep env dirname cmp sort uniq cut kill crash dmesg cpphello lsblk
+REXC_PROGS ?= hello echo printenv cat yes basename
 LINUX_PROGS =
