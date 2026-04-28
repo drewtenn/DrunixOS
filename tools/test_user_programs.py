@@ -22,6 +22,7 @@ SMOKES = (
     ("hello", "Hello from ring 3!"),
     ("/bin/echo rexy echo smoke", "rexy echo smoke"),
     ("/bin/printenv PATH", "/bin"),
+    ("/bin/env -i PATH=/bin printenv PATH", "/bin\r\n"),
     ("/bin/cat hello.txt", "Hello from the filesystem!"),
     ("/bin/basename /usr/bin/leaf.txt .txt", "leaf\r\n"),
     ("/bin/dirname /usr/bin/leaf.txt", "/usr/bin\r\n"),
