@@ -1,0 +1,75 @@
+static mut DIRNAME_BUFFER: [u8; 512];
+
+fn copy_range(value: str, start: i32, end: i32) -> str {
+	let mut out: i32 = 0;
+	let mut index: i32 = start;
+	while index < end && out < 511 {
+		*(DIRNAME_BUFFER + out) = value[index];
+		index = index + 1;
+		out = out + 1;
+	}
+	*(DIRNAME_BUFFER + out) = 0;
+	return DIRNAME_BUFFER;
+}
+
+fn trim_trailing_slashes(value: str, len: i32) -> i32 {
+	let mut end: i32 = len;
+	while end > 1 && value[end - 1] == 47 {
+		end = end - 1;
+	}
+	return end;
+}
+
+fn last_slash_before(value: str, end: i32) -> i32 {
+	let mut index: i32 = end - 1;
+	while index >= 0 {
+		if value[index] == 47 {
+			return index;
+		}
+		index = index - 1;
+	}
+	return -1;
+}
+
+fn trim_dir_slashes(value: str, end: i32) -> i32 {
+	let mut dir_end: i32 = end;
+	while dir_end > 1 && value[dir_end - 1] == 47 {
+		dir_end = dir_end - 1;
+	}
+	return dir_end;
+}
+
+fn main() -> i32 {
+	let count: i32 = std::process::args_len();
+	if count != 2 {
+		println("usage: dirname string");
+		return 2;
+	}
+
+	let path: str = std::process::arg_at(1);
+	if str_is_empty(path) {
+		println(".");
+		return 0;
+	}
+
+	let end: i32 = trim_trailing_slashes(path, strlen(path));
+	let slash: i32 = last_slash_before(path, end);
+	if slash < 0 {
+		println(".");
+		return 0;
+	}
+
+	if slash == 0 {
+		println("/");
+		return 0;
+	}
+
+	let dir_end: i32 = trim_dir_slashes(path, slash);
+	if dir_end <= 0 {
+		println("/");
+	} else {
+		println(copy_range(path, 0, dir_end));
+	}
+
+	return 0;
+}

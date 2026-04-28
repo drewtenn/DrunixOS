@@ -24,6 +24,7 @@ SMOKES = (
     ("/bin/printenv PATH", "/bin"),
     ("/bin/cat hello.txt", "Hello from the filesystem!"),
     ("/bin/basename /usr/bin/leaf.txt .txt", "leaf\r\n"),
+    ("/bin/dirname /usr/bin/leaf.txt", "/usr/bin\r\n"),
     ("cpphello", "new[] sum=6"),
 )
 
