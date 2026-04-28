@@ -29,6 +29,7 @@ SMOKES = (
     ("/bin/head -n 1 readme.txt", "DUFS test file.\r\n"),
     ("/bin/wc -l readme.txt", "3 readme.txt\r\n"),
     ("/bin/writer", "hello from the pipe writer\r\n"),
+    ("/bin/writer | /bin/reader", "[reader] received 27 bytes\r\n"),
     ("cpphello", "new[] sum=6"),
 )
 

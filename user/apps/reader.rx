@@ -1,0 +1,19 @@
+static mut READER_BUFFER: [u8; 256];
+
+fn main() -> i32 {
+	let mut total: i32 = 0;
+
+	while true {
+		let count: i32 = std::fs::read(0, READER_BUFFER + 0, 256);
+		if count <= 0 {
+			break;
+		}
+		std::io::write(1, READER_BUFFER + 0, count);
+		total = total + count;
+	}
+
+	print("[reader] received ");
+	print_i32(total);
+	println(" bytes");
+	return 0;
+}
