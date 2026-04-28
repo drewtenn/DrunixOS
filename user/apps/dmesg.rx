@@ -1,0 +1,28 @@
+static mut DMESG_BUFFER: [u8; 512];
+
+fn main() -> i32 {
+	if std::process::args_len() != 1 {
+		println("usage: dmesg");
+		return 1;
+	}
+
+	let fd: i32 = std::fs::open_read("/proc/kmsg");
+	if fd < 0 {
+		println("dmesg: cannot open /proc/kmsg");
+		return 1;
+	}
+
+	while true {
+		let count: i32 = std::fs::read(fd, DMESG_BUFFER + 0, 512);
+		if count <= 0 {
+			break;
+		}
+		if std::io::write(1, DMESG_BUFFER + 0, count) != count {
+			std::fs::close(fd);
+			return 1;
+		}
+	}
+
+	std::fs::close(fd);
+	return 0;
+}
