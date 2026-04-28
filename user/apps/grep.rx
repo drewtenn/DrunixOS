@@ -1,0 +1,194 @@
+static mut GREP_LINE: [u8; 512];
+static mut GREP_BYTE: [u8; 1];
+
+fn lower_byte(byte: u8) -> u8 {
+	if byte >= 65 && byte <= 90 {
+		return byte + 32;
+	}
+	return byte;
+}
+
+fn char_eq(left: u8, right: u8, ignore_case: bool) -> bool {
+	if ignore_case {
+		return lower_byte(left) == lower_byte(right);
+	}
+	return left == right;
+}
+
+fn contains_pattern(line_len: i32, pattern: str, ignore_case: bool) -> bool {
+	let plen: i32 = strlen(pattern);
+	if plen == 0 {
+		return true;
+	}
+	if plen > line_len {
+		return false;
+	}
+
+	let mut index: i32 = 0;
+	while index <= line_len - plen {
+		let mut matched: bool = true;
+		let mut pindex: i32 = 0;
+		while pindex < plen {
+			if !char_eq(GREP_LINE[index + pindex], pattern[pindex], ignore_case) {
+				matched = false;
+				break;
+			}
+			pindex = pindex + 1;
+		}
+		if matched {
+			return true;
+		}
+		index = index + 1;
+	}
+	return false;
+}
+
+fn write_line(line_len: i32) -> i32 {
+	std::io::write(1, GREP_LINE + 0, line_len);
+	if line_len == 0 || GREP_LINE[line_len - 1] != 10 {
+		print("\n");
+	}
+	return 0;
+}
+
+fn process_line(line_len: i32, name: str, pattern: str, ignore_case: bool,
+                show_line_numbers: bool, invert: bool, show_filename: bool,
+                line_no: i32) -> bool {
+	let mut ok: bool = contains_pattern(line_len, pattern, ignore_case);
+	if invert {
+		ok = !ok;
+	}
+	if !ok {
+		return false;
+	}
+	if show_filename {
+		print(name);
+		print(":");
+	}
+	if show_line_numbers {
+		print_i32(line_no);
+		print(":");
+	}
+	write_line(line_len);
+	return true;
+}
+
+fn grep_stream(fd: i32, name: str, pattern: str, ignore_case: bool,
+               show_line_numbers: bool, invert: bool, show_filename: bool) -> bool {
+	let mut line_len: i32 = 0;
+	let mut line_no: i32 = 0;
+	let mut matched: bool = false;
+
+	while true {
+		let count: i32 = std::fs::read(fd, GREP_BYTE + 0, 1);
+		if count <= 0 {
+			break;
+		}
+		if line_len < 511 {
+			*(GREP_LINE + line_len) = GREP_BYTE[0];
+			line_len = line_len + 1;
+		}
+		if GREP_BYTE[0] == 10 {
+			line_no = line_no + 1;
+			if process_line(line_len, name, pattern, ignore_case, show_line_numbers,
+			                invert, show_filename, line_no) {
+				matched = true;
+			}
+			line_len = 0;
+		}
+	}
+
+	if line_len > 0 {
+		line_no = line_no + 1;
+		if process_line(line_len, name, pattern, ignore_case, show_line_numbers,
+		                invert, show_filename, line_no) {
+			matched = true;
+		}
+	}
+	return matched;
+}
+
+fn open_input(path: str) -> i32 {
+	if str_eq(path, "-") {
+		return 0;
+	}
+	return std::fs::open_read(path);
+}
+
+fn close_input(fd: i32) -> i32 {
+	if fd != 0 {
+		return std::fs::close(fd);
+	}
+	return 0;
+}
+
+fn main() -> i32 {
+	let count: i32 = std::process::args_len();
+	let mut ignore_case: bool = false;
+	let mut show_line_numbers: bool = false;
+	let mut invert: bool = false;
+	let mut first: i32 = 1;
+	let mut rc: i32 = 1;
+
+	while first < count && std::process::arg_at(first)[0] == 45 &&
+	      std::process::arg_at(first)[1] != 0 {
+		let option: str = std::process::arg_at(first);
+		if str_eq(option, "--") {
+			first = first + 1;
+			break;
+		}
+		let mut index: i32 = 1;
+		while option[index] != 0 {
+			if option[index] == 105 {
+				ignore_case = true;
+			} else if option[index] == 110 {
+				show_line_numbers = true;
+			} else if option[index] == 118 {
+				invert = true;
+			} else {
+				print("grep: invalid option: ");
+				println(option);
+				return 2;
+			}
+			index = index + 1;
+		}
+		first = first + 1;
+	}
+
+	if first >= count {
+		println("usage: grep [-inv] pattern [file...]");
+		return 2;
+	}
+
+	let pattern: str = std::process::arg_at(first);
+	first = first + 1;
+	if first == count {
+		if grep_stream(0, "", pattern, ignore_case, show_line_numbers, invert, false) {
+			return 0;
+		}
+		return 1;
+	}
+
+	let show_filename: bool = count - first > 1;
+	let mut file_index: i32 = first;
+	while file_index < count {
+		let path: str = std::process::arg_at(file_index);
+		let fd: i32 = open_input(path);
+		if fd < 0 {
+			print("grep: cannot open: ");
+			println(path);
+			rc = 2;
+		} else {
+			if grep_stream(fd, path, pattern, ignore_case, show_line_numbers,
+			               invert, show_filename) {
+				if rc != 2 {
+					rc = 0;
+				}
+			}
+			close_input(fd);
+		}
+		file_index = file_index + 1;
+	}
+
+	return rc;
+}
