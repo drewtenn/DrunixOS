@@ -1,0 +1,172 @@
+static mut CMP_A_BUFFER: [u8; 1];
+static mut CMP_B_BUFFER: [u8; 1];
+static mut CMP_OCTAL_BUFFER: [u8; 8];
+
+fn usage() -> i32 {
+	println("usage: cmp [-l|-s] file1 file2");
+	return 2;
+}
+
+fn open_input(path: str) -> i32 {
+	if str_eq(path, "-") {
+		return 0;
+	}
+	return std::fs::open_read(path);
+}
+
+fn close_input(fd: i32) -> i32 {
+	if fd != 0 {
+		return std::fs::close(fd);
+	}
+	return 0;
+}
+
+fn read_a(fd: i32) -> i32 {
+	let count: i32 = std::fs::read(fd, CMP_A_BUFFER + 0, 1);
+	if count <= 0 {
+		return -1;
+	}
+	return CMP_A_BUFFER[0] as i32;
+}
+
+fn read_b(fd: i32) -> i32 {
+	let count: i32 = std::fs::read(fd, CMP_B_BUFFER + 0, 1);
+	if count <= 0 {
+		return -1;
+	}
+	return CMP_B_BUFFER[0] as i32;
+}
+
+fn octal_byte(value: i32) -> str {
+	*(CMP_OCTAL_BUFFER + 0) = ((value / 64) + 48) as u8;
+	*(CMP_OCTAL_BUFFER + 1) = (((value / 8) % 8) + 48) as u8;
+	*(CMP_OCTAL_BUFFER + 2) = ((value % 8) + 48) as u8;
+	*(CMP_OCTAL_BUFFER + 3) = 0;
+	return CMP_OCTAL_BUFFER;
+}
+
+fn report_open_failure(path: str) -> i32 {
+	print("cmp: cannot open: ");
+	println(path);
+	return 2;
+}
+
+fn report_eof(path: str, byte_no: i32) -> i32 {
+	print("cmp: EOF on ");
+	print(path);
+	print(" after byte ");
+	println_i32(byte_no);
+	return 0;
+}
+
+fn report_difference(name_a: str, name_b: str, byte_no: i32, line_no: i32) -> i32 {
+	print(name_a);
+	print(" ");
+	print(name_b);
+	print(" differ: char ");
+	print_i32(byte_no);
+	print(", line ");
+	println_i32(line_no);
+	return 0;
+}
+
+fn report_list_difference(byte_no: i32, ca: i32, cb: i32) -> i32 {
+	print_i32(byte_no);
+	print(" ");
+	print(octal_byte(ca));
+	print(" ");
+	println(octal_byte(cb));
+	return 0;
+}
+
+fn main() -> i32 {
+	let count: i32 = std::process::args_len();
+	let mut list: bool = false;
+	let mut silent: bool = false;
+	let mut first: i32 = 1;
+
+	if count > 1 && std::process::arg_at(1)[0] == 45 && std::process::arg_at(1)[1] != 0 {
+		if str_eq(std::process::arg_at(1), "-l") {
+			list = true;
+		} else if str_eq(std::process::arg_at(1), "-s") {
+			silent = true;
+		} else {
+			return usage();
+		}
+		first = 2;
+	}
+
+	if count - first != 2 {
+		return usage();
+	}
+
+	let name_a: str = std::process::arg_at(first);
+	let name_b: str = std::process::arg_at(first + 1);
+	let fd_a: i32 = open_input(name_a);
+	if fd_a < 0 {
+		if !silent {
+			report_open_failure(name_a);
+		}
+		return 2;
+	}
+
+	let fd_b: i32 = open_input(name_b);
+	if fd_b < 0 {
+		if !silent {
+			report_open_failure(name_b);
+		}
+		close_input(fd_a);
+		return 2;
+	}
+
+	let mut byte_no: i32 = 1;
+	let mut line_no: i32 = 1;
+	let mut different: bool = false;
+
+	while true {
+		let ca: i32 = read_a(fd_a);
+		let cb: i32 = read_b(fd_b);
+
+		if ca < 0 && cb < 0 {
+			break;
+		}
+
+		if ca < 0 || cb < 0 {
+			different = true;
+			if !silent {
+				if ca < 0 {
+					report_eof(name_a, byte_no - 1);
+				} else {
+					report_eof(name_b, byte_no - 1);
+				}
+			}
+			break;
+		}
+
+		if ca != cb {
+			different = true;
+			if silent {
+				break;
+			}
+			if list {
+				report_list_difference(byte_no, ca, cb);
+			} else {
+				report_difference(name_a, name_b, byte_no, line_no);
+				break;
+			}
+		}
+
+		if ca == 10 {
+			line_no = line_no + 1;
+		}
+		byte_no = byte_no + 1;
+	}
+
+	close_input(fd_a);
+	close_input(fd_b);
+
+	if different {
+		return 1;
+	}
+	return 0;
+}

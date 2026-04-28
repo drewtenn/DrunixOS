@@ -25,6 +25,7 @@ SMOKES = (
     ("/bin/cat hello.txt", "Hello from the filesystem!"),
     ("/bin/basename /usr/bin/leaf.txt .txt", "leaf\r\n"),
     ("/bin/dirname /usr/bin/leaf.txt", "/usr/bin\r\n"),
+    ("/bin/cmp hello.txt readme.txt", "hello.txt readme.txt differ: char 1, line 1\r\n"),
     ("cpphello", "new[] sum=6"),
 )
 
