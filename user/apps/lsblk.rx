@@ -1,0 +1,176 @@
+static mut LS_DENTS: [u8; 512];
+static mut LS_CHILD_DENTS: [u8; 512];
+static mut LS_PATH: [u8; 128];
+static mut LS_TEXT: [u8; 64];
+static mut LS_MAJMIN: [u8; 24];
+static mut LS_TYPE: [u8; 16];
+
+fn streq(a: str, b: str) -> bool {
+	return str_eq(a, b);
+}
+
+fn copy_to(buf: *u8, cap: i32, value: str) -> i32 {
+	let mut index: i32 = 0;
+	while value[index] != 0 && index < cap - 1 {
+		*(buf + index) = value[index];
+		index = index + 1;
+	}
+	*(buf + index) = 0;
+	return index;
+}
+
+fn append_to(buf: *u8, cap: i32, offset: i32, value: str) -> i32 {
+	let mut out: i32 = offset;
+	let mut index: i32 = 0;
+	while value[index] != 0 && out < cap - 1 {
+		*(buf + out) = value[index];
+		out = out + 1;
+		index = index + 1;
+	}
+	*(buf + out) = 0;
+	return out;
+}
+
+fn sysfs_path(name: str, parent: str, leaf: str) -> str {
+	let mut out: i32 = copy_to(LS_PATH + 0, 128, "/sys/block/");
+	if !str_is_empty(parent) {
+		out = append_to(LS_PATH + 0, 128, out, parent);
+		out = append_to(LS_PATH + 0, 128, out, "/");
+	}
+	out = append_to(LS_PATH + 0, 128, out, name);
+	out = append_to(LS_PATH + 0, 128, out, "/");
+	append_to(LS_PATH + 0, 128, out, leaf);
+	return LS_PATH;
+}
+
+fn read_file(path: str, buf: *u8, cap: i32) -> i32 {
+	let fd: i32 = std::fs::open_read(path);
+	if fd < 0 {
+		*(buf + 0) = 0;
+		return -1;
+	}
+	let mut count: i32 = std::fs::read(fd, buf, cap - 1);
+	std::fs::close(fd);
+	if count < 0 {
+		*(buf + 0) = 0;
+		return -1;
+	}
+	*(buf + count) = 0;
+	while count > 0 && (buf[count - 1] == 10 || buf[count - 1] == 13) {
+		count = count - 1;
+		*(buf + count) = 0;
+	}
+	return count;
+}
+
+fn parse_uint(value: str) -> i32 {
+	let mut result: i32 = 0;
+	let mut index: i32 = 0;
+	while value[index] >= 48 && value[index] <= 57 {
+		result = result * 10 + ((value[index] as i32) - 48);
+		index = index + 1;
+	}
+	return result;
+}
+
+fn size_mb(sectors: i32) -> i32 {
+	return (sectors + 2047) / 2048;
+}
+
+fn strip_dir_suffix(name: str) -> i32 {
+	let len: i32 = strlen(name);
+	if len > 0 && name[len - 1] == 47 {
+		*((name + len - 1) as *u8) = 0;
+		return 1;
+	}
+	return 0;
+}
+
+fn print_dev(name: str, parent: str, fs_mode: bool) -> i32 {
+	read_file(sysfs_path(name, parent, "size"), LS_TEXT + 0, 64);
+	let mb: i32 = size_mb(parse_uint(LS_TEXT));
+	read_file(sysfs_path(name, parent, "dev"), LS_MAJMIN + 0, 24);
+	read_file(sysfs_path(name, parent, "type"), LS_TYPE + 0, 16);
+
+	if !str_is_empty(parent) {
+		print("`-");
+	}
+	print(name);
+	if fs_mode {
+		print("    ");
+		print("      ");
+		print("      ");
+		println("");
+		return 0;
+	}
+	print(" ");
+	print(LS_MAJMIN);
+	print(" 0 ");
+	print_i32(mb);
+	print("M 0 ");
+	print(LS_TYPE);
+	println("");
+	return 0;
+}
+
+fn scan_children(parent: str, fs_mode: bool) -> i32 {
+	let path: str = sysfs_path(parent, "", "");
+	let count: i32 = std::fs::getdents(path, LS_CHILD_DENTS + 0, 512);
+	if count <= 0 {
+		return 0;
+	}
+	let mut offset: i32 = 0;
+	while offset < count {
+		let child: str = (LS_CHILD_DENTS + offset) as str;
+		let len: i32 = strlen(child);
+		let was_dir: i32 = strip_dir_suffix(child);
+		if len > 0 && was_dir != 0 {
+			print_dev(child, parent, fs_mode);
+		}
+		offset = offset + len + 1;
+	}
+	return 0;
+}
+
+fn print_all(fs_mode: bool) -> i32 {
+	let count: i32 = std::fs::getdents("/sys/block", LS_DENTS + 0, 512);
+	if count < 0 {
+		println("lsblk: cannot read /sys/block");
+		return 1;
+	}
+	if fs_mode {
+		println("NAME    FSTYPE LABEL UUID MOUNTPOINTS");
+	} else {
+		println("NAME    MAJ:MIN RM SIZE RO TYPE MOUNTPOINTS");
+	}
+	let mut offset: i32 = 0;
+	while offset < count {
+		let name: str = (LS_DENTS + offset) as str;
+		let len: i32 = strlen(name);
+		strip_dir_suffix(name);
+		if len > 0 {
+			print_dev(name, "", fs_mode);
+			scan_children(name, fs_mode);
+		}
+		offset = offset + len + 1;
+	}
+	return 0;
+}
+
+fn usage() -> i32 {
+	println("usage: lsblk [-f]");
+	return 1;
+}
+
+fn main() -> i32 {
+	let argc: i32 = std::process::args_len();
+	let mut fs_mode: bool = false;
+	if argc == 2 && streq(std::process::arg_at(1), "-f") {
+		fs_mode = true;
+	} else if argc == 2 && streq(std::process::arg_at(1), "--help") {
+		return usage();
+	} else if argc != 1 {
+		return usage();
+	}
+	return print_all(fs_mode);
+}
