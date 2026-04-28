@@ -1,0 +1,171 @@
+fn is_leap_year(year: i32) -> bool {
+	if year % 400 == 0 {
+		return true;
+	}
+	if year % 100 == 0 {
+		return false;
+	}
+	return year % 4 == 0;
+}
+
+fn days_in_year(year: i32) -> i32 {
+	if is_leap_year(year) {
+		return 366;
+	}
+	return 365;
+}
+
+fn days_in_month(year: i32, month: i32) -> i32 {
+	if month == 1 {
+		return 31;
+	}
+	if month == 2 {
+		if is_leap_year(year) {
+			return 29;
+		}
+		return 28;
+	}
+	if month == 3 {
+		return 31;
+	}
+	if month == 4 {
+		return 30;
+	}
+	if month == 5 {
+		return 31;
+	}
+	if month == 6 {
+		return 30;
+	}
+	if month == 7 {
+		return 31;
+	}
+	if month == 8 {
+		return 31;
+	}
+	if month == 9 {
+		return 30;
+	}
+	if month == 10 {
+		return 31;
+	}
+	if month == 11 {
+		return 30;
+	}
+	return 31;
+}
+
+fn weekday_name(day: i32) -> str {
+	if day == 0 {
+		return "Sun";
+	}
+	if day == 1 {
+		return "Mon";
+	}
+	if day == 2 {
+		return "Tue";
+	}
+	if day == 3 {
+		return "Wed";
+	}
+	if day == 4 {
+		return "Thu";
+	}
+	if day == 5 {
+		return "Fri";
+	}
+	return "Sat";
+}
+
+fn month_name(month: i32) -> str {
+	if month == 1 {
+		return "Jan";
+	}
+	if month == 2 {
+		return "Feb";
+	}
+	if month == 3 {
+		return "Mar";
+	}
+	if month == 4 {
+		return "Apr";
+	}
+	if month == 5 {
+		return "May";
+	}
+	if month == 6 {
+		return "Jun";
+	}
+	if month == 7 {
+		return "Jul";
+	}
+	if month == 8 {
+		return "Aug";
+	}
+	if month == 9 {
+		return "Sep";
+	}
+	if month == 10 {
+		return "Oct";
+	}
+	if month == 11 {
+		return "Nov";
+	}
+	return "Dec";
+}
+
+fn print_two(value: i32) -> i32 {
+	if value < 10 {
+		print("0");
+	}
+	print_i32(value);
+	return 0;
+}
+
+fn main() -> i32 {
+	let now: i32 = std::time::unix_seconds();
+	if now < 0 {
+		println("date: cannot read system clock");
+		return 1;
+	}
+
+	let total_days: i32 = now / 86400;
+	let mut seconds_of_day: i32 = now % 86400;
+	let hour: i32 = seconds_of_day / 3600;
+	seconds_of_day = seconds_of_day % 3600;
+	let minute: i32 = seconds_of_day / 60;
+	let second: i32 = seconds_of_day % 60;
+
+	let weekday: i32 = (total_days + 4) % 7;
+	let mut remaining_days: i32 = total_days;
+	let mut year: i32 = 1970;
+	while remaining_days >= days_in_year(year) {
+		remaining_days = remaining_days - days_in_year(year);
+		year = year + 1;
+	}
+
+	let mut month: i32 = 1;
+	while remaining_days >= days_in_month(year, month) {
+		remaining_days = remaining_days - days_in_month(year, month);
+		month = month + 1;
+	}
+	let day_of_month: i32 = remaining_days + 1;
+
+	print(weekday_name(weekday));
+	print(" ");
+	print(month_name(month));
+	print(" ");
+	if day_of_month < 10 {
+		print(" ");
+	}
+	print_i32(day_of_month);
+	print(" ");
+	print_two(hour);
+	print(":");
+	print_two(minute);
+	print(":");
+	print_two(second);
+	print(" UTC ");
+	println_i32(year);
+	return 0;
+}

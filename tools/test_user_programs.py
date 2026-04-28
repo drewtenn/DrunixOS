@@ -30,6 +30,7 @@ SMOKES = (
     ("/bin/wc -l readme.txt", "3 readme.txt\r\n"),
     ("/bin/writer", "hello from the pipe writer\r\n"),
     ("/bin/writer | /bin/reader", "[reader] received 27 bytes\r\n"),
+    ("/bin/date", "UTC"),
     ("cpphello", "new[] sum=6"),
 )
 
