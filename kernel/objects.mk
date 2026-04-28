@@ -9,7 +9,7 @@ KOBJS = kernel/arch/x86/boot/kernel-entry.o kernel/arch/x86/start_kernel.o \
         kernel/arch/x86/idt.o kernel/arch/x86/isr.o kernel/arch/x86/sse.o kernel/arch/x86/df_test.o \
         kernel/arch/x86/irq.o kernel/arch/x86/pit.o kernel/arch/x86/clock.o \
         kernel/arch/x86/platform/pc/keyboard.o kernel/arch/x86/platform/pc/mouse.o kernel/arch/x86/platform/pc/ata.o \
-        kernel/drivers/blkdev.o kernel/drivers/blkdev_part.o kernel/blk/bcache.o kernel/drivers/chardev.o kernel/drivers/tty.o kernel/drivers/fbdev.o kernel/drivers/inputdev.o shared/kbdmap.o \
+        kernel/drivers/blkdev.o kernel/drivers/blkdev_part.o kernel/blk/bcache.o kernel/drivers/chardev.o kernel/drivers/tty.o kernel/drivers/fbdev.o kernel/drivers/inputdev.o kernel/drivers/wmdev.o shared/kbdmap.o \
         kernel/gui/display.o kernel/gui/framebuffer.o kernel/arch/x86/boot/framebuffer_multiboot.o kernel/gui/font8x16.o \
         kernel/mm/pmm_core.o kernel/arch/x86/mm/pmm.o kernel/arch/x86/mm/paging.o kernel/arch/x86/mm/paging_asm.o kernel/mm/fault.o kernel/mm/vma.o kernel/mm/commit.o kernel/mm/kheap.o kernel/mm/slab.o \
         kernel/proc/elf.o kernel/proc/process.o kernel/arch/x86/proc/arch_proc.o kernel/arch/x86/proc/process_asm.o kernel/proc/task_group.o kernel/proc/resources.o \

@@ -15,6 +15,7 @@
 #include "klog.h"
 #include "kstring.h"
 #include "fs.h"
+#include "wmdev.h"
 #include <stdint.h>
 
 #define PROCESS_USER_STACK_TOP USER_STACK_TOP
@@ -93,6 +94,8 @@ static void process_release_inline_open_files(process_t *proc)
 			pty_release_master(fh->u.pty.pty_idx);
 		else if (fh->type == FD_TYPE_PTY_SLAVE)
 			pty_release_slave(fh->u.pty.pty_idx);
+		else if (fh->type == FD_TYPE_WM)
+			wmdev_close(fh->u.wm.conn_id);
 
 		fh->type = FD_TYPE_NONE;
 		fh->writable = 0;
@@ -435,6 +438,8 @@ int process_create_file(process_t *proc,
 				pty_get_master(inherit_fds[i].u.pty.pty_idx);
 			else if (inherit_fds[i].type == FD_TYPE_PTY_SLAVE)
 				pty_get_slave(inherit_fds[i].u.pty.pty_idx);
+			else if (inherit_fds[i].type == FD_TYPE_WM)
+				(void)wmdev_retain(inherit_fds[i].u.wm.conn_id);
 		}
 		copied_inherit_fds = 1;
 	} else {

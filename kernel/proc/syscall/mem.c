@@ -20,6 +20,7 @@
 #include "uaccess.h"
 #include "vfs.h"
 #include "vma.h"
+#include "wmdev.h"
 #include <stdint.h>
 
 static int prot_is_valid(uint32_t prot)
@@ -243,6 +244,28 @@ syscall_committed_munmap_bytes(process_t *proc, uint32_t start, uint32_t end)
 	return bytes;
 }
 
+static int syscall_range_has_shared_mapping(process_t *proc,
+                                            uint32_t start,
+                                            uint32_t end)
+{
+	arch_aspace_t aspace;
+
+	if (!proc || start >= end)
+		return 0;
+
+	aspace = (arch_aspace_t)proc->pd_phys;
+	for (uint32_t page = start; page < end; page += PAGE_SIZE) {
+		arch_mm_mapping_t mapping;
+
+		if (arch_mm_query(aspace, page, &mapping) != 0)
+			continue;
+		if (mapping.flags & ARCH_MM_MAP_SHARED)
+			return 1;
+	}
+
+	return 0;
+}
+
 static int syscall_mmap_anonymous_private(process_t *cur,
                                           uint32_t hint,
                                           uint32_t length,
@@ -333,6 +356,62 @@ static int syscall_mmap_chardev(process_t *cur,
 	*addr_out = map_addr;
 	return 0;
 
+fail:
+	syscall_unmap_user_range(cur, map_addr, map_addr + map_len);
+	(void)vma_unmap_range(cur, map_addr, map_addr + map_len);
+	return -1;
+}
+
+static int syscall_mmap_wmdev(process_t *cur,
+                              uint32_t hint,
+                              uint32_t length,
+                              uint32_t prot,
+                              uint32_t fd,
+                              uint32_t file_offset,
+                              uint32_t *addr_out)
+{
+	file_handle_t *fh;
+	uint32_t map_len;
+	uint32_t map_addr = 0;
+	uint32_t vma_flags;
+	uint32_t map_flags;
+	arch_aspace_t aspace;
+
+	if (!cur || !addr_out || fd >= MAX_FDS || length == 0)
+		return -1;
+	if (file_offset & (PAGE_SIZE - 1u))
+		return -1;
+	fh = &proc_fd_entries(cur)[fd];
+	if (fh->type != FD_TYPE_WM)
+		return -1;
+	if (!prot_has_user_access(prot))
+		return -1;
+	map_len = (length + PAGE_SIZE - 1u) & ~(PAGE_SIZE - 1u);
+	if (map_len == 0)
+		return -1;
+	vma_flags = prot_to_vma_flags(prot) & ~(uint32_t)VMA_FLAG_ANON;
+	if (vma_map_anonymous(cur, hint, map_len, vma_flags, &map_addr) != 0)
+		return -1;
+	aspace = (arch_aspace_t)cur->pd_phys;
+	map_flags = ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ | ARCH_MM_MAP_USER |
+	            ARCH_MM_MAP_SHARED;
+	if (prot & LINUX_PROT_WRITE)
+		map_flags |= ARCH_MM_MAP_WRITE;
+	for (uint32_t off = 0; off < map_len; off += PAGE_SIZE) {
+		uint32_t phys = 0;
+		if (wmdev_mmap_page(fh->u.wm.conn_id,
+		                    file_offset,
+		                    off / PAGE_SIZE,
+		                    &phys) != 0)
+			goto fail;
+		pmm_incref(phys);
+		if (arch_mm_map(aspace, map_addr + off, phys, map_flags) != 0) {
+			pmm_decref(phys);
+			goto fail;
+		}
+	}
+	*addr_out = map_addr;
+	return 0;
 fail:
 	syscall_unmap_user_range(cur, map_addr, map_addr + map_len);
 	(void)vma_unmap_range(cur, map_addr, map_addr + map_len);
@@ -484,13 +563,27 @@ uint32_t SYSCALL_NOINLINE syscall_case_mmap(uint32_t ebx)
 		} else {
 			file_handle_t *fh;
 			int is_chardev;
+			int is_wmdev;
 
 			if (args.fd >= MAX_FDS)
 				return (uint32_t)-1;
 			fh = &proc_fd_entries(cur)[args.fd];
 			is_chardev = (fh->type == FD_TYPE_CHARDEV);
+			is_wmdev = (fh->type == FD_TYPE_WM);
 
-			if (is_chardev) {
+			if (is_wmdev) {
+				if ((args.flags & ~LINUX_MAP_SHARED) != 0 ||
+				    (args.flags & LINUX_MAP_SHARED) == 0)
+					return (uint32_t)-1;
+				if (syscall_mmap_wmdev(cur,
+				                       args.addr,
+				                       args.length,
+				                       args.prot,
+				                       args.fd,
+				                       args.offset,
+				                       &map_addr) != 0)
+					return (uint32_t)-1;
+			} else if (is_chardev) {
 				if ((args.flags & ~LINUX_MAP_SHARED) != 0 ||
 				    (args.flags & LINUX_MAP_SHARED) == 0)
 					return (uint32_t)-1;
@@ -559,15 +652,29 @@ uint32_t SYSCALL_NOINLINE syscall_case_mmap2(uint32_t ebx,
 		} else {
 			file_handle_t *fh;
 			int is_chardev;
+			int is_wmdev;
 
 			if (edi >= MAX_FDS)
 				return (uint32_t)-1;
 			fh = &proc_fd_entries(cur)[edi];
 			is_chardev = (fh->type == FD_TYPE_CHARDEV);
+			is_wmdev = (fh->type == FD_TYPE_WM);
 			if (ebp > UINT32_MAX / PAGE_SIZE)
 				return (uint32_t)-1;
 
-			if (is_chardev) {
+			if (is_wmdev) {
+				if ((esi & ~LINUX_MAP_SHARED) != 0 ||
+				    (esi & LINUX_MAP_SHARED) == 0)
+					return (uint32_t)-1;
+				if (syscall_mmap_wmdev(cur,
+				                       ebx,
+				                       ecx,
+				                       edx,
+				                       edi,
+				                       ebp * PAGE_SIZE,
+				                       &map_addr) != 0)
+					return (uint32_t)-1;
+			} else if (is_chardev) {
 				if ((esi & ~LINUX_MAP_SHARED) != 0 ||
 				    (esi & LINUX_MAP_SHARED) == 0)
 					return (uint32_t)-1;
@@ -644,6 +751,10 @@ uint32_t SYSCALL_NOINLINE syscall_case_mprotect(uint32_t ebx,
 			return (uint32_t)-1;
 
 		new_flags = prot_to_vma_flags(edx);
+		if (!prot_has_user_access(edx) &&
+		    syscall_range_has_shared_mapping(cur, ebx, end))
+			return (uint32_t)-1;
+
 		reserve_bytes = syscall_mprotect_transition_bytes(
 		    cur, ebx, end, new_flags, 1);
 		if (reserve_bytes != 0 && vm_commit_reserve(cur, reserve_bytes) != 0)

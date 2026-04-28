@@ -106,6 +106,16 @@ int sys_close(int fd)
 	return r;
 }
 
+int sys_ioctl(int fd, unsigned int request, void *arg)
+{
+	int r;
+	__asm__ volatile("int $0x80"
+	                 : "=a"(r)
+	                 : "a"(54), "b"(fd), "c"(request), "d"(arg)
+	                 : "memory");
+	return r;
+}
+
 int sys_exec(const char *filename, char **argv, int argc)
 {
 	(void)argc;
@@ -515,6 +525,20 @@ int sys_waitpid(int pid, int options)
 	                 : "a"(7), "b"(pid), "c"(&status), "d"(options)
 	                 : "memory");
 	return r < 0 ? r : status;
+}
+
+int sys_waitpid_status(int pid, int *status, int options)
+{
+	int r;
+	int local_status = 0;
+
+	if (!status)
+		status = &local_status;
+	__asm__ volatile("int $0x80"
+	                 : "=a"(r)
+	                 : "a"(7), "b"(pid), "c"(status), "d"(options)
+	                 : "memory");
+	return r;
 }
 
 int sys_tcsetpgrp(int fd, int pgid)

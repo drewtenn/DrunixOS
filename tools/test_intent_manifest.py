@@ -103,6 +103,8 @@ X86_PROCESS_KTESTS = (
     "test_linux_syscalls_fill_uname_time_and_fstat64",
     "test_linux_syscalls_cover_blockdev_fd_path",
     "test_linux_poll_and_select_wait_for_tty_input",
+    "test_linux_poll_reports_pty_readiness",
+    "test_linux_poll_timeout_modes",
     "test_linux_termios_on_stdout_controls_foreground_tty",
     "test_linux_syscalls_support_busybox_identity_and_rt_sigmask",
     "test_linux_syscalls_support_busybox_stdio_helpers",
@@ -124,6 +126,7 @@ X86_UACCESS_KTESTS = (
     "test_process_fork_stack_pages_break_cow_on_write_fault",
     "test_process_fork_child_writes_image_data_before_exec",
     "test_process_fork_preserves_user_io_mappings",
+    "test_process_fork_preserves_user_shared_mappings",
     "test_process_fork_child_survives_parent_exit_and_reuses_last_cow_ref",
     "test_process_fork_child_stack_growth_is_private",
     "test_process_fork_child_gets_fresh_task_group_slot",
@@ -282,6 +285,22 @@ X86_DESKTOP_KTESTS = (
     "test_framebuffer_draw_glyph_rejects_overflowing_position",
     "test_framebuffer_pack_rgb_scales_to_mask_size",
     "test_k_memset32_fills_words",
+)
+
+WMDEV_KTESTS = (
+    "test_wmdev_registers_single_server",
+    "test_wmdev_create_window_tracks_owner_and_surface",
+    "test_wmdev_mmap_page_returns_surface_pages",
+    "test_wmdev_user_record_create_returns_surface_response",
+    "test_wmdev_retain_keeps_connection_until_final_close",
+    "test_wmdev_mmap_page_rejects_non_base_surface_offsets",
+    "test_wmdev_rejects_cross_owner_present",
+    "test_wmdev_event_queue_round_trips_to_owner",
+    "test_wmdev_client_close_emits_destroy_and_frees_pages",
+    "test_wmdev_client_close_replaces_saturated_window_queue_with_destroy",
+    "test_wmdev_client_close_prioritizes_destroy_when_other_windows_fill_queue",
+    "test_wmdev_server_close_destroys_windows_and_stales_handles",
+    "test_wmdev_server_close_delivers_disconnect_when_client_queue_full",
 )
 
 X86_ARCH_KTESTS = (
@@ -502,6 +521,7 @@ INTENTS: tuple[TestIntent, ...] = (
                         "test_shared_clone_rejects_thread_without_sighand",
                         "test_shared_clone_thread_shares_group_and_selected_resources",
                         "test_shared_clone_process_without_vm_gets_distinct_group_and_as",
+                        "test_shared_arch_clone_preserves_shared_user_mapping",
                     ),
                 ),
                 SourceMarkers(
@@ -776,7 +796,12 @@ INTENTS: tuple[TestIntent, ...] = (
                         "test_process_fork_child_gets_fresh_task_group_slot",
                         "test_process_fork_bumps_pipe_refs_once_with_resource_table",
                         "test_process_fork_rolls_back_when_kstack_alloc_fails",
+                        "test_process_fork_preserves_user_shared_mappings",
                     ),
+                ),
+                SourceMarkers(
+                    "kernel/test/test_arch_shared.c",
+                    ("test_shared_arch_clone_preserves_shared_user_mapping",),
                 ),
                 SourceMarkers(
                     "kernel/arch/x86/test/test_process.c",
@@ -936,6 +961,16 @@ INTENTS: tuple[TestIntent, ...] = (
                         "test_wallpaper_cover_crops_wide_source_horizontally",
                     ),
                 ),
+                SourceMarkers("kernel/test/test_wmdev.c", WMDEV_KTESTS),
+                SourceMarkers(
+                    "kernel/test/test_arch_shared.c",
+                    (
+                        "test_shared_wmdev_mmap_refs_shared_surface_page",
+                        "test_shared_wmdev_mprotect_prot_none_keeps_refs",
+                        "test_shared_wmdev_mmap_rejects_prot_none_without_ref",
+                        "test_shared_dup2_bumps_wmdev_ref",
+                    ),
+                ),
             ),
             "arm64": (
                 SourceMarkers(
@@ -950,6 +985,14 @@ INTENTS: tuple[TestIntent, ...] = (
                     (
                         "Drunix ARM64 console",
                         "drunix shell -- type 'help' for commands",
+                    ),
+                ),
+                SourceMarkers(
+                    "kernel/test/test_arch_shared.c",
+                    (
+                        "test_shared_wmdev_mmap_refs_shared_surface_page",
+                        "test_shared_wmdev_mprotect_prot_none_keeps_refs",
+                        "test_shared_wmdev_mmap_rejects_prot_none_without_ref",
                     ),
                 ),
             ),

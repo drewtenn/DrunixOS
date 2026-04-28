@@ -12,6 +12,7 @@
 #include "syscall/syscall_linux.h"
 #include "sched.h"
 #include "klog.h"
+#include "uaccess.h"
 #include <stdint.h>
 
 static uint32_t SYSCALL_NOINLINE syscall_case_unknown(uint32_t eax)
@@ -43,6 +44,7 @@ static uint32_t SYSCALL_NOINLINE syscall_case_unknown(uint32_t eax)
 #define ARM64_LINUX_SYS_READ 63u
 #define ARM64_LINUX_SYS_READV 65u
 #define ARM64_LINUX_SYS_WRITEV 66u
+#define ARM64_LINUX_SYS_PPOLL 73u
 #define ARM64_LINUX_SYS_RENAMEAT 38u
 #define ARM64_LINUX_SYS_READLINKAT 78u
 #define ARM64_LINUX_SYS_NEWFSTATAT 79u
@@ -148,6 +150,41 @@ static uint64_t arm64_syscall_exit(arch_trap_frame_t *frame, uint32_t exit_group
 		return 0u;
 	}
 	return (uint64_t)-1;
+}
+
+static uint64_t arm64_syscall_ppoll(arch_trap_frame_t *frame)
+{
+	uint32_t timeout_ptr = (uint32_t)arch_syscall_arg2(frame);
+	uint32_t sigmask = (uint32_t)arch_syscall_arg3(frame);
+	uint32_t sigsetsize = (uint32_t)arch_syscall_arg4(frame);
+	uint32_t timeout_ms = (uint32_t)-1;
+
+	if (sigmask != 0 || sigsetsize != 0)
+		return (uint64_t)(int64_t)-LINUX_EINVAL;
+
+	if (timeout_ptr != 0) {
+		process_t *cur = sched_current();
+		uint64_t ts[2];
+		uint64_t ms;
+
+		if (!cur ||
+		    uaccess_copy_from_user(cur, ts, timeout_ptr, sizeof(ts)) != 0)
+			return (uint64_t)(int64_t)-LINUX_EFAULT;
+		if (ts[1] >= 1000000000ull)
+			return (uint64_t)(int64_t)-LINUX_EINVAL;
+		if (ts[0] > 0x7FFFFFFFull / 1000ull) {
+			timeout_ms = 0x7FFFFFFFu;
+		} else {
+			ms = ts[0] * 1000ull + (ts[1] + 999999ull) / 1000000ull;
+			timeout_ms =
+			    ms > 0x7FFFFFFFull ? 0x7FFFFFFFu : (uint32_t)ms;
+		}
+	}
+
+	return arm64_syscall_ret32(syscall_case_poll(
+	    (uint32_t)arch_syscall_arg0(frame),
+	    (uint32_t)arch_syscall_arg1(frame),
+	    timeout_ms));
 }
 
 uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
@@ -289,6 +326,9 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		    (uint32_t)arch_syscall_arg0(frame),
 		    (uint32_t)arch_syscall_arg1(frame),
 		    (uint32_t)arch_syscall_arg2(frame)));
+		break;
+	case ARM64_LINUX_SYS_PPOLL:
+		ret = arm64_syscall_ppoll(frame);
 		break;
 	case ARM64_LINUX_SYS_READLINKAT:
 		ret = arm64_syscall_ret32(syscall_case_readlinkat(

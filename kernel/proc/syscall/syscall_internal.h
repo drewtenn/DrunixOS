@@ -124,7 +124,7 @@ syscall_case_readlinkat(uint32_t ebx, uint32_t ecx, uint32_t edx, uint32_t esi);
 uint32_t syscall_case_truncate64(uint32_t ebx, uint32_t ecx, uint32_t edx);
 uint32_t syscall_case_ftruncate64(uint32_t ebx, uint32_t ecx, uint32_t edx);
 uint32_t syscall_case_utimensat(uint32_t ebx, uint32_t ecx, uint32_t esi);
-uint32_t syscall_case_poll(uint32_t ebx, uint32_t ecx);
+uint32_t syscall_case_poll(uint32_t ebx, uint32_t ecx, uint32_t edx);
 uint32_t syscall_case_ioctl(uint32_t ebx, uint32_t ecx, uint32_t edx);
 uint32_t syscall_case_fcntl64(uint32_t ebx, uint32_t ecx, uint32_t edx);
 uint32_t syscall_case_execve(uint32_t ebx, uint32_t ecx, uint32_t edx);

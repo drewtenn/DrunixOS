@@ -36,5 +36,9 @@ int pty_master_read(uint32_t pty_idx, uint8_t *buf, uint32_t count);
 int pty_master_write(uint32_t pty_idx, const uint8_t *buf, uint32_t count);
 int pty_slave_read(uint32_t pty_idx, uint8_t *buf, uint32_t count);
 int pty_slave_write(uint32_t pty_idx, const uint8_t *buf, uint32_t count);
+uint32_t pty_master_read_available(uint32_t pty_idx);
+uint32_t pty_slave_read_available(uint32_t pty_idx);
+int pty_master_read_closed(uint32_t pty_idx);
+int pty_slave_read_closed(uint32_t pty_idx);
 
 #endif /* PROC_PTY_H */

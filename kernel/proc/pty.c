@@ -82,6 +82,16 @@ static int pty_ring_read(pty_ring_t *r, uint8_t *buf, uint32_t count)
 	return (int)copied;
 }
 
+static uint32_t pty_ring_available(const pty_ring_t *r)
+{
+	return r ? r->count : 0;
+}
+
+static int pty_ring_closed(const pty_ring_t *r)
+{
+	return r && r->closed;
+}
+
 int pty_alloc_master(void)
 {
 	for (uint32_t i = 0; i < PTY_MAX; i++) {
@@ -207,4 +217,32 @@ int pty_slave_write(uint32_t pty_idx, const uint8_t *buf, uint32_t count)
 	if (pty_idx >= PTY_MAX || !pty_pool[pty_idx].in_use)
 		return -1;
 	return pty_ring_write(&pty_pool[pty_idx].to_master, buf, count);
+}
+
+uint32_t pty_master_read_available(uint32_t pty_idx)
+{
+	if (pty_idx >= PTY_MAX || !pty_pool[pty_idx].in_use)
+		return 0;
+	return pty_ring_available(&pty_pool[pty_idx].to_master);
+}
+
+uint32_t pty_slave_read_available(uint32_t pty_idx)
+{
+	if (pty_idx >= PTY_MAX || !pty_pool[pty_idx].in_use)
+		return 0;
+	return pty_ring_available(&pty_pool[pty_idx].to_slave);
+}
+
+int pty_master_read_closed(uint32_t pty_idx)
+{
+	if (pty_idx >= PTY_MAX || !pty_pool[pty_idx].in_use)
+		return 0;
+	return pty_ring_closed(&pty_pool[pty_idx].to_master);
+}
+
+int pty_slave_read_closed(uint32_t pty_idx)
+{
+	if (pty_idx >= PTY_MAX || !pty_pool[pty_idx].in_use)
+		return 0;
+	return pty_ring_closed(&pty_pool[pty_idx].to_slave);
 }

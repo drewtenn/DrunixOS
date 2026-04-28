@@ -15,6 +15,7 @@
 #include "sched.h"
 #include "tty.h"
 #include "vfs.h"
+#include "wmdev.h"
 #include <stdint.h>
 
 /*
@@ -96,6 +97,8 @@ void fd_close_one(process_t *proc, unsigned fd)
 		pty_release_master(fh->u.pty.pty_idx);
 	else if (fh->type == FD_TYPE_PTY_SLAVE)
 		pty_release_slave(fh->u.pty.pty_idx);
+	if (fh->type == FD_TYPE_WM)
+		wmdev_close(fh->u.wm.conn_id);
 
 	fh->type = FD_TYPE_NONE;
 	fh->writable = 0;

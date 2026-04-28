@@ -83,6 +83,11 @@ int sys_close(int fd)
 	return (int)syscall1(ARM64_SYS_CLOSE, fd);
 }
 
+int sys_ioctl(int fd, unsigned int request, void *arg)
+{
+	return (int)syscall3(ARM64_SYS_IOCTL, fd, request, (long)arg);
+}
+
 int sys_exec(const char *filename, char **argv, int argc)
 {
 	(void)argc;
@@ -112,10 +117,20 @@ int sys_display_claim(void)
 
 int sys_poll(sys_pollfd_t *fds, unsigned int nfds, int timeout)
 {
-	(void)fds;
-	(void)nfds;
-	(void)timeout;
-	return -1;
+	sys_timespec_t ts;
+	sys_timespec_t *tsp = 0;
+
+	if (timeout >= 0) {
+		ts.tv_sec = timeout / 1000;
+		ts.tv_nsec = (long)(timeout % 1000) * 1000000L;
+		tsp = &ts;
+	}
+	return (int)syscall5(ARM64_SYS_PPOLL,
+	                     (long)fds,
+	                     nfds,
+	                     (long)tsp,
+	                     0,
+	                     0);
 }
 
 int sys_getdents(const char *path, char *buf, int size)
@@ -347,6 +362,15 @@ int sys_waitpid(int pid, int options)
 	int status = 0;
 	r = (int)syscall4(ARM64_SYS_WAIT4, pid, (long)&status, options, 0);
 	return r < 0 ? r : status;
+}
+
+int sys_waitpid_status(int pid, int *status, int options)
+{
+	int local_status = 0;
+
+	if (!status)
+		status = &local_status;
+	return (int)syscall4(ARM64_SYS_WAIT4, pid, (long)status, options, 0);
 }
 
 int sys_tcsetpgrp(int fd, int pgid)
