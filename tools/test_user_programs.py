@@ -28,6 +28,7 @@ SMOKES = (
     ("/bin/cmp hello.txt readme.txt", "hello.txt readme.txt differ: char 1, line 1\r\n"),
     ("/bin/head -n 1 readme.txt", "DUFS test file.\r\n"),
     ("/bin/wc -l readme.txt", "3 readme.txt\r\n"),
+    ("/bin/writer", "hello from the pipe writer\r\n"),
     ("cpphello", "new[] sum=6"),
 )
 
