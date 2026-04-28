@@ -336,6 +336,7 @@ Contributor policy lives under `docs/contributing/`. Use
 `docs/style.md` plus `docs/contributing/docs.md` for book prose and chapter
 workflow, and the other files in `docs/contributing/` for focused project
 rules such as syscall-table maintenance, commit messages, Linux references,
+Rexy app porting policy (`docs/contributing/rexy-porting.md`),
 cross-architecture testing policy (`docs/contributing/testing.md`), and README
 updates.
 

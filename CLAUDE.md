@@ -9,6 +9,7 @@ Use these files as the canonical rule set for this repo:
 - C coding style: `docs/contributing/c-style.md`
 - Linux-reference policy: `docs/contributing/linux-reference.md`
 - Syscall table maintenance: `docs/contributing/syscalls.md`
+- Rexy app porting policy: `docs/contributing/rexy-porting.md`
 - Commit message constraints: `docs/contributing/commits.md`
 - README maintenance: `docs/contributing/readme.md`
 
