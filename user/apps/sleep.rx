@@ -1,0 +1,37 @@
+fn parse_seconds_arg(value: str) -> i32 {
+	if str_is_empty(value) {
+		return -1;
+	}
+
+	let mut result: i32 = 0;
+	let mut index: i32 = 0;
+	while value[index] != 0 {
+		let byte: u8 = value[index];
+		if byte < 48 || byte > 57 {
+			return -1;
+		}
+		result = result * 10 + ((byte as i32) - 48);
+		index = index + 1;
+	}
+	return result;
+}
+
+fn main() -> i32 {
+	let count: i32 = std::process::args_len();
+	if count != 2 {
+		println("usage: sleep seconds");
+		return 2;
+	}
+
+	let mut seconds: i32 = parse_seconds_arg(std::process::arg_at(1));
+	if seconds < 0 {
+		println("usage: sleep seconds");
+		return 2;
+	}
+
+	while seconds > 0 {
+		seconds = std::time::sleep(seconds);
+	}
+
+	return 0;
+}
