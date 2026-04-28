@@ -34,6 +34,7 @@ SMOKES = (
     ("/bin/date", "UTC"),
     ("/bin/grep DUFS readme.txt", "DUFS test file.\r\n"),
     ("/bin/echo tee-line | /bin/tee /tmp/tee-smoke.txt", "tee-line\r\n"),
+    ("/bin/kill -l 15", "TERM\r\n"),
     ("cpphello", "new[] sum=6"),
 )
 

@@ -121,7 +121,7 @@ def main():
 
     if "include programs.mk" not in makefile_text:
         add_failure(failures, "user/Makefile must include user/programs.mk as the shared user program manifest")
-    required_rexc_progs = {"hello", "echo", "printenv", "cat", "yes", "basename", "dirname", "sleep", "cmp", "which", "head", "wc", "writer", "reader", "sleeper", "date", "grep", "tee", "dmesg", "tail"}
+    required_rexc_progs = {"hello", "echo", "printenv", "cat", "yes", "basename", "dirname", "sleep", "cmp", "which", "head", "wc", "writer", "reader", "sleeper", "date", "grep", "tee", "dmesg", "tail", "kill"}
     missing_rexc_progs = sorted(required_rexc_progs - rexc_set)
     if missing_rexc_progs:
         add_failure(
