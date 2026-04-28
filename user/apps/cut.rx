@@ -16,14 +16,12 @@ fn parse_uint_part(spec: str, start: i32, end: i32) -> i32 {
 		return -1;
 	}
 	let mut value: i32 = 0;
-	let mut index: i32 = start;
-	while index < end {
+	for let mut index: i32 = start; index < end; index = index + 1 {
 		let byte: u8 = spec[index];
 		if byte < 48 || byte > 57 {
 			return -1;
 		}
 		value = value * 10 + ((byte as i32) - 48);
-		index = index + 1;
 	}
 	if value <= 0 {
 		return -1;
@@ -105,13 +103,11 @@ fn parse_list(spec: str) -> i32 {
 }
 
 fn selected(pos: i32) -> bool {
-	let mut index: i32 = 0;
-	while index < CUT_RANGE_COUNT {
+	for let mut index: i32 = 0; index < CUT_RANGE_COUNT; index = index + 1 {
 		if pos >= CUT_FIRST[index] &&
 		   (CUT_LAST[index] == 0 || pos <= CUT_LAST[index]) {
 			return true;
 		}
-		index = index + 1;
 	}
 	return false;
 }
@@ -129,13 +125,11 @@ fn cut_chars(len: i32) -> i32 {
 		body_len = body_len - 1;
 	}
 
-	let mut index: i32 = 0;
 	let mut pos: i32 = 1;
-	while index < body_len {
+	for let mut index: i32 = 0; index < body_len; index = index + 1 {
 		if selected(pos) {
 			put_byte(CUT_LINE[index]);
 		}
-		index = index + 1;
 		pos = pos + 1;
 	}
 	if had_newline {
@@ -145,21 +139,17 @@ fn cut_chars(len: i32) -> i32 {
 }
 
 fn line_has_delim(len: i32, delim: u8) -> bool {
-	let mut index: i32 = 0;
-	while index < len {
+	for let mut index: i32 = 0; index < len; index = index + 1 {
 		if CUT_LINE[index] == delim {
 			return true;
 		}
-		index = index + 1;
 	}
 	return false;
 }
 
 fn print_range(start: i32, end: i32) -> i32 {
-	let mut index: i32 = start;
-	while index < end {
+	for let mut index: i32 = start; index < end; index = index + 1 {
 		put_byte(CUT_LINE[index]);
-		index = index + 1;
 	}
 	return 0;
 }
@@ -322,8 +312,7 @@ fn main() -> i32 {
 		return 1;
 	}
 
-	let mut index: i32 = first;
-	while index < argc {
+	for let mut index: i32 = first; index < argc; index = index + 1 {
 		let path: str = std::process::arg_at(index);
 		let fd: i32 = open_input(path);
 		if fd < 0 {
@@ -334,7 +323,6 @@ fn main() -> i32 {
 			process_stream(fd, mode, delim, suppress);
 			close_input(fd);
 		}
-		index = index + 1;
 	}
 	return rc;
 }

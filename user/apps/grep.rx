@@ -24,21 +24,17 @@ fn contains_pattern(line_len: i32, pattern: str, ignore_case: bool) -> bool {
 		return false;
 	}
 
-	let mut index: i32 = 0;
-	while index <= line_len - plen {
+	for let mut index: i32 = 0; index <= line_len - plen; index = index + 1 {
 		let mut matched: bool = true;
-		let mut pindex: i32 = 0;
-		while pindex < plen {
+		for let mut pindex: i32 = 0; pindex < plen; pindex = pindex + 1 {
 			if !char_eq(GREP_LINE[index + pindex], pattern[pindex], ignore_case) {
 				matched = false;
 				break;
 			}
-			pindex = pindex + 1;
 		}
 		if matched {
 			return true;
 		}
-		index = index + 1;
 	}
 	return false;
 }
@@ -137,8 +133,7 @@ fn main() -> i32 {
 			first = first + 1;
 			break;
 		}
-		let mut index: i32 = 1;
-		while option[index] != 0 {
+		for let mut index: i32 = 1; option[index] != 0; index = index + 1 {
 			if option[index] == 105 {
 				ignore_case = true;
 			} else if option[index] == 110 {
@@ -150,7 +145,6 @@ fn main() -> i32 {
 				println(option);
 				return 2;
 			}
-			index = index + 1;
 		}
 		first = first + 1;
 	}
@@ -170,8 +164,7 @@ fn main() -> i32 {
 	}
 
 	let show_filename: bool = count - first > 1;
-	let mut file_index: i32 = first;
-	while file_index < count {
+	for let mut file_index: i32 = first; file_index < count; file_index = file_index + 1 {
 		let path: str = std::process::arg_at(file_index);
 		let fd: i32 = open_input(path);
 		if fd < 0 {
@@ -187,7 +180,6 @@ fn main() -> i32 {
 			}
 			close_input(fd);
 		}
-		file_index = file_index + 1;
 	}
 
 	return rc;

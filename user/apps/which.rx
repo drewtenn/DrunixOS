@@ -1,12 +1,10 @@
 static mut WHICH_PATH_BUFFER: [u8; 128];
 
 fn has_slash(value: str) -> bool {
-	let mut index: i32 = 0;
-	while value[index] != 0 {
+	for let mut index: i32 = 0; value[index] != 0; index = index + 1 {
 		if value[index] == 47 {
 			return true;
 		}
-		index = index + 1;
 	}
 	return false;
 }
@@ -22,9 +20,8 @@ fn is_file(path: str) -> bool {
 
 fn copy_name(name: str) -> i32 {
 	let mut index: i32 = 0;
-	while index < 127 && name[index] != 0 {
+	for index = 0; index < 127 && name[index] != 0; index = index + 1 {
 		*(WHICH_PATH_BUFFER + index) = name[index];
-		index = index + 1;
 	}
 	*(WHICH_PATH_BUFFER + index) = 0;
 	if name[index] != 0 {
@@ -41,10 +38,9 @@ fn build_path(path: str, start: i32, dir_len: i32, name: str) -> i32 {
 		return copy_name(name);
 	}
 
-	while dir_index < dir_len && out < 127 {
+	for dir_index = 0; dir_index < dir_len && out < 127; dir_index = dir_index + 1 {
 		*(WHICH_PATH_BUFFER + out) = path[start + dir_index];
 		out = out + 1;
-		dir_index = dir_index + 1;
 	}
 	if dir_index < dir_len {
 		*(WHICH_PATH_BUFFER + out) = 0;
@@ -57,10 +53,9 @@ fn build_path(path: str, start: i32, dir_len: i32, name: str) -> i32 {
 	}
 
 	let mut name_index: i32 = 0;
-	while name[name_index] != 0 && out < 127 {
+	for name_index = 0; name[name_index] != 0 && out < 127; name_index = name_index + 1 {
 		*(WHICH_PATH_BUFFER + out) = name[name_index];
 		out = out + 1;
-		name_index = name_index + 1;
 	}
 	*(WHICH_PATH_BUFFER + out) = 0;
 	if name[name_index] != 0 {
@@ -135,12 +130,10 @@ fn main() -> i32 {
 		return usage();
 	}
 
-	let mut index: i32 = first;
-	while index < count {
+	for let mut index: i32 = first; index < count; index = index + 1 {
 		if which_one(std::process::arg_at(index), all) != 0 {
 			rc = 1;
 		}
-		index = index + 1;
 	}
 
 	return rc;

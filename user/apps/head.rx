@@ -10,14 +10,12 @@ fn parse_count(value: str) -> i32 {
 		return -1;
 	}
 	let mut result: i32 = 0;
-	let mut index: i32 = 0;
-	while value[index] != 0 {
+	for let mut index: i32 = 0; value[index] != 0; index = index + 1 {
 		let byte: u8 = value[index];
 		if byte < 48 || byte > 57 {
 			return -1;
 		}
 		result = result * 10 + ((byte as i32) - 48);
-		index = index + 1;
 	}
 	return result;
 }
@@ -104,8 +102,7 @@ fn main() -> i32 {
 	}
 
 	let multiple: bool = count - first > 1;
-	let mut index: i32 = first;
-	while index < count {
+	for let mut index: i32 = first; index < count; index = index + 1 {
 		let path: str = std::process::arg_at(index);
 		let fd: i32 = open_input(path);
 		if fd < 0 {
@@ -119,7 +116,6 @@ fn main() -> i32 {
 			print_head(fd, max_lines);
 			close_input(fd);
 		}
-		index = index + 1;
 	}
 
 	return rc;

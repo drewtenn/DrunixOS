@@ -9,14 +9,13 @@ fn usage() -> i32 {
 
 fn str_compare(left: str, right: str) -> i32 {
 	let mut index: i32 = 0;
-	while left[index] != 0 && right[index] != 0 {
+	for index = 0; left[index] != 0 && right[index] != 0; index = index + 1 {
 		if left[index] < right[index] {
 			return -1;
 		}
 		if left[index] > right[index] {
 			return 1;
 		}
-		index = index + 1;
 	}
 	if left[index] == 0 && right[index] == 0 {
 		return 0;
@@ -47,16 +46,12 @@ fn swap_offsets(left: i32, right: i32) -> i32 {
 }
 
 fn sort_lines(storage: *u8, line_count: i32, reverse: bool) -> i32 {
-	let mut outer: i32 = 0;
-	while outer < line_count {
-		let mut inner: i32 = outer + 1;
-		while inner < line_count {
+	for let mut outer: i32 = 0; outer < line_count; outer = outer + 1 {
+		for let mut inner: i32 = outer + 1; inner < line_count; inner = inner + 1 {
 			if line_compare(storage, outer, inner, reverse) > 0 {
 				swap_offsets(outer, inner);
 			}
-			inner = inner + 1;
 		}
-		outer = outer + 1;
 	}
 	return 0;
 }
@@ -134,13 +129,11 @@ fn close_input(fd: i32) -> i32 {
 }
 
 fn print_sorted(storage: *u8, line_count: i32, unique: bool) -> i32 {
-	let mut index: i32 = 0;
-	while index < line_count {
+	for let mut index: i32 = 0; index < line_count; index = index + 1 {
 		if !unique || index == 0 ||
 		   str_compare(line_at(storage, index), line_at(storage, index - 1)) != 0 {
 			println(line_at(storage, index));
 		}
-		index = index + 1;
 	}
 	return 0;
 }
@@ -159,8 +152,7 @@ fn main() -> i32 {
 			first = first + 1;
 			break;
 		}
-		let mut index: i32 = 1;
-		while option[index] != 0 {
+		for let mut index: i32 = 1; option[index] != 0; index = index + 1 {
 			if option[index] == 114 {
 				reverse = true;
 			} else if option[index] == 117 {
@@ -170,7 +162,6 @@ fn main() -> i32 {
 				println(option);
 				return 2;
 			}
-			index = index + 1;
 		}
 		first = first + 1;
 	}
@@ -188,8 +179,7 @@ fn main() -> i32 {
 			return 2;
 		}
 	} else {
-		let mut file_index: i32 = first;
-		while file_index < count {
+		for let mut file_index: i32 = first; file_index < count; file_index = file_index + 1 {
 			let path: str = std::process::arg_at(file_index);
 			let fd: i32 = open_input(path);
 			if fd < 0 {
@@ -206,7 +196,6 @@ fn main() -> i32 {
 				}
 				close_input(fd);
 			}
-			file_index = file_index + 1;
 		}
 	}
 

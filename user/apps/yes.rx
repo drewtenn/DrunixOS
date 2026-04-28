@@ -1,11 +1,9 @@
 fn print_arguments(count: i32) -> i32 {
-	let mut index: i32 = 1;
-	while index < count {
+	for let mut index: i32 = 1; index < count; index = index + 1 {
 		if index > 1 {
 			print(" ");
 		}
 		print(std::process::arg_at(index));
-		index = index + 1;
 	}
 	print("\n");
 	return 0;

@@ -94,8 +94,7 @@ fn main() -> i32 {
 		if count == 2 {
 			return list_signals();
 		}
-		let mut index: i32 = 2;
-		while index < count {
+		for let mut index: i32 = 2; index < count; index = index + 1 {
 			let number: i32 = parse_number(std::process::arg_at(index));
 			if number == -2147483648 {
 				return 2;
@@ -103,7 +102,6 @@ fn main() -> i32 {
 			if !print_signal_name(number) {
 				rc = 1;
 			}
-			index = index + 1;
 		}
 		return rc;
 	}
@@ -124,8 +122,7 @@ fn main() -> i32 {
 		return 2;
 	}
 
-	let mut index: i32 = first_pid;
-	while index < count {
+	for let mut index: i32 = first_pid; index < count; index = index + 1 {
 		let pid: i32 = parse_number(std::process::arg_at(index));
 		if pid == -2147483648 || pid == 0 {
 			print("kill: invalid pid: ");
@@ -136,7 +133,6 @@ fn main() -> i32 {
 			println(std::process::arg_at(index));
 			rc = 1;
 		}
-		index = index + 1;
 	}
 
 	return rc;

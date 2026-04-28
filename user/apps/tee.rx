@@ -1,44 +1,11 @@
 static mut TEE_BUFFER: [u8; 256];
-
-fn fd_at(index: i32, fd0: i32, fd1: i32, fd2: i32, fd3: i32,
-         fd4: i32, fd5: i32, fd6: i32, fd7: i32) -> i32 {
-	if index == 0 {
-		return fd0;
-	}
-	if index == 1 {
-		return fd1;
-	}
-	if index == 2 {
-		return fd2;
-	}
-	if index == 3 {
-		return fd3;
-	}
-	if index == 4 {
-		return fd4;
-	}
-	if index == 5 {
-		return fd5;
-	}
-	if index == 6 {
-		return fd6;
-	}
-	return fd7;
-}
+static mut TEE_FDS: [i32; 8];
 
 fn main() -> i32 {
 	let count: i32 = std::process::args_len();
 	let mut first: i32 = 1;
 	let mut rc: i32 = 0;
 	let mut file_count: i32 = 0;
-	let mut fd0: i32 = -1;
-	let mut fd1: i32 = -1;
-	let mut fd2: i32 = -1;
-	let mut fd3: i32 = -1;
-	let mut fd4: i32 = -1;
-	let mut fd5: i32 = -1;
-	let mut fd6: i32 = -1;
-	let mut fd7: i32 = -1;
 
 	if count > 1 && str_eq(std::process::arg_at(1), "-a") {
 		println("tee: append mode is not supported yet");
@@ -48,40 +15,17 @@ fn main() -> i32 {
 		first = 2;
 	}
 
-	let mut index: i32 = first;
-	while index < count && file_count < 8 {
+	for let mut index: i32 = first; index < count && file_count < 8; index = index + 1 {
 		let path: str = std::process::arg_at(index);
 		let fd: i32 = std::fs::create_write(path);
 		if fd < 0 {
 			print("tee: cannot open: ");
 			println(path);
 			rc = 1;
-		} else if file_count == 0 {
-			fd0 = fd;
-			file_count = file_count + 1;
-		} else if file_count == 1 {
-			fd1 = fd;
-			file_count = file_count + 1;
-		} else if file_count == 2 {
-			fd2 = fd;
-			file_count = file_count + 1;
-		} else if file_count == 3 {
-			fd3 = fd;
-			file_count = file_count + 1;
-		} else if file_count == 4 {
-			fd4 = fd;
-			file_count = file_count + 1;
-		} else if file_count == 5 {
-			fd5 = fd;
-			file_count = file_count + 1;
-		} else if file_count == 6 {
-			fd6 = fd;
-			file_count = file_count + 1;
 		} else {
-			fd7 = fd;
+			*(TEE_FDS + file_count) = fd;
 			file_count = file_count + 1;
 		}
-		index = index + 1;
 	}
 
 	if count - first > 8 {
@@ -95,22 +39,14 @@ fn main() -> i32 {
 			break;
 		}
 		std::io::write(1, TEE_BUFFER + 0, bytes);
-		let mut out: i32 = 0;
-		while out < file_count {
-			std::io::write(fd_at(out, fd0, fd1, fd2, fd3, fd4, fd5, fd6, fd7),
-			               TEE_BUFFER + 0, bytes);
-			out = out + 1;
+		for let mut out: i32 = 0; out < file_count; out = out + 1 {
+			std::io::write(TEE_FDS[out], TEE_BUFFER + 0, bytes);
 		}
 	}
 
-	if fd0 >= 0 { std::fs::close(fd0); }
-	if fd1 >= 0 { std::fs::close(fd1); }
-	if fd2 >= 0 { std::fs::close(fd2); }
-	if fd3 >= 0 { std::fs::close(fd3); }
-	if fd4 >= 0 { std::fs::close(fd4); }
-	if fd5 >= 0 { std::fs::close(fd5); }
-	if fd6 >= 0 { std::fs::close(fd6); }
-	if fd7 >= 0 { std::fs::close(fd7); }
+	for let mut out: i32 = 0; out < file_count; out = out + 1 {
+		std::fs::close(TEE_FDS[out]);
+	}
 
 	return rc;
 }

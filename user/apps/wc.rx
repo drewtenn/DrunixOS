@@ -25,8 +25,7 @@ fn count_stream(fd: i32) -> i32 {
 		}
 
 		WC_BYTES = WC_BYTES + count;
-		let mut index: i32 = 0;
-		while index < count {
+		for let mut index: i32 = 0; index < count; index = index + 1 {
 			let byte: u8 = WC_BUFFER[index];
 			if byte == 10 {
 				WC_LINES = WC_LINES + 1;
@@ -37,7 +36,6 @@ fn count_stream(fd: i32) -> i32 {
 				WC_WORDS = WC_WORDS + 1;
 				in_word = true;
 			}
-			index = index + 1;
 		}
 	}
 
@@ -76,24 +74,20 @@ fn parse_options(value: str) -> i32 {
 		return 0;
 	}
 
-	let mut index: i32 = 1;
-	while value[index] != 0 {
+	for let mut index: i32 = 1; value[index] != 0; index = index + 1 {
 		let byte: u8 = value[index];
 		if byte != 108 && byte != 119 && byte != 99 {
 			return -1;
 		}
-		index = index + 1;
 	}
 	return 1;
 }
 
 fn option_has(value: str, flag: u8) -> bool {
-	let mut index: i32 = 1;
-	while value[index] != 0 {
+	for let mut index: i32 = 1; value[index] != 0; index = index + 1 {
 		if value[index] == flag {
 			return true;
 		}
-		index = index + 1;
 	}
 	return false;
 }
@@ -158,8 +152,7 @@ fn main() -> i32 {
 		return 0;
 	}
 
-	let mut index: i32 = first;
-	while index < count {
+	for let mut index: i32 = first; index < count; index = index + 1 {
 		let path: str = std::process::arg_at(index);
 		let fd: i32 = open_input(path);
 		if fd < 0 {
@@ -174,7 +167,6 @@ fn main() -> i32 {
 			total_bytes = total_bytes + WC_BYTES;
 			print_counts(show_l, show_w, show_c, path, true);
 		}
-		index = index + 1;
 	}
 
 	if count - first > 1 {

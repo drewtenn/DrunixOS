@@ -123,7 +123,7 @@ fn main() -> i32 {
 	let mut line_no: i32 = 1;
 	let mut different: bool = false;
 
-	while true {
+	for byte_no = 1; true; byte_no = byte_no + 1 {
 		let ca: i32 = read_a(fd_a);
 		let cb: i32 = read_b(fd_b);
 
@@ -159,7 +159,6 @@ fn main() -> i32 {
 		if ca == 10 {
 			line_no = line_no + 1;
 		}
-		byte_no = byte_no + 1;
 	}
 
 	close_input(fd_a);

@@ -27,10 +27,8 @@ fn read_input_line(fd: i32) -> i32 {
 }
 
 fn copy_current_to_prev(len: i32) -> i32 {
-	let mut index: i32 = 0;
-	while index < len {
+	for let mut index: i32 = 0; index < len; index = index + 1 {
 		*(UNIQ_PREV + index) = UNIQ_LINE[index];
-		index = index + 1;
 	}
 	*(UNIQ_PREV + len) = 0;
 	return len;
@@ -40,12 +38,10 @@ fn same_as_prev(len: i32, prev_len: i32) -> bool {
 	if len != prev_len {
 		return false;
 	}
-	let mut index: i32 = 0;
-	while index < len {
+	for let mut index: i32 = 0; index < len; index = index + 1 {
 		if UNIQ_PREV[index] != UNIQ_LINE[index] {
 			return false;
 		}
-		index = index + 1;
 	}
 	return true;
 }
@@ -65,15 +61,11 @@ fn write_number(fd: i32, value: i32) -> i32 {
 		}
 	}
 
-	let mut spaces: i32 = 7 - digits;
-	while spaces > 0 {
+	for let mut spaces: i32 = 7 - digits; spaces > 0; spaces = spaces - 1 {
 		std::io::write_str(fd, " ");
-		spaces = spaces - 1;
 	}
-	let mut index: i32 = digits - 1;
-	while index >= 0 {
+	for let mut index: i32 = digits - 1; index >= 0; index = index - 1 {
 		std::io::write(fd, UNIQ_DIGITS + index, 1);
-		index = index - 1;
 	}
 	return digits;
 }
@@ -110,8 +102,7 @@ fn main() -> i32 {
 	while first < argc && std::process::arg_at(first)[0] == 45 &&
 	      std::process::arg_at(first)[1] != 0 {
 		let option: str = std::process::arg_at(first);
-		let mut index: i32 = 1;
-		while option[index] != 0 {
+		for let mut index: i32 = 1; option[index] != 0; index = index + 1 {
 			if option[index] == 99 {
 				show_count = true;
 			} else if option[index] == 100 {
@@ -123,7 +114,6 @@ fn main() -> i32 {
 				println(option);
 				return 2;
 			}
-			index = index + 1;
 		}
 		first = first + 1;
 	}

@@ -2,10 +2,8 @@ static mut DIRNAME_BUFFER: [u8; 512];
 
 fn copy_range(value: str, start: i32, end: i32) -> str {
 	let mut out: i32 = 0;
-	let mut index: i32 = start;
-	while index < end && out < 511 {
+	for let mut index: i32 = start; index < end && out < 511; index = index + 1 {
 		*(DIRNAME_BUFFER + out) = value[index];
-		index = index + 1;
 		out = out + 1;
 	}
 	*(DIRNAME_BUFFER + out) = 0;

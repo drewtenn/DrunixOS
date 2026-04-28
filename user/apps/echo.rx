@@ -8,13 +8,11 @@ fn main() -> i32 {
 		start = 2;
 	}
 
-	let mut index: i32 = start;
-	while index < count {
+	for let mut index: i32 = start; index < count; index = index + 1 {
 		if index > start {
 			print(" ");
 		}
 		print(std::process::arg_at(index));
-		index = index + 1;
 	}
 
 	if newline {
