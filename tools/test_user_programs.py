@@ -32,6 +32,7 @@ SMOKES = (
     ("/bin/writer | /bin/reader", "[reader] received 27 bytes\r\n"),
     ("/bin/date", "UTC"),
     ("/bin/grep DUFS readme.txt", "DUFS test file.\r\n"),
+    ("/bin/echo tee-line | /bin/tee /tmp/tee-smoke.txt", "tee-line\r\n"),
     ("cpphello", "new[] sum=6"),
 )
 
