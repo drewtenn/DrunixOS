@@ -153,14 +153,14 @@ fn main() -> i32 {
 			break;
 		}
 		for let mut index: i32 = 1; option[index] != 0; index++ {
-			if option[index] == 114 {
-				reverse = true;
-			} else if option[index] == 117 {
-				unique = true;
-			} else {
-				print("sort: invalid option: ");
-				println(option);
-				return 2;
+			match option[index] {
+				114 => { reverse = true; }
+				117 => { unique = true; }
+				_ => {
+					print("sort: invalid option: ");
+					println(option);
+					return 2;
+				}
 			}
 		}
 		first++;

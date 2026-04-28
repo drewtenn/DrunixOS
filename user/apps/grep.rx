@@ -134,16 +134,15 @@ fn main() -> i32 {
 			break;
 		}
 		for let mut index: i32 = 1; option[index] != 0; index++ {
-			if option[index] == 105 {
-				ignore_case = true;
-			} else if option[index] == 110 {
-				show_line_numbers = true;
-			} else if option[index] == 118 {
-				invert = true;
-			} else {
-				print("grep: invalid option: ");
-				println(option);
-				return 2;
+			match option[index] {
+				105 => { ignore_case = true; }
+				110 => { show_line_numbers = true; }
+				118 => { invert = true; }
+				_ => {
+					print("grep: invalid option: ");
+					println(option);
+					return 2;
+				}
 			}
 		}
 		first++;

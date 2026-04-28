@@ -268,36 +268,50 @@ fn main() -> i32 {
 			first++;
 			break;
 		}
-		if arg[1] == 98 || arg[1] == 99 || arg[1] == 102 {
-			if mode != 0 {
+		match arg[1] {
+			98 | 99 | 102 | 100 => {
+				if mode != 0 {
+					return usage();
+				}
+				let value: str = option_value(arg, 2, first + 1, argc);
+				if str_is_empty(value) {
+					return usage();
+				}
+				match arg[1] {
+					100 => {
+						if value[1] != 0 {
+							return usage();
+						}
+					}
+					_ => {
+						if parse_list(value) != 0 {
+							return usage();
+						}
+					}
+				}
+				match arg[1] {
+					100 => { delim = value[0]; }
+					102 => { mode = 2; }
+					_ => { mode = 1; }
+				}
+				if arg[2] == 0 {
+					first++;
+				}
+			}
+			115 => {
+				if arg[2] != 0 {
+					return usage();
+				}
+				suppress = true;
+			}
+			110 => {
+				if arg[2] != 0 {
+					return usage();
+				}
+			}
+			_ => {
 				return usage();
 			}
-			let spec: str = option_value(arg, 2, first + 1, argc);
-			if str_is_empty(spec) || parse_list(spec) != 0 {
-				return usage();
-			}
-			if arg[2] == 0 {
-				first++;
-			}
-			if arg[1] == 102 {
-				mode = 2;
-			} else {
-				mode = 1;
-			}
-		} else if arg[1] == 100 {
-			let value: str = option_value(arg, 2, first + 1, argc);
-			if str_is_empty(value) || value[1] != 0 {
-				return usage();
-			}
-			delim = value[0];
-			if arg[2] == 0 {
-				first++;
-			}
-		} else if str_eq(arg, "-s") {
-			suppress = true;
-		} else if str_eq(arg, "-n") {
-		} else {
-			return usage();
 		}
 		first++;
 	}
