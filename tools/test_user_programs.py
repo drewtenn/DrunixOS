@@ -30,6 +30,7 @@ SMOKES = (
     ("/bin/tail -n 1 readme.txt", "Line three.\r\n"),
     ("/bin/uniq readme.txt", "Line two.\r\n"),
     ("/bin/sort readme.txt", "Line two.\r\n"),
+    ("/bin/cut -c 1-4 readme.txt", "DUFS\r\n"),
     ("/bin/wc -l readme.txt", "3 readme.txt\r\n"),
     ("/bin/writer", "hello from the pipe writer\r\n"),
     ("/bin/writer | /bin/reader", "[reader] received 27 bytes\r\n"),
