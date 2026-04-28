@@ -1,0 +1,77 @@
+extern fn sys_trap_ud2() -> i32;
+extern fn sys_trap_gpfault() -> i32;
+
+static mut CRASH_ZERO: i32 = 0;
+static mut CRASH_RESULT: i32 = 0;
+
+fn usage() -> i32 {
+	println("usage: crash <type>");
+	println("types: divzero  nullptr  badptr  ud2  gpfault");
+	return 1;
+}
+
+fn do_divzero() -> i32 {
+	println("crash: dividing by zero...");
+	CRASH_RESULT = 42 / CRASH_ZERO;
+	println("crash: ERROR - should not reach here");
+	return CRASH_RESULT;
+}
+
+fn do_nullptr() -> i32 {
+	let p: *i32 = 0 as *i32;
+	println("crash: dereferencing NULL pointer...");
+	CRASH_RESULT = p[0];
+	println("crash: ERROR - should not reach here");
+	return CRASH_RESULT;
+}
+
+fn do_badptr() -> i32 {
+	let p: *i32 = (-559038737) as *i32;
+	println("crash: writing to unmapped address 0xDEADBEEF...");
+	*(p + 0) = 2989;
+	println("crash: ERROR - should not reach here");
+	return 0;
+}
+
+fn do_ud2() -> i32 {
+	println("crash: executing invalid opcode (UD2)...");
+	sys_trap_ud2();
+	println("crash: ERROR - should not reach here");
+	return 0;
+}
+
+fn do_gpfault() -> i32 {
+	println("crash: loading null selector into %ds to force #GP...");
+	sys_trap_gpfault();
+	println("crash: ERROR - should not reach here");
+	return 0;
+}
+
+fn main() -> i32 {
+	if std::process::args_len() < 2 {
+		return usage();
+	}
+
+	let kind: str = std::process::arg_at(1);
+	if str_eq(kind, "divzero") {
+		return do_divzero();
+	}
+	if str_eq(kind, "nullptr") {
+		return do_nullptr();
+	}
+	if str_eq(kind, "badptr") {
+		return do_badptr();
+	}
+	if str_eq(kind, "ud2") {
+		return do_ud2();
+	}
+	if str_eq(kind, "gpfault") {
+		return do_gpfault();
+	}
+
+	print("crash: unknown type '");
+	print(kind);
+	println("'");
+	println("types: divzero  nullptr  badptr  ud2  gpfault");
+	return 1;
+}
