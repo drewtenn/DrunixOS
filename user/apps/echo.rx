@@ -1,0 +1,25 @@
+fn main() -> i32 {
+	let mut start: i32 = 1;
+	let mut newline: bool = true;
+	let count: i32 = std::process::args_len();
+
+	if count > 1 && str_eq(std::process::arg_at(1), "-n") {
+		newline = false;
+		start = 2;
+	}
+
+	let mut index: i32 = start;
+	while index < count {
+		if index > start {
+			print(" ");
+		}
+		print(std::process::arg_at(index));
+		index = index + 1;
+	}
+
+	if newline {
+		print("\n");
+	}
+
+	return 0;
+}

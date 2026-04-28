@@ -121,8 +121,14 @@ def main():
 
     if "include programs.mk" not in makefile_text:
         add_failure(failures, "user/Makefile must include user/programs.mk as the shared user program manifest")
-    if "REXC_PROGS ?= hello" not in text:
-        add_failure(failures, "user/programs.mk must list hello in REXC_PROGS")
+    required_rexc_progs = {"hello", "echo"}
+    missing_rexc_progs = sorted(required_rexc_progs - rexc_set)
+    if missing_rexc_progs:
+        add_failure(
+            failures,
+            "user/programs.mk must list canonical Rexc programs in REXC_PROGS: "
+            + " ".join(missing_rexc_progs),
+        )
     if not re.search(r"^REXC_BUILD_DIR[ \t]*\?=[ \t]*\.\./external/rexc/build[ \t]*$", makefile_text, re.MULTILINE):
         add_failure(failures, "user/Makefile must define REXC_BUILD_DIR for the local Rexc build")
     if not re.search(r"^REXC[ \t]*\?=[ \t]*\$\(REXC_BUILD_DIR\)/rexc[ \t]*$", makefile_text, re.MULTILINE):
