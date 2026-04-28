@@ -433,6 +433,7 @@ int sys_getppid(void);
  *    -1: no such process
  */
 int sys_waitpid(int pid, int options);
+int sys_waitpid_status(int pid, int *status, int options);
 
 /*
  * Set the foreground process group of the TTY associated with fd.

@@ -1,39 +1,22 @@
 /*
- * desktop.c — DrunixOS user-space compositor.
+ * desktop.c - DrunixOS user-space compositor and window server.
  *
- * Maps /dev/fb0, runs a shell on a freshly-allocated pty pair, and
- * renders the slave-side output into a windowed terminal on top of
- * a procedural / JPEG wallpaper.  Forked helpers stream input through
- * small pipes so the parent can poll for whichever source is ready:
- *
- *   - keyboard helper:  /dev/kbd → 'K' tagged events
- *   - terminal helper:  pty master → byte stream
- *   - mouse helper:     /dev/mouse → 'M' tagged 3-byte packets
- *
- * The parent forwards keystrokes to the pty master, feeds terminal
- * bytes through a minimal ANSI consumer in batches, and tracks the
- * pointer position so the cursor sprite follows the mouse.
- *
- * Framebuffer geometry comes from /dev/fb0info at startup; nothing
- * about the screen is hard-coded.
+ * The desktop owns the framebuffer and taskbar. Application windows are owned
+ * by separate client processes through /dev/wm; the desktop maps their
+ * surfaces, draws shared chrome, and routes input events back to clients.
  */
 
-#include "desktop_font.h"
-#include "desktop_wallpaper.h"
 #include "cursor_sprite.h"
+#include "desktop_font.h"
 #include "desktop_window.h"
 #include "kbdmap.h"
 #include "mman.h"
-#include "nanojpeg.h"
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
 #include "syscall.h"
 #include "unistd.h"
-
-#ifndef DESKTOP_ENABLE_JPEG_WALLPAPER
-#define DESKTOP_ENABLE_JPEG_WALLPAPER 0
-#endif
+#include "wm_api.h"
 
 typedef struct {
 	uint32_t width;
@@ -53,8 +36,7 @@ typedef struct {
 #define COLOR_TEAL 0x00129896u
 #define COLOR_GREEN 0x004da891u
 #define COLOR_BLUE 0x000d74b4u
-#define COLOR_TERM_BG 0x00141414u
-#define COLOR_TERM_FG 0x00d0d0d0u
+#define COLOR_CLIENT_BG 0x00141414u
 #define COLOR_TITLEBAR 0x00374561u
 #define COLOR_TITLEBAR_FG 0x00f0f0f0u
 #define COLOR_TITLEBAR_BUTTON 0x00475f78u
@@ -69,31 +51,32 @@ typedef struct {
 #define COLOR_TASKBAR_ICON 0x0060d6ffu
 #define COLOR_TASKBAR_CLOCK 0x00f4f7fbu
 
-#define TERM_COLS 80
-#define TERM_ROWS 24
-#define TERM_GLYPH_W 8
-#define TERM_GLYPH_H 16
-#define TERM_PAD 8
 #define TITLE_H 20
-#define TERM_DEFAULT_X 64
-#define TERM_DEFAULT_Y 64
-
 #define TASKBAR_H 48
 #define TASKBAR_PAD DRUNIX_TASKBAR_PAD
 #define TASKBAR_ICON_SIZE DRUNIX_TASKBAR_ICON_SIZE
 #define TASKBAR_ICON_GAP DRUNIX_TASKBAR_ICON_GAP
-
 #define POINTER_W DRUNIX_CURSOR_W
 #define POINTER_H DRUNIX_CURSOR_H
-
 #define EVT_KEY 'K'
 #define EVT_MOUSE 'M'
+#define DESKTOP_CLIENT_WINDOWS 8
+#define DESKTOP_LAUNCHED_PIDS 16
 
-#define APP_WIN_W 320
-#define APP_WIN_H 220
-#define APP_WIN_PAD 10
-#define APP_LINE_H 16
-#define APP_LINE_MAX 36
+typedef struct {
+	int used;
+	uint32_t id;
+	int x;
+	int y;
+	int w;
+	int h;
+	int minimized;
+	int visible;
+	char title[DRWIN_MAX_TITLE];
+	uint32_t *pixels;
+	uint32_t pitch;
+	uint32_t mapped_length;
+} desktop_client_window_t;
 
 static uint32_t *g_fb;
 static uint32_t *g_scene;
@@ -104,27 +87,14 @@ static uint32_t g_fb_bytes;
 static int g_clip_enabled;
 static drunix_rect_t g_clip_rect;
 
-static char g_grid[TERM_ROWS][TERM_COLS];
-static int g_cursor_x;
-static int g_cursor_y;
-static int g_esc_state;
-
-static int g_term_x = TERM_DEFAULT_X;
-static int g_term_y = TERM_DEFAULT_Y;
-static int g_terminal_minimized;
-static int g_terminal_closed;
-static int g_dragging_app;
-static int g_shell_pid = -1;
-static int g_term_helper_pid = -1;
-static int g_ptmx = -1;
-static int g_term_pipe_r = -1;
-
-static int g_app_open[DRUNIX_TASKBAR_APP_HELP + 1];
-static int g_app_minimized[DRUNIX_TASKBAR_APP_HELP + 1];
-static int g_app_x[DRUNIX_TASKBAR_APP_HELP + 1];
-static int g_app_y[DRUNIX_TASKBAR_APP_HELP + 1];
-static int g_app_geometry_ready;
-static int g_focused_app = DRUNIX_TASKBAR_APP_TERMINAL;
+static int g_wm_fd = -1;
+static int g_event_pipe_r = -1;
+static desktop_client_window_t g_client_windows[DESKTOP_CLIENT_WINDOWS];
+static uint32_t g_focused_window;
+static uint32_t g_dragging_window;
+static int g_drag_offset_x;
+static int g_drag_offset_y;
+static int g_launched_pids[DESKTOP_LAUNCHED_PIDS];
 
 static int g_pointer_x;
 static int g_pointer_y;
@@ -184,9 +154,7 @@ fill_rect(uint32_t *target, int x, int y, int w, int h, uint32_t color)
 	if (w <= 0 || h <= 0)
 		return;
 	rect = drunix_rect_make(x, y, w, h);
-	bounds = screen_rect();
-	if (g_clip_enabled)
-		bounds = g_clip_rect;
+	bounds = g_clip_enabled ? g_clip_rect : screen_rect();
 	if (!drunix_rect_clip(rect, bounds, &rect))
 		return;
 
@@ -201,21 +169,20 @@ fill_rect(uint32_t *target, int x, int y, int w, int h, uint32_t color)
 
 static void copy_rect_from_scene(int x, int y, int w, int h)
 {
-	if (!g_scene)
-		return;
-	if (w <= 0 || h <= 0)
+	if (!g_scene || !g_fb || w <= 0 || h <= 0)
 		return;
 	for (int j = 0; j < h; j++) {
 		int yy = y + j;
+
 		if (yy < 0 || yy >= (int)g_info.height)
 			continue;
-		uint32_t *src = g_scene + (uint32_t)yy * g_pitch_pixels;
-		uint32_t *dst = g_fb + (uint32_t)yy * g_pitch_pixels;
 		for (int i = 0; i < w; i++) {
 			int xx = x + i;
+
 			if (xx < 0 || xx >= (int)g_info.width)
 				continue;
-			dst[xx] = src[xx];
+			g_fb[(uint32_t)yy * g_pitch_pixels + (uint32_t)xx] =
+			    g_scene[(uint32_t)yy * g_pitch_pixels + (uint32_t)xx];
 		}
 	}
 }
@@ -251,10 +218,12 @@ draw_glyph(uint32_t *target, int x, int y, char ch, uint32_t fg, uint32_t bg)
 {
 	const uint8_t *gly = desktop_font_glyph((unsigned char)ch);
 
-	for (int row = 0; row < TERM_GLYPH_H; row++) {
+	for (int row = 0; row < 16; row++) {
 		uint8_t bits = gly[row];
-		for (int col = 0; col < TERM_GLYPH_W; col++) {
+
+		for (int col = 0; col < 8; col++) {
 			uint32_t color = (bits & (1u << col)) ? fg : bg;
+
 			put_pixel(target, x + col, y + row, color);
 		}
 	}
@@ -265,12 +234,12 @@ static void draw_text(
 {
 	while (*s) {
 		draw_glyph(target, x, y, *s, fg, bg);
-		x += TERM_GLYPH_W;
+		x += 8;
 		s++;
 	}
 }
 
-static void render_wallpaper_procedural(uint32_t *target)
+static void render_wallpaper(uint32_t *target)
 {
 	uint32_t base = pack_rgb(0x07, 0x1c, 0x3a);
 	uint32_t teal = pack_rgb(0x12, 0x98, 0x96);
@@ -305,199 +274,6 @@ static void render_wallpaper_procedural(uint32_t *target)
 	}
 }
 
-#if DESKTOP_ENABLE_JPEG_WALLPAPER
-static int try_load_wallpaper_jpeg(const char *path, uint32_t *target)
-{
-	int fd;
-	int read_total = 0;
-	int n;
-	int decoded = 0;
-	uint8_t *jpeg_buf = 0;
-	uint32_t jpeg_cap = 16u * 1024u;
-	uint8_t *rgb;
-	int src_w;
-	int src_h;
-	int color;
-
-	fd = sys_open(path);
-	if (fd < 0)
-		return 0;
-	sys_write("desktop: wallpaper open\n");
-
-	jpeg_buf = (uint8_t *)malloc(jpeg_cap);
-	if (!jpeg_buf) {
-		sys_close(fd);
-		return 0;
-	}
-	for (;;) {
-		if ((uint32_t)read_total + 4096u > jpeg_cap) {
-			uint32_t new_cap = jpeg_cap * 2u;
-			uint8_t *grown = (uint8_t *)malloc(new_cap);
-			if (!grown)
-				goto out_free;
-			memcpy(grown, jpeg_buf, (size_t)read_total);
-			free(jpeg_buf);
-			jpeg_buf = grown;
-			jpeg_cap = new_cap;
-		}
-		n = sys_read(fd, (char *)(jpeg_buf + read_total), 4096);
-		if (n <= 0)
-			break;
-		read_total += n;
-	}
-	sys_close(fd);
-	sys_write("desktop: wallpaper read\n");
-	if (read_total < 2)
-		goto out_free;
-
-	njInit();
-	sys_write("desktop: wallpaper decode start\n");
-	if (njDecode(jpeg_buf, read_total) != NJ_OK)
-		goto out_done;
-	sys_write("desktop: wallpaper decode done\n");
-
-	src_w = njGetWidth();
-	src_h = njGetHeight();
-	color = njIsColor();
-	rgb = njGetImage();
-	if (src_w <= 0 || src_h <= 0 || !rgb)
-		goto out_done;
-
-	for (uint32_t y = 0; y < g_info.height; y++) {
-		uint32_t *drow = target + y * g_pitch_pixels;
-
-		for (uint32_t x = 0; x < g_info.width; x++) {
-			drunix_wallpaper_sample_t sample =
-			    drunix_wallpaper_cover_sample((int)x,
-			                                  (int)y,
-			                                  (int)g_info.width,
-			                                  (int)g_info.height,
-			                                  src_w,
-			                                  src_h);
-			const uint8_t *srow =
-			    rgb + (uint32_t)sample.y * (uint32_t)src_w *
-			              (color ? 3u : 1u);
-			uint8_t r;
-			uint8_t g;
-			uint8_t b;
-
-			if (color) {
-				const uint8_t *p = srow + (uint32_t)sample.x * 3u;
-				r = p[0];
-				g = p[1];
-				b = p[2];
-			} else {
-				r = g = b = srow[sample.x];
-			}
-			drow[x] = pack_rgb(r, g, b);
-		}
-	}
-	sys_write("desktop: wallpaper render done\n");
-	decoded = 1;
-
-out_done:
-	njDone();
-out_free:
-	free(jpeg_buf);
-	return decoded;
-}
-#endif
-
-static void render_wallpaper(uint32_t *target)
-{
-#if DESKTOP_ENABLE_JPEG_WALLPAPER
-	if (!try_load_wallpaper_jpeg("/etc/wallpaper.jpg", target))
-		render_wallpaper_procedural(target);
-#else
-	render_wallpaper_procedural(target);
-#endif
-}
-
-static void term_clear(void)
-{
-	for (int r = 0; r < TERM_ROWS; r++)
-		for (int c = 0; c < TERM_COLS; c++)
-			g_grid[r][c] = ' ';
-	g_cursor_x = 0;
-	g_cursor_y = 0;
-}
-
-static void term_scroll(void)
-{
-	for (int r = 0; r < TERM_ROWS - 1; r++)
-		for (int c = 0; c < TERM_COLS; c++)
-			g_grid[r][c] = g_grid[r + 1][c];
-	for (int c = 0; c < TERM_COLS; c++)
-		g_grid[TERM_ROWS - 1][c] = ' ';
-}
-
-static void term_putchar(char ch)
-{
-	if (g_esc_state == 1) {
-		if (ch == '[')
-			g_esc_state = 2;
-		else
-			g_esc_state = 0;
-		return;
-	}
-	if (g_esc_state == 2) {
-		if (ch >= '@' && ch <= '~')
-			g_esc_state = 0;
-		return;
-	}
-
-	if (ch == 0x1b) {
-		g_esc_state = 1;
-		return;
-	}
-	if (ch == '\n') {
-		g_cursor_x = 0;
-		g_cursor_y++;
-	} else if (ch == '\r') {
-		g_cursor_x = 0;
-	} else if (ch == '\b' || ch == 0x7f) {
-		if (g_cursor_x > 0) {
-			g_cursor_x--;
-			g_grid[g_cursor_y][g_cursor_x] = ' ';
-		}
-	} else if (ch == '\t') {
-		int next = (g_cursor_x + 8) & ~7;
-		if (next > TERM_COLS)
-			next = TERM_COLS;
-		while (g_cursor_x < next)
-			g_grid[g_cursor_y][g_cursor_x++] = ' ';
-	} else if ((unsigned char)ch >= 32 && (unsigned char)ch < 127) {
-		if (g_cursor_x >= TERM_COLS) {
-			g_cursor_x = 0;
-			g_cursor_y++;
-		}
-		if (g_cursor_y >= TERM_ROWS) {
-			term_scroll();
-			g_cursor_y = TERM_ROWS - 1;
-		}
-		g_grid[g_cursor_y][g_cursor_x++] = ch;
-	}
-	if (g_cursor_y >= TERM_ROWS) {
-		term_scroll();
-		g_cursor_y = TERM_ROWS - 1;
-	}
-}
-
-static int terminal_window_w(void)
-{
-	return TERM_COLS * TERM_GLYPH_W + 2 * TERM_PAD;
-}
-
-static int terminal_window_h(void)
-{
-	return TERM_ROWS * TERM_GLYPH_H + 2 * TERM_PAD + TITLE_H;
-}
-
-static int terminal_visible(void)
-{
-	return !g_terminal_closed && !g_terminal_minimized;
-}
-
 static void
 draw_title_button(uint32_t *target, int x, int y, uint32_t bg, int close_button)
 {
@@ -525,37 +301,226 @@ draw_title_button(uint32_t *target, int x, int y, uint32_t bg, int close_button)
 	          COLOR_TITLEBAR_BUTTON_FG);
 }
 
-static void
-render_window_frame(uint32_t *target, int app, int x, int y, int w, int h);
-
-static void render_terminal(uint32_t *target)
+static const char *window_title(const desktop_client_window_t *win)
 {
-	int win_w = terminal_window_w();
-	int win_h = terminal_window_h();
+	return win && win->title[0] ? win->title : "App";
+}
 
-	if (!terminal_visible())
+static void render_window_frame(uint32_t *target,
+                                const desktop_client_window_t *win,
+                                int x,
+                                int y,
+                                int w,
+                                int h)
+{
+	int control_y;
+
+	fill_rect(target, x, y, w, TITLE_H, COLOR_TITLEBAR);
+	draw_text(target, x + 8, y + 2, window_title(win), COLOR_TITLEBAR_FG, COLOR_TITLEBAR);
+	control_y = drunix_window_control_y(y, TITLE_H);
+	draw_title_button(target,
+	                  drunix_window_minimize_button_x(x, w),
+	                  control_y,
+	                  COLOR_TITLEBAR_BUTTON,
+	                  0);
+	draw_title_button(target,
+	                  drunix_window_close_button_x(x, w),
+	                  control_y,
+	                  COLOR_TITLEBAR_CLOSE,
+	                  1);
+	fill_rect(target, x, y + TITLE_H, w, h - TITLE_H, COLOR_CLIENT_BG);
+}
+
+static desktop_client_window_t *find_client_window(uint32_t id)
+{
+	for (int i = 0; i < DESKTOP_CLIENT_WINDOWS; i++) {
+		if (g_client_windows[i].used && g_client_windows[i].id == id)
+			return &g_client_windows[i];
+	}
+	return 0;
+}
+
+static desktop_client_window_t *alloc_client_window(uint32_t id)
+{
+	desktop_client_window_t *existing = find_client_window(id);
+
+	if (existing)
+		return existing;
+	for (int i = 0; i < DESKTOP_CLIENT_WINDOWS; i++) {
+		if (!g_client_windows[i].used) {
+			memset(&g_client_windows[i], 0, sizeof(g_client_windows[i]));
+			g_client_windows[i].used = 1;
+			g_client_windows[i].id = id;
+			g_client_windows[i].visible = 1;
+			return &g_client_windows[i];
+		}
+	}
+	return 0;
+}
+
+static unsigned int surface_length(const drwin_surface_info_t *info)
+{
+	if (!info || info->pitch == 0 || info->height == 0)
+		return 0;
+	if (info->pitch > ((unsigned int)-1) / info->height)
+		return 0;
+	return info->pitch * info->height;
+}
+
+static void copy_title(char dst[DRWIN_MAX_TITLE], const char *src)
+{
+	unsigned int i;
+
+	if (!src)
+		src = "";
+	for (i = 0; i + 1u < DRWIN_MAX_TITLE && src[i]; i++)
+		dst[i] = src[i];
+	dst[i] = '\0';
+	while (++i < DRWIN_MAX_TITLE)
+		dst[i] = '\0';
+}
+
+static void free_client_window(desktop_client_window_t *win)
+{
+	if (!win)
+		return;
+	if (win->pixels && win->mapped_length)
+		(void)sys_munmap(win->pixels, win->mapped_length);
+	if (g_focused_window == win->id)
+		g_focused_window = 0;
+	if (g_dragging_window == win->id)
+		g_dragging_window = 0;
+	memset(win, 0, sizeof(*win));
+}
+
+static int map_client_surface(desktop_client_window_t *win,
+                              const drwin_surface_info_t *surface)
+{
+	unsigned int length;
+	void *pixels;
+
+	if (!win || !surface || surface->width == 0 || surface->height == 0 ||
+	    surface->pitch == 0 || surface->bpp != DRWIN_BPP)
+		return -1;
+	length = surface_length(surface);
+	if (length == 0)
+		return -1;
+	if (win->pixels && win->mapped_length == length &&
+	    win->pitch == surface->pitch)
+		return 0;
+	if (win->pixels && win->mapped_length)
+		(void)sys_munmap(win->pixels, win->mapped_length);
+	pixels = mmap(0,
+	              length,
+	              PROT_READ | PROT_WRITE,
+	              MAP_SHARED,
+	              g_wm_fd,
+	              surface->map_offset);
+	if (pixels == MAP_FAILED) {
+		win->pixels = 0;
+		win->mapped_length = 0;
+		return -1;
+	}
+	win->pixels = (uint32_t *)pixels;
+	win->mapped_length = length;
+	win->pitch = surface->pitch;
+	return 0;
+}
+
+static drunix_rect_t client_window_rect(const desktop_client_window_t *win)
+{
+	if (!win || !win->used)
+		return drunix_rect_make(0, 0, 0, 0);
+	return drunix_rect_make(win->x, win->y, win->w, win->h + TITLE_H);
+}
+
+static int client_window_visible(const desktop_client_window_t *win)
+{
+	return win && win->used && win->visible && !win->minimized;
+}
+
+static void render_client_window(uint32_t *target, const desktop_client_window_t *win)
+{
+	if (!client_window_visible(win))
 		return;
 
 	render_window_frame(
-	    target, DRUNIX_TASKBAR_APP_TERMINAL, g_term_x, g_term_y, win_w, win_h);
+	    target, win, win->x, win->y, win->w, win->h + TITLE_H);
+	if (!win->pixels || win->pitch == 0)
+		return;
+	for (int row = 0; row < win->h; row++) {
+		int sy = win->y + TITLE_H + row;
+		uint32_t *src = (uint32_t *)((uint8_t *)win->pixels +
+		                             (uint32_t)row * win->pitch);
 
-	int gx = g_term_x + TERM_PAD;
-	int gy = g_term_y + TITLE_H + TERM_PAD;
-	for (int r = 0; r < TERM_ROWS; r++) {
-		for (int c = 0; c < TERM_COLS; c++) {
-			draw_glyph(target,
-			           gx + c * TERM_GLYPH_W,
-			           gy + r * TERM_GLYPH_H,
-			           g_grid[r][c],
-			           COLOR_TERM_FG,
-			           COLOR_TERM_BG);
-		}
+		for (int col = 0; col < win->w; col++)
+			put_pixel(target, win->x + col, sy, src[col]);
 	}
+}
 
-	int cx = gx + g_cursor_x * TERM_GLYPH_W;
-	int cy = gy + g_cursor_y * TERM_GLYPH_H;
-	fill_rect(
-	    target, cx, cy + TERM_GLYPH_H - 2, TERM_GLYPH_W, 2, COLOR_TERM_FG);
+static void render_windows(uint32_t *target)
+{
+	for (int i = 0; i < DESKTOP_CLIENT_WINDOWS; i++) {
+		if (g_client_windows[i].id != g_focused_window)
+			render_client_window(target, &g_client_windows[i]);
+	}
+	if (g_focused_window) {
+		desktop_client_window_t *focused = find_client_window(g_focused_window);
+
+		render_client_window(target, focused);
+	}
+}
+
+static int title_matches_app(const char *title, int app)
+{
+	if (!title)
+		return 0;
+	if (app == DRUNIX_TASKBAR_APP_TERMINAL)
+		return strcmp(title, "Terminal") == 0;
+	if (app == DRUNIX_TASKBAR_APP_FILES)
+		return strcmp(title, "Files") == 0;
+	if (app == DRUNIX_TASKBAR_APP_PROCESSES)
+		return strcmp(title, "Processes") == 0;
+	if (app == DRUNIX_TASKBAR_APP_HELP || app == DRUNIX_TASKBAR_APP_MENU)
+		return strcmp(title, "Help") == 0;
+	return 0;
+}
+
+static int taskbar_app_active(int app)
+{
+	for (int i = 0; i < DESKTOP_CLIENT_WINDOWS; i++) {
+		desktop_client_window_t *win = &g_client_windows[i];
+
+		if (win->used && title_matches_app(win->title, app))
+			return 1;
+	}
+	return 0;
+}
+
+static desktop_client_window_t *taskbar_window_for_app(int app)
+{
+	desktop_client_window_t *fallback = 0;
+
+	for (int i = 0; i < DESKTOP_CLIENT_WINDOWS; i++) {
+		desktop_client_window_t *win = &g_client_windows[i];
+
+		if (!win->used || !title_matches_app(win->title, app))
+			continue;
+		if (win->id == g_focused_window)
+			return win;
+		if (!fallback)
+			fallback = win;
+	}
+	return fallback;
+}
+
+static int client_window_capacity_available(void)
+{
+	for (int i = 0; i < DESKTOP_CLIENT_WINDOWS; i++) {
+		if (!g_client_windows[i].used)
+			return 1;
+	}
+	return 0;
 }
 
 static void draw_taskbar_icon_terminal(uint32_t *target, int x, int y)
@@ -641,281 +606,15 @@ static void format_clock(char *buf, int bufsz)
 	}
 	int minutes = (int)((ts.tv_sec / 60) % 60);
 	int hours = (int)((ts.tv_sec / 3600) % 24);
+
 	snprintf(buf, (size_t)bufsz, "%02d:%02d", hours, minutes);
-}
-
-static int app_window_x(int app)
-{
-	int x = 96 + (app - DRUNIX_TASKBAR_APP_FILES) * 36;
-	int max_x = (int)g_info.width - APP_WIN_W;
-
-	if (max_x < 0)
-		max_x = 0;
-	if (x > max_x)
-		x = max_x;
-	if (x < 0)
-		x = 0;
-	return x;
-}
-
-static int app_window_y(int app)
-{
-	int y = 92 + (app - DRUNIX_TASKBAR_APP_FILES) * 28;
-	int max_y = (int)g_info.height - TASKBAR_H - APP_WIN_H;
-
-	if (max_y < 0)
-		max_y = 0;
-	if (y > max_y)
-		y = max_y;
-	if (y < 0)
-		y = 0;
-	return y;
-}
-
-static int app_is_managed_window(int app)
-{
-	return app >= DRUNIX_TASKBAR_APP_TERMINAL && app <= DRUNIX_TASKBAR_APP_HELP;
-}
-
-static int app_uses_static_window(int app)
-{
-	return app >= DRUNIX_TASKBAR_APP_FILES && app <= DRUNIX_TASKBAR_APP_HELP;
-}
-
-static void ensure_app_geometry(void)
-{
-	if (g_app_geometry_ready)
-		return;
-	for (int app = DRUNIX_TASKBAR_APP_FILES; app <= DRUNIX_TASKBAR_APP_HELP;
-	     app++) {
-		g_app_x[app] = app_window_x(app);
-		g_app_y[app] = app_window_y(app);
-	}
-	g_app_geometry_ready = 1;
-}
-
-static const char *window_title(int app)
-{
-	if (app == DRUNIX_TASKBAR_APP_TERMINAL)
-		return "Terminal";
-	if (app == DRUNIX_TASKBAR_APP_FILES)
-		return "Files";
-	if (app == DRUNIX_TASKBAR_APP_PROCESSES)
-		return "Processes";
-	if (app == DRUNIX_TASKBAR_APP_HELP)
-		return "Help";
-	return "App";
-}
-
-static void window_rect(int app, int *x, int *y, int *w, int *h)
-{
-	ensure_app_geometry();
-	if (app == DRUNIX_TASKBAR_APP_TERMINAL) {
-		*x = g_term_x;
-		*y = g_term_y;
-		*w = terminal_window_w();
-		*h = terminal_window_h();
-		return;
-	}
-	*x = g_app_x[app];
-	*y = g_app_y[app];
-	*w = APP_WIN_W;
-	*h = APP_WIN_H;
-}
-
-static drunix_rect_t window_dirty_rect(int app)
-{
-	int x;
-	int y;
-	int w;
-	int h;
-
-	window_rect(app, &x, &y, &w, &h);
-	return drunix_rect_make(x, y, w, h);
-}
-
-static int window_visible(int app)
-{
-	if (app == DRUNIX_TASKBAR_APP_TERMINAL)
-		return terminal_visible();
-	if (!app_uses_static_window(app))
-		return 0;
-	return g_app_open[app] && !g_app_minimized[app];
-}
-
-static void set_window_position(int app, int x, int y)
-{
-	if (app == DRUNIX_TASKBAR_APP_TERMINAL) {
-		g_term_x = x;
-		g_term_y = y;
-		return;
-	}
-	if (app_uses_static_window(app)) {
-		ensure_app_geometry();
-		g_app_x[app] = x;
-		g_app_y[app] = y;
-	}
-}
-
-static void clamp_window_position(int app)
-{
-	int x;
-	int y;
-	int w;
-	int h;
-	int max_x;
-	int max_y;
-
-	if (!app_is_managed_window(app))
-		return;
-	window_rect(app, &x, &y, &w, &h);
-	max_x = (int)g_info.width - w;
-	max_y = (int)g_info.height - TASKBAR_H - h;
-	if (max_x < 0)
-		max_x = 0;
-	if (max_y < 0)
-		max_y = 0;
-	if (x < 0)
-		x = 0;
-	if (y < 0)
-		y = 0;
-	if (x > max_x)
-		x = max_x;
-	if (y > max_y)
-		y = max_y;
-	set_window_position(app, x, y);
-}
-
-static void
-render_window_frame(uint32_t *target, int app, int x, int y, int w, int h)
-{
-	int control_y;
-
-	fill_rect(target, x, y, w, TITLE_H, COLOR_TITLEBAR);
-	draw_text(target,
-	          x + 8,
-	          y + 2,
-	          window_title(app),
-	          COLOR_TITLEBAR_FG,
-	          COLOR_TITLEBAR);
-	control_y = drunix_window_control_y(y, TITLE_H);
-	draw_title_button(target,
-	                  drunix_window_minimize_button_x(x, w),
-	                  control_y,
-	                  COLOR_TITLEBAR_BUTTON,
-	                  0);
-	draw_title_button(target,
-	                  drunix_window_close_button_x(x, w),
-	                  control_y,
-	                  COLOR_TITLEBAR_CLOSE,
-	                  1);
-	fill_rect(target, x, y + TITLE_H, w, h - TITLE_H, COLOR_TERM_BG);
-}
-
-static void draw_app_line(uint32_t *target, int x, int y, const char *line)
-{
-	char clipped[APP_LINE_MAX + 1];
-	int i = 0;
-
-	if (!line)
-		line = "";
-	while (line[i] && i < APP_LINE_MAX) {
-		clipped[i] = line[i];
-		i++;
-	}
-	clipped[i] = '\0';
-	draw_text(target, x, y, clipped, COLOR_TERM_FG, COLOR_TERM_BG);
-}
-
-static void draw_dents_lines(
-    uint32_t *target, int x, int y, const char *path, const char *heading)
-{
-	char dents[512];
-	int n = sys_getdents(path, dents, (int)sizeof(dents));
-	int line = 1;
-
-	draw_app_line(target, x, y, heading);
-	if (n < 0) {
-		draw_app_line(target, x, y + APP_LINE_H, "cannot read directory");
-		return;
-	}
-	for (int i = 0; i < n && line < 10;) {
-		const char *entry = dents + i;
-		int len = 0;
-
-		while (i + len < n && entry[len])
-			len++;
-		if (i + len >= n)
-			break;
-		draw_app_line(target, x, y + line * APP_LINE_H, entry);
-		line++;
-		i += len + 1;
-	}
-	if (line == 1)
-		draw_app_line(target, x, y + APP_LINE_H, "(empty)");
-}
-
-static void render_app_content(uint32_t *target, int app, int x, int y)
-{
-	if (app == DRUNIX_TASKBAR_APP_FILES) {
-		draw_dents_lines(target, x, y, "/", "Files: /");
-		return;
-	}
-	if (app == DRUNIX_TASKBAR_APP_PROCESSES) {
-		draw_dents_lines(target, x, y, "/proc", "Processes: /proc");
-		return;
-	}
-	if (app == DRUNIX_TASKBAR_APP_HELP) {
-		draw_app_line(target, x, y, "Drunix Desktop");
-		draw_app_line(target, x, y + APP_LINE_H, "Taskbar opens apps");
-		draw_app_line(target, x, y + APP_LINE_H * 2, "Terminal runs shell");
-		draw_app_line(target, x, y + APP_LINE_H * 3, "Files lists root");
-		draw_app_line(target, x, y + APP_LINE_H * 4, "Processes lists /proc");
-		draw_app_line(target, x, y + APP_LINE_H * 5, "Drag app title bars");
-	}
-}
-
-static void render_app_window(uint32_t *target, int app)
-{
-	int x;
-	int y;
-	int w;
-	int h;
-
-	if (!app_uses_static_window(app))
-		return;
-	if (!window_visible(app))
-		return;
-
-	window_rect(app, &x, &y, &w, &h);
-	render_window_frame(target, app, x, y, w, h);
-	render_app_content(target, app, x + APP_WIN_PAD, y + TITLE_H + APP_WIN_PAD);
-}
-
-static void render_window_by_app(uint32_t *target, int app)
-{
-	if (app == DRUNIX_TASKBAR_APP_TERMINAL) {
-		render_terminal(target);
-		return;
-	}
-	render_app_window(target, app);
-}
-
-static void render_windows(uint32_t *target)
-{
-	for (int app = DRUNIX_TASKBAR_APP_TERMINAL; app <= DRUNIX_TASKBAR_APP_HELP;
-	     app++) {
-		if (app != g_focused_app)
-			render_window_by_app(target, app);
-	}
-	render_window_by_app(target, g_focused_app);
 }
 
 static void render_taskbar(uint32_t *target)
 {
 	int y = (int)g_info.height - TASKBAR_H;
 	int icon_y = taskbar_icon_y();
-	int x = TASKBAR_PAD;
+	int x;
 	char clock[8];
 	int clock_x;
 
@@ -925,36 +624,36 @@ static void render_taskbar(uint32_t *target)
 	fill_rect(target, 0, y, (int)g_info.width, 1, COLOR_TASKBAR_EDGE);
 
 	x = drunix_taskbar_app_x(DRUNIX_TASKBAR_APP_MENU);
-	draw_taskbar_button(target, x, icon_y, 0, draw_taskbar_icon_logo);
-	x = drunix_taskbar_app_x(DRUNIX_TASKBAR_APP_TERMINAL);
 	draw_taskbar_button(
-	    target, x, icon_y, terminal_visible(), draw_taskbar_icon_terminal);
+	    target, x, icon_y, taskbar_app_active(DRUNIX_TASKBAR_APP_MENU), draw_taskbar_icon_logo);
+	x = drunix_taskbar_app_x(DRUNIX_TASKBAR_APP_TERMINAL);
+	draw_taskbar_button(target,
+	                    x,
+	                    icon_y,
+	                    taskbar_app_active(DRUNIX_TASKBAR_APP_TERMINAL),
+	                    draw_taskbar_icon_terminal);
 	x = drunix_taskbar_app_x(DRUNIX_TASKBAR_APP_FILES);
 	draw_taskbar_button(target,
 	                    x,
 	                    icon_y,
-	                    g_app_open[DRUNIX_TASKBAR_APP_FILES] &&
-	                        !g_app_minimized[DRUNIX_TASKBAR_APP_FILES],
+	                    taskbar_app_active(DRUNIX_TASKBAR_APP_FILES),
 	                    draw_taskbar_icon_file);
 	x = drunix_taskbar_app_x(DRUNIX_TASKBAR_APP_PROCESSES);
 	draw_taskbar_button(target,
 	                    x,
 	                    icon_y,
-	                    g_app_open[DRUNIX_TASKBAR_APP_PROCESSES] &&
-	                        !g_app_minimized[DRUNIX_TASKBAR_APP_PROCESSES],
+	                    taskbar_app_active(DRUNIX_TASKBAR_APP_PROCESSES),
 	                    draw_taskbar_icon_gear);
 	x = drunix_taskbar_app_x(DRUNIX_TASKBAR_APP_HELP);
 	draw_taskbar_button(target,
 	                    x,
 	                    icon_y,
-	                    g_app_open[DRUNIX_TASKBAR_APP_HELP] &&
-	                        !g_app_minimized[DRUNIX_TASKBAR_APP_HELP],
+	                    taskbar_app_active(DRUNIX_TASKBAR_APP_HELP),
 	                    draw_taskbar_icon_browser);
 
 	format_clock(clock, (int)sizeof(clock));
-	clock_x = (int)g_info.width - TASKBAR_PAD - 5 * TERM_GLYPH_W;
-	draw_text(
-	    target, clock_x, y + 16, clock, COLOR_TASKBAR_CLOCK, COLOR_TASKBAR);
+	clock_x = (int)g_info.width - TASKBAR_PAD - 5 * 8;
+	draw_text(target, clock_x, y + 16, clock, COLOR_TASKBAR_CLOCK, COLOR_TASKBAR);
 }
 
 static void draw_pointer_sprite(void);
@@ -981,11 +680,10 @@ static int compose_scene_rect(drunix_rect_t rect)
 		return 1;
 	if (!drunix_rect_clip(rect, screen_rect(), &clipped))
 		return 1;
-
 	if (!g_wallpaper)
 		return 0;
-	copy_wallpaper_rect_to_scene(clipped);
 
+	copy_wallpaper_rect_to_scene(clipped);
 	begin_clip(clipped);
 	render_windows(g_scene);
 	render_taskbar(g_scene);
@@ -1031,10 +729,6 @@ static void present_scene(void)
 
 static void draw_pointer_sprite(void)
 {
-	/*
-	 * Pointer overlay is drawn only into the live framebuffer.  The scene
-	 * buffer keeps the desktop/window pixels underneath it.
-	 */
 	for (int j = 0; j < POINTER_H; j++) {
 		for (int i = 0; i < POINTER_W; i++) {
 			int cursor_pixel = drunix_cursor_pixel_at(i, j);
@@ -1064,25 +758,19 @@ static int read_fb_info(void)
 {
 	int fd;
 	int read_total = 0;
-	int n;
 
-	sys_write("desktop: fbinfo open start\n");
 	fd = sys_open("/dev/fb0info");
 	if (fd < 0)
 		return -1;
-	sys_write("desktop: fbinfo open done\n");
 	while (read_total < (int)sizeof(g_info)) {
-		sys_write("desktop: fbinfo read start\n");
-		n = sys_read(
+		int n = sys_read(
 		    fd, (char *)&g_info + read_total, (int)sizeof(g_info) - read_total);
-		sys_write("desktop: fbinfo read done\n");
+
 		if (n <= 0)
 			break;
 		read_total += n;
 	}
-	sys_write("desktop: fbinfo close start\n");
 	sys_close(fd);
-	sys_write("desktop: fbinfo close done\n");
 	if (read_total != (int)sizeof(g_info))
 		return -1;
 	if (g_info.width == 0 || g_info.height == 0 || g_info.pitch == 0 ||
@@ -1090,43 +778,6 @@ static int read_fb_info(void)
 		return -1;
 	g_pitch_pixels = g_info.pitch / 4u;
 	return 0;
-}
-
-static int spawn_shell(int slave_fd, char *const *argv, char *const *envp)
-{
-	int pid = sys_fork();
-
-	if (pid < 0) {
-		sys_write("desktop: fork failed\n");
-		sys_exit(1);
-	}
-	if (pid == 0) {
-		sys_dup2(slave_fd, 0);
-		sys_dup2(slave_fd, 1);
-		sys_dup2(slave_fd, 2);
-		if (slave_fd > 2)
-			sys_close(slave_fd);
-		sys_execve("bin/shell", (char **)argv, (char **)envp);
-		sys_write("desktop: exec failed\n");
-		sys_exit(1);
-	}
-	return pid;
-}
-
-/*
- * Forward declarations for the three event-emitter children.  Each one
- * runs in its own forked process and pumps fixed 4-byte records into
- * the shared event pipe that the parent reads.
- */
-static void emit_event(int pipe_w, char tag, uint8_t a, uint8_t b, uint8_t c)
-{
-	uint8_t rec[4];
-
-	rec[0] = (uint8_t)tag;
-	rec[1] = a;
-	rec[2] = b;
-	rec[3] = c;
-	sys_fwrite(pipe_w, (const char *)rec, (int)sizeof(rec));
 }
 
 static int fd_has_input(int fd)
@@ -1139,41 +790,29 @@ static int fd_has_input(int fd)
 	return sys_poll(&pfd, 1, 0) > 0 && (pfd.revents & SYS_POLLIN);
 }
 
+static void emit_event(int pipe_w, char tag, uint8_t a, uint8_t b, uint8_t c)
+{
+	uint8_t rec[4];
+
+	rec[0] = (uint8_t)tag;
+	rec[1] = a;
+	rec[2] = b;
+	rec[3] = c;
+	sys_fwrite(pipe_w, (const char *)rec, (int)sizeof(rec));
+}
+
 static int read_event_record(int fd, uint8_t rec[4])
 {
 	int got = 0;
 
 	while (got < 4) {
 		int n = sys_read(fd, (char *)(rec + got), 4 - got);
+
 		if (n <= 0)
 			return -1;
 		got += n;
 	}
 	return 0;
-}
-
-static void drain_terminal_bytes(int fd)
-{
-	uint8_t buf[512];
-	int rendered = 0;
-
-	for (;;) {
-		int n = sys_read(fd, (char *)buf, (int)sizeof(buf));
-		if (n <= 0)
-			break;
-		for (int i = 0; i < n; i++)
-			term_putchar((char)buf[i]);
-		rendered = 1;
-		if (!fd_has_input(fd))
-			break;
-	}
-
-	if (rendered && terminal_visible()) {
-		render_terminal(g_scene);
-		copy_rect_from_scene(
-		    g_term_x, g_term_y, terminal_window_w(), terminal_window_h());
-		render_pointer();
-	}
 }
 
 static void run_kbd_helper(int pipe_w)
@@ -1195,17 +834,16 @@ static void run_kbd_helper(int pipe_w)
 	for (;;) {
 		int n = sys_read(kbd, (char *)batch, (int)sizeof(batch));
 		int records;
-		int i;
 
 		if (n <= 0)
 			continue;
 		records = n / (int)sizeof(struct evt);
-		for (i = 0; i < records; i++) {
+		for (int i = 0; i < records; i++) {
 			struct evt *e = &batch[i];
 			char cooked[KBDMAP_OUT_MIN];
 			int produced;
 
-			if (e->type != 0x01 /* EV_KEY */)
+			if (e->type != 0x01)
 				continue;
 			produced = kbdmap_translate(
 			    &kstate, e->code, e->value, cooked, (int)sizeof(cooked));
@@ -1215,30 +853,9 @@ static void run_kbd_helper(int pipe_w)
 	}
 }
 
-static void run_term_helper(int pipe_w, int master_fd)
-{
-	uint8_t buf[256];
-
-	for (;;) {
-		int n = sys_read(master_fd, (char *)buf, (int)sizeof(buf));
-		if (n <= 0)
-			continue;
-		sys_fwrite(pipe_w, (const char *)buf, n);
-	}
-}
-
 static void run_mouse_helper(int pipe_w)
 {
 	int mfd = sys_open("/dev/mouse");
-	/*
-	 * Linux input_event ABI on i386: { sec, usec, type, code, value }
-	 * — 16 bytes total.  /dev/mouse rejects reads smaller than one
-	 * record, so we always pull a multiple of sizeof(rec) and never
-	 * desync from report boundaries.  Each report ends in
-	 * EV_SYN/SYN_REPORT.  We accumulate REL_X / REL_Y / button
-	 * changes, clamp the deltas into signed bytes for the parent's
-	 * fixed 4-byte event format, and flush on SYN_REPORT.
-	 */
 	struct evt {
 		uint32_t sec;
 		uint32_t usec;
@@ -1247,44 +864,42 @@ static void run_mouse_helper(int pipe_w)
 		int32_t value;
 	};
 	struct evt batch[16];
-
-	if (mfd < 0)
-		sys_exit(1);
-
 	int32_t pending_dx = 0;
 	int32_t pending_dy = 0;
 	uint8_t pending_buttons = 0;
 
+	if (mfd < 0)
+		sys_exit(1);
+
 	for (;;) {
 		int n = sys_read(mfd, (char *)batch, (int)sizeof(batch));
 		int records;
-		int i;
 
 		if (n <= 0)
 			continue;
 		records = n / (int)sizeof(struct evt);
-		for (i = 0; i < records; i++) {
+		for (int i = 0; i < records; i++) {
 			struct evt *e = &batch[i];
 
-			if (e->type == 0x02 /* EV_REL */) {
-				if (e->code == 0x00 /* REL_X */)
+			if (e->type == 0x02) {
+				if (e->code == 0x00)
 					pending_dx += e->value;
-				else if (e->code == 0x01 /* REL_Y */)
+				else if (e->code == 0x01)
 					pending_dy += e->value;
-			} else if (e->type == 0x01 /* EV_KEY */) {
+			} else if (e->type == 0x01) {
 				uint8_t mask = 0;
 
-				if (e->code == 0x110 /* BTN_LEFT */)
+				if (e->code == 0x110)
 					mask = 0x01u;
-				else if (e->code == 0x111 /* BTN_RIGHT */)
+				else if (e->code == 0x111)
 					mask = 0x02u;
-				else if (e->code == 0x112 /* BTN_MIDDLE */)
+				else if (e->code == 0x112)
 					mask = 0x04u;
 				if (e->value)
 					pending_buttons |= mask;
 				else
 					pending_buttons &= (uint8_t)~mask;
-			} else if (e->type == 0x00 /* EV_SYN */) {
+			} else if (e->type == 0x00) {
 				int8_t cdx;
 				int8_t cdy;
 
@@ -1317,24 +932,21 @@ static int spawn_helper_child(void (*fn)(int, int), int arg0, int arg1)
 	if (pid < 0)
 		return -1;
 	if (pid == 0) {
+		if (g_wm_fd > 2)
+			sys_close(g_wm_fd);
+		if (g_event_pipe_r > 2 && g_event_pipe_r != arg0 &&
+		    g_event_pipe_r != arg1)
+			sys_close(g_event_pipe_r);
 		fn(arg0, arg1);
 		sys_exit(0);
 	}
 	return pid;
 }
 
-/*
- * Wrappers so spawn_helper_child can take a single uniform signature.
- */
 static void wrap_kbd(int pipe_w, int unused)
 {
 	(void)unused;
 	run_kbd_helper(pipe_w);
-}
-
-static void wrap_term(int pipe_w, int master_fd)
-{
-	run_term_helper(pipe_w, master_fd);
 }
 
 static void wrap_mouse(int pipe_w, int unused)
@@ -1343,169 +955,321 @@ static void wrap_mouse(int pipe_w, int unused)
 	run_mouse_helper(pipe_w);
 }
 
-static int start_terminal_session(void)
+static int wm_server_connect(void)
 {
-	int slave;
-	int term_fds[2];
-	char *shell_argv[] = {"shell", 0};
-	char *shell_envp[] = {"PATH=/usr/bin:/bin", 0};
+	drwin_register_server_request_t req;
 
-	if (g_ptmx >= 0 && g_term_pipe_r >= 0 && g_shell_pid > 0)
-		return 0;
-
-	g_ptmx = sys_open_flags("/dev/ptmx", SYS_O_RDWR, 0);
-	if (g_ptmx < 0) {
-		sys_write("desktop: cannot open /dev/ptmx\n");
+	g_wm_fd = sys_open_flags("/dev/wm", SYS_O_RDWR, 0);
+	if (g_wm_fd < 0)
 		return -1;
-	}
-	slave = sys_open_flags("/dev/pts0", SYS_O_RDWR, 0);
-	if (slave < 0) {
-		sys_write("desktop: cannot open /dev/pts0\n");
-		sys_close(g_ptmx);
-		g_ptmx = -1;
-		return -1;
-	}
-	g_shell_pid = spawn_shell(slave, shell_argv, shell_envp);
-	sys_close(slave);
+	memset(&req, 0, sizeof(req));
+	req.size = sizeof(req);
+	req.type = DRWIN_REQ_REGISTER_SERVER;
+	req.magic = DRWIN_SERVER_MAGIC;
+	return sys_fwrite(g_wm_fd, (const char *)&req, sizeof(req)) ==
+	               (int)sizeof(req)
+	           ? 0
+	           : -1;
+}
 
-	if (sys_pipe(term_fds) != 0) {
-		sys_write("desktop: pipe failed\n");
-		if (g_shell_pid > 0)
-			sys_kill(g_shell_pid, SIGTERM);
-		if (g_ptmx >= 0) {
-			sys_close(g_ptmx);
-			g_ptmx = -1;
+static void send_client_window_event(uint32_t window,
+                                     uint32_t type,
+                                     int x,
+                                     int y,
+                                     int code,
+                                     int value)
+{
+	drwin_send_event_request_t req;
+
+	if (g_wm_fd < 0 || window == 0)
+		return;
+	memset(&req, 0, sizeof(req));
+	req.size = sizeof(req);
+	req.type = DRWIN_REQ_SEND_EVENT;
+	req.event.type = type;
+	req.event.window = (int32_t)window;
+	req.event.x = x;
+	req.event.y = y;
+	req.event.code = code;
+	req.event.value = value;
+	(void)sys_fwrite(g_wm_fd, (const char *)&req, sizeof(req));
+}
+
+static void focus_client_window(uint32_t window)
+{
+	if (window == g_focused_window)
+		return;
+	if (g_focused_window)
+		send_client_window_event(g_focused_window,
+		                         DRWIN_EVENT_FOCUS,
+		                         0,
+		                         0,
+		                         0,
+		                         0);
+	g_focused_window = window;
+	if (g_focused_window)
+		send_client_window_event(g_focused_window,
+		                         DRWIN_EVENT_FOCUS,
+		                         0,
+		                         0,
+		                         0,
+		                         1);
+}
+
+static desktop_client_window_t *focused_client_window(void)
+{
+	desktop_client_window_t *win = find_client_window(g_focused_window);
+
+	return client_window_visible(win) ? win : 0;
+}
+
+static void clear_focus_if_hidden(const desktop_client_window_t *win)
+{
+	if (win && win->id == g_focused_window && !client_window_visible(win))
+		focus_client_window(0);
+}
+
+static drunix_rect_t client_dirty_rect(const desktop_client_window_t *win,
+                                       drwin_rect_t dirty)
+{
+	if (!win || dirty.w <= 0 || dirty.h <= 0)
+		return client_window_rect(win);
+	return drunix_rect_make(win->x + dirty.x,
+	                        win->y + TITLE_H + dirty.y,
+	                        dirty.w,
+	                        dirty.h);
+}
+
+static void handle_wm_create(const drwin_server_msg_t *msg)
+{
+	desktop_client_window_t *win = alloc_client_window(msg->window);
+
+	if (!win) {
+		send_client_window_event(msg->window,
+		                         DRWIN_EVENT_CLOSE,
+		                         0,
+		                         0,
+		                         0,
+		                         0);
+		return;
+	}
+	win->x = msg->rect.x;
+	win->y = msg->rect.y;
+	win->w = msg->rect.w;
+	win->h = msg->rect.h;
+	win->minimized = 0;
+	win->visible = 1;
+	copy_title(win->title, msg->title);
+	if (map_client_surface(win, &msg->surface) != 0) {
+		send_client_window_event(msg->window,
+		                         DRWIN_EVENT_CLOSE,
+		                         0,
+		                         0,
+		                         0,
+		                         0);
+		free_client_window(win);
+		return;
+	}
+	focus_client_window(win->id);
+	present_scene();
+}
+
+static void handle_wm_destroy(const drwin_server_msg_t *msg)
+{
+	desktop_client_window_t *win = find_client_window(msg->window);
+	drunix_rect_t dirty;
+
+	if (!win)
+		return;
+	dirty = client_window_rect(win);
+	free_client_window(win);
+	present_dirty_rect(dirty);
+}
+
+static void drain_wm_server_messages(void)
+{
+	for (;;) {
+		drwin_server_msg_t msg;
+		int n;
+		desktop_client_window_t *win;
+
+		n = sys_read(g_wm_fd, (char *)&msg, (int)sizeof(msg));
+		if (n != (int)sizeof(msg))
+			break;
+		if (msg.size != sizeof(msg))
+			continue;
+
+		if (msg.type == DRWIN_MSG_CREATE_WINDOW) {
+			handle_wm_create(&msg);
+		} else if (msg.type == DRWIN_MSG_DESTROY_WINDOW) {
+			handle_wm_destroy(&msg);
+		} else if (msg.type == DRWIN_MSG_PRESENT_WINDOW) {
+			win = find_client_window(msg.window);
+			if (win)
+				present_dirty_rect(client_dirty_rect(win, msg.rect));
+		} else if (msg.type == DRWIN_MSG_SET_TITLE) {
+			win = find_client_window(msg.window);
+			if (win) {
+				copy_title(win->title, msg.title);
+				present_dirty_rect(client_window_rect(win));
+			}
+		} else if (msg.type == DRWIN_MSG_SHOW_WINDOW) {
+			win = find_client_window(msg.window);
+			if (win) {
+				win->visible = msg.visible ? 1 : 0;
+				clear_focus_if_hidden(win);
+				present_dirty_rect(client_window_rect(win));
+			}
+		} else if (msg.type == DRWIN_MSG_SERVER_DISCONNECT) {
+			break;
 		}
-		g_shell_pid = -1;
-		return -1;
+
+		if (!fd_has_input(g_wm_fd))
+			break;
 	}
-	g_term_pipe_r = term_fds[0];
-	g_term_helper_pid = spawn_helper_child(wrap_term, term_fds[1], g_ptmx);
-	sys_close(term_fds[1]);
-	term_clear();
-	g_terminal_closed = 0;
-	g_terminal_minimized = 0;
-	g_focused_app = DRUNIX_TASKBAR_APP_TERMINAL;
+}
+
+static void reap_launched_apps(void);
+
+static int launch_taskbar_app(int app)
+{
+	const char *path = 0;
+	char *argv[2];
+	int pid;
+	int pid_slot = -1;
+
+	if (!client_window_capacity_available())
+		return -1;
+	reap_launched_apps();
+	for (int i = 0; i < DESKTOP_LAUNCHED_PIDS; i++) {
+		if (g_launched_pids[i] <= 0) {
+			pid_slot = i;
+			break;
+		}
+	}
+	if (pid_slot < 0)
+		return -1;
+
+	if (app == DRUNIX_TASKBAR_APP_TERMINAL)
+		path = "/bin/terminal";
+	else if (app == DRUNIX_TASKBAR_APP_FILES)
+		path = "/bin/files";
+	else if (app == DRUNIX_TASKBAR_APP_PROCESSES)
+		path = "/bin/processes";
+	else if (app == DRUNIX_TASKBAR_APP_HELP || app == DRUNIX_TASKBAR_APP_MENU)
+		path = "/bin/help";
+	if (!path)
+		return -1;
+
+	pid = sys_fork();
+	if (pid < 0)
+		return -1;
+	if (pid == 0) {
+		if (g_wm_fd > 2)
+			sys_close(g_wm_fd);
+		if (g_event_pipe_r > 2)
+			sys_close(g_event_pipe_r);
+		argv[0] = (char *)path;
+		argv[1] = 0;
+		sys_exec(path, argv, 1);
+		sys_exit(127);
+	}
+	g_launched_pids[pid_slot] = pid;
 	return 0;
 }
 
-static void close_terminal_window(void)
+static void reap_launched_apps(void)
 {
-	if (g_terminal_closed)
-		return;
-	g_terminal_closed = 1;
-	g_terminal_minimized = 0;
-	if (g_dragging_app == DRUNIX_TASKBAR_APP_TERMINAL)
-		g_dragging_app = DRUNIX_TASKBAR_APP_NONE;
-	if (g_shell_pid > 0)
-		sys_kill(g_shell_pid, SIGTERM);
-	if (g_term_helper_pid > 0)
-		sys_kill(g_term_helper_pid, SIGTERM);
-	if (g_ptmx >= 0) {
-		sys_close(g_ptmx);
-		g_ptmx = -1;
+	for (int i = 0; i < DESKTOP_LAUNCHED_PIDS; i++) {
+		int pid = g_launched_pids[i];
+
+		if (pid <= 0)
+			continue;
+		int status = 0;
+		int waited = sys_waitpid_status(pid, &status, WNOHANG);
+
+		if (waited == pid || waited < 0)
+			g_launched_pids[i] = 0;
 	}
-	if (g_term_pipe_r >= 0) {
-		sys_close(g_term_pipe_r);
-		g_term_pipe_r = -1;
-	}
-	g_shell_pid = -1;
-	g_term_helper_pid = -1;
 }
 
-static void open_or_toggle_terminal(void)
+static int window_hit_test_client(const desktop_client_window_t *win, int px, int py)
 {
-	if (g_terminal_closed) {
-		if (start_terminal_session() == 0)
-			g_focused_app = DRUNIX_TASKBAR_APP_TERMINAL;
-		return;
-	}
-	g_terminal_minimized = terminal_visible();
-	g_focused_app = DRUNIX_TASKBAR_APP_TERMINAL;
+	if (!client_window_visible(win))
+		return DRUNIX_WINDOW_HIT_NONE;
+	return drunix_window_hit_test(
+	    win->x, win->y, win->w, win->h + TITLE_H, TITLE_H, px, py);
 }
 
-static void open_or_toggle_app(int app)
+static desktop_client_window_t *window_at_pointer(int px, int py)
 {
-	if (app < DRUNIX_TASKBAR_APP_FILES || app > DRUNIX_TASKBAR_APP_HELP)
-		return;
-	if (g_app_open[app] && !g_app_minimized[app] && g_focused_app == app) {
-		g_app_minimized[app] = 1;
-		return;
+	desktop_client_window_t *focused = find_client_window(g_focused_window);
+
+	if (window_hit_test_client(focused, px, py) != DRUNIX_WINDOW_HIT_NONE)
+		return focused;
+	for (int i = DESKTOP_CLIENT_WINDOWS - 1; i >= 0; i--) {
+		desktop_client_window_t *win = &g_client_windows[i];
+
+		if (win->id == g_focused_window)
+			continue;
+		if (window_hit_test_client(win, px, py) != DRUNIX_WINDOW_HIT_NONE)
+			return win;
 	}
-	g_app_open[app] = 1;
-	g_app_minimized[app] = 0;
-	g_focused_app = app;
+	return 0;
+}
+
+static void clamp_client_window(desktop_client_window_t *win)
+{
+	int max_x;
+	int max_y;
+
+	if (!win)
+		return;
+	max_x = (int)g_info.width - win->w;
+	max_y = (int)g_info.height - TASKBAR_H - (win->h + TITLE_H);
+	if (max_x < 0)
+		max_x = 0;
+	if (max_y < 0)
+		max_y = 0;
+	if (win->x < 0)
+		win->x = 0;
+	if (win->y < 0)
+		win->y = 0;
+	if (win->x > max_x)
+		win->x = max_x;
+	if (win->y > max_y)
+		win->y = max_y;
+}
+
+static void send_pointer_event_to_client(const desktop_client_window_t *win,
+                                         uint8_t buttons)
+{
+	if (!win)
+		return;
+	send_client_window_event(win->id,
+	                         DRWIN_EVENT_MOUSE,
+	                         g_pointer_x - win->x,
+	                         g_pointer_y - win->y - TITLE_H,
+	                         0,
+	                         buttons);
 }
 
 static int handle_taskbar_app_click(int app)
 {
+	desktop_client_window_t *win;
+
 	if (app == DRUNIX_TASKBAR_APP_NONE)
 		return 0;
-	if (app == DRUNIX_TASKBAR_APP_MENU) {
-		open_or_toggle_app(DRUNIX_TASKBAR_APP_HELP);
+	win = taskbar_window_for_app(app);
+	if (win) {
+		win->minimized = 0;
+		win->visible = 1;
+		focus_client_window(win->id);
 		return 1;
 	}
-	if (app == DRUNIX_TASKBAR_APP_TERMINAL) {
-		open_or_toggle_terminal();
-		return 1;
-	}
-	open_or_toggle_app(app);
+	if (launch_taskbar_app(app) != 0)
+		return 0;
 	return 1;
-}
-
-static int window_hit_test_app(int app, int px, int py)
-{
-	int x;
-	int y;
-	int w;
-	int h;
-
-	if (!window_visible(app))
-		return DRUNIX_WINDOW_HIT_NONE;
-	window_rect(app, &x, &y, &w, &h);
-	return drunix_window_hit_test(x, y, w, h, TITLE_H, px, py);
-}
-
-static int window_at_pointer(int px, int py)
-{
-	if (window_hit_test_app(g_focused_app, px, py) != DRUNIX_WINDOW_HIT_NONE)
-		return g_focused_app;
-	for (int app = DRUNIX_TASKBAR_APP_HELP; app >= DRUNIX_TASKBAR_APP_TERMINAL;
-	     app--) {
-		if (app == g_focused_app)
-			continue;
-		if (window_hit_test_app(app, px, py) != DRUNIX_WINDOW_HIT_NONE)
-			return app;
-	}
-	return DRUNIX_TASKBAR_APP_NONE;
-}
-
-static void focus_window_app(int app)
-{
-	if (app_is_managed_window(app))
-		g_focused_app = app;
-}
-
-static void minimize_window_app(int app)
-{
-	if (app == DRUNIX_TASKBAR_APP_TERMINAL)
-		g_terminal_minimized = 1;
-	else if (app_uses_static_window(app))
-		g_app_minimized[app] = 1;
-	if (g_dragging_app == app)
-		g_dragging_app = DRUNIX_TASKBAR_APP_NONE;
-}
-
-static void close_window_app(int app)
-{
-	if (app == DRUNIX_TASKBAR_APP_TERMINAL)
-		close_terminal_window();
-	else if (app_uses_static_window(app)) {
-		g_app_open[app] = 0;
-		g_app_minimized[app] = 0;
-	}
-	if (g_dragging_app == app)
-		g_dragging_app = DRUNIX_TASKBAR_APP_NONE;
 }
 
 static void handle_mouse_event(uint8_t buttons, int sdx, int sdy)
@@ -1516,6 +1280,7 @@ static void handle_mouse_event(uint8_t buttons, int sdx, int sdy)
 	int full_repaint = 0;
 	int dirty_repaint = 0;
 	drunix_rect_t dirty_rect = drunix_rect_make(0, 0, 0, 0);
+	desktop_client_window_t *dragging;
 
 	g_pointer_x += sdx;
 	g_pointer_y += sdy;
@@ -1528,27 +1293,18 @@ static void handle_mouse_event(uint8_t buttons, int sdx, int sdy)
 	if (g_pointer_y > (int)g_info.height - POINTER_H)
 		g_pointer_y = (int)g_info.height - POINTER_H;
 
-	if (g_dragging_app != DRUNIX_TASKBAR_APP_NONE && (old_buttons & 0x01u)) {
-		int dx = g_pointer_x - old_x;
-		int dy = g_pointer_y - old_y;
+	dragging = find_client_window(g_dragging_window);
+	if (dragging && (old_buttons & 0x01u)) {
+		drunix_rect_t old_rect = client_window_rect(dragging);
 
-		if (dx != 0 || dy != 0) {
-			int x;
-			int y;
-			int w;
-			int h;
-			drunix_rect_t old_rect = window_dirty_rect(g_dragging_app);
-
-			window_rect(g_dragging_app, &x, &y, &w, &h);
-			set_window_position(g_dragging_app, x + dx, y + dy);
-			clamp_window_position(g_dragging_app);
-			dirty_rect =
-			    drunix_rect_union(old_rect, window_dirty_rect(g_dragging_app));
-			dirty_repaint = 1;
-		}
+		dragging->x = g_pointer_x - g_drag_offset_x;
+		dragging->y = g_pointer_y - g_drag_offset_y;
+		clamp_client_window(dragging);
+		dirty_rect = drunix_rect_union(old_rect, client_window_rect(dragging));
+		dirty_repaint = 1;
 	}
-	if (g_dragging_app != DRUNIX_TASKBAR_APP_NONE && !(buttons & 0x01u))
-		g_dragging_app = DRUNIX_TASKBAR_APP_NONE;
+	if (g_dragging_window && !(buttons & 0x01u))
+		g_dragging_window = 0;
 
 	if ((buttons & 0x01u) && !(old_buttons & 0x01u)) {
 		int taskbar_app = drunix_taskbar_app_at(
@@ -1557,26 +1313,40 @@ static void handle_mouse_event(uint8_t buttons, int sdx, int sdy)
 		if (handle_taskbar_app_click(taskbar_app)) {
 			full_repaint = 1;
 		} else {
-			int app = window_at_pointer(g_pointer_x, g_pointer_y);
+			desktop_client_window_t *win =
+			    window_at_pointer(g_pointer_x, g_pointer_y);
 
-			if (app != DRUNIX_TASKBAR_APP_NONE) {
-				int hit = window_hit_test_app(app, g_pointer_x, g_pointer_y);
+			if (win) {
+				int hit = window_hit_test_client(win, g_pointer_x, g_pointer_y);
 
-				focus_window_app(app);
+				focus_client_window(win->id);
 				if (hit == DRUNIX_WINDOW_HIT_CLOSE) {
-					close_window_app(app);
+					send_client_window_event(
+					    win->id, DRWIN_EVENT_CLOSE, 0, 0, 0, 0);
 					full_repaint = 1;
 				} else if (hit == DRUNIX_WINDOW_HIT_MINIMIZE) {
-					minimize_window_app(app);
+					win->minimized = 1;
+					clear_focus_if_hidden(win);
 					full_repaint = 1;
 				} else if (hit == DRUNIX_WINDOW_HIT_TITLE) {
-					g_dragging_app = app;
+					g_dragging_window = win->id;
+					g_drag_offset_x = g_pointer_x - win->x;
+					g_drag_offset_y = g_pointer_y - win->y;
 					full_repaint = 1;
 				} else if (hit == DRUNIX_WINDOW_HIT_BODY) {
+					send_pointer_event_to_client(win, buttons);
 					full_repaint = 1;
 				}
 			}
 		}
+	} else if (buttons != old_buttons || sdx != 0 || sdy != 0) {
+		desktop_client_window_t *target =
+		    window_at_pointer(g_pointer_x, g_pointer_y);
+
+		if (target &&
+		    window_hit_test_client(target, g_pointer_x, g_pointer_y) ==
+		        DRUNIX_WINDOW_HIT_BODY)
+			send_pointer_event_to_client(target, buttons);
 	}
 
 	g_mouse_buttons = buttons;
@@ -1584,7 +1354,7 @@ static void handle_mouse_event(uint8_t buttons, int sdx, int sdy)
 		present_scene();
 	else if (dirty_repaint)
 		present_dirty_rect(dirty_rect);
-	else
+	else if (old_x != g_pointer_x || old_y != g_pointer_y)
 		render_pointer();
 }
 
@@ -1598,62 +1368,58 @@ static void flush_pending_mouse(drunix_mouse_coalesce_t *pending)
 
 int main(int argc, char **argv)
 {
+	int fbfd;
+	int evt_fds[2];
+	int evt_r;
+	int evt_w;
+
 	(void)argc;
 	(void)argv;
 
-	sys_write("desktop: main start\n");
 	if (read_fb_info() != 0) {
 		sys_write("desktop: cannot read /dev/fb0info\n");
 		return 1;
 	}
-	sys_write("desktop: fbinfo ok\n");
 
-	sys_write("desktop: fb open start\n");
-	int fbfd = sys_open_flags("/dev/fb0", SYS_O_RDWR, 0);
+	fbfd = sys_open_flags("/dev/fb0", SYS_O_RDWR, 0);
 	if (fbfd < 0) {
 		sys_write("desktop: cannot open /dev/fb0\n");
 		return 1;
 	}
-	sys_write("desktop: fb open done\n");
 	g_fb_bytes = g_info.pitch * g_info.height;
-	sys_write("desktop: mmap start\n");
 	g_fb = (uint32_t *)mmap(
 	    0, g_fb_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
 	if (g_fb == MAP_FAILED) {
 		sys_write("desktop: framebuffer mmap failed\n");
 		return 1;
 	}
-	sys_write("desktop: mmap done\n");
-	sys_write("desktop: scene alloc start\n");
+	sys_close(fbfd);
+
 	g_scene = (uint32_t *)malloc(g_fb_bytes);
 	if (!g_scene) {
 		sys_write("desktop: scene allocation failed\n");
 		return 1;
 	}
-	sys_write("desktop: scene alloc done\n");
-
-	sys_write("desktop: wallpaper alloc start\n");
 	g_wallpaper = (uint32_t *)malloc(g_fb_bytes);
-	sys_write("desktop: wallpaper alloc done\n");
 	if (g_wallpaper)
 		render_wallpaper(g_wallpaper);
 
-	sys_write("desktop: display claim start\n");
 	if (sys_display_claim() != 0) {
 		sys_write("desktop: cannot claim display\n");
 		return 1;
 	}
-	sys_write("desktop: display claim done\n");
+	if (wm_server_connect() != 0) {
+		sys_write("desktop: wm server unavailable\n");
+		return 1;
+	}
 
-	int evt_fds[2];
 	if (sys_pipe(evt_fds) != 0) {
 		sys_write("desktop: pipe failed\n");
 		return 1;
 	}
-
-	int evt_r = evt_fds[0];
-	int evt_w = evt_fds[1];
-
+	evt_r = evt_fds[0];
+	evt_w = evt_fds[1];
+	g_event_pipe_r = evt_r;
 	(void)spawn_helper_child(wrap_kbd, evt_w, 0);
 	(void)spawn_helper_child(wrap_mouse, evt_w, 0);
 	sys_close(evt_w);
@@ -1663,81 +1429,67 @@ int main(int argc, char **argv)
 	g_pointer_old_x = g_pointer_x;
 	g_pointer_old_y = g_pointer_y;
 
-	if (start_terminal_session() != 0)
-		return 1;
 	present_scene();
+	(void)launch_taskbar_app(DRUNIX_TASKBAR_APP_TERMINAL);
 
 	for (;;) {
 		sys_pollfd_t pfds[2];
-		int nfds = 0;
-		int term_poll_idx = -1;
-		int evt_poll_idx;
+		int wm_poll_idx = 0;
+		int evt_poll_idx = 1;
 
-		if (g_term_pipe_r >= 0) {
-			term_poll_idx = nfds;
-			pfds[nfds].fd = g_term_pipe_r;
-			pfds[nfds].events = SYS_POLLIN;
-			pfds[nfds].revents = 0;
-			nfds++;
-		}
-		evt_poll_idx = nfds;
-		pfds[nfds].fd = evt_r;
-		pfds[nfds].events = SYS_POLLIN;
-		pfds[nfds].revents = 0;
-		nfds++;
+		pfds[wm_poll_idx].fd = g_wm_fd;
+		pfds[wm_poll_idx].events = SYS_POLLIN;
+		pfds[wm_poll_idx].revents = 0;
+		pfds[evt_poll_idx].fd = evt_r;
+		pfds[evt_poll_idx].events = SYS_POLLIN;
+		pfds[evt_poll_idx].revents = 0;
 
-		if (sys_poll(pfds, (unsigned int)nfds, -1) <= 0) {
+		if (sys_poll(pfds, 2, -1) <= 0) {
 			sys_yield();
 			continue;
 		}
 
-		if (term_poll_idx >= 0 && (pfds[term_poll_idx].revents & SYS_POLLIN))
-			drain_terminal_bytes(g_term_pipe_r);
+		if (pfds[wm_poll_idx].revents & SYS_POLLIN)
+			drain_wm_server_messages();
 
-		drunix_mouse_coalesce_t pending_mouse;
+		if (pfds[evt_poll_idx].revents & SYS_POLLIN) {
+			drunix_mouse_coalesce_t pending_mouse;
 
-		drunix_mouse_coalesce_init(&pending_mouse);
-		while ((pfds[evt_poll_idx].revents & SYS_POLLIN) ||
-		       fd_has_input(evt_r)) {
-			uint8_t rec[4];
+			drunix_mouse_coalesce_init(&pending_mouse);
+			while ((pfds[evt_poll_idx].revents & SYS_POLLIN) ||
+			       fd_has_input(evt_r)) {
+				uint8_t rec[4];
 
-			pfds[evt_poll_idx].revents = 0;
-			if (read_event_record(evt_r, rec) != 0)
-				break;
+				pfds[evt_poll_idx].revents = 0;
+				if (read_event_record(evt_r, rec) != 0)
+					break;
+				if (rec[0] == EVT_KEY) {
+					desktop_client_window_t *focused =
+					    focused_client_window();
 
-			switch (rec[0]) {
-			case EVT_KEY:
-				if (terminal_visible() && g_ptmx >= 0)
-					sys_fwrite(g_ptmx, (const char *)&rec[1], 1);
-				break;
-			case EVT_MOUSE: {
-				/*
-				 * Coalesced report from the mouse helper:
-				 *   rec[1] = current button mask (low 3 bits),
-				 *   rec[2] = signed dx (REL_X, positive = right),
-				 *   rec[3] = signed dy (REL_Y, positive = down).
-				 *
-				 * REL_Y is already in screen orientation (the kernel
-				 * driver flips the PS/2 wire convention before
-				 * publishing), so we just add it directly.
-				 */
-				int8_t sdx = (int8_t)rec[2];
-				int8_t sdy = (int8_t)rec[3];
+					if (focused)
+						send_client_window_event(focused->id,
+						                         DRWIN_EVENT_KEY,
+						                         0,
+						                         0,
+						                         rec[1],
+						                         rec[1]);
+				} else if (rec[0] == EVT_MOUSE) {
+					int8_t sdx = (int8_t)rec[2];
+					int8_t sdy = (int8_t)rec[3];
 
-				if (rec[1] != g_mouse_buttons) {
-					flush_pending_mouse(&pending_mouse);
-					handle_mouse_event(rec[1], (int)sdx, (int)sdy);
-				} else {
-					drunix_mouse_coalesce_add(
-					    &pending_mouse, rec[1], (int)sdx, (int)sdy);
+					if (rec[1] != g_mouse_buttons) {
+						flush_pending_mouse(&pending_mouse);
+						handle_mouse_event(rec[1], (int)sdx, (int)sdy);
+					} else {
+						drunix_mouse_coalesce_add(
+						    &pending_mouse, rec[1], (int)sdx, (int)sdy);
+					}
 				}
-				break;
 			}
-			default:
-				break;
-			}
+			flush_pending_mouse(&pending_mouse);
 		}
-		flush_pending_mouse(&pending_mouse);
+		reap_launched_apps();
 	}
 
 	return 0;

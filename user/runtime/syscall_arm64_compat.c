@@ -364,6 +364,15 @@ int sys_waitpid(int pid, int options)
 	return r < 0 ? r : status;
 }
 
+int sys_waitpid_status(int pid, int *status, int options)
+{
+	int local_status = 0;
+
+	if (!status)
+		status = &local_status;
+	return (int)syscall4(ARM64_SYS_WAIT4, pid, (long)status, options, 0);
+}
+
 int sys_tcsetpgrp(int fd, int pgid)
 {
 	return (int)syscall2(SYS_DRUNIX_TCSETPGRP, fd, pgid);
