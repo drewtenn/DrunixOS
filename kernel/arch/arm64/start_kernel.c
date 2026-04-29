@@ -257,15 +257,22 @@ void arm64_start_kernel(void)
 	platform_uart_puts(line);
 
 	(void)virtio_mmio_enumerate();
-	(void)virtio_blk_smoke();
 
+	/* Bring up the GICv3 distributor + redistributor + CPU interface,
+	 * then unmask DAIF.I, before running virtio-blk so the device's
+	 * SPI is delivered through to the registered handler. The timer
+	 * stays dormant (CNTP_CTL_EL0 = 0) until arch_timer_start runs,
+	 * so no spurious heartbeat ticks during the blk smoke. */
 	arch_irq_init();
-	arch_timer_set_periodic_handler(arm64_virt_heartbeat_handler);
-	arch_timer_start(2u);
 	arch_interrupts_enable();
 
+	(void)virtio_blk_smoke();
+
+	arch_timer_set_periodic_handler(arm64_virt_heartbeat_handler);
+	arch_timer_start(2u);
+
 	platform_uart_puts(
-	    "Drunix virt M2.1: GICv3 + virtio-mmio + virtio-blk read. "
+	    "Drunix virt M2.2: GICv3 + virtio-mmio + virtio-blk (IRQ-driven). "
 	    "Heartbeat at 2 Hz.\n");
 
 	for (;;)

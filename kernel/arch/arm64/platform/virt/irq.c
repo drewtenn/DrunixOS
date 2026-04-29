@@ -18,6 +18,8 @@
 #include "../../timer.h"
 #include <stdint.h>
 
+#include "irq.h"
+
 #define GICD_BASE                0x08000000UL
 #define GICR_BASE_CPU0           0x080A0000UL
 #define GICR_SGI_OFFSET          0x10000UL
@@ -29,6 +31,7 @@
 #define GICD_ICENABLER0_OFFSET   0x0180u
 #define GICD_ICPENDR0_OFFSET     0x0280u
 #define GICD_IPRIORITYR0_OFFSET  0x0400u
+#define GICD_IROUTER0_OFFSET     0x6000u
 
 #define GICD_CTLR_ARE_NS         (1u << 4)
 #define GICD_CTLR_ENABLE_GRP1_NS (1u << 1)
@@ -50,13 +53,27 @@
 #define ARCH_INTID_CNTP_EL1      30u
 #define ARCH_INTID_SPECIAL_FIRST 1020u
 #define ARCH_INTID_SPURIOUS      1023u
+#define ARCH_INTID_SPI_FIRST     32u
+#define ARCH_INTID_MAX           1019u
 
 #define GICD_RWP_TIMEOUT_ITERS   0x100000u
 
-/* Drunix's per-platform IRQ table maps PLATFORM_IRQ_TIMER (= 0) to a
- * single registered handler. There is no need for a wider table on virt
- * M1; SMP and SPI-driven device IRQs add capacity in later milestones. */
+#define VIRT_SPI_HANDLER_SLOTS   8u
+
 static platform_irq_handler_fn g_timer_handler;
+
+/*
+ * SPI handler table. Each entry pairs a registered INTID with its
+ * handler. M2.2 needs at most a couple of entries (virtio-blk + room
+ * to grow); a small flat table is simpler than a sparse map and the
+ * dispatch overhead is irrelevant against MMIO.
+ */
+struct virt_spi_handler {
+	uint32_t intid;
+	platform_irq_handler_fn fn;
+};
+
+static struct virt_spi_handler g_spi_handlers[VIRT_SPI_HANDLER_SLOTS];
 
 static void mmio_write32(uintptr_t addr, uint32_t value)
 {
@@ -212,6 +229,54 @@ void platform_irq_register(uint32_t irq, platform_irq_handler_fn fn)
 		g_timer_handler = fn;
 }
 
+int virt_irq_register_spi(uint32_t spi, platform_irq_handler_fn fn)
+{
+	uint32_t intid = ARCH_INTID_SPI_FIRST + spi;
+
+	if (intid > ARCH_INTID_MAX || !fn)
+		return -1;
+
+	for (uint32_t i = 0; i < VIRT_SPI_HANDLER_SLOTS; i++) {
+		if (g_spi_handlers[i].fn == 0 || g_spi_handlers[i].intid == intid) {
+			g_spi_handlers[i].intid = intid;
+			g_spi_handlers[i].fn = fn;
+			return 0;
+		}
+	}
+	return -1;
+}
+
+void virt_irq_enable_spi(uint32_t spi, uint8_t priority)
+{
+	uint32_t intid = ARCH_INTID_SPI_FIRST + spi;
+	uintptr_t igroupr_addr;
+	uintptr_t isenabler_addr;
+	uint32_t bit;
+	uint32_t reg_index = intid / 32u;
+	bit = intid % 32u;
+
+	/* GICD_IGROUPR<reg_index>: set INTID's bit to assign Group 1 NS. */
+	igroupr_addr = GICD_BASE + GICD_IGROUPR0_OFFSET + reg_index * 4u;
+	mmio_write32(igroupr_addr, mmio_read32(igroupr_addr) | (1u << bit));
+
+	/* IPRIORITYR is byte-addressable; INTID's byte = base + intid. */
+	*(volatile uint8_t *)(GICD_BASE + GICD_IPRIORITYR0_OFFSET + intid) =
+	    priority;
+
+	/* IROUTER<intid> is a 64-bit register; routing 0 = Aff3:Aff2:Aff1:Aff0
+	 * = 0:0:0:0 picks the first PE (CPU 0) in 1-of-N off mode. */
+	*(volatile uint64_t *)(GICD_BASE + GICD_IROUTER0_OFFSET +
+	                       (uint64_t)intid * 8u) = 0u;
+
+	gicd_wait_rwp();
+
+	/* GICD_ISENABLER<reg_index>: write-1-to-set the enable bit. */
+	isenabler_addr = GICD_BASE + GICD_ISENABLER0_OFFSET + reg_index * 4u;
+	mmio_write32(isenabler_addr, 1u << bit);
+
+	gicd_wait_rwp();
+}
+
 int platform_irq_dispatch(void)
 {
 	uint64_t iar = icc_iar1_el1_read();
@@ -220,8 +285,7 @@ int platform_irq_dispatch(void)
 	/* GICv3 reserves INTIDs 1020..1023 for special signals (Group 0/1
 	 * targeted at a non-current EL, plus the Spurious INTID 1023).
 	 * None of them require an EOIR write; treat the whole range as
-	 * "nothing handled". Defensive against config drift; on the M1
-	 * single-Group-1-NS setup only 1023 actually appears. */
+	 * "nothing handled". */
 	if (intid >= ARCH_INTID_SPECIAL_FIRST)
 		return 0;
 
@@ -232,6 +296,14 @@ int platform_irq_dispatch(void)
 		arm64_timer_irq();
 		if (g_timer_handler)
 			g_timer_handler();
+	} else if (intid >= ARCH_INTID_SPI_FIRST) {
+		for (uint32_t i = 0; i < VIRT_SPI_HANDLER_SLOTS; i++) {
+			if (g_spi_handlers[i].intid == intid &&
+			    g_spi_handlers[i].fn) {
+				g_spi_handlers[i].fn();
+				break;
+			}
+		}
 	}
 
 	icc_eoir1_el1_write(iar);

@@ -16,6 +16,7 @@
  */
 
 #include "../platform.h"
+#include "irq.h"
 #include "virtio_blk.h"
 #include "virtio_mmio.h"
 #include "virtio_queue.h"
@@ -35,6 +36,12 @@
 
 #define POLL_TIMEOUT_ITERS 0x10000000u
 
+/* QEMU virt machine maps virtio-mmio slot N to SPI (16 + N), per
+ * hw/arm/virt.c's VIRT_MMIO_IRQ + slot index. */
+#define VIRTIO_MMIO_SPI_BASE      16u
+#define VIRTIO_MMIO_BASE_ADDR     0x0A000000UL
+#define VIRTIO_MMIO_STRIDE_BYTES  0x200u
+
 struct virtio_blk_req_hdr {
 	uint32_t type;
 	uint32_t reserved;
@@ -52,6 +59,20 @@ static __attribute__((aligned(512))) uint8_t g_data_buf[512];
 static __attribute__((aligned(64))) volatile uint8_t g_status;
 
 static virtq_t g_queue;
+static uintptr_t g_dev_base;
+static volatile uint32_t g_completion_pending;
+
+static void virtio_blk_irq_handler(void)
+{
+	uint32_t isr = *(volatile uint32_t *)(g_dev_base +
+	                                       VIRTIO_MMIO_INTERRUPT_STATUS);
+
+	/* InterruptStatus bit 0 = used buffer notification, bit 1 = config
+	 * change. Ack whichever bits we saw so the device deasserts the
+	 * line; the actual completion drain happens after WFI returns. */
+	*(volatile uint32_t *)(g_dev_base + VIRTIO_MMIO_INTERRUPT_ACK) = isr;
+	g_completion_pending = 1u;
+}
 
 static uint32_t mmio_read32(uintptr_t addr)
 {
@@ -156,6 +177,24 @@ int virtio_blk_smoke(void)
 	mmio_write32(base + VIRTIO_MMIO_QUEUE_PFN,
 	             (uint32_t)(g_queue.base_phys >> 12));
 
+	/* Route this device's SPI through the GICv3 to our handler.
+	 * QEMU virt: slot N → SPI (16 + N); slot index = (base - 0xA000000)
+	 * / 0x200. Register and enable before driver-OK so the device
+	 * cannot fire an IRQ that goes unhandled. */
+	g_dev_base = base;
+	{
+		uint32_t slot = (uint32_t)((base - VIRTIO_MMIO_BASE_ADDR) /
+		                            VIRTIO_MMIO_STRIDE_BYTES);
+		uint32_t spi = VIRTIO_MMIO_SPI_BASE + slot;
+
+		if (virt_irq_register_spi(spi, virtio_blk_irq_handler) != 0) {
+			platform_uart_puts(
+			    "virtio-blk: SPI handler registration failed\n");
+			return -1;
+		}
+		virt_irq_enable_spi(spi, 0xA0u);
+	}
+
 	status_or(base, VIRTIO_STATUS_DRIVER_OK);
 
 	/* Build the read request: header (RO), data buffer (WR), status
@@ -190,16 +229,29 @@ int virtio_blk_smoke(void)
 	g_queue.desc[status_idx].next = 0u;
 
 	virtq_submit(&g_queue, head);
+	g_completion_pending = 0u;
 	mmio_write32(base + VIRTIO_MMIO_QUEUE_NOTIFY, 0u);
 
+	/* Wait for the device to fire the SPI we registered above. The
+	 * IRQ handler sets g_completion_pending and acks the device. We
+	 * loop on WFI rather than busy-spin so the CPU sleeps between
+	 * events. A bounded fallback poll backstops the unlikely case
+	 * where the IRQ never arrives. */
 	for (poll = 0; poll < POLL_TIMEOUT_ITERS; poll++) {
-		completed = virtq_drain_one(&g_queue, &completed_len);
-		if (completed != 0xFFFFu)
+		__asm__ volatile("wfi");
+		if (g_completion_pending)
 			break;
 	}
 
+	if (!g_completion_pending) {
+		platform_uart_puts("virtio-blk: read timed out (no IRQ)\n");
+		return -1;
+	}
+
+	completed = virtq_drain_one(&g_queue, &completed_len);
 	if (completed == 0xFFFFu) {
-		platform_uart_puts("virtio-blk: read timed out\n");
+		platform_uart_puts(
+		    "virtio-blk: IRQ fired but used ring empty\n");
 		return -1;
 	}
 
