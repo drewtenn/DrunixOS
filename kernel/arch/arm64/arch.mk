@@ -35,7 +35,6 @@ ifeq ($(PLATFORM),virt)
 ARM_CFLAGS += -DDRUNIX_ARM64_PLATFORM_VIRT=1
 ARM_LINKER_LD := kernel/arch/arm64/linker.virt.ld
 else
-ARM_CFLAGS += -DDRUNIX_ARM64_PLATFORM_RASPI3B=1
 ARM_LINKER_LD := kernel/arch/arm64/linker.ld
 endif
 

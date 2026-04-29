@@ -18,7 +18,7 @@ ifeq ($(PLATFORM),virt)
 build-virt: kernel-arm64.elf
 
 run: build-virt | $(LOG_DIR)
-	$(QEMU_ARM) -M virt,gic-version=3 -cpu cortex-a72 -smp 1 -m 1G \
+	$(QEMU_ARM) -M virt,gic-version=3 -cpu cortex-a53 -smp 1 -m 1G \
 	    -kernel kernel-arm64.elf \
 	    -nographic -no-reboot
 

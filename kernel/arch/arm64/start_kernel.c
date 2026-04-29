@@ -28,9 +28,6 @@
 
 extern char vectors_el1[];
 extern int arm64_user_smoke_boot(void);
-#if DRUNIX_ARM64_PLATFORM_VIRT
-void arm64_virt_heartbeat_handler(void);
-#endif
 
 #ifndef DRUNIX_ARM64_SMOKE_FALLBACK
 #define DRUNIX_ARM64_SMOKE_FALLBACK 0

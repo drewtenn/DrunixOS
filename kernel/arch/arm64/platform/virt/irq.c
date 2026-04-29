@@ -48,31 +48,41 @@
 #define GICR_SGI_IPRIORITYR0_OFFSET  0x0400u
 
 #define ARCH_INTID_CNTP_EL1      30u
+#define ARCH_INTID_SPECIAL_FIRST 1020u
 #define ARCH_INTID_SPURIOUS      1023u
+
+#define GICD_RWP_TIMEOUT_ITERS   0x100000u
 
 /* Drunix's per-platform IRQ table maps PLATFORM_IRQ_TIMER (= 0) to a
  * single registered handler. There is no need for a wider table on virt
  * M1; SMP and SPI-driven device IRQs add capacity in later milestones. */
 static platform_irq_handler_fn g_timer_handler;
 
-#define MMIO32(addr) (*(volatile uint32_t *)(uintptr_t)(addr))
-
 static void mmio_write32(uintptr_t addr, uint32_t value)
 {
-	MMIO32(addr) = value;
+	*(volatile uint32_t *)addr = value;
 }
 
 static uint32_t mmio_read32(uintptr_t addr)
 {
-	return MMIO32(addr);
+	return *(volatile uint32_t *)addr;
 }
 
 static void gicd_wait_rwp(void)
 {
-	while ((mmio_read32(GICD_BASE + GICD_CTLR_OFFSET) & GICD_CTLR_RWP) != 0u)
-		;
+	uint32_t i = 0;
+
+	while ((mmio_read32(GICD_BASE + GICD_CTLR_OFFSET) & GICD_CTLR_RWP) != 0u) {
+		if (++i > GICD_RWP_TIMEOUT_ITERS)
+			break;
+	}
 }
 
+/* ICC_SRE_EL1.SRE is sticky once set. The set-bit-0 + ISB sequence is
+ * harmless if SRE was already enabled, and required if it wasn't.
+ * Assumption: EL2 firmware did not lock SRE_EL2.Enable=0 before handing
+ * EL1 control to Drunix; that is true for QEMU's default `-M virt` boot.
+ */
 static void icc_sre_el1_enable(void)
 {
 	uint64_t sre;
@@ -109,12 +119,16 @@ static uint64_t icc_iar1_el1_read(void)
 	uint64_t value;
 
 	__asm__ volatile("mrs %0, S3_0_C12_C12_0" : "=r"(value));
-	__asm__ volatile("dsb sy");
 	return value;
 }
 
+/* Per ARM IHI 0069 §12.2: a DSB before EOIR ensures the handler's loads
+ * and stores have retired before the priority drops, and an ISB after
+ * keeps later instructions from speculating across the priority change.
+ */
 static void icc_eoir1_el1_write(uint64_t value)
 {
+	__asm__ volatile("dsb sy");
 	__asm__ volatile("msr S3_0_C12_C12_1, %0" : : "r"(value));
 	__asm__ volatile("isb");
 }
@@ -133,9 +147,9 @@ static void gicd_init(void)
 	gicd_wait_rwp();
 
 	/* Mask and clear-pending all SPIs (32 .. lines-1). PPIs/SGIs are
-	 * controlled by the redistributor. M1 has no SPI consumers, but
-	 * leaving them enabled would defeat IRQ debugging on real hardware
-	 * later. */
+	 * controlled by the redistributor. M1 has no SPI consumers, so the
+	 * SPIs start out disabled; M2 explicitly enables the ones it wires
+	 * to virtio-mmio devices. */
 	for (i = 32u; i < lines; i += 32u) {
 		mmio_write32(GICD_BASE + GICD_ICENABLER0_OFFSET + (i / 8u),
 		             0xFFFFFFFFu);
@@ -149,7 +163,7 @@ static void gicr_init_cpu0(void)
 	uintptr_t rd = GICR_BASE_CPU0;
 	uintptr_t sgi = rd + GICR_SGI_OFFSET;
 	uint32_t waker;
-	volatile uint32_t i = 0;
+	uint32_t i = 0;
 
 	/* Wake the redistributor: clear ProcessorSleep, then wait until
 	 * ChildrenAsleep deasserts. */
@@ -203,9 +217,17 @@ int platform_irq_dispatch(void)
 	uint64_t iar = icc_iar1_el1_read();
 	uint32_t intid = (uint32_t)(iar & 0xFFFFFFu);
 
-	if (intid == ARCH_INTID_SPURIOUS)
+	/* GICv3 reserves INTIDs 1020..1023 for special signals (Group 0/1
+	 * targeted at a non-current EL, plus the Spurious INTID 1023).
+	 * None of them require an EOIR write; treat the whole range as
+	 * "nothing handled". Defensive against config drift; on the M1
+	 * single-Group-1-NS setup only 1023 actually appears. */
+	if (intid >= ARCH_INTID_SPECIAL_FIRST)
 		return 0;
 
+	/* Runs in IRQ context with interrupts disabled. Handlers must not
+	 * sleep, must not block on locks held outside IRQ context, and must
+	 * keep their work bounded in time. */
 	if (intid == ARCH_INTID_CNTP_EL1) {
 		arm64_timer_irq();
 		if (g_timer_handler)
