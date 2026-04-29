@@ -6,7 +6,8 @@
  * Implements the legacy (v1) split-ring layout because QEMU's `-M virt`
  * exposes virtio devices in legacy mode by default. Modern (v2) layout
  * is a small refactor away once the driver wires up the
- * virtio-mmio.force-legacy=false transport.
+ * virtio-mmio.force-legacy=false transport — tracked under FR-010
+ * "modern transport" in the v1.2 PRD.
  *
  * Memory ordering: aarch64 with the MMU off (M2.1's state) treats RAM
  * as Device-nGnRnE — strongly ordered, no caching — so DMB barriers are
@@ -18,6 +19,7 @@
  */
 
 #include "virtio_queue.h"
+#include "kstring.h"
 #include <stdint.h>
 
 #define VIRTQ_BACKING_ALIGN 4096u
@@ -73,8 +75,7 @@ int virtq_init(virtq_t *q, void *backing, uint32_t backing_len)
 	/* Zero the whole region so the avail/used flags+idx start clean,
 	 * the descriptor table is in a known state, and freshly-allocated
 	 * descriptors have predictable defaults. */
-	for (uint32_t off = 0; off < VIRTQ_BACKING_LEN; off++)
-		base[off] = 0u;
+	k_memset(base, 0, VIRTQ_BACKING_LEN);
 
 	/* Build a free list through the desc->next pointers. The free
 	 * head is descriptor 0; descriptor i's `next` points to i+1; the

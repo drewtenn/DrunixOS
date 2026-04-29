@@ -47,11 +47,16 @@
 #define VIRTIO_MMIO_BASE_ADDR     0x0A000000UL
 #define VIRTIO_MMIO_STRIDE_BYTES  0x200u
 
+/* Naturally aligned: 4 + 4 + 8 = 16 bytes with no padding. The
+ * `packed` attribute is omitted deliberately — it would be a no-op
+ * for the current layout and would suppress alignment diagnostics
+ * if a member type were ever changed in a way that introduces
+ * padding. */
 struct virtio_blk_req_hdr {
 	uint32_t type;
 	uint32_t reserved;
 	uint64_t sector;
-} __attribute__((packed));
+};
 
 /*
  * Static, page-aligned backing for the virtqueue and the I/O buffers.
@@ -141,6 +146,11 @@ int virtio_blk_smoke(void)
 		return -1;
 	}
 
+	/* Stash the device base now so the IRQ handler always has a
+	 * valid pointer if any later step (or future code path)
+	 * registers an interrupt earlier than today. */
+	g_dev_base = base;
+
 	cap_lo = mmio_read32(base + VIRTIO_MMIO_CONFIG +
 	                     VIRTIO_BLK_CFG_CAPACITY_LO);
 	cap_hi = mmio_read32(base + VIRTIO_MMIO_CONFIG +
@@ -204,7 +214,6 @@ int virtio_blk_smoke(void)
 	 * QEMU virt: slot N → SPI (16 + N); slot index = (base - 0xA000000)
 	 * / 0x200. Register and enable before driver-OK so the device
 	 * cannot fire an IRQ that goes unhandled. */
-	g_dev_base = base;
 	{
 		uint32_t slot = (uint32_t)((base - VIRTIO_MMIO_BASE_ADDR) /
 		                            VIRTIO_MMIO_STRIDE_BYTES);
