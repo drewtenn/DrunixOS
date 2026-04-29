@@ -50,3 +50,4 @@ docs/superpowers/
 .x86-serial-console-flag
 .include-busybox-flag
 logs/*.stderr
+.claude-octopus/
