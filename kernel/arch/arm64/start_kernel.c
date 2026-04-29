@@ -13,6 +13,9 @@
 #include "../../fs/vfs.h"
 #include "../../mm/kheap.h"
 #include "platform/platform.h"
+#if DRUNIX_ARM64_PLATFORM_VIRT
+#include "platform/virt/virtio_mmio.h"
+#endif
 #include "../../proc/init_launch.h"
 #include "../../proc/sched.h"
 #include "mm/pmm.h"
@@ -234,10 +237,11 @@ void arm64_start_kernel(void)
 	platform_uart_puts("Drunix AArch64 v0 - hello from EL1\n");
 
 #if DRUNIX_ARM64_PLATFORM_VIRT
-	/* Phase 1 M1 of docs/superpowers/specs/2026-04-29-gpu-h264-mvp.md.
-	 * GICv3 + generic-timer are wired here; MMU/heap/USB/rootfs still
-	 * assume raspi3b's hardware backend, so they remain gated until M2
-	 * brings up virtio-mmio + virtio-blk + the rest of the boot chain. */
+	/* Phase 1 M2.0 of docs/superpowers/specs/2026-04-29-gpu-h264-mvp.md.
+	 * GICv3 + generic-timer are up. virtio-mmio enumeration (read-only)
+	 * lands here; virtqueue mechanics + virtio-blk + DMA discipline
+	 * arrive in M2.1+. MMU/heap/USB/rootfs still assume raspi3b's
+	 * hardware backend so they remain gated. */
 	k_snprintf(line,
 	           sizeof(line),
 	           "CurrentEL=0x%X (EL%u)\n",
@@ -251,13 +255,16 @@ void arm64_start_kernel(void)
 	           (unsigned int)arm64_read_cntfrq());
 	platform_uart_puts(line);
 
+	(void)virtio_mmio_enumerate();
+
 	arch_irq_init();
 	arch_timer_set_periodic_handler(arm64_virt_heartbeat_handler);
 	arch_timer_start(2u);
 	arch_interrupts_enable();
 
 	platform_uart_puts(
-	    "Drunix virt M1: GICv3 + CNTP_EL1 up. Heartbeat at 2 Hz.\n");
+	    "Drunix virt M2.0: GICv3 + CNTP_EL1 + virtio-mmio scan. "
+	    "Heartbeat at 2 Hz.\n");
 
 	for (;;)
 		__asm__ volatile("wfi");
