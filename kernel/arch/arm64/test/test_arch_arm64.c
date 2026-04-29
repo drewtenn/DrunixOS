@@ -5,6 +5,7 @@
 
 #include "ktest.h"
 #include "arch.h"
+#include "fdt.h"
 #include "kstring.h"
 #include "pmm.h"
 #include "process.h"
@@ -15,6 +16,9 @@
 #include "dma.h"
 #include "platform/virt/dma.h"
 #endif
+
+extern const uint8_t virt_snapshot_dtb[];
+extern const uint32_t virt_snapshot_dtb_size;
 
 static void test_arm64_pmm_alloc_free_reuses_pages(ktest_case_t *tc)
 {
@@ -415,6 +419,59 @@ static void test_arm64_dma_barriers_compile_and_execute(ktest_case_t *tc)
 
 #endif /* DRUNIX_ARM64_PLATFORM_VIRT */
 
+/* FDT-parser tests. Phase 1 M2.4a / FR-002. The snapshot blob is a
+ * pinned device-tree dump from QEMU's `-M virt,gic-version=3` machine
+ * (see tools/virt-snapshot.md). Embedded via .incbin so KTESTs do
+ * not depend on QEMU at build time. Tests are platform-agnostic — the
+ * snapshot is the input, the parser is the system-under-test. */
+
+static void test_arm64_fdt_validates_snapshot_magic(ktest_case_t *tc)
+{
+	KTEST_EXPECT_EQ(tc, (uint32_t)fdt_validate(virt_snapshot_dtb), 0u);
+}
+
+static void test_arm64_fdt_rejects_garbage_blob(ktest_case_t *tc)
+{
+	uint8_t garbage[64];
+
+	for (uint32_t i = 0; i < sizeof(garbage); i++)
+		garbage[i] = (uint8_t)i;
+	KTEST_EXPECT_NE(tc, (uint32_t)fdt_validate(garbage), 0u);
+	KTEST_EXPECT_NE(tc, (uint32_t)fdt_validate(0), 0u);
+}
+
+static void test_arm64_fdt_finds_memory_range(ktest_case_t *tc)
+{
+	fdt_memory_range_t ranges[FDT_MAX_MEMORY_RANGES];
+	uint32_t count = 0;
+
+	KTEST_ASSERT_EQ(
+	    tc,
+	    fdt_get_memory(
+	        virt_snapshot_dtb, ranges, FDT_MAX_MEMORY_RANGES, &count),
+	    0);
+	KTEST_EXPECT_EQ(tc, count, 1u);
+	if (count >= 1u) {
+		KTEST_EXPECT_EQ(tc, (uint32_t)(ranges[0].base >> 32), 0u);
+		KTEST_EXPECT_EQ(tc, (uint32_t)ranges[0].base, 0x40000000u);
+		KTEST_EXPECT_EQ(tc, (uint32_t)(ranges[0].size >> 32), 0u);
+		KTEST_EXPECT_EQ(tc, (uint32_t)ranges[0].size, 0x40000000u);
+	}
+}
+
+static void test_arm64_fdt_chosen_bootargs_optional(ktest_case_t *tc)
+{
+	const char *args = fdt_get_chosen_bootargs(virt_snapshot_dtb);
+
+	/* QEMU virt's /chosen has no bootargs by default; an empty
+	 * string or NULL are both acceptable. The point of the test
+	 * is that the call returns without crashing on absent props. */
+	if (args)
+		KTEST_EXPECT_GE(tc, (uint32_t)k_strlen(args), 0u);
+	else
+		KTEST_EXPECT_NULL(tc, args);
+}
+
 static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_pmm_alloc_free_reuses_pages),
     KTEST_CASE(test_arm64_pmm_multiple_allocations_are_distinct),
@@ -426,6 +483,10 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_uaccess_copies_mapped_user_bytes),
     KTEST_CASE(test_arm64_process_resources_start_with_single_refs),
     KTEST_CASE(test_arm64_process_resource_get_put_tracks_refs),
+    KTEST_CASE(test_arm64_fdt_validates_snapshot_magic),
+    KTEST_CASE(test_arm64_fdt_rejects_garbage_blob),
+    KTEST_CASE(test_arm64_fdt_finds_memory_range),
+    KTEST_CASE(test_arm64_fdt_chosen_bootargs_optional),
 #if DRUNIX_ARM64_PLATFORM_VIRT
     KTEST_CASE(test_arm64_dma_alloc_returns_aligned_in_pool),
     KTEST_CASE(test_arm64_dma_alloc_free_reuses_pages),

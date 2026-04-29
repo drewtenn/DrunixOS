@@ -71,6 +71,7 @@ ARM_KOBJS := kernel/arch/arm64/boot.o \
              kernel/arch/arm64/arch.o \
              kernel/arch/arm64/exceptions.o \
              kernel/arch/arm64/exceptions_s.o \
+             kernel/arch/arm64/fdt.o \
              kernel/arch/arm64/proc/entry.o \
              kernel/arch/arm64/proc/arch_proc.o \
              kernel/arch/arm64/proc/smoke.o \
@@ -229,6 +230,12 @@ kernel/arch/arm64/proc/%.arm64.o: kernel/arch/arm64/proc/%.c
 
 kernel/arch/arm64/test/%.arm64.o: kernel/arch/arm64/test/%.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@
+
+# .S sources in test/ — used by virt_snapshot_dtb.S which embeds the
+# pinned device-tree blob via .incbin "tools/virt-snapshot.dtb".
+kernel/arch/arm64/test/%.arm64.o: kernel/arch/arm64/test/%.S \
+                                   tools/virt-snapshot.dtb
+	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 kernel/arch/arm64/proc/smoke.o: kernel/arch/arm64/proc/smoke.c
 	$(ARM_CC) $(ARM_CFLAGS) $(DEPFLAGS) $(ARM_INC) -c $< -o $@

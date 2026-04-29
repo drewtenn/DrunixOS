@@ -3,6 +3,12 @@
 .global _start
 
 _start:
+    /* x0 holds the FDT/DTB pointer per the Linux ARM64 boot protocol.
+     * Preserve it through the EL transitions and the BSS zero loop into
+     * x19 (callee-saved by AAPCS64); publish to g_fdt_blob_phys after
+     * BSS is zeroed so the C runtime can consume it. */
+    mov x19, x0
+
     mrs x1, mpidr_el1
     and x1, x1, #0xFF
     cbnz x1, .Lpark
@@ -71,6 +77,10 @@ _start:
     b .Lbss_zero
 
 .Lbss_done:
+    /* BSS is zero; safe to publish the saved FDT pointer. */
+    ldr x0, =g_fdt_blob_phys
+    str x19, [x0]
+
     bl arm64_start_kernel
 
 .Lpark:
