@@ -28,6 +28,9 @@
 
 extern char vectors_el1[];
 extern int arm64_user_smoke_boot(void);
+#if DRUNIX_ARM64_PLATFORM_VIRT
+void arm64_virt_heartbeat_handler(void);
+#endif
 
 #ifndef DRUNIX_ARM64_SMOKE_FALLBACK
 #define DRUNIX_ARM64_SMOKE_FALLBACK 0
@@ -96,15 +99,29 @@ static uint32_t arm64_terminal_free_pages(void *ctx)
 #endif /* !DRUNIX_ARM64_PLATFORM_VIRT */
 
 #if DRUNIX_ARM64_PLATFORM_VIRT
-/* Virt M0 stub: smoke.c / syscall.c hold a static link reference to
+/* Virt M0/M1 stub: smoke.c / syscall.c hold a static link reference to
  * arm64_console_loop for their error paths. Those paths are not reached
- * on virt M0 (no userspace runs), but the symbol must exist for the link
- * to succeed. WFI loop is sufficient. M1 replaces this with the real
- * console_terminal-driven loop once the input path is ready. */
+ * on virt without a scheduler, but the symbol must exist for the link
+ * to succeed. M2 swaps to the real console_terminal-driven loop. */
 void arm64_console_loop(void)
 {
 	for (;;)
 		__asm__ volatile("wfi");
+}
+
+static volatile uint32_t g_virt_heartbeat_count;
+
+void arm64_virt_heartbeat_handler(void)
+{
+	g_virt_heartbeat_count++;
+	platform_uart_putc('.');
+	if ((g_virt_heartbeat_count % 20u) == 0u) {
+		char line[32];
+
+		k_snprintf(line, sizeof(line), " [%u]\n",
+		           (unsigned int)g_virt_heartbeat_count);
+		platform_uart_puts(line);
+	}
 }
 #else
 void arm64_console_loop(void)
@@ -220,12 +237,10 @@ void arm64_start_kernel(void)
 	platform_uart_puts("Drunix AArch64 v0 - hello from EL1\n");
 
 #if DRUNIX_ARM64_PLATFORM_VIRT
-	/* Phase 1 M0 of docs/superpowers/specs/2026-04-29-gpu-h264-mvp.md.
-	 * MMU/heap/IRQ/timer/USB/rootfs all assume raspi3b's hardware backend
-	 * today. M1 lands GICv3 + generic-timer routing; M2 brings up
-	 * virtio-mmio + virtio-blk + the rest of the boot chain. Until then,
-	 * the virt platform proves only that the build system, the EL1
-	 * entry, and the PL011 driver are healthy. */
+	/* Phase 1 M1 of docs/superpowers/specs/2026-04-29-gpu-h264-mvp.md.
+	 * GICv3 + generic-timer are wired here; MMU/heap/USB/rootfs still
+	 * assume raspi3b's hardware backend, so they remain gated until M2
+	 * brings up virtio-mmio + virtio-blk + the rest of the boot chain. */
 	k_snprintf(line,
 	           sizeof(line),
 	           "CurrentEL=0x%X (EL%u)\n",
@@ -239,10 +254,13 @@ void arm64_start_kernel(void)
 	           (unsigned int)arm64_read_cntfrq());
 	platform_uart_puts(line);
 
+	arch_irq_init();
+	arch_timer_set_periodic_handler(arm64_virt_heartbeat_handler);
+	arch_timer_start(2u);
+	arch_interrupts_enable();
+
 	platform_uart_puts(
-	    "Drunix virt M0: PL011 up, EL1 reached. Halting in WFI.\n");
-	platform_uart_puts(
-	    "(M1 wires GICv3 + generic-timer; M2 brings up virtio.)\n");
+	    "Drunix virt M1: GICv3 + CNTP_EL1 up. Heartbeat at 2 Hz.\n");
 
 	for (;;)
 		__asm__ volatile("wfi");

@@ -1,36 +1,14 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
- * stubs.c - Minimal Phase-1 M0 stubs for the virt platform.
+ * stubs.c - Phase-1 placeholder stubs for the virt platform.
  *
- * IRQ, framebuffer, USB, and block-device hooks are required by the
- * platform.h interface but not yet implemented for virt. M0's success
- * criterion is "boot and print"; the kernel halts in arm64_console_loop()
- * before any of these would be exercised. M1 replaces the IRQ stubs with a
- * real GICv3 driver; M2/M3 replace the rest with virtio-mmio backends.
+ * The IRQ surface moved to irq.c (GICv3) in M1. Framebuffer, USB, and
+ * block-device hooks remain stubbed; M2 replaces them with virtio-gpu /
+ * virtio-blk front-ends.
  */
 
 #include "../platform.h"
 #include <stdint.h>
-
-void platform_irq_init(void)
-{
-}
-
-void platform_irq_register(uint32_t irq, platform_irq_handler_fn fn)
-{
-	(void)irq;
-	(void)fn;
-}
-
-int platform_irq_dispatch(void)
-{
-	return 0;
-}
-
-void platform_irq_enable(void)
-{
-	/* Leave interrupts masked until GICv3 lands in M1. */
-}
 
 int platform_framebuffer_acquire(framebuffer_info_t **out)
 {
