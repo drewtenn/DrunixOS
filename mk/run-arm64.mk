@@ -11,10 +11,26 @@ test-all: test-headless test-halt test-threadtest
 
 run-grub-menu run-stdio: run
 
+ifeq ($(PLATFORM),virt)
+# QEMU `-M virt,gic-version=3` is the v1.2 GPU/media MVP test machine. M0
+# only needs PL011 stdio; no disk image, no USB keyboard. `-nographic`
+# routes PL011 to the controlling terminal and lets Ctrl-A x exit cleanly.
+build-virt: kernel-arm64.elf
+
+run: build-virt | $(LOG_DIR)
+	$(QEMU_ARM) -M virt,gic-version=3 -cpu cortex-a72 -smp 1 -m 1G \
+	    -kernel kernel-arm64.elf \
+	    -nographic -no-reboot
+
+run-fresh: run
+
+run-virt: run
+else
 run: kernel-arm64.elf $(ROOT_DISK_IMG) | $(LOG_DIR)
 	$(QEMU_ARM) -M $(QEMU_ARM_MACHINE) -kernel kernel-arm64.elf -drive if=sd,format=raw,file=$(ROOT_DISK_IMG) -serial null -serial stdio -device usb-kbd -monitor none -no-reboot
 
 run-fresh: run
+endif
 
 ARM_GDB_COMMON = -ex "set pagination off" \
                  -ex "set confirm off" \

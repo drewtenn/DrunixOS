@@ -6,7 +6,11 @@
 #include "framebuffer.h"
 #include <stdint.h>
 
+#if defined(DRUNIX_ARM64_PLATFORM_VIRT)
+#include "virt/platform.h"
+#else
 #include "raspi3b/platform.h"
+#endif
 
 #define PLATFORM_IRQ_TIMER 0u
 #define PLATFORM_IRQ_COUNT 1u

@@ -6,6 +6,17 @@ ARM_OBJCOPY ?= aarch64-elf-objcopy
 ARM_GDB ?= aarch64-elf-gdb
 ROOT_FS ?= ext3
 BUILD_MODE ?= production
+
+# Platform selector. Default raspi3b preserves existing behavior; virt is the
+# QEMU `-M virt` machine added in 2026-04-29-gpu-h264-mvp.md Phase 1.
+PLATFORM ?= raspi3b
+
+ifneq ($(PLATFORM),raspi3b)
+ifneq ($(PLATFORM),virt)
+$(error PLATFORM must be raspi3b or virt; got "$(PLATFORM)")
+endif
+endif
+
 ifeq ($(BUILD_MODE),debug)
 BUILD_OPT ?= -Og
 else ifeq ($(BUILD_MODE),production)
@@ -19,13 +30,38 @@ include user/programs.mk
 ARM_CFLAGS ?= -ffreestanding -fno-stack-protector -fno-pic -fno-pie \
               -mcpu=cortex-a53 -mgeneral-regs-only -mstrict-align \
               -nostdlib -Wall -Wextra -Werror -g $(BUILD_OPT)
-ARM_LDFLAGS ?= -nostdlib -T kernel/arch/arm64/linker.ld
+
+ifeq ($(PLATFORM),virt)
+ARM_CFLAGS += -DDRUNIX_ARM64_PLATFORM_VIRT=1
+ARM_LINKER_LD := kernel/arch/arm64/linker.virt.ld
+else
+ARM_CFLAGS += -DDRUNIX_ARM64_PLATFORM_RASPI3B=1
+ARM_LINKER_LD := kernel/arch/arm64/linker.ld
+endif
+
+ARM_LDFLAGS ?= -nostdlib -T $(ARM_LINKER_LD)
+
+ARM_PLATFORM_INC := -I kernel/arch/arm64/platform/$(PLATFORM)
+
 ARM_INC := -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 \
            -I kernel/arch/arm64/mm -I kernel/arch/arm64/proc \
            -I kernel/mm -I kernel/proc -I kernel/fs \
            -I kernel/drivers -I kernel/blk -I kernel/arch/arm64/platform \
-           -I kernel/arch/arm64/platform/raspi3b -I kernel/gui -I kernel/console \
+           $(ARM_PLATFORM_INC) -I kernel/gui -I kernel/console \
            -I shared
+
+# Per-platform object lists. raspi3b ships its full hardware backend; virt
+# provides PL011 + stubs for M0 (irq/fb/usb/blk). M1+ replace the stubs.
+ifeq ($(PLATFORM),virt)
+ARM_PLATFORM_OBJS := kernel/arch/arm64/platform/virt/uart.o \
+                     kernel/arch/arm64/platform/virt/stubs.o
+else
+ARM_PLATFORM_OBJS := kernel/arch/arm64/platform/raspi3b/uart.o \
+                     kernel/arch/arm64/platform/raspi3b/irq.o \
+                     kernel/arch/arm64/platform/raspi3b/video.o \
+                     kernel/arch/arm64/platform/raspi3b/usb_hci.o \
+                     kernel/arch/arm64/platform/raspi3b/emmc.o
+endif
 
 ARM_KOBJS := kernel/arch/arm64/boot.o \
              kernel/arch/arm64/arch.o \
@@ -41,11 +77,7 @@ ARM_KOBJS := kernel/arch/arm64/boot.o \
              kernel/arch/arm64/mm/temp_map.o \
              kernel/mm/pmm_core.arm64.o \
              kernel/arch/arm64/timer.o \
-             kernel/arch/arm64/platform/raspi3b/uart.o \
-             kernel/arch/arm64/platform/raspi3b/irq.o \
-             kernel/arch/arm64/platform/raspi3b/video.o \
-             kernel/arch/arm64/platform/raspi3b/usb_hci.o \
-             kernel/arch/arm64/platform/raspi3b/emmc.o \
+             $(ARM_PLATFORM_OBJS) \
              kernel/arch/arm64/start_kernel.o \
              kernel/lib/kprintf.arm64.o \
              kernel/lib/kstring.arm64.o
