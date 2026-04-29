@@ -46,6 +46,7 @@ docs/superpowers/
 .build-mode-flag
 .arm64-smoke-fallback-flag
 .arm64-halt-test-flag
+.arm64-platform-flag
 .x86-serial-console-flag
 .include-busybox-flag
 logs/*.stderr

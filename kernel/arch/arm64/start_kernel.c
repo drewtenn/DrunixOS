@@ -15,6 +15,7 @@
 #include "platform/platform.h"
 #if DRUNIX_ARM64_PLATFORM_VIRT
 #include "platform/virt/virtio_mmio.h"
+#include "platform/virt/virtio_blk.h"
 #endif
 #include "../../proc/init_launch.h"
 #include "../../proc/sched.h"
@@ -256,6 +257,7 @@ void arm64_start_kernel(void)
 	platform_uart_puts(line);
 
 	(void)virtio_mmio_enumerate();
+	(void)virtio_blk_smoke();
 
 	arch_irq_init();
 	arch_timer_set_periodic_handler(arm64_virt_heartbeat_handler);
@@ -263,7 +265,7 @@ void arm64_start_kernel(void)
 	arch_interrupts_enable();
 
 	platform_uart_puts(
-	    "Drunix virt M2.0: GICv3 + CNTP_EL1 + virtio-mmio scan. "
+	    "Drunix virt M2.1: GICv3 + virtio-mmio + virtio-blk read. "
 	    "Heartbeat at 2 Hz.\n");
 
 	for (;;)

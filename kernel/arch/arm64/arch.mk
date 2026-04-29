@@ -55,6 +55,8 @@ ifeq ($(PLATFORM),virt)
 ARM_PLATFORM_OBJS := kernel/arch/arm64/platform/virt/uart.o \
                      kernel/arch/arm64/platform/virt/irq.o \
                      kernel/arch/arm64/platform/virt/virtio_mmio.o \
+                     kernel/arch/arm64/platform/virt/virtio_queue.o \
+                     kernel/arch/arm64/platform/virt/virtio_blk.o \
                      kernel/arch/arm64/platform/virt/stubs.o
 else
 ARM_PLATFORM_OBJS := kernel/arch/arm64/platform/raspi3b/uart.o \

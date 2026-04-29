@@ -157,6 +157,8 @@ endif
 	echo "$(VGA_TEXT)" | cmp -s - $@ || echo "$(VGA_TEXT)" > $@
 .disk-sectors-flag: FORCE
 	echo "$(DISK_SECTORS)" | cmp -s - $@ || echo "$(DISK_SECTORS)" > $@
+.arm64-platform-flag: FORCE
+	echo "$(PLATFORM)" | cmp -s - $@ || echo "$(PLATFORM)" > $@
 #GRUB menu timeout(seconds).Default 0 boots the first entry instantly.
 #Override(e.g.GRUB_TIMEOUT = 10) to display the menu — the `run - grub - menu`
 #target uses this for interactive verification.
@@ -363,7 +365,8 @@ build: kernel-arm64.elf kernel8.img $(ROOT_DISK_IMG) $(ARM_BUILD_EXTRA) $(ARM_CO
 kernel/arch/arm64/start_kernel.o: .init-program-flag .arm64-smoke-fallback-flag .arm64-halt-test-flag Makefile
 kernel/arch/arm64/arch.o: Makefile
 kernel/arch/arm64/platform/raspi3b/video.o: Makefile
-$(ARM_KOBJS) $(ARM_SHARED_KOBJS) $(ARM_COMPILE_ONLY_OBJS) $(ARM_KTOBJS): .ktest-flag
+$(ARM_KOBJS) $(ARM_SHARED_KOBJS) $(ARM_COMPILE_ONLY_OBJS) $(ARM_KTOBJS): .ktest-flag .arm64-platform-flag
+kernel-arm64.elf: .arm64-platform-flag
 
 iso: kernel8.img
 

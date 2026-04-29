@@ -25,12 +25,6 @@
 #define VIRTIO_MMIO_STRIDE       0x200UL
 #define VIRTIO_MMIO_SLOTS        32u
 
-/* Modern layout (Virtio 1.x). Legacy (v1) shares the first three. */
-#define VIRTIO_MMIO_MAGIC_VALUE  0x000u  /* "virt" — 0x74726976 */
-#define VIRTIO_MMIO_VERSION      0x004u  /* 1 = legacy, 2 = modern */
-#define VIRTIO_MMIO_DEVICE_ID    0x008u  /* 0 = absent, see VIRTIO_DEV_ID_* */
-#define VIRTIO_MMIO_VENDOR_ID    0x00Cu
-
 #define VIRTIO_MAGIC             0x74726976u  /* 'v''i''r''t' little-endian */
 
 static uint32_t mmio_read32(uintptr_t addr)
@@ -97,4 +91,28 @@ uint32_t virtio_mmio_enumerate(void)
 	platform_uart_puts(line);
 
 	return populated;
+}
+
+int virtio_mmio_find(uint32_t device_id, uintptr_t *out_base,
+                     uint32_t *out_version)
+{
+	for (uint32_t slot = 0; slot < VIRTIO_MMIO_SLOTS; slot++) {
+		uintptr_t base = VIRTIO_MMIO_BASE + slot * VIRTIO_MMIO_STRIDE;
+		uint32_t magic = mmio_read32(base + VIRTIO_MMIO_MAGIC_VALUE);
+		uint32_t device;
+
+		if (magic != VIRTIO_MAGIC)
+			continue;
+
+		device = mmio_read32(base + VIRTIO_MMIO_DEVICE_ID);
+		if (device != device_id)
+			continue;
+
+		if (out_base)
+			*out_base = base;
+		if (out_version)
+			*out_version = mmio_read32(base + VIRTIO_MMIO_VERSION);
+		return 1;
+	}
+	return 0;
 }
