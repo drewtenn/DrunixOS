@@ -39,6 +39,11 @@
                             ~(VIRTQ_BACKING_ALIGN - 1u))
 #define VIRTQ_BACKING_LEN  (VIRTQ_USED_OFFSET + VIRTQ_USED_BYTES)
 
+/* Catch a future VIRTQ_SIZE bump that would push desc+avail past the
+ * 4-KiB alignment boundary the layout assumes. */
+_Static_assert(VIRTQ_DESC_BYTES + VIRTQ_AVAIL_BYTES <= VIRTQ_BACKING_ALIGN,
+               "virtq desc+avail exceeds the 4 KiB legacy alignment window");
+
 uint32_t virtq_backing_size(void)
 {
 	return VIRTQ_BACKING_LEN;

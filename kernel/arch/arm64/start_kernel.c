@@ -266,7 +266,9 @@ void arm64_start_kernel(void)
 	arch_irq_init();
 	arch_interrupts_enable();
 
-	(void)virtio_blk_smoke();
+	if (virtio_blk_smoke() != 0)
+		platform_uart_puts(
+		    "virtio-blk: smoke test failed; continuing\n");
 
 	arch_timer_set_periodic_handler(arm64_virt_heartbeat_handler);
 	arch_timer_start(2u);

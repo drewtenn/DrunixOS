@@ -34,7 +34,12 @@
 #define VIRTIO_BLK_CFG_CAPACITY_LO  0x000u
 #define VIRTIO_BLK_CFG_CAPACITY_HI  0x004u
 
-#define POLL_TIMEOUT_ITERS 0x10000000u
+/* Bounded fallback so a wedged device shows up in the boot log instead
+ * of hanging forever. WFI returns on any unmasked IRQ, so on a healthy
+ * device the loop exits on the first iteration. 0x100000 (~1M) is plenty
+ * of slack for a single read; M2.3 should switch to a CNTP_EL0 wall-
+ * clock deadline once the timer subsystem is the source of truth. */
+#define POLL_TIMEOUT_ITERS 0x100000u
 
 /* QEMU virt machine maps virtio-mmio slot N to SPI (16 + N), per
  * hw/arm/virt.c's VIRT_MMIO_IRQ + slot index. */
@@ -60,6 +65,10 @@ static __attribute__((aligned(64))) volatile uint8_t g_status;
 
 static virtq_t g_queue;
 static uintptr_t g_dev_base;
+/* Single-CPU + IRQ context only on M2.x: the IRQ handler's write to
+ * g_completion_pending is published to the main path because the IRQ
+ * return is a context-synchronization event. Promote to atomic_uint
+ * with explicit acquire/release ordering when SMP lands. */
 static volatile uint32_t g_completion_pending;
 
 static void virtio_blk_irq_handler(void)
@@ -153,6 +162,20 @@ int virtio_blk_smoke(void)
 	mmio_write32(base + VIRTIO_MMIO_DRIVER_FEATURES_SEL, 0u);
 	mmio_write32(base + VIRTIO_MMIO_DRIVER_FEATURES, 0u);
 	status_or(base, VIRTIO_STATUS_FEATURES_OK);
+
+	/* Per Virtio 1.0 §3.1.1 step 6: re-read STATUS and confirm the
+	 * device kept FEATURES_OK set. If it cleared the bit, the
+	 * device rejected our feature negotiation and we must abort.
+	 * Legacy v1 transports treat this as advisory; we observe it
+	 * anyway so the M2.x switch to modern (v2) is a feature flip
+	 * rather than a debugging session. */
+	if ((mmio_read32(base + VIRTIO_MMIO_STATUS) & VIRTIO_STATUS_FEATURES_OK)
+	    == 0u) {
+		platform_uart_puts(
+		    "virtio-blk: device rejected feature negotiation\n");
+		status_or(base, VIRTIO_STATUS_FAILED);
+		return -1;
+	}
 
 	/* Legacy queue setup. Page size = the unit QEMU multiplies the
 	 * QueuePFN by to get the physical address (Virtio 1.0 §4.2.4.1). */
