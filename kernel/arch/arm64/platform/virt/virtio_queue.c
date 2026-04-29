@@ -9,15 +9,14 @@
  * virtio-mmio.force-legacy=false transport — tracked under FR-010
  * "modern transport" in the v1.2 PRD.
  *
- * Memory ordering: aarch64 with the MMU off (M2.1's state) treats RAM
- * as Device-nGnRnE — strongly ordered, no caching — so DMB barriers are
- * sufficient to order producer (guest) writes ahead of the kick that
- * makes them visible to QEMU. Once the MMU lands and Normal cacheable
- * memory is configured for these regions, callers will need to add
- * DC CVAC after writing descriptors and DC IVAC before reading the
- * used ring. FR-013 captures that follow-on.
+ * Memory ordering rules live in docs/contributing/aarch64-dma.md and
+ * are accessed through the helpers in kernel/arch/arm64/dma.h. M2.x
+ * (MMU off, RAM as Device-nGnRnE) needs DMB barriers only; M2.4 will
+ * add cache maintenance through the same helpers without changing
+ * call sites.
  */
 
+#include "../../dma.h"
 #include "virtio_queue.h"
 #include "kstring.h"
 #include <stdint.h>
@@ -33,13 +32,13 @@
  * Round to 8192 so callers can statically declare a single 8 KiB block.
  */
 
-#define VIRTQ_DESC_BYTES   (sizeof(struct virtq_desc) * VIRTQ_SIZE)
-#define VIRTQ_AVAIL_BYTES  (sizeof(struct virtq_avail))
-#define VIRTQ_USED_BYTES   (sizeof(struct virtq_used))
-#define VIRTQ_USED_OFFSET  ((VIRTQ_DESC_BYTES + VIRTQ_AVAIL_BYTES + \
-                             VIRTQ_BACKING_ALIGN - 1u) & \
-                            ~(VIRTQ_BACKING_ALIGN - 1u))
-#define VIRTQ_BACKING_LEN  (VIRTQ_USED_OFFSET + VIRTQ_USED_BYTES)
+#define VIRTQ_DESC_BYTES (sizeof(struct virtq_desc) * VIRTQ_SIZE)
+#define VIRTQ_AVAIL_BYTES (sizeof(struct virtq_avail))
+#define VIRTQ_USED_BYTES (sizeof(struct virtq_used))
+#define VIRTQ_USED_OFFSET                                                      \
+	((VIRTQ_DESC_BYTES + VIRTQ_AVAIL_BYTES + VIRTQ_BACKING_ALIGN - 1u) &       \
+	 ~(VIRTQ_BACKING_ALIGN - 1u))
+#define VIRTQ_BACKING_LEN (VIRTQ_USED_OFFSET + VIRTQ_USED_BYTES)
 
 /* Catch a future VIRTQ_SIZE bump that would push desc+avail past the
  * 4-KiB alignment boundary the layout assumes. */
@@ -49,11 +48,6 @@ _Static_assert(VIRTQ_DESC_BYTES + VIRTQ_AVAIL_BYTES <= VIRTQ_BACKING_ALIGN,
 uint32_t virtq_backing_size(void)
 {
 	return VIRTQ_BACKING_LEN;
-}
-
-static void dmb_ish(void)
-{
-	__asm__ volatile("dmb ish" ::: "memory");
 }
 
 int virtq_init(virtq_t *q, void *backing, uint32_t backing_len)
@@ -125,14 +119,14 @@ void virtq_submit(virtq_t *q, uint16_t head)
 
 	/* Producer-side ordering: descriptor writes must retire before
 	 * avail->idx becomes visible to the device. */
-	dmb_ish();
+	arm64_dma_wmb();
 
 	q->avail->idx = (uint16_t)(q->avail->idx + 1u);
 	q->next_avail = (uint16_t)(q->next_avail + 1u);
 
 	/* Order the avail->idx write before the caller's QueueNotify
 	 * MMIO write that delivers the kick. */
-	dmb_ish();
+	arm64_dma_wmb();
 }
 
 uint16_t virtq_drain_one(virtq_t *q, uint32_t *out_len)
@@ -144,11 +138,16 @@ uint16_t virtq_drain_one(virtq_t *q, uint32_t *out_len)
 	if (!q)
 		return 0xFFFFu;
 
-	dmb_ish();
 	used_idx = q->used->idx;
 	if (used_idx == q->last_used)
 		return 0xFFFFu;
 
+	/* Consumer-side ordering: the load of used->idx must complete
+	 * before any read of the ring entry it gates. Without this
+	 * barrier the CPU may speculate q->used->ring[slot] ahead of
+	 * the idx check on M2.4's MMU+caches, returning stale data.
+	 * Mirrors Linux's virt_rmb() placement in virtqueue_get_buf. */
+	arm64_dma_rmb();
 	slot = (uint16_t)(q->last_used & (VIRTQ_SIZE - 1u));
 	elem = q->used->ring[slot];
 

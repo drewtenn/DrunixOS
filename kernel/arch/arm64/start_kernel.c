@@ -14,6 +14,7 @@
 #include "../../mm/kheap.h"
 #include "platform/platform.h"
 #if DRUNIX_ARM64_PLATFORM_VIRT
+#include "platform/virt/dma.h"
 #include "platform/virt/virtio_mmio.h"
 #include "platform/virt/virtio_blk.h"
 #endif
@@ -119,7 +120,9 @@ void arm64_virt_heartbeat_handler(void)
 	if ((g_virt_heartbeat_count % 20u) == 0u) {
 		char line[32];
 
-		k_snprintf(line, sizeof(line), " [%u]\n",
+		k_snprintf(line,
+		           sizeof(line),
+		           " [%u]\n",
 		           (unsigned int)g_virt_heartbeat_count);
 		platform_uart_puts(line);
 	}
@@ -266,16 +269,20 @@ void arm64_start_kernel(void)
 	arch_irq_init();
 	arch_interrupts_enable();
 
+	virt_dma_init();
+
 	if (virtio_blk_smoke() != 0)
+		platform_uart_puts("virtio-blk: smoke test failed; continuing\n");
+	else if (platform_block_register() != 0)
 		platform_uart_puts(
-		    "virtio-blk: smoke test failed; continuing\n");
+		    "virtio-blk: blkdev registration failed; continuing\n");
 
 	arch_timer_set_periodic_handler(arm64_virt_heartbeat_handler);
 	arch_timer_start(2u);
 
 	platform_uart_puts(
-	    "Drunix virt M2.2: GICv3 + virtio-mmio + virtio-blk (IRQ-driven). "
-	    "Heartbeat at 2 Hz.\n");
+	    "Drunix virt M2.3: GICv3 + virtio-mmio + virtio-blk + blkdev "
+	    "registry. Heartbeat at 2 Hz.\n");
 
 	for (;;)
 		__asm__ volatile("wfi");

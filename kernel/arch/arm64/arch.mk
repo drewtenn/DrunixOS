@@ -52,7 +52,8 @@ ARM_INC := -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 \
 # Per-platform object lists. raspi3b ships its full hardware backend; virt
 # provides PL011 + stubs for M0 (irq/fb/usb/blk). M1+ replace the stubs.
 ifeq ($(PLATFORM),virt)
-ARM_PLATFORM_OBJS := kernel/arch/arm64/platform/virt/irq.o \
+ARM_PLATFORM_OBJS := kernel/arch/arm64/platform/virt/dma.o \
+                     kernel/arch/arm64/platform/virt/irq.o \
                      kernel/arch/arm64/platform/virt/stubs.o \
                      kernel/arch/arm64/platform/virt/uart.o \
                      kernel/arch/arm64/platform/virt/virtio_blk.o \

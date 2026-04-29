@@ -1030,6 +1030,11 @@ INTENTS: tuple[TestIntent, ...] = (
                         "test_arm64_uaccess_copies_mapped_user_bytes",
                         "test_arm64_process_resources_start_with_single_refs",
                         "test_arm64_process_resource_get_put_tracks_refs",
+                        "test_arm64_dma_alloc_returns_aligned_in_pool",
+                        "test_arm64_dma_alloc_free_reuses_pages",
+                        "test_arm64_dma_alloc_multipage_is_contiguous",
+                        "test_arm64_dma_phys_virt_round_trip_validates_bounds",
+                        "test_arm64_dma_barriers_compile_and_execute",
                     ),
                 ),
                 SourceMarkers(

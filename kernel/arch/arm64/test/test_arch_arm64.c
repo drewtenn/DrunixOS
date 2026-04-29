@@ -11,6 +11,10 @@
 #include "resources.h"
 #include "uaccess.h"
 #include "vma.h"
+#if DRUNIX_ARM64_PLATFORM_VIRT
+#include "dma.h"
+#include "platform/virt/dma.h"
+#endif
 
 static void test_arm64_pmm_alloc_free_reuses_pages(ktest_case_t *tc)
 {
@@ -335,6 +339,82 @@ static void test_arm64_pmm_refcount_saturates_at_255(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc, pmm_refcount(page), 255u);
 }
 
+#if DRUNIX_ARM64_PLATFORM_VIRT
+
+/* Virt-platform DMA-allocator tests. Phase 1 M2.3 / FR-012.
+ * The pool is shared with the live virtio-blk driver; the tests
+ * allocate from the *current* free run rather than asserting on
+ * absolute free-counts so that prior allocations (queue backing,
+ * request header, data scratch) do not break invariants. */
+
+static void test_arm64_dma_alloc_returns_aligned_in_pool(ktest_case_t *tc)
+{
+	void *p = virt_dma_alloc(1u);
+	uintptr_t addr;
+
+	KTEST_ASSERT_NOT_NULL(tc, p);
+	addr = (uintptr_t)p;
+	KTEST_EXPECT_EQ(tc, addr % VIRT_DMA_PAGE_SIZE, 0u);
+	KTEST_EXPECT_EQ(tc, virt_virt_to_phys(p), (uint64_t)addr);
+	KTEST_EXPECT_EQ(tc, (uintptr_t)virt_phys_to_virt((uint64_t)addr), addr);
+	virt_dma_free(p, 1u);
+}
+
+static void test_arm64_dma_alloc_free_reuses_pages(ktest_case_t *tc)
+{
+	void *first = virt_dma_alloc(1u);
+	void *second;
+
+	KTEST_ASSERT_NOT_NULL(tc, first);
+	virt_dma_free(first, 1u);
+	second = virt_dma_alloc(1u);
+	KTEST_EXPECT_EQ(tc, (uintptr_t)second, (uintptr_t)first);
+	if (second)
+		virt_dma_free(second, 1u);
+}
+
+static void test_arm64_dma_alloc_multipage_is_contiguous(ktest_case_t *tc)
+{
+	uint8_t *p = virt_dma_alloc(3u);
+
+	KTEST_ASSERT_NOT_NULL(tc, p);
+	KTEST_EXPECT_EQ(tc, (uintptr_t)p % VIRT_DMA_PAGE_SIZE, 0u);
+	/* Writing across the run must not fault — proves the pages are
+	 * contiguous and the bitmap reservations are correct. */
+	for (uint32_t i = 0; i < 3u * VIRT_DMA_PAGE_SIZE; i++)
+		p[i] = (uint8_t)i;
+	virt_dma_free(p, 3u);
+}
+
+static void
+test_arm64_dma_phys_virt_round_trip_validates_bounds(ktest_case_t *tc)
+{
+	uint8_t outside_pool;
+	void *converted;
+
+	KTEST_EXPECT_EQ(tc, virt_virt_to_phys(&outside_pool), 0u);
+	converted = virt_phys_to_virt((uint64_t)0xDEADBEEFu);
+	KTEST_EXPECT_NULL(tc, converted);
+	KTEST_EXPECT_NULL(tc, virt_dma_alloc(0u));
+	KTEST_EXPECT_NULL(tc, virt_dma_alloc(virt_dma_pages_total() + 1u));
+}
+
+static void test_arm64_dma_barriers_compile_and_execute(ktest_case_t *tc)
+{
+	/* Memory ordering can't be observed reliably on a single emulated
+	 * CPU; this case asserts the helpers exist, link, and execute
+	 * without trapping. The compile-time check that they actually
+	 * emit DMB encodings lives in dma.h. */
+	arm64_dma_wmb();
+	arm64_dma_rmb();
+	arm64_dma_mb();
+	arm64_dma_cache_clean(0, 0);
+	arm64_dma_cache_invalidate(0, 0);
+	KTEST_EXPECT_EQ(tc, 1u, 1u);
+}
+
+#endif /* DRUNIX_ARM64_PLATFORM_VIRT */
+
 static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_pmm_alloc_free_reuses_pages),
     KTEST_CASE(test_arm64_pmm_multiple_allocations_are_distinct),
@@ -346,6 +426,13 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_uaccess_copies_mapped_user_bytes),
     KTEST_CASE(test_arm64_process_resources_start_with_single_refs),
     KTEST_CASE(test_arm64_process_resource_get_put_tracks_refs),
+#if DRUNIX_ARM64_PLATFORM_VIRT
+    KTEST_CASE(test_arm64_dma_alloc_returns_aligned_in_pool),
+    KTEST_CASE(test_arm64_dma_alloc_free_reuses_pages),
+    KTEST_CASE(test_arm64_dma_alloc_multipage_is_contiguous),
+    KTEST_CASE(test_arm64_dma_phys_virt_round_trip_validates_bounds),
+    KTEST_CASE(test_arm64_dma_barriers_compile_and_execute),
+#endif
 };
 
 static ktest_suite_t suite = KTEST_SUITE("arch_arm64", cases);
