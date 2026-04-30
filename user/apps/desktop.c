@@ -9,6 +9,7 @@
 #include "cursor_sprite.h"
 #include "desktop_font.h"
 #include "desktop_window.h"
+#include "fbdev_ioctl.h"
 #include "kbdmap.h"
 #include "mman.h"
 #include "stdio.h"
@@ -79,6 +80,7 @@ typedef struct {
 } desktop_client_window_t;
 
 static uint32_t *g_fb;
+static int g_fb_fd = -1;
 static uint32_t *g_scene;
 static uint32_t *g_wallpaper;
 static fbinfo_t g_info;
@@ -696,6 +698,19 @@ static drunix_rect_t pointer_rect_at(int x, int y)
 	return drunix_rect_make(x, y, POINTER_W, POINTER_H);
 }
 
+static void publish_dirty_rect(drunix_rect_t rect)
+{
+	/* M3.2: tell the kernel exactly which rect of /dev/fb0 we just
+	 * mutated. The active framebuffer provider (virtio-gpu on virt;
+	 * ramfb fallback ignores) propagates the update to the host
+	 * display. If the kernel doesn't support DRUNIX_FBIO_FLUSH_RECT
+	 * (M3.1 or older), the ioctl returns -1 and we silently fall
+	 * through — the kernel's transitional fallback timer (~3 Hz) is
+	 * what keeps the display refreshing in that case. */
+	if (g_fb_fd >= 0 && drunix_rect_valid(rect))
+		(void)sys_ioctl(g_fb_fd, DRUNIX_FBIO_FLUSH_RECT, &rect);
+}
+
 static void present_dirty_rect(drunix_rect_t rect)
 {
 	drunix_rect_t dirty = rect;
@@ -716,6 +731,7 @@ static void present_dirty_rect(drunix_rect_t rect)
 	draw_pointer_sprite();
 	g_pointer_old_x = g_pointer_x;
 	g_pointer_old_y = g_pointer_y;
+	publish_dirty_rect(dirty);
 }
 
 static void present_scene(void)
@@ -725,6 +741,10 @@ static void present_scene(void)
 	draw_pointer_sprite();
 	g_pointer_old_x = g_pointer_x;
 	g_pointer_old_y = g_pointer_y;
+	/* Whole-screen update: publish a full-screen dirty rect so the
+	 * kernel knows to flush everything, not just the last sub-rect
+	 * present_dirty_rect issued. */
+	publish_dirty_rect(screen_rect());
 }
 
 static void draw_pointer_sprite(void)
@@ -1393,7 +1413,11 @@ int main(int argc, char **argv)
 		sys_write("desktop: framebuffer mmap failed\n");
 		return 1;
 	}
-	sys_close(fbfd);
+	/* Keep fbfd open for the lifetime of the compositor so M3.2
+	 * DRUNIX_FBIO_FLUSH_RECT ioctls can target it. The mmap itself
+	 * is independent of the fd's lifetime, so leaving fbfd open
+	 * costs only one fd-table slot. */
+	g_fb_fd = fbfd;
 
 	g_scene = (uint32_t *)malloc(g_fb_bytes);
 	if (!g_scene) {
