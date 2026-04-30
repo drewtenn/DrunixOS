@@ -63,4 +63,32 @@ uint64_t arm64_virt_virtio_net_tx_buffer_phys(uint32_t i);
 uint64_t arm64_virt_virtio_net_rx_queue_phys(void);
 uint64_t arm64_virt_virtio_net_tx_queue_phys(void);
 
+/*
+ * Commit 4 — RX refill + IRQ completion + driver-local RX ring.
+ *
+ * `_driver_ok()` reports whether DRIVER_OK has been asserted; it is
+ * the post-init readiness signal.
+ *
+ * `_rx_dequeue(out, max_len)` pulls one frame from the driver-local
+ * RX ring into `out`, returns the byte count copied (Ethernet payload
+ * only; the virtio_net_hdr has already been stripped). Returns 0 if
+ * no frame is available, -1 if the caller's buffer is too small.
+ * Commit 6's /dev/net0 chardev calls this from read().
+ *
+ * Counter accessors return current values for KTEST and diagnostics.
+ * `_rx_packets()` counts successful publishes; `_rx_drops_short()`
+ * counts completions where used.len < sizeof(virtio_net_hdr);
+ * `_rx_drops_oversize()` counts completions where used.len exceeds
+ * the configured max frame size; `_rx_drops_ring_full()` counts
+ * frames dropped because the driver-local RX ring was full.
+ */
+int arm64_virt_virtio_net_driver_ok(void);
+
+int32_t arm64_virt_virtio_net_rx_dequeue(uint8_t *out, uint32_t max_len);
+
+uint32_t arm64_virt_virtio_net_rx_packets(void);
+uint32_t arm64_virt_virtio_net_rx_drops_short(void);
+uint32_t arm64_virt_virtio_net_rx_drops_oversize(void);
+uint32_t arm64_virt_virtio_net_rx_drops_ring_full(void);
+
 #endif

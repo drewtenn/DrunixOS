@@ -889,6 +889,61 @@ static void test_arm64_virtio_net_packet_buffers_distinct(ktest_case_t *tc)
 }
 
 /*
+ * M4 commit 4 — RX refill, IRQ completion, structural cache discipline.
+ * arm64_virt_virtio_net_init now primes the receiveq, registers the
+ * GICv3 SPI handler, and asserts DRIVER_OK. The host-net harness uses
+ * an isolated user-mode netdev (-netdev user,restrict=on) which does
+ * not deliver inbound traffic, so live RX is exercised in commit 7+
+ * via a socket-backed harness. These tests cover the post-init state
+ * and the structural cache-discipline contract.
+ */
+static void test_arm64_virtio_net_driver_ok_after_init(ktest_case_t *tc)
+{
+	if (!arm64_virt_virtio_net_rings_ready()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	KTEST_EXPECT_TRUE(tc, arm64_virt_virtio_net_driver_ok());
+}
+
+static void test_arm64_virtio_net_rx_counters_initialized(ktest_case_t *tc)
+{
+	if (!arm64_virt_virtio_net_driver_ok()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	/* No frames have been received in the isolated harness, so
+	 * every RX counter must be 0 post-init. A non-zero short or
+	 * oversize counter would mean the IRQ handler ran with bad
+	 * lengths during the handshake — a logic bug. */
+	KTEST_EXPECT_EQ(tc, arm64_virt_virtio_net_rx_packets(), 0u);
+	KTEST_EXPECT_EQ(tc, arm64_virt_virtio_net_rx_drops_short(), 0u);
+	KTEST_EXPECT_EQ(tc, arm64_virt_virtio_net_rx_drops_oversize(), 0u);
+	KTEST_EXPECT_EQ(tc, arm64_virt_virtio_net_rx_drops_ring_full(), 0u);
+}
+
+static void test_arm64_virtio_net_rx_dequeue_empty_returns_zero(ktest_case_t *tc)
+{
+	uint8_t buf[16];
+	int32_t rc;
+
+	if (!arm64_virt_virtio_net_driver_ok()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	/* No frames yet -> dequeue returns 0, doesn't touch buf. */
+	k_memset(buf, 0xAA, sizeof(buf));
+	rc = arm64_virt_virtio_net_rx_dequeue(buf, sizeof(buf));
+	KTEST_EXPECT_EQ(tc, (uint32_t)rc, 0u);
+	/* buf must be untouched. */
+	KTEST_EXPECT_EQ(tc, (uint32_t)buf[0], 0xAAu);
+	KTEST_EXPECT_EQ(tc, (uint32_t)buf[15], 0xAAu);
+}
+
+/*
  * Phase 2 M3.0 — virtio-gpu front-end. The driver's init runs from
  * arm64_start_kernel before KTEST execution, so by the time these
  * tests run the device has either reached arm64_virt_virtio_gpu_ready()
@@ -1270,6 +1325,9 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_virtio_net_dma_rings_allocated),
     KTEST_CASE(test_arm64_virtio_net_packet_buffers_translate_nonzero),
     KTEST_CASE(test_arm64_virtio_net_packet_buffers_distinct),
+    KTEST_CASE(test_arm64_virtio_net_driver_ok_after_init),
+    KTEST_CASE(test_arm64_virtio_net_rx_counters_initialized),
+    KTEST_CASE(test_arm64_virtio_net_rx_dequeue_empty_returns_zero),
     KTEST_CASE(test_arm64_virtio_gpu_reached_ready),
     KTEST_CASE(test_arm64_virtio_gpu_query_display_returns_nonzero),
     KTEST_CASE(test_arm64_virtio_gpu_pattern_checksum_is_deterministic),

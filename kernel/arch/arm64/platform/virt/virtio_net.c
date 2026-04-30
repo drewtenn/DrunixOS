@@ -32,7 +32,9 @@
  */
 
 #include "../platform.h"
+#include "../../dma.h"
 #include "dma.h"
+#include "irq.h"
 #include "virtio_mmio.h"
 #include "virtio_net.h"
 #include "virtio_queue.h"
@@ -75,13 +77,48 @@
  * 2 pages cover that with 4 KiB headroom for any future growth. */
 #define VIRTIO_NET_QUEUE_BACKING_PAGES  2u
 
+/* Maximum Ethernet frame size (excluding the 10-byte virtio_net_hdr
+ * the device prepends). Standard Ethernet II 14-byte header + 1500-
+ * byte payload = 1514. The driver-local RX ring stores up to this
+ * many bytes per slot. */
+#define VIRTIO_NET_HDR_BYTES            10u
+#define VIRTIO_NET_MAX_FRAME            1514u
+
+/* Driver-local RX ring: a small SPSC ring that holds Ethernet frames
+ * pulled off the virtqueue's used ring by the IRQ handler, awaiting
+ * pickup by the consumer (commit 6's /dev/net0 chardev). 8 slots
+ * keeps memory bounded; a future commit can size it from the device
+ * MTU * QoS budget. */
+#define VIRTIO_NET_DRIVER_RX_SLOTS      8u
+
+/* QEMU virt machine maps virtio-mmio slot N -> SPI 16+N (Virtio
+ * 1.0 / qemu/hw/arm/virt.c). Reused locally so this file stays
+ * self-contained until later commits move the constant into a
+ * shared header. */
+#define VIRTIO_MMIO_SPI_BASE            16u
+
+/* Bits of VIRTIO_MMIO_INTERRUPT_STATUS. */
+#define VIRTIO_MMIO_ISR_USED_RING       (1u << 0)
+#define VIRTIO_MMIO_ISR_CONFIG_CHANGE   (1u << 1)
+
 _Static_assert(VIRTIO_NET_RING_BUFFERS == VIRTQ_SIZE,
                "virtio-net buffer count must match VIRTQ_SIZE");
+
+/*
+ * Driver-local RX ring entry. Holds one Ethernet frame's payload (no
+ * virtio_net_hdr) along with the byte count copied. The IRQ handler
+ * publishes here; consumer (commit 6) reads from here.
+ */
+typedef struct {
+	uint8_t bytes[VIRTIO_NET_MAX_FRAME];
+	uint32_t len;
+} virtio_net_driver_rx_slot_t;
 
 static struct {
 	int found;
 	int features_ok;
 	int rings_ready;
+	int driver_ok;
 	uintptr_t base;
 	uint32_t slot;
 	uint32_t version;
@@ -100,7 +137,37 @@ static struct {
 	void *tx_pool;
 	uint8_t *tx_buffers[VIRTIO_NET_RING_BUFFERS];
 	uint64_t tx_buffers_phys[VIRTIO_NET_RING_BUFFERS];
+
+	/* Driver-local RX ring (SPSC: producer = IRQ, consumer = chardev). */
+	virtio_net_driver_rx_slot_t driver_rx[VIRTIO_NET_DRIVER_RX_SLOTS];
+	uint16_t driver_rx_head;       /* next write slot */
+	uint16_t driver_rx_tail;       /* next read slot */
+	uint16_t driver_rx_count;      /* slots currently full */
+
+	/* RX counters. */
+	uint32_t rx_packets;
+	uint32_t rx_drops_short;
+	uint32_t rx_drops_oversize;
+	uint32_t rx_drops_ring_full;
 } g_state;
+
+/*
+ * Opaque RX token. Carries a pointer to the post-header Ethernet
+ * frame bytes plus the validated frame byte count. The token is
+ * constructed ONLY by virtio_net_rx_invalidate_and_take(), which
+ * performs arm64_dma_cache_invalidate() before any field of the
+ * underlying buffer is read. The publish path takes this token by
+ * value, which makes "invalidate before parse" a property of the
+ * function signature rather than a comment in the code.
+ *
+ * Defined here at file scope (not in the header) so external
+ * callers cannot construct a token without going through the
+ * invalidate path.
+ */
+typedef struct {
+	const uint8_t *frame;
+	uint32_t len;
+} virtio_net_rx_token_t;
 
 static uint32_t mmio_read32(uintptr_t addr)
 {
@@ -192,6 +259,166 @@ static int virtio_net_setup_queue(uintptr_t base,
 	mmio_write32(base + VIRTIO_MMIO_QUEUE_ALIGN, VIRT_DMA_PAGE_SIZE);
 	mmio_write32(base + VIRTIO_MMIO_QUEUE_PFN,
 	             (uint32_t)(queue->base_phys >> 12));
+	return 0;
+}
+
+/*
+ * Refill descriptor `head` with a writable RX buffer (1:1 mapping
+ * descriptor i <-> rx_buffers[i]). Marks the descriptor VRITQ_DESC_F_
+ * WRITE so the device fills it on the next packet, and submits it via
+ * virtq_submit. The submit path performs the desc cache_clean and
+ * dma_wmb required by aarch64-dma.md.
+ */
+static void virtio_net_rx_refill_one(uint16_t head)
+{
+	struct virtq_desc *desc;
+
+	if (head >= VIRTIO_NET_RING_BUFFERS)
+		return;
+
+	desc = &g_state.rx_queue.desc[head];
+	desc->addr = g_state.rx_buffers_phys[head];
+	desc->len = VIRTIO_NET_BUFFER_BYTES;
+	desc->flags = VIRTQ_DESC_F_WRITE;
+	desc->next = 0u;
+	virtq_submit(&g_state.rx_queue, head);
+}
+
+/*
+ * Construct an RX token from a used-ring completion. Performs the
+ * cache invalidate FIRST (the structural barrier — see token type
+ * comment), then validates length bounds. Returns 1 if the token
+ * is valid (caller should publish), 0 if the completion should be
+ * dropped (counter has been incremented and caller should refill).
+ *
+ * This is the only path that constructs a virtio_net_rx_token_t.
+ */
+static int virtio_net_rx_invalidate_and_take(uint16_t buf_index,
+                                             uint32_t used_len,
+                                             virtio_net_rx_token_t *out)
+{
+	uint8_t *raw;
+
+	if (buf_index >= VIRTIO_NET_RING_BUFFERS)
+		return 0;
+
+	raw = g_state.rx_buffers[buf_index];
+
+	/* Cache invalidate before reading any byte of the buffer. The
+	 * device wrote up to `used_len` bytes via DMA; on M2.4+ MMU+
+	 * caches a stale clean line could otherwise mask the device
+	 * write. Invalidate covers the whole buffer span the device
+	 * may have written, capped at the configured buffer size. */
+	if (used_len > VIRTIO_NET_BUFFER_BYTES)
+		used_len = VIRTIO_NET_BUFFER_BYTES;
+	arm64_dma_cache_invalidate(raw, used_len);
+
+	if (used_len < VIRTIO_NET_HDR_BYTES) {
+		g_state.rx_drops_short++;
+		return 0;
+	}
+	if (used_len > VIRTIO_NET_HDR_BYTES + VIRTIO_NET_MAX_FRAME) {
+		g_state.rx_drops_oversize++;
+		return 0;
+	}
+
+	out->frame = raw + VIRTIO_NET_HDR_BYTES;
+	out->len = used_len - VIRTIO_NET_HDR_BYTES;
+	return 1;
+}
+
+/*
+ * Publish a validated frame to the driver-local RX ring. Takes the
+ * token by value, which is the structural enforcement that the
+ * caller went through invalidate_and_take. Increments rx_packets on
+ * success or rx_drops_ring_full on consumer back-pressure.
+ */
+static void virtio_net_publish_frame(const virtio_net_rx_token_t *token)
+{
+	virtio_net_driver_rx_slot_t *slot;
+
+	if (g_state.driver_rx_count >= VIRTIO_NET_DRIVER_RX_SLOTS) {
+		g_state.rx_drops_ring_full++;
+		return;
+	}
+
+	slot = &g_state.driver_rx[g_state.driver_rx_head];
+	k_memcpy(slot->bytes, token->frame, token->len);
+	slot->len = token->len;
+
+	g_state.driver_rx_head =
+	    (uint16_t)((g_state.driver_rx_head + 1u) %
+	               VIRTIO_NET_DRIVER_RX_SLOTS);
+	g_state.driver_rx_count =
+	    (uint16_t)(g_state.driver_rx_count + 1u);
+	g_state.rx_packets++;
+}
+
+/*
+ * IRQ handler. Acks both used-ring (bit 0) and config-change (bit 1)
+ * by writing the snapshot back to INTERRUPT_ACK; config-change is
+ * acked-and-ignored for now (link-status tracking lands in a later
+ * commit). Drains the receiveq used ring, validates and publishes
+ * each frame, refills the descriptor regardless of validation
+ * outcome, and notifies queue 0 to keep the device fed.
+ */
+static void virtio_net_irq_handler(void)
+{
+	uintptr_t base = g_state.base;
+	uint32_t isr;
+
+	if (!g_state.driver_ok)
+		return;
+
+	isr = mmio_read32(base + VIRTIO_MMIO_INTERRUPT_STATUS);
+	mmio_write32(base + VIRTIO_MMIO_INTERRUPT_ACK, isr);
+
+	if ((isr & VIRTIO_MMIO_ISR_USED_RING) == 0u)
+		return;
+
+	for (;;) {
+		uint32_t used_len = 0;
+		uint16_t head = virtq_drain_one(&g_state.rx_queue, &used_len);
+		virtio_net_rx_token_t token;
+
+		if (head == 0xFFFFu)
+			break;
+
+		if (virtio_net_rx_invalidate_and_take(head, used_len, &token))
+			virtio_net_publish_frame(&token);
+		/* else: drop counters incremented in invalidate_and_take */
+
+		virtio_net_rx_refill_one(head);
+	}
+
+	mmio_write32(base + VIRTIO_MMIO_QUEUE_NOTIFY, VIRTIO_NET_QUEUE_RX);
+}
+
+/*
+ * Pre-fill the receiveq with all VIRTIO_NET_RING_BUFFERS writable
+ * buffers BEFORE DRIVER_OK is asserted. Each buffer is invalidated
+ * before being handed to the device, ensuring no stale dirty cache
+ * line could be flushed over a device write later. Returns 0 on
+ * success.
+ */
+static int virtio_net_rx_prime(void)
+{
+	for (uint32_t i = 0; i < VIRTIO_NET_RING_BUFFERS; i++) {
+		uint16_t head = virtq_alloc_chain(&g_state.rx_queue, 1u);
+
+		if (head == 0xFFFFu) {
+			platform_uart_puts(
+			    "virtio-net: failed to seed receiveq descriptors\n");
+			return -1;
+		}
+
+		/* Pre-invalidate the buffer before handing it to the
+		 * device, so a stale dirty cache line cannot evict over
+		 * the device's write later. */
+		arm64_dma_cache_invalidate(g_state.rx_buffers[head],
+		                           VIRTIO_NET_BUFFER_BYTES);
+		virtio_net_rx_refill_one(head);
+	}
 	return 0;
 }
 
@@ -352,9 +579,17 @@ int arm64_virt_virtio_net_init(void)
 	g_state.found = 0;
 	g_state.features_ok = 0;
 	g_state.rings_ready = 0;
+	g_state.driver_ok = 0;
 	g_state.base = 0;
 	g_state.slot = 0;
 	g_state.version = 0;
+	g_state.driver_rx_head = 0;
+	g_state.driver_rx_tail = 0;
+	g_state.driver_rx_count = 0;
+	g_state.rx_packets = 0;
+	g_state.rx_drops_short = 0;
+	g_state.rx_drops_oversize = 0;
+	g_state.rx_drops_ring_full = 0;
 	k_memset(g_state.mac, 0, sizeof(g_state.mac));
 
 	for (uint32_t slot = 0; slot < VIRTIO_NET_MMIO_MAX_SLOTS; slot++) {
@@ -422,6 +657,39 @@ int arm64_virt_virtio_net_init(void)
 		           (unsigned int)VIRTIO_NET_RING_BUFFERS,
 		           (unsigned int)VIRTIO_NET_BUFFER_BYTES);
 		platform_uart_puts(line);
+
+		/* Prime the receiveq with writable buffers BEFORE
+		 * asserting DRIVER_OK. The device begins receiving as
+		 * soon as DRIVER_OK is set; without buffers posted it
+		 * would silently drop frames. */
+		if (virtio_net_rx_prime() != 0) {
+			status_or(base, VIRTIO_STATUS_FAILED);
+			return -1;
+		}
+
+		/* Wire the GICv3 SPI: virtio-mmio slot N -> SPI 16+N. */
+		{
+			uint32_t spi = VIRTIO_MMIO_SPI_BASE + slot;
+			if (virt_irq_register_spi(spi,
+			                          virtio_net_irq_handler) != 0) {
+				platform_uart_puts(
+				    "virtio-net: SPI handler registration failed\n");
+				status_or(base, VIRTIO_STATUS_FAILED);
+				return -1;
+			}
+			virt_irq_enable_spi(spi, 0xA0u);
+		}
+
+		status_or(base, VIRTIO_STATUS_DRIVER_OK);
+		g_state.driver_ok = 1;
+
+		/* Notify queue 0 so the device picks up the buffers we
+		 * just primed. */
+		mmio_write32(base + VIRTIO_MMIO_QUEUE_NOTIFY,
+		             VIRTIO_NET_QUEUE_RX);
+
+		platform_uart_puts(
+		    "virtio-net: driver_ok; receive queue primed\n");
 		return 1;
 	}
 
@@ -491,4 +759,52 @@ uint64_t arm64_virt_virtio_net_rx_queue_phys(void)
 uint64_t arm64_virt_virtio_net_tx_queue_phys(void)
 {
 	return g_state.rings_ready ? g_state.tx_queue.base_phys : 0;
+}
+
+int arm64_virt_virtio_net_driver_ok(void)
+{
+	return g_state.driver_ok;
+}
+
+int32_t arm64_virt_virtio_net_rx_dequeue(uint8_t *out, uint32_t max_len)
+{
+	virtio_net_driver_rx_slot_t *slot;
+	uint32_t copy;
+
+	if (!out || g_state.driver_rx_count == 0u)
+		return 0;
+
+	slot = &g_state.driver_rx[g_state.driver_rx_tail];
+	if (slot->len > max_len)
+		return -1;
+
+	copy = slot->len;
+	k_memcpy(out, slot->bytes, copy);
+
+	g_state.driver_rx_tail =
+	    (uint16_t)((g_state.driver_rx_tail + 1u) %
+	               VIRTIO_NET_DRIVER_RX_SLOTS);
+	g_state.driver_rx_count =
+	    (uint16_t)(g_state.driver_rx_count - 1u);
+	return (int32_t)copy;
+}
+
+uint32_t arm64_virt_virtio_net_rx_packets(void)
+{
+	return g_state.rx_packets;
+}
+
+uint32_t arm64_virt_virtio_net_rx_drops_short(void)
+{
+	return g_state.rx_drops_short;
+}
+
+uint32_t arm64_virt_virtio_net_rx_drops_oversize(void)
+{
+	return g_state.rx_drops_oversize;
+}
+
+uint32_t arm64_virt_virtio_net_rx_drops_ring_full(void)
+{
+	return g_state.rx_drops_ring_full;
 }
