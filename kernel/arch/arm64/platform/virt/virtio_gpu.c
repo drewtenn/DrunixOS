@@ -27,61 +27,60 @@
 /* Virtio 1.2 §5.7.6.7: command type encodings. Only the 2D commands
  * M3.0 needs are named; the rest are intentionally absent so an
  * accidental reference fails to compile. */
-#define VIRTIO_GPU_CMD_GET_DISPLAY_INFO       0x0100u
-#define VIRTIO_GPU_CMD_RESOURCE_CREATE_2D     0x0101u
+#define VIRTIO_GPU_CMD_GET_DISPLAY_INFO 0x0100u
+#define VIRTIO_GPU_CMD_RESOURCE_CREATE_2D 0x0101u
 #define VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING 0x0106u
-#define VIRTIO_GPU_CMD_SET_SCANOUT            0x0103u
-#define VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D    0x0105u
-#define VIRTIO_GPU_CMD_RESOURCE_FLUSH         0x0104u
+#define VIRTIO_GPU_CMD_SET_SCANOUT 0x0103u
+#define VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D 0x0105u
+#define VIRTIO_GPU_CMD_RESOURCE_FLUSH 0x0104u
 
 /* Response types we expect from M3.0 commands. */
-#define VIRTIO_GPU_RESP_OK_NODATA             0x1100u
-#define VIRTIO_GPU_RESP_OK_DISPLAY_INFO       0x1101u
+#define VIRTIO_GPU_RESP_OK_NODATA 0x1100u
+#define VIRTIO_GPU_RESP_OK_DISPLAY_INFO 0x1101u
 
 /* §5.7.4 device config: VIRTIO_GPU_MAX_SCANOUTS = 16, but 1 is plenty
  * for M3.0. */
-#define VIRTIO_GPU_MAX_SCANOUTS_M3_0          1u
+#define VIRTIO_GPU_MAX_SCANOUTS_M3_0 1u
 
 /* §5.7.6.7 Format codes (subset). B8G8R8X8_UNORM matches Drunix's
  * existing 32-bpp BGRA framebuffer 1:1 (X = unused alpha byte). */
-#define VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM      2u
+#define VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM 2u
 
 /* Fixed resource id used by M3.0. 0 is reserved as "no resource";
  * M3.0 only ever has one live resource so a static id keeps the
  * lifecycle obvious. */
-#define VIRTIO_GPU_M3_0_RESOURCE_ID           1u
-#define VIRTIO_GPU_M3_0_SCANOUT_ID            0u
+#define VIRTIO_GPU_M3_0_RESOURCE_ID 1u
+#define VIRTIO_GPU_M3_0_SCANOUT_ID 0u
 
 /* M3.0 scanout dimensions: 32x32 BGRA = 4 KiB = exactly one DMA page.
  * The DMA pool is 16 pages and is shared with virtio-blk and
  * virtio-input. M3.1 grows this once a dedicated reservation lands. */
-#define VIRTIO_GPU_M3_0_WIDTH                 32u
-#define VIRTIO_GPU_M3_0_HEIGHT                32u
-#define VIRTIO_GPU_M3_0_BPP                   4u
-#define VIRTIO_GPU_M3_0_PITCH \
-	(VIRTIO_GPU_M3_0_WIDTH * VIRTIO_GPU_M3_0_BPP)
-#define VIRTIO_GPU_M3_0_SCANOUT_BYTES \
+#define VIRTIO_GPU_M3_0_WIDTH 32u
+#define VIRTIO_GPU_M3_0_HEIGHT 32u
+#define VIRTIO_GPU_M3_0_BPP 4u
+#define VIRTIO_GPU_M3_0_PITCH (VIRTIO_GPU_M3_0_WIDTH * VIRTIO_GPU_M3_0_BPP)
+#define VIRTIO_GPU_M3_0_SCANOUT_BYTES                                          \
 	(VIRTIO_GPU_M3_0_PITCH * VIRTIO_GPU_M3_0_HEIGHT)
 
 /* Page budgets — see plan doc for the budget rationale. */
-#define VIRTIO_GPU_CONTROLQ_PAGES             2u
-#define VIRTIO_GPU_CURSORQ_PAGES              2u
-#define VIRTIO_GPU_REQ_PAGES                  1u
-#define VIRTIO_GPU_RESP_PAGES                 1u
-#define VIRTIO_GPU_SCANOUT_PAGES              1u
+#define VIRTIO_GPU_CONTROLQ_PAGES 2u
+#define VIRTIO_GPU_CURSORQ_PAGES 2u
+#define VIRTIO_GPU_REQ_PAGES 1u
+#define VIRTIO_GPU_RESP_PAGES 1u
+#define VIRTIO_GPU_SCANOUT_PAGES 1u
 
 /* Bounded poll on the used ring after a controlq submit. Same shape
  * as virtio-blk's POLL_TIMEOUT_ITERS so a stuck device shows up in
  * the boot log instead of hanging silently. Codex's debate-gate review
  * called this out explicitly. */
-#define VIRTIO_GPU_POLL_TIMEOUT_ITERS         0x100000u
+#define VIRTIO_GPU_POLL_TIMEOUT_ITERS 0x100000u
 
 /* Slot/SPI mapping mirrors virtio-blk. Even though M3.0 polls and
  * doesn't register an SPI handler, we still compute the slot index
  * for diagnostic logging. */
-#define VIRTIO_GPU_MMIO_BASE_ADDR             0x0A000000UL
-#define VIRTIO_GPU_MMIO_STRIDE_BYTES          0x200u
-#define VIRTIO_GPU_MMIO_SPI_BASE              16u
+#define VIRTIO_GPU_MMIO_BASE_ADDR 0x0A000000UL
+#define VIRTIO_GPU_MMIO_STRIDE_BYTES 0x200u
+#define VIRTIO_GPU_MMIO_SPI_BASE 16u
 
 /*
  * Wire-level structs from the Virtio 1.2 spec. Naturally aligned, so
@@ -110,7 +109,7 @@ struct virtio_gpu_resp_display_info {
 		struct virtio_gpu_rect r;
 		uint32_t enabled;
 		uint32_t flags;
-	} pmodes[16];  /* VIRTIO_GPU_MAX_SCANOUTS spec value */
+	} pmodes[16]; /* VIRTIO_GPU_MAX_SCANOUTS spec value */
 };
 
 struct virtio_gpu_resource_create_2d {
@@ -252,8 +251,8 @@ static void status_or(uintptr_t base, uint32_t bit)
  * cache-invalidate resp → validate response type matches expected_type.
  */
 static int virtio_gpu_submit_cmd(uint32_t req_len,
-                                  uint32_t resp_len,
-                                  uint32_t expected_type)
+                                 uint32_t resp_len,
+                                 uint32_t expected_type)
 {
 	uint16_t head;
 	uint16_t req_idx;
@@ -355,8 +354,8 @@ static int virtio_gpu_get_display_info(void)
 
 	g_req->hdr.type = VIRTIO_GPU_CMD_GET_DISPLAY_INFO;
 	if (virtio_gpu_submit_cmd(sizeof(struct virtio_gpu_ctrl_hdr),
-	                           sizeof(struct virtio_gpu_resp_display_info),
-	                           VIRTIO_GPU_RESP_OK_DISPLAY_INFO) != 0)
+	                          sizeof(struct virtio_gpu_resp_display_info),
+	                          VIRTIO_GPU_RESP_OK_DISPLAY_INFO) != 0)
 		return -1;
 
 	enabled = g_resp->display_info.pmodes[0].enabled;
@@ -395,8 +394,8 @@ static int virtio_gpu_resource_create_2d(void)
 	g_req->create_2d.height = VIRTIO_GPU_M3_0_HEIGHT;
 
 	return virtio_gpu_submit_cmd(sizeof(struct virtio_gpu_resource_create_2d),
-	                              sizeof(struct virtio_gpu_ctrl_hdr),
-	                              VIRTIO_GPU_RESP_OK_NODATA);
+	                             sizeof(struct virtio_gpu_ctrl_hdr),
+	                             VIRTIO_GPU_RESP_OK_NODATA);
 }
 
 static int virtio_gpu_attach_backing(void)
@@ -409,8 +408,8 @@ static int virtio_gpu_attach_backing(void)
 	g_req->attach.entry.padding = 0;
 
 	return virtio_gpu_submit_cmd(sizeof(g_req->attach),
-	                              sizeof(struct virtio_gpu_ctrl_hdr),
-	                              VIRTIO_GPU_RESP_OK_NODATA);
+	                             sizeof(struct virtio_gpu_ctrl_hdr),
+	                             VIRTIO_GPU_RESP_OK_NODATA);
 }
 
 static int virtio_gpu_set_scanout(uint32_t width, uint32_t height)
@@ -424,14 +423,14 @@ static int virtio_gpu_set_scanout(uint32_t width, uint32_t height)
 	g_req->set_scanout.resource_id = VIRTIO_GPU_M3_0_RESOURCE_ID;
 
 	return virtio_gpu_submit_cmd(sizeof(struct virtio_gpu_set_scanout),
-	                              sizeof(struct virtio_gpu_ctrl_hdr),
-	                              VIRTIO_GPU_RESP_OK_NODATA);
+	                             sizeof(struct virtio_gpu_ctrl_hdr),
+	                             VIRTIO_GPU_RESP_OK_NODATA);
 }
 
 static int virtio_gpu_transfer_to_host(uint32_t x,
-                                        uint32_t y,
-                                        uint32_t width,
-                                        uint32_t height)
+                                       uint32_t y,
+                                       uint32_t width,
+                                       uint32_t height)
 {
 	uint64_t offset = ((uint64_t)y * (uint64_t)VIRTIO_GPU_M3_0_PITCH) +
 	                  (uint64_t)x * (uint64_t)VIRTIO_GPU_M3_0_BPP;
@@ -452,14 +451,14 @@ static int virtio_gpu_transfer_to_host(uint32_t x,
 	arm64_dma_cache_clean(g_scanout, VIRTIO_GPU_M3_0_SCANOUT_BYTES);
 
 	return virtio_gpu_submit_cmd(sizeof(struct virtio_gpu_transfer_to_host_2d),
-	                              sizeof(struct virtio_gpu_ctrl_hdr),
-	                              VIRTIO_GPU_RESP_OK_NODATA);
+	                             sizeof(struct virtio_gpu_ctrl_hdr),
+	                             VIRTIO_GPU_RESP_OK_NODATA);
 }
 
 static int virtio_gpu_resource_flush(uint32_t x,
-                                      uint32_t y,
-                                      uint32_t width,
-                                      uint32_t height)
+                                     uint32_t y,
+                                     uint32_t width,
+                                     uint32_t height)
 {
 	g_req->hdr.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
 	g_req->flush.r.x = x;
@@ -470,8 +469,8 @@ static int virtio_gpu_resource_flush(uint32_t x,
 	g_req->flush.padding = 0;
 
 	return virtio_gpu_submit_cmd(sizeof(struct virtio_gpu_resource_flush),
-	                              sizeof(struct virtio_gpu_ctrl_hdr),
-	                              VIRTIO_GPU_RESP_OK_NODATA);
+	                             sizeof(struct virtio_gpu_ctrl_hdr),
+	                             VIRTIO_GPU_RESP_OK_NODATA);
 }
 
 /*
@@ -495,13 +494,13 @@ static void virtio_gpu_draw_test_pattern(void)
 			int left = col < VIRTIO_GPU_M3_0_WIDTH / 2u;
 
 			if (top && left)
-				bgra = 0x000000FFu;  /* red */
+				bgra = 0x000000FFu; /* red */
 			else if (top && !left)
-				bgra = 0x0000FF00u;  /* green */
+				bgra = 0x0000FF00u; /* green */
 			else if (!top && left)
-				bgra = 0x00FF0000u;  /* blue */
+				bgra = 0x00FF0000u; /* blue */
 			else
-				bgra = 0x00FFFFFFu;  /* white */
+				bgra = 0x00FFFFFFu; /* white */
 
 			pixels[row * VIRTIO_GPU_M3_0_WIDTH + col] = bgra;
 		}
@@ -552,15 +551,15 @@ static int virtio_gpu_alloc_buffers(void)
 	g_dma_pages_held += VIRTIO_GPU_SCANOUT_PAGES;
 
 	if (virtq_init(&g_controlq,
-	                g_controlq_backing,
-	                VIRTIO_GPU_CONTROLQ_PAGES * VIRT_DMA_PAGE_SIZE) != 0) {
+	               g_controlq_backing,
+	               VIRTIO_GPU_CONTROLQ_PAGES * VIRT_DMA_PAGE_SIZE) != 0) {
 		platform_uart_puts("virtio-gpu: controlq virtq_init failed\n");
 		return -1;
 	}
 
 	if (virtq_init(&g_cursorq,
-	                g_cursorq_backing,
-	                VIRTIO_GPU_CURSORQ_PAGES * VIRT_DMA_PAGE_SIZE) != 0) {
+	               g_cursorq_backing,
+	               VIRTIO_GPU_CURSORQ_PAGES * VIRT_DMA_PAGE_SIZE) != 0) {
 		platform_uart_puts("virtio-gpu: cursorq virtq_init failed\n");
 		return -1;
 	}
@@ -646,19 +645,20 @@ int arm64_virt_virtio_gpu_init(void)
 	}
 
 	if (version != 1u) {
-		k_snprintf(line,
-		           sizeof(line),
-		           "virtio-gpu: unsupported transport version %u (legacy only)\n",
-		           (unsigned int)version);
+		k_snprintf(
+		    line,
+		    sizeof(line),
+		    "virtio-gpu: unsupported transport version %u (legacy only)\n",
+		    (unsigned int)version);
 		platform_uart_puts(line);
 		return -1;
 	}
 
 	g_dev_base = base;
 	slot = (uint32_t)((base - VIRTIO_GPU_MMIO_BASE_ADDR) /
-	                   VIRTIO_GPU_MMIO_STRIDE_BYTES);
+	                  VIRTIO_GPU_MMIO_STRIDE_BYTES);
 	spi = VIRTIO_GPU_MMIO_SPI_BASE + slot;
-	(void)spi;  /* M3.0 polls; SPI computed for diagnostic completeness. */
+	(void)spi; /* M3.0 polls; SPI computed for diagnostic completeness. */
 
 	k_snprintf(line,
 	           sizeof(line),
@@ -684,10 +684,9 @@ int arm64_virt_virtio_gpu_init(void)
 	mmio_write32(base + VIRTIO_MMIO_DRIVER_FEATURES, 0u);
 	status_or(base, VIRTIO_STATUS_FEATURES_OK);
 
-	if ((mmio_read32(base + VIRTIO_MMIO_STATUS) &
-	     VIRTIO_STATUS_FEATURES_OK) == 0u) {
-		platform_uart_puts(
-		    "virtio-gpu: device rejected feature negotiation\n");
+	if ((mmio_read32(base + VIRTIO_MMIO_STATUS) & VIRTIO_STATUS_FEATURES_OK) ==
+	    0u) {
+		platform_uart_puts("virtio-gpu: device rejected feature negotiation\n");
 		status_or(base, VIRTIO_STATUS_FAILED);
 		virtio_gpu_free_buffers();
 		return -1;
@@ -715,21 +714,17 @@ int arm64_virt_virtio_gpu_init(void)
 		goto out_cleanup;
 	if (virtio_gpu_attach_backing() != 0)
 		goto out_cleanup;
-	if (virtio_gpu_set_scanout(VIRTIO_GPU_M3_0_WIDTH,
-	                            VIRTIO_GPU_M3_0_HEIGHT) != 0)
+	if (virtio_gpu_set_scanout(VIRTIO_GPU_M3_0_WIDTH, VIRTIO_GPU_M3_0_HEIGHT) !=
+	    0)
 		goto out_cleanup;
 
 	virtio_gpu_draw_test_pattern();
 
-	if (virtio_gpu_transfer_to_host(0,
-	                                 0,
-	                                 VIRTIO_GPU_M3_0_WIDTH,
-	                                 VIRTIO_GPU_M3_0_HEIGHT) != 0)
+	if (virtio_gpu_transfer_to_host(
+	        0, 0, VIRTIO_GPU_M3_0_WIDTH, VIRTIO_GPU_M3_0_HEIGHT) != 0)
 		goto out_cleanup;
-	if (virtio_gpu_resource_flush(0,
-	                               0,
-	                               VIRTIO_GPU_M3_0_WIDTH,
-	                               VIRTIO_GPU_M3_0_HEIGHT) != 0)
+	if (virtio_gpu_resource_flush(
+	        0, 0, VIRTIO_GPU_M3_0_WIDTH, VIRTIO_GPU_M3_0_HEIGHT) != 0)
 		goto out_cleanup;
 
 	/* All six commands succeeded — only now mark the driver init'd
@@ -737,8 +732,8 @@ int arm64_virt_virtio_gpu_init(void)
 	 * init call short-circuit with success after a partial failure. */
 	g_initialized = 1;
 	g_ready = 1;
-	platform_uart_puts(
-	    "virtio-gpu: M3.0 sequence complete (32x32 BGRA test pattern flushed)\n");
+	platform_uart_puts("virtio-gpu: M3.0 sequence complete (32x32 BGRA test "
+	                   "pattern flushed)\n");
 	return 0;
 
 out_cleanup:
@@ -760,7 +755,7 @@ int arm64_virt_virtio_gpu_ready(void)
 }
 
 int arm64_virt_virtio_gpu_query_display(uint32_t *out_width,
-                                         uint32_t *out_height)
+                                        uint32_t *out_height)
 {
 	if (!g_ready)
 		return -1;
@@ -784,25 +779,23 @@ int arm64_virt_virtio_gpu_partial_flush_smoke(void)
 	 * known sentinel color so a later checksum can confirm the path
 	 * actually mutated the buffer end-to-end. */
 	pixels = (uint32_t *)g_scanout;
-	for (row = VIRTIO_GPU_M3_0_HEIGHT / 2u;
-	     row < VIRTIO_GPU_M3_0_HEIGHT;
+	for (row = VIRTIO_GPU_M3_0_HEIGHT / 2u; row < VIRTIO_GPU_M3_0_HEIGHT;
 	     row++) {
-		for (col = VIRTIO_GPU_M3_0_WIDTH / 2u;
-		     col < VIRTIO_GPU_M3_0_WIDTH;
+		for (col = VIRTIO_GPU_M3_0_WIDTH / 2u; col < VIRTIO_GPU_M3_0_WIDTH;
 		     col++) {
 			pixels[row * VIRTIO_GPU_M3_0_WIDTH + col] = 0x00010203u;
 		}
 	}
 
 	if (virtio_gpu_transfer_to_host(VIRTIO_GPU_M3_0_WIDTH / 2u,
-	                                 VIRTIO_GPU_M3_0_HEIGHT / 2u,
-	                                 VIRTIO_GPU_M3_0_WIDTH / 2u,
-	                                 VIRTIO_GPU_M3_0_HEIGHT / 2u) != 0)
+	                                VIRTIO_GPU_M3_0_HEIGHT / 2u,
+	                                VIRTIO_GPU_M3_0_WIDTH / 2u,
+	                                VIRTIO_GPU_M3_0_HEIGHT / 2u) != 0)
 		return -1;
 	if (virtio_gpu_resource_flush(VIRTIO_GPU_M3_0_WIDTH / 2u,
-	                               VIRTIO_GPU_M3_0_HEIGHT / 2u,
-	                               VIRTIO_GPU_M3_0_WIDTH / 2u,
-	                               VIRTIO_GPU_M3_0_HEIGHT / 2u) != 0)
+	                              VIRTIO_GPU_M3_0_HEIGHT / 2u,
+	                              VIRTIO_GPU_M3_0_WIDTH / 2u,
+	                              VIRTIO_GPU_M3_0_HEIGHT / 2u) != 0)
 		return -1;
 
 	return 0;

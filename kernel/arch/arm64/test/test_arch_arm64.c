@@ -501,8 +501,7 @@ static void test_arm64_fwcfg_finds_etc_ramfb(ktest_case_t *tc)
 	uint16_t selector = 0;
 	uint32_t size = 0;
 
-	KTEST_ASSERT_EQ(tc,
-	                fwcfg_find_file("etc/ramfb", &selector, &size), 0);
+	KTEST_ASSERT_EQ(tc, fwcfg_find_file("etc/ramfb", &selector, &size), 0);
 	/* QEMU's RAMFBCfg is 28 bytes (be64 + 5 × be32). */
 	KTEST_EXPECT_EQ(tc, size, 28u);
 	KTEST_EXPECT_NE(tc, (uint32_t)selector, 0u);
@@ -513,11 +512,10 @@ static void test_arm64_fwcfg_rejects_unknown_file(ktest_case_t *tc)
 	uint16_t selector = 0xBEEF;
 	uint32_t size = 0xDEADBEEFu;
 
-	KTEST_EXPECT_NE(
-	    tc,
-	    (uint32_t)fwcfg_find_file("etc/this-key-does-not-exist",
-	                              &selector, &size),
-	    0u);
+	KTEST_EXPECT_NE(tc,
+	                (uint32_t)fwcfg_find_file(
+	                    "etc/this-key-does-not-exist", &selector, &size),
+	                0u);
 }
 
 static void test_arm64_ramfb_layout_reserves_8mib(ktest_case_t *tc)
@@ -531,11 +529,10 @@ static void test_arm64_ramfb_layout_reserves_8mib(ktest_case_t *tc)
 	KTEST_EXPECT_GE(tc,
 	                (uint32_t)l->framebuffer_base,
 	                (uint32_t)(l->heap_base + l->heap_size));
-	KTEST_EXPECT_GE(
-	    tc,
-	    (uint32_t)((l->ram_base + l->ram_size) -
-	               (l->framebuffer_base + l->framebuffer_size)),
-	    0u);
+	KTEST_EXPECT_GE(tc,
+	                (uint32_t)((l->ram_base + l->ram_size) -
+	                           (l->framebuffer_base + l->framebuffer_size)),
+	                0u);
 }
 
 static void test_arm64_ramfb_classifier_returns_framebuffer(ktest_case_t *tc)
@@ -556,8 +553,8 @@ static void test_arm64_ramfb_classifier_returns_framebuffer(ktest_case_t *tc)
 	                (uint32_t)PLATFORM_MM_FRAMEBUFFER);
 	/* One byte past the FB span must NOT be classified as FB. */
 	KTEST_EXPECT_NE(tc,
-	                (uint32_t)platform_mm_classify(
-	                    l->framebuffer_base + l->framebuffer_size),
+	                (uint32_t)platform_mm_classify(l->framebuffer_base +
+	                                               l->framebuffer_size),
 	                (uint32_t)PLATFORM_MM_FRAMEBUFFER);
 }
 
@@ -573,8 +570,8 @@ static void test_arm64_ramfb_kernel_alias_is_normal_nc(ktest_case_t *tc)
 		KTEST_EXPECT_EQ(tc, 0u, 0u);
 		return;
 	}
-	rc = arch_mm_query(arch_aspace_kernel(),
-	                   (uintptr_t)l->framebuffer_base, &map);
+	rc = arch_mm_query(
+	    arch_aspace_kernel(), (uintptr_t)l->framebuffer_base, &map);
 	KTEST_ASSERT_EQ(tc, rc, 0);
 	KTEST_EXPECT_NE(tc, map.flags & ARCH_MM_MAP_NC, 0u);
 	KTEST_EXPECT_EQ(tc, map.flags & ARCH_MM_MAP_IO, 0u);
@@ -705,8 +702,8 @@ static void test_arm64_virtio_gpu_reached_ready(ktest_case_t *tc)
 	KTEST_EXPECT_TRUE(tc, arm64_virt_virtio_gpu_ready());
 }
 
-static void test_arm64_virtio_gpu_query_display_returns_nonzero(
-    ktest_case_t *tc)
+static void
+test_arm64_virtio_gpu_query_display_returns_nonzero(ktest_case_t *tc)
 {
 	uint32_t w = 0;
 	uint32_t h = 0;
@@ -723,8 +720,8 @@ static void test_arm64_virtio_gpu_query_display_returns_nonzero(
 	KTEST_EXPECT_NE(tc, h, 0u);
 }
 
-static void test_arm64_virtio_gpu_pattern_checksum_is_deterministic(
-    ktest_case_t *tc)
+static void
+test_arm64_virtio_gpu_pattern_checksum_is_deterministic(ktest_case_t *tc)
 {
 	uint32_t a;
 	uint32_t b;
@@ -742,8 +739,7 @@ static void test_arm64_virtio_gpu_pattern_checksum_is_deterministic(
 	KTEST_EXPECT_NE(tc, a, 0u);
 }
 
-static void test_arm64_virtio_gpu_partial_flush_smoke_passes(
-    ktest_case_t *tc)
+static void test_arm64_virtio_gpu_partial_flush_smoke_passes(ktest_case_t *tc)
 {
 	uint32_t before;
 	uint32_t after;
@@ -762,8 +758,7 @@ static void test_arm64_virtio_gpu_partial_flush_smoke_passes(
 	KTEST_EXPECT_NE(tc, before, after);
 }
 
-static void test_arm64_virtio_gpu_dma_pages_held_within_budget(
-    ktest_case_t *tc)
+static void test_arm64_virtio_gpu_dma_pages_held_within_budget(ktest_case_t *tc)
 {
 	uint32_t held;
 

@@ -197,10 +197,8 @@ static void arm64_launch_init_or_fallback(void)
 	sched_init();
 	arm64_mount_root_namespace();
 	arm64_mount_synthetic_filesystems();
-	init_pid = boot_launch_init_process(init_prog,
-	                                    init_arg0,
-	                                    DRUNIX_INIT_ENV0,
-	                                    BOOT_LAUNCH_INIT_STANDALONE);
+	init_pid = boot_launch_init_process(
+	    init_prog, init_arg0, DRUNIX_INIT_ENV0, BOOT_LAUNCH_INIT_STANDALONE);
 	if (init_pid < 0) {
 		platform_uart_puts("ARM64 init launch failed: ");
 		platform_uart_puts(init_prog);

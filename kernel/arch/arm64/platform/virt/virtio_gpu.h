@@ -51,7 +51,7 @@ int arm64_virt_virtio_gpu_ready(void);
 
 /* Send GET_DISPLAY_INFO; populate width/height of scanout 0. */
 int arm64_virt_virtio_gpu_query_display(uint32_t *out_width,
-                                         uint32_t *out_height);
+                                        uint32_t *out_height);
 
 /* Run the dirty-rect partial flush on the existing M3.0 scanout. */
 int arm64_virt_virtio_gpu_partial_flush_smoke(void);
