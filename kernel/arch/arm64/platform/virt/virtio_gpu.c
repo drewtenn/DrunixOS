@@ -27,6 +27,7 @@
 #include "../../dma.h"
 #include "../../mm/mmu.h"
 #include "../../timer.h"
+#include "cursor_sprite.h"
 #include "dma.h"
 #include "fbdev.h"
 #include "kprintf.h"
@@ -46,6 +47,11 @@
 #define VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D 0x0105u
 #define VIRTIO_GPU_CMD_RESOURCE_FLUSH 0x0104u
 
+/* Cursor commands (Virtio 1.2 §5.7.6.10) — go on cursorq (queue 1)
+ * not controlq. */
+#define VIRTIO_GPU_CMD_UPDATE_CURSOR 0x0300u
+#define VIRTIO_GPU_CMD_MOVE_CURSOR 0x0301u
+
 /* Response types we expect from M3.0 commands. */
 #define VIRTIO_GPU_RESP_OK_NODATA 0x1100u
 #define VIRTIO_GPU_RESP_OK_DISPLAY_INFO 0x1101u
@@ -58,11 +64,22 @@
  * existing 32-bpp BGRA framebuffer 1:1 (X = unused alpha byte). */
 #define VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM 2u
 
-/* Fixed resource id and scanout id. 0 is reserved as "no resource";
- * the driver only ever has one live resource so a static id keeps the
- * lifecycle obvious. */
+/* Fixed resource ids. 0 is reserved as "no resource". M3.3 adds a
+ * second static resource for the hardware cursor sprite — separate
+ * resource so the cursor lives in its own backing buffer, not the
+ * scanout. */
 #define VIRTIO_GPU_RESOURCE_ID 1u
+#define VIRTIO_GPU_CURSOR_RESOURCE_ID 2u
 #define VIRTIO_GPU_SCANOUT_ID 0u
+
+/* M3.3 cursor sprite size. virtio-gpu/QEMU expects 64x64 BGRA;
+ * Drunix's 13x20 sprite (shared/cursor_sprite.h) is rendered at the
+ * top-left and the rest is transparent (alpha=0). */
+#define VIRTIO_GPU_CURSOR_W 64u
+#define VIRTIO_GPU_CURSOR_H 64u
+#define VIRTIO_GPU_CURSOR_BPP 4u
+#define VIRTIO_GPU_CURSOR_PITCH (VIRTIO_GPU_CURSOR_W * VIRTIO_GPU_CURSOR_BPP)
+#define VIRTIO_GPU_CURSOR_BYTES (VIRTIO_GPU_CURSOR_PITCH * VIRTIO_GPU_CURSOR_H)
 
 /* Scanout dimensions. M3.1 keeps the same 1024x768 BGRA size that
  * ramfb (M2.5a) used so the userspace compositor (user/apps/desktop)
@@ -78,13 +95,17 @@
 #define VIRTIO_GPU_PITCH (VIRTIO_GPU_WIDTH * VIRTIO_GPU_BPP)
 #define VIRTIO_GPU_SCANOUT_BYTES (VIRTIO_GPU_PITCH * VIRTIO_GPU_HEIGHT)
 
-/* Page budgets — see docs/design/m3.1-virtio-gpu-fbdev-swap.md.
- * The scanout buffer no longer comes from the DMA pool; it lives in
- * the platform_ram_layout()->framebuffer_base/size reservation. */
+/* Page budgets — see docs/design/m3.1-virtio-gpu-fbdev-swap.md and
+ * m3.3-hardware-cursor.md. Scanout buffer lives in the framebuffer
+ * reservation; cursor sprite (4 pages = 64x64 BGRA) and cursorq
+ * request page (1 page) come from the DMA pool. */
 #define VIRTIO_GPU_CONTROLQ_PAGES 2u
 #define VIRTIO_GPU_CURSORQ_PAGES 2u
 #define VIRTIO_GPU_REQ_PAGES 1u
 #define VIRTIO_GPU_RESP_PAGES 1u
+#define VIRTIO_GPU_CURSOR_BACKING_PAGES \
+	((VIRTIO_GPU_CURSOR_BYTES + VIRT_DMA_PAGE_SIZE - 1u) / VIRT_DMA_PAGE_SIZE)
+#define VIRTIO_GPU_CURSOR_REQ_PAGES 1u
 
 /* Wall-clock-based bounded poll on the used ring after a controlq
  * submit. Replaces the M3.0 iteration-count timeout — codex's M3.0
@@ -172,6 +193,26 @@ struct virtio_gpu_resource_flush {
 	uint32_t padding;
 };
 
+/* Cursor commands (Virtio 1.2 §5.7.6.10). UPDATE_CURSOR sets the
+ * sprite + position + hotspot; MOVE_CURSOR uses the same struct
+ * shape but only x/y/scanout_id matter (resource_id, hot_x, hot_y,
+ * padding are ignored by the device). */
+struct virtio_gpu_cursor_pos {
+	uint32_t scanout_id;
+	uint32_t x;
+	uint32_t y;
+	uint32_t padding;
+};
+
+struct virtio_gpu_update_cursor {
+	struct virtio_gpu_ctrl_hdr hdr;
+	struct virtio_gpu_cursor_pos pos;
+	uint32_t resource_id;
+	uint32_t hot_x;
+	uint32_t hot_y;
+	uint32_t padding;
+};
+
 /*
  * Single request and response page. M3.0 sends one command at a time
  * on the controlq, so the largest command (resource_attach_backing
@@ -223,6 +264,11 @@ _Static_assert(sizeof(struct virtio_gpu_transfer_to_host_2d) == 56,
 _Static_assert(sizeof(struct virtio_gpu_resource_flush) == 48,
                "virtio-gpu resource_flush must be 48 bytes "
                "(hdr 24 + rect 16 + u32 + pad)");
+_Static_assert(sizeof(struct virtio_gpu_cursor_pos) == 16,
+               "virtio-gpu cursor_pos must be 16 bytes (4×u32)");
+_Static_assert(sizeof(struct virtio_gpu_update_cursor) == 56,
+               "virtio-gpu update_cursor must be 56 bytes "
+               "(hdr 24 + pos 16 + 4×u32)");
 
 /* Driver state. Single-CPU + single-driver-thread per virtio-blk. */
 static int g_initialized;
@@ -290,6 +336,24 @@ static struct {
  * rebuilt with the M3.2 ioctl path. */
 static uint32_t g_no_ioctl_ticks;
 #define VIRTIO_GPU_FALLBACK_TICK_THRESHOLD 17u
+
+/* M3.3 hardware-cursor state. The sprite is uploaded once at init;
+ * subsequent ioctl-driven moves submit MOVE_CURSOR on cursorq. The
+ * cursor request page (g_cursor_req) is dedicated to cursorq and
+ * never shared with controlq's g_req — codex's M3.3 debate-gate
+ * flagged that race. g_cursor_ready=1 only after both sprite upload
+ * and the initial UPDATE_CURSOR succeeded; the fbdev ioctl handler
+ * gates on this so failures fall back to the compositor's software
+ * cursor cleanly. */
+static uint8_t *g_cursor_backing;
+static uint64_t g_cursor_backing_phys;
+static struct virtio_gpu_update_cursor *g_cursor_req;
+static int g_cursor_ready;
+
+/* Forward declaration so the main init function can call it after
+ * fbdev_init succeeds. The implementation lives near the other
+ * cursor helpers below. */
+static int virtio_gpu_cursor_init(void);
 
 static uint32_t mmio_read32(uintptr_t addr)
 {
@@ -904,6 +968,12 @@ int arm64_virt_virtio_gpu_init(void)
 	 * the host scans guest pages directly there. */
 	fbdev_set_publish_dirty_rect(arm64_virt_virtio_gpu_publish_dirty_rect);
 
+	/* M3.3: hardware cursor. Best-effort — failure leaves
+	 * g_cursor_ready = 0; the fbdev cursor ioctl returns -1 in that
+	 * case and userspace falls back to drawing the cursor in
+	 * software. */
+	(void)virtio_gpu_cursor_init();
+
 	/* All steps succeeded — only now mark the driver init'd and
 	 * ready. Setting g_initialized earlier would let a future init
 	 * call short-circuit with success after a partial failure. */
@@ -1175,4 +1245,235 @@ void arm64_virt_virtio_gpu_pump_flush(void)
 uint32_t arm64_virt_virtio_gpu_pump_runs(void)
 {
 	return g_flush_runs;
+}
+
+/*
+ * Render Drunix's 13x20 cursor sprite (shared/cursor_sprite.h) into
+ * a 64x64 BGRA buffer. Pixels outside the 13x20 sprite stay alpha=0
+ * (transparent); FG = white opaque, SHADOW = dark opaque.
+ *
+ * Format = B8G8R8A8_UNORM: byte 0 = blue, 1 = green, 2 = red, 3 = alpha.
+ * As a uint32_t on little-endian: 0xAARRGGBB.
+ */
+static void virtio_gpu_render_cursor_sprite(void)
+{
+	uint32_t *pixels = (uint32_t *)g_cursor_backing;
+	uint32_t y;
+	uint32_t x;
+
+	for (y = 0; y < VIRTIO_GPU_CURSOR_H; y++) {
+		for (x = 0; x < VIRTIO_GPU_CURSOR_W; x++) {
+			uint32_t bgra = 0; /* transparent */
+			int kind = drunix_cursor_pixel_at((int)x, (int)y);
+
+			if (kind == DRUNIX_CURSOR_PIXEL_FG)
+				bgra = 0xFFFFFFFFu; /* opaque white */
+			else if (kind == DRUNIX_CURSOR_PIXEL_SHADOW)
+				bgra = 0xFF202020u; /* opaque dark gray */
+			pixels[y * VIRTIO_GPU_CURSOR_W + x] = bgra;
+		}
+	}
+}
+
+/*
+ * Drain any used-ring completions on the cursorq, freeing their
+ * descriptor chains. Cursor commands have no response payload; the
+ * used-ring entry just signals "device finished with this descriptor",
+ * letting us reclaim the descriptor for reuse. Called before each
+ * MOVE_CURSOR submit so the queue doesn't fill up.
+ */
+static void virtio_gpu_cursorq_drain_used(void)
+{
+	uint32_t completed_len;
+	uint16_t head;
+
+	for (;;) {
+		head = virtq_drain_one(&g_cursorq, &completed_len);
+		if (head == 0xFFFFu)
+			break;
+		virtq_free_chain(&g_cursorq, head);
+	}
+}
+
+/*
+ * Submit a cursorq command (UPDATE_CURSOR or MOVE_CURSOR). Both use
+ * the virtio_gpu_update_cursor struct; only `type` and the relevant
+ * fields differ between them.
+ *
+ * Fire-and-forget: this function does NOT wait for completion. The
+ * device reads g_cursor_req as it processes the descriptor; rapid
+ * back-to-back submits race on the buffer, but since all fields
+ * other than `type`/coords have stable values during steady-state
+ * MOVE_CURSOR traffic, the device sees consistent commands.
+ *
+ * Returns 0 if the descriptor was queued, -1 if the queue is full.
+ */
+static int virtio_gpu_cursorq_submit(uint32_t type,
+                                      uint32_t x,
+                                      uint32_t y,
+                                      uint32_t resource_id,
+                                      uint32_t hot_x,
+                                      uint32_t hot_y)
+{
+	uint16_t head;
+
+	virtio_gpu_cursorq_drain_used();
+
+	g_cursor_req->hdr.type = type;
+	g_cursor_req->hdr.flags = 0;
+	g_cursor_req->hdr.fence_id = 0;
+	g_cursor_req->hdr.ctx_id = 0;
+	g_cursor_req->hdr.padding = 0;
+	g_cursor_req->pos.scanout_id = VIRTIO_GPU_SCANOUT_ID;
+	g_cursor_req->pos.x = x;
+	g_cursor_req->pos.y = y;
+	g_cursor_req->pos.padding = 0;
+	g_cursor_req->resource_id = resource_id;
+	g_cursor_req->hot_x = hot_x;
+	g_cursor_req->hot_y = hot_y;
+	g_cursor_req->padding = 0;
+
+	arm64_dma_cache_clean(g_cursor_req, sizeof(*g_cursor_req));
+
+	head = virtq_alloc_chain(&g_cursorq, 1u);
+	if (head == 0xFFFFu)
+		return -1;
+
+	g_cursorq.desc[head].addr = virt_virt_to_phys(g_cursor_req);
+	g_cursorq.desc[head].len = sizeof(*g_cursor_req);
+	g_cursorq.desc[head].flags = 0;
+	g_cursorq.desc[head].next = 0;
+
+	virtq_submit(&g_cursorq, head);
+	mmio_write32(g_dev_base + VIRTIO_MMIO_QUEUE_NOTIFY, 1u);
+	return 0;
+}
+
+/*
+ * Upload the cursor sprite as a virtio-gpu resource on the controlq.
+ * Sequence: RESOURCE_CREATE_2D (B8G8R8A8_UNORM, 64x64) →
+ * RESOURCE_ATTACH_BACKING (one entry pointing at g_cursor_backing) →
+ * TRANSFER_TO_HOST_2D (full sprite). Uses the shared g_req/g_resp
+ * pages because this runs ONLY at init, before any cursorq traffic
+ * starts; controlq pump activity is safe here too because the pump
+ * doesn't run until init completes.
+ */
+static int virtio_gpu_cursor_create_resource(void)
+{
+	g_req->hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_2D;
+	g_req->create_2d.resource_id = VIRTIO_GPU_CURSOR_RESOURCE_ID;
+	g_req->create_2d.format = 1u; /* VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM */
+	g_req->create_2d.width = VIRTIO_GPU_CURSOR_W;
+	g_req->create_2d.height = VIRTIO_GPU_CURSOR_H;
+	if (virtio_gpu_submit_cmd(sizeof(struct virtio_gpu_resource_create_2d),
+	                           sizeof(struct virtio_gpu_ctrl_hdr),
+	                           VIRTIO_GPU_RESP_OK_NODATA) != 0)
+		return -1;
+
+	g_req->hdr.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING;
+	g_req->attach.hdr.resource_id = VIRTIO_GPU_CURSOR_RESOURCE_ID;
+	g_req->attach.hdr.nr_entries = 1u;
+	g_req->attach.entry.addr = g_cursor_backing_phys;
+	g_req->attach.entry.length = VIRTIO_GPU_CURSOR_BYTES;
+	g_req->attach.entry.padding = 0;
+	if (virtio_gpu_submit_cmd(sizeof(g_req->attach),
+	                           sizeof(struct virtio_gpu_ctrl_hdr),
+	                           VIRTIO_GPU_RESP_OK_NODATA) != 0)
+		return -1;
+
+	g_req->hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D;
+	g_req->xfer.r.x = 0;
+	g_req->xfer.r.y = 0;
+	g_req->xfer.r.width = VIRTIO_GPU_CURSOR_W;
+	g_req->xfer.r.height = VIRTIO_GPU_CURSOR_H;
+	g_req->xfer.offset = 0;
+	g_req->xfer.resource_id = VIRTIO_GPU_CURSOR_RESOURCE_ID;
+	g_req->xfer.padding = 0;
+	arm64_dma_cache_clean(g_cursor_backing, VIRTIO_GPU_CURSOR_BYTES);
+	if (virtio_gpu_submit_cmd(sizeof(struct virtio_gpu_transfer_to_host_2d),
+	                           sizeof(struct virtio_gpu_ctrl_hdr),
+	                           VIRTIO_GPU_RESP_OK_NODATA) != 0)
+		return -1;
+
+	return 0;
+}
+
+/*
+ * Cursor init: allocate sprite backing + cursor request page, render
+ * Drunix's sprite into the BGRA buffer, upload the resource via
+ * controlq, then UPDATE_CURSOR via cursorq with the initial position
+ * (screen center). On any failure, free what was allocated and leave
+ * g_cursor_ready=0 so the fbdev ioctl handler returns -1, signalling
+ * the compositor to keep its software cursor.
+ */
+static int virtio_gpu_cursor_init(void)
+{
+	uint32_t init_x = g_display_width / 2u;
+	uint32_t init_y = g_display_height / 2u;
+
+	g_cursor_backing = virt_dma_alloc(VIRTIO_GPU_CURSOR_BACKING_PAGES);
+	if (!g_cursor_backing) {
+		platform_uart_puts(
+		    "virtio-gpu: cursor backing alloc failed; software cursor stays\n");
+		return -1;
+	}
+	g_dma_pages_held += VIRTIO_GPU_CURSOR_BACKING_PAGES;
+	g_cursor_backing_phys = (uint64_t)(uintptr_t)g_cursor_backing;
+
+	g_cursor_req = virt_dma_alloc(VIRTIO_GPU_CURSOR_REQ_PAGES);
+	if (!g_cursor_req) {
+		platform_uart_puts(
+		    "virtio-gpu: cursor req alloc failed; software cursor stays\n");
+		virt_dma_free(g_cursor_backing, VIRTIO_GPU_CURSOR_BACKING_PAGES);
+		g_dma_pages_held -= VIRTIO_GPU_CURSOR_BACKING_PAGES;
+		g_cursor_backing = 0;
+		return -1;
+	}
+	g_dma_pages_held += VIRTIO_GPU_CURSOR_REQ_PAGES;
+
+	virtio_gpu_render_cursor_sprite();
+
+	if (virtio_gpu_cursor_create_resource() != 0) {
+		platform_uart_puts(
+		    "virtio-gpu: cursor sprite upload failed; software cursor stays\n");
+		virt_dma_free(g_cursor_req, VIRTIO_GPU_CURSOR_REQ_PAGES);
+		virt_dma_free(g_cursor_backing, VIRTIO_GPU_CURSOR_BACKING_PAGES);
+		g_dma_pages_held -=
+		    VIRTIO_GPU_CURSOR_REQ_PAGES + VIRTIO_GPU_CURSOR_BACKING_PAGES;
+		g_cursor_req = 0;
+		g_cursor_backing = 0;
+		return -1;
+	}
+
+	if (virtio_gpu_cursorq_submit(VIRTIO_GPU_CMD_UPDATE_CURSOR, init_x,
+	                                init_y, VIRTIO_GPU_CURSOR_RESOURCE_ID,
+	                                0, 0) != 0) {
+		platform_uart_puts(
+		    "virtio-gpu: initial UPDATE_CURSOR submit failed; software cursor stays\n");
+		return -1;
+	}
+
+	g_cursor_ready = 1;
+	platform_uart_puts(
+	    "virtio-gpu: hardware cursor uploaded (64x64 BGRA, sprite from "
+	    "shared/cursor_sprite.h)\n");
+	return 0;
+}
+
+void arm64_virt_virtio_gpu_move_cursor(int32_t x, int32_t y)
+{
+	if (!g_cursor_ready || g_flush_disabled)
+		return;
+	if (x < 0 || y < 0)
+		return;
+	if ((uint32_t)x >= g_display_width || (uint32_t)y >= g_display_height)
+		return;
+
+	(void)virtio_gpu_cursorq_submit(VIRTIO_GPU_CMD_MOVE_CURSOR,
+	                                 (uint32_t)x, (uint32_t)y, 0, 0, 0);
+}
+
+int arm64_virt_virtio_gpu_cursor_ready(void)
+{
+	return g_cursor_ready;
 }

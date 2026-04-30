@@ -102,6 +102,26 @@ void arm64_virt_virtio_gpu_pump_flush(void);
 uint32_t arm64_virt_virtio_gpu_pump_runs(void);
 
 /*
+ * M3.3 hardware cursor: submit a MOVE_CURSOR command on cursorq.
+ * Fire-and-forget; does not wait for the device to acknowledge.
+ * Off-screen or negative coordinates return without submitting.
+ *
+ * Called from the fbdev ioctl handler when DRUNIX_FBIO_MOVE_CURSOR
+ * arrives. If the cursor isn't ready (sprite upload failed), this
+ * is a no-op and the fbdev handler returns -1 to the caller so the
+ * compositor can fall back to software cursor.
+ */
+void arm64_virt_virtio_gpu_move_cursor(int32_t x, int32_t y);
+
+/*
+ * Predicate: 1 when the hardware cursor sprite has been uploaded to
+ * the host AND the initial UPDATE_CURSOR succeeded. fbdev's cursor
+ * ioctl gates on this so an in-flight init failure cleanly disables
+ * the hardware path.
+ */
+int arm64_virt_virtio_gpu_cursor_ready(void);
+
+/*
  * M3.2 dirty-rect publish hook. IRQ-safe: unions `rect` into the
  * driver's pending dirty state (a single coalesced rect) and sets
  * the flush flag so the next pump_flush picks it up. Called from

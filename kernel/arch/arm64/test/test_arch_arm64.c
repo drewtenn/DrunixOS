@@ -769,17 +769,24 @@ static void test_arm64_virtio_gpu_partial_flush_smoke_passes(ktest_case_t *tc)
 static void test_arm64_virtio_gpu_dma_pages_held_within_budget(ktest_case_t *tc)
 {
 	uint32_t held;
+	uint32_t expected = 6u;
 
 	if (!arm64_virt_virtio_gpu_ready())
 		return;
 
 	/* M3.1 budget: 2 controlq + 2 cursorq + 1 req + 1 resp = 6 pages.
-	 * The scanout buffer no longer comes from the DMA pool — it lives
-	 * in platform_ram_layout()->framebuffer_base/size. Anything other
-	 * than 6 means either the cleanup path leaked or the budget
-	 * accounting is stale. */
+	 * M3.3 hardware cursor adds 4 pages of cursor sprite backing
+	 * (64x64x4 = 16 KiB) + 1 page of dedicated cursorq request
+	 * buffer = 5 more pages, total 11. The cursor budget only
+	 * counts when the cursor actually uploaded successfully —
+	 * cursor_ready gates that. The scanout buffer no longer comes
+	 * from the DMA pool: it lives in
+	 * platform_ram_layout()->framebuffer_base/size. */
+	if (arm64_virt_virtio_gpu_cursor_ready())
+		expected = 11u;
+
 	held = arm64_virt_virtio_gpu_dma_pages_held();
-	KTEST_EXPECT_EQ(tc, held, 6u);
+	KTEST_EXPECT_EQ(tc, held, expected);
 }
 
 static void test_arm64_virtio_gpu_owns_fb0_post_init(ktest_case_t *tc)
