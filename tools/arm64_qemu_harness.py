@@ -92,7 +92,8 @@ _VIRT_DEFAULT_DEVICES: list[str] = [
 
 def qemu_command(serial_log: Path,
                  platform: str = "raspi3b",
-                 devices: Sequence[str] | None = None) -> list[str]:
+                 devices: Sequence[str] | None = None,
+                 netdev: str | None = None) -> list[str]:
     """The canonical headless QEMU command-line for ARM64 boots.
 
     `devices` parameterises the -device list for the `virt` platform
@@ -100,11 +101,17 @@ def qemu_command(serial_log: Path,
     test_arm64_ktest_ramfb_fallback.py runs without
     `virtio-gpu-device` to verify the ramfb fallback path). When None,
     the default _VIRT_DEFAULT_DEVICES list is used. Ignored on raspi3b.
+
+    `netdev` overrides the default isolated user-mode netdev. The
+    integration test passes `socket,id=n0,connect=127.0.0.1:11000`
+    to wire QEMU's virtio-net to a host-side listener that can
+    inject and capture raw Ethernet frames.
     """
     if platform == "virt":
         device_args: list[str] = []
         for d in devices if devices is not None else _VIRT_DEFAULT_DEVICES:
             device_args.extend(["-device", d])
+        netdev_arg = netdev if netdev is not None else "user,id=n0,restrict=on"
         return [
             qemu_binary(),
             "-display", "none",
@@ -114,7 +121,7 @@ def qemu_command(serial_log: Path,
             "-m", "1G",
             "-kernel", "kernel-arm64.elf",
             "-drive", "file=img/disk.img,if=none,format=raw,id=hd0",
-            "-netdev", "user,id=n0,restrict=on",
+            "-netdev", netdev_arg,
             *device_args,
             "-serial", f"file:{serial_log}",
             "-monitor", "none",
@@ -146,7 +153,9 @@ def boot_and_wait(serial_log: Path,
                   done: Callable[[str], bool],
                   timeout: float = 20.0,
                   platform: str = "raspi3b",
-                  devices: Sequence[str] | None = None) -> BootResult:
+                  devices: Sequence[str] | None = None,
+                  netdev: str | None = None,
+                  on_qemu_started: Callable[[subprocess.Popen], None] | None = None) -> BootResult:
     """Boot the kernel under QEMU; poll the serial log until `done(text)`.
 
     `done` is invoked with the current contents of the serial log on
@@ -156,6 +165,11 @@ def boot_and_wait(serial_log: Path,
 
     `devices` overrides the default -device list for the virt
     platform; ignored on raspi3b.
+
+    `netdev` overrides the default user-mode netdev (see qemu_command).
+    `on_qemu_started` runs once after Popen but before the wait loop;
+    used by the integration test to inject frames into the socket
+    netdev concurrently with the boot.
     """
     serial_log.parent.mkdir(exist_ok=True)
     serial_log.unlink(missing_ok=True)
@@ -166,11 +180,16 @@ def boot_and_wait(serial_log: Path,
     with stderr_log.open("w") as stderr:
         try:
             proc = subprocess.Popen(
-                qemu_command(serial_log, platform, devices=devices),
+                qemu_command(serial_log,
+                             platform,
+                             devices=devices,
+                             netdev=netdev),
                 cwd=ROOT,
                 stdout=subprocess.DEVNULL,
                 stderr=stderr,
             )
+            if on_qemu_started is not None:
+                on_qemu_started(proc)
         except FileNotFoundError as exc:
             raise SystemExit(
                 f"failed to start QEMU command {qemu_binary()!r}: {exc}"

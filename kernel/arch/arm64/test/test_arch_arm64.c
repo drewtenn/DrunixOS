@@ -23,6 +23,7 @@
 #include "platform/virt/fwcfg.h"
 #include "platform/virt/virtio_gpu.h"
 #include "platform/virt/virtio_net.h"
+#include "timer.h"
 #endif
 
 extern const uint8_t virt_snapshot_dtb[];
@@ -914,6 +915,18 @@ static void test_arm64_virtio_net_rx_counters_initialized(ktest_case_t *tc)
 		return;
 	}
 
+	/* The integration harness injects a frame before this test
+	 * runs; under that harness rx_packets is already non-zero, so
+	 * skip-pass. The drop counters must still be zero because the
+	 * harness's well-known frame is in-spec (14+16 bytes). */
+	if (arm64_virt_virtio_net_rx_packets() != 0u) {
+		KTEST_EXPECT_EQ(tc, arm64_virt_virtio_net_rx_drops_short(), 0u);
+		KTEST_EXPECT_EQ(tc,
+		                arm64_virt_virtio_net_rx_drops_oversize(),
+		                0u);
+		return;
+	}
+
 	/* No frames have been received in the isolated harness, so
 	 * every RX counter must be 0 post-init. A non-zero short or
 	 * oversize counter would mean the IRQ handler ran with bad
@@ -930,6 +943,17 @@ static void test_arm64_virtio_net_rx_dequeue_empty_returns_zero(ktest_case_t *tc
 	int32_t rc;
 
 	if (!arm64_virt_virtio_net_driver_ok()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	/* The integration harness injects a frame before this test
+	 * runs; the integration KTEST will dequeue it later, but if
+	 * any frame is currently queued this empty-path test cannot
+	 * exercise the empty branch. Skip-pass under the integration
+	 * harness; the empty-path coverage stays load-bearing under
+	 * the standard harness. */
+	if (arm64_virt_virtio_net_rx_packets() != 0u) {
 		KTEST_EXPECT_EQ(tc, 0u, 0u);
 		return;
 	}
@@ -1116,6 +1140,78 @@ static void test_arm64_virtio_net_chardev_rejects_short(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc,
 	                arm64_virt_virtio_net_tx_drops_busy(),
 	                before_drops + 1u);
+}
+
+/*
+ * M4 commit 8 — integration RX. Polls for up to ~2 seconds for an
+ * inbound frame on the receive ring. The default KTEST harness uses
+ * an isolated user-mode netdev (restrict=on) which delivers no
+ * traffic, so this test skip-passes by default. The integration
+ * harness (tools/test_arm64_virtio_net_integration.py) wires QEMU's
+ * virtio-net to a host-side socket listener and injects a known
+ * frame; that path runs the assertion branch.
+ *
+ * The well-known frame the harness injects:
+ *   dst MAC   = 52:54:00:0d:00:01 (the guest's configured mac=)
+ *   src MAC   = de:ad:be:ef:00:01 (host harness)
+ *   EtherType = 0x88b5 (local experimental)
+ *   payload   = "drunix-host-ping" (16 bytes)
+ */
+static void test_arm64_virtio_net_rx_receives_host_frame(ktest_case_t *tc)
+{
+	uint8_t buf[1514];
+	uint64_t deadline_cycles;
+	uint64_t freq_hz;
+	int32_t n;
+
+	if (!arm64_virt_virtio_net_driver_ok()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	/* Bounded wall-clock poll (matches virtio-blk's deadline pattern):
+	 * wait up to 2 seconds for rx_packets to advance. */
+	freq_hz = arm64_timer_cntfrq_hz();
+	deadline_cycles = arm64_timer_now_cycles() + freq_hz * 2u;
+	while (arm64_virt_virtio_net_rx_packets() == 0u) {
+		if (arm64_timer_now_cycles() >= deadline_cycles)
+			break;
+	}
+
+	if (arm64_virt_virtio_net_rx_packets() == 0u) {
+		/* No frame within deadline -> not running under the
+		 * integration harness; skip-pass. */
+		platform_uart_puts(
+		    "virtio-net: integration ktest skip (no inbound frame)\n");
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	platform_uart_puts(
+	    "virtio-net: integration ktest detected inbound frame\n");
+
+	/* Frame arrived. Dequeue it and verify the well-known signature. */
+	n = arm64_virt_virtio_net_rx_dequeue(buf, sizeof(buf));
+	KTEST_ASSERT_TRUE(tc, n > 0);
+	KTEST_ASSERT_TRUE(tc, n >= 14);
+
+	/* Destination MAC matches the guest's configured mac=. */
+	KTEST_EXPECT_EQ(tc, (uint32_t)buf[0], 0x52u);
+	KTEST_EXPECT_EQ(tc, (uint32_t)buf[1], 0x54u);
+	KTEST_EXPECT_EQ(tc, (uint32_t)buf[2], 0x00u);
+	KTEST_EXPECT_EQ(tc, (uint32_t)buf[3], 0x0du);
+	KTEST_EXPECT_EQ(tc, (uint32_t)buf[4], 0x00u);
+	KTEST_EXPECT_EQ(tc, (uint32_t)buf[5], 0x01u);
+
+	/* Source MAC matches the host harness's well-known address. */
+	KTEST_EXPECT_EQ(tc, (uint32_t)buf[6], 0xdeu);
+	KTEST_EXPECT_EQ(tc, (uint32_t)buf[7], 0xadu);
+	KTEST_EXPECT_EQ(tc, (uint32_t)buf[8], 0xbeu);
+	KTEST_EXPECT_EQ(tc, (uint32_t)buf[9], 0xefu);
+
+	/* EtherType = 0x88b5 (big-endian on the wire). */
+	KTEST_EXPECT_EQ(tc, (uint32_t)buf[12], 0x88u);
+	KTEST_EXPECT_EQ(tc, (uint32_t)buf[13], 0xb5u);
 }
 
 /*
@@ -1510,6 +1606,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_virtio_net_chardev_write_submits_tx),
     KTEST_CASE(test_arm64_virtio_net_chardev_rejects_oversize),
     KTEST_CASE(test_arm64_virtio_net_chardev_rejects_short),
+    KTEST_CASE(test_arm64_virtio_net_rx_receives_host_frame),
     KTEST_CASE(test_arm64_virtio_gpu_reached_ready),
     KTEST_CASE(test_arm64_virtio_gpu_query_display_returns_nonzero),
     KTEST_CASE(test_arm64_virtio_gpu_pattern_checksum_is_deterministic),

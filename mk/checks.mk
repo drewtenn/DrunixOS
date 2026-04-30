@@ -41,6 +41,7 @@ check-kernel-unit:
 	python3 tools/test_arm64_ktest.py --platform raspi3b
 	python3 tools/test_arm64_ktest.py --platform virt
 	python3 tools/test_arm64_ktest_ramfb_fallback.py
+	python3 tools/test_arm64_virtio_net_integration.py
 
 check-syscall-parity:
 	python3 tools/test_arm64_syscall_parity.py
