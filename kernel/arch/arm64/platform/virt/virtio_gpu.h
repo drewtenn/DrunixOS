@@ -3,6 +3,7 @@
 #ifndef KERNEL_ARCH_ARM64_PLATFORM_VIRT_VIRTIO_GPU_H
 #define KERNEL_ARCH_ARM64_PLATFORM_VIRT_VIRTIO_GPU_H
 
+#include "desktop_window.h"
 #include <stdint.h>
 
 /*
@@ -99,5 +100,21 @@ void arm64_virt_virtio_gpu_pump_flush(void);
  * pump. Increments only when both TRANSFER_TO_HOST_2D and
  * RESOURCE_FLUSH succeeded. */
 uint32_t arm64_virt_virtio_gpu_pump_runs(void);
+
+/*
+ * M3.2 dirty-rect publish hook. IRQ-safe: unions `rect` into the
+ * driver's pending dirty state (a single coalesced rect) and sets
+ * the flush flag so the next pump_flush picks it up. Called from
+ * fbdev_ioctl on DRUNIX_FBIO_FLUSH_RECT after rect validation.
+ *
+ * The pump consumes the union under a brief IRQ-mask critical
+ * section so an IRQ-context publish (e.g. timer-tick fallback)
+ * cannot tear the consume; the actual TRANSFER+FLUSH runs with
+ * IRQs enabled. See virtio_gpu.c.
+ *
+ * If the driver isn't ready or has been permanently disabled, this
+ * call is a no-op.
+ */
+void arm64_virt_virtio_gpu_publish_dirty_rect(drunix_rect_t rect);
 
 #endif /* KERNEL_ARCH_ARM64_PLATFORM_VIRT_VIRTIO_GPU_H */

@@ -264,6 +264,17 @@ static int g_flush_disabled;
 
 #define VIRTIO_GPU_FLUSH_FAIL_THRESHOLD 60u
 
+/* M3.2 — coalesced dirty-rect state. publish_dirty_rect (called from
+ * fbdev ioctl in process context, but the timer-tick fallback in
+ * Commit 4 will also publish from IRQ context) unions rects into
+ * g_pending_dirty. The pump consumes the union under a brief
+ * IRQ-mask critical section so IRQ-context publishes can't tear the
+ * consume; the actual TRANSFER+FLUSH runs with IRQs enabled. */
+static struct {
+	drunix_rect_t rect;
+	int valid;
+} g_pending_dirty;
+
 static uint32_t mmio_read32(uintptr_t addr)
 {
 	return *(volatile uint32_t *)addr;
@@ -855,6 +866,12 @@ int arm64_virt_virtio_gpu_init(void)
 		goto out_cleanup;
 	}
 
+	/* M3.2: register the dirty-rect publish hook so userspace ioctls
+	 * route through to virtio-gpu's per-rect pump path. The ramfb
+	 * fallback registers no hook (publish_dirty_rect = NULL) since
+	 * the host scans guest pages directly there. */
+	fbdev_set_publish_dirty_rect(arm64_virt_virtio_gpu_publish_dirty_rect);
+
 	/* All steps succeeded — only now mark the driver init'd and
 	 * ready. Setting g_initialized earlier would let a future init
 	 * call short-circuit with success after a partial failure. */
@@ -980,17 +997,104 @@ void arm64_virt_virtio_gpu_request_flush(void)
  * controlq used ring with a bounded busy wait, which is appropriate
  * in process context but ugly in an interrupt handler.
  */
+/*
+ * Per-rect TRANSFER+FLUSH. Cleans the contiguous row-span covering
+ * the rect (rect.y * pitch for rect.h * pitch bytes) — over-cleans
+ * horizontally for non-full-width rects, but stays correct and
+ * mostly academic on the Normal-NC mapping.
+ */
+static int virtio_gpu_pump_rect(drunix_rect_t rect)
+{
+	uint64_t row_offset = (uint64_t)rect.y * (uint64_t)VIRTIO_GPU_PITCH;
+	uint64_t row_bytes = (uint64_t)rect.h * (uint64_t)VIRTIO_GPU_PITCH;
+
+	arm64_dma_cache_clean(g_scanout + row_offset, (uint32_t)row_bytes);
+
+	if (virtio_gpu_transfer_to_host((uint32_t)rect.x, (uint32_t)rect.y,
+	                                (uint32_t)rect.w,
+	                                (uint32_t)rect.h) != 0)
+		return -1;
+	if (virtio_gpu_resource_flush((uint32_t)rect.x, (uint32_t)rect.y,
+	                              (uint32_t)rect.w,
+	                              (uint32_t)rect.h) != 0)
+		return -1;
+	return 0;
+}
+
+/*
+ * Atomically take the pending dirty rect (consume + reset) under an
+ * IRQ-mask critical section. Called by the pump in process context;
+ * an IRQ-context publish_dirty_rect (e.g. fallback from timer tick
+ * in Commit 4) cannot interleave with the copy + valid-clear pair.
+ */
+static int virtio_gpu_take_pending_rect(drunix_rect_t *out_rect)
+{
+	uint64_t saved_daif;
+	int had_rect;
+
+	__asm__ volatile("mrs %0, daif" : "=r"(saved_daif));
+	__asm__ volatile("msr daifset, #2");
+
+	had_rect = g_pending_dirty.valid;
+	if (had_rect) {
+		*out_rect = g_pending_dirty.rect;
+		g_pending_dirty.valid = 0;
+		g_pending_dirty.rect = drunix_rect_make(0, 0, 0, 0);
+	}
+
+	__asm__ volatile("msr daif, %0" : : "r"(saved_daif) : "memory");
+	return had_rect;
+}
+
+void arm64_virt_virtio_gpu_publish_dirty_rect(drunix_rect_t rect)
+{
+	uint64_t saved_daif;
+
+	if (!g_ready || g_flush_disabled || !drunix_rect_valid(rect))
+		return;
+
+	__asm__ volatile("mrs %0, daif" : "=r"(saved_daif));
+	__asm__ volatile("msr daifset, #2");
+
+	if (g_pending_dirty.valid)
+		g_pending_dirty.rect =
+		    drunix_rect_union(g_pending_dirty.rect, rect);
+	else
+		g_pending_dirty.rect = rect;
+	g_pending_dirty.valid = 1;
+	g_flush_needed = 1u;
+
+	__asm__ volatile("msr daif, %0" : : "r"(saved_daif) : "memory");
+}
+
 void arm64_virt_virtio_gpu_pump_flush(void)
 {
+	drunix_rect_t rect;
+	int had_pending;
+	int rc;
+
 	if (!g_ready || g_flush_disabled || !g_flush_needed)
 		return;
 
 	g_flush_needed = 0u;
 
-	if (virtio_gpu_transfer_to_host(0, 0, VIRTIO_GPU_WIDTH,
-	                                VIRTIO_GPU_HEIGHT) != 0 ||
-	    virtio_gpu_resource_flush(0, 0, VIRTIO_GPU_WIDTH,
-	                              VIRTIO_GPU_HEIGHT) != 0) {
+	/*
+	 * M3.2: prefer the per-rect path when a publish has set the
+	 * pending dirty rect. Otherwise (M3.1 callers that still set
+	 * g_flush_needed without publishing a rect) fall back to a
+	 * full-frame TRANSFER. Commit 4 makes the full-frame path
+	 * conditional on the no-ioctl-recent fallback timer.
+	 */
+	had_pending = virtio_gpu_take_pending_rect(&rect);
+	if (had_pending) {
+		rc = virtio_gpu_pump_rect(rect);
+	} else {
+		rect = drunix_rect_make(0, 0, (int)VIRTIO_GPU_WIDTH,
+		                        (int)VIRTIO_GPU_HEIGHT);
+		rc = virtio_gpu_pump_rect(rect);
+	}
+
+	if (rc != 0) {
 		g_flush_failures++;
 		if (g_flush_failures >= VIRTIO_GPU_FLUSH_FAIL_THRESHOLD) {
 			g_flush_disabled = 1;
