@@ -39,4 +39,28 @@ uint32_t arm64_virt_virtio_net_version(void);
 int arm64_virt_virtio_net_features_ok(void);
 const uint8_t *arm64_virt_virtio_net_mac(void);
 
+/*
+ * Commit 3 accessors. `_rings_ready()` reports whether the queue
+ * backing + packet buffer pools were successfully allocated and the
+ * RX/TX queues configured at the MMIO level (DRIVER_OK is NOT yet
+ * asserted in commit 3 — that is commit 4's responsibility).
+ *
+ * `_buffer_count()` returns the per-queue buffer count
+ * (VIRTIO_NET_RING_BUFFERS, currently 16).
+ *
+ * `_rx_buffer_phys(i)` / `_tx_buffer_phys(i)` return the device-
+ * visible physical address of the i-th packet buffer for KTEST
+ * verification that every buffer translates to a non-zero phys
+ * (silent DMA-to-zero canary). Returns 0 if i is out of range.
+ *
+ * `_rx_queue_phys()` / `_tx_queue_phys()` return the queue backing's
+ * physical base, or 0 if rings are not yet ready.
+ */
+int arm64_virt_virtio_net_rings_ready(void);
+uint32_t arm64_virt_virtio_net_buffer_count(void);
+uint64_t arm64_virt_virtio_net_rx_buffer_phys(uint32_t i);
+uint64_t arm64_virt_virtio_net_tx_buffer_phys(uint32_t i);
+uint64_t arm64_virt_virtio_net_rx_queue_phys(void);
+uint64_t arm64_virt_virtio_net_tx_queue_phys(void);
+
 #endif

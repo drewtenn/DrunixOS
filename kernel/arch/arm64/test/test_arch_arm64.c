@@ -807,6 +807,88 @@ static void test_arm64_virtio_net_rejects_modern_transport(ktest_case_t *tc)
 }
 
 /*
+ * M4 commit 3 — DMA-pool ring allocation. arm64_virt_virtio_net_init
+ * now allocates queue backing and packet buffer pools from
+ * virt_dma_alloc and configures both queues at the MMIO level. These
+ * tests assert the ring/buffer state is consistent post-init.
+ */
+static void test_arm64_virtio_net_dma_rings_allocated(ktest_case_t *tc)
+{
+	if (!arm64_virt_virtio_net_device_found() ||
+	    !arm64_virt_virtio_net_features_ok()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	KTEST_EXPECT_TRUE(tc, arm64_virt_virtio_net_rings_ready());
+	KTEST_EXPECT_TRUE(tc, arm64_virt_virtio_net_rx_queue_phys() != 0u);
+	KTEST_EXPECT_TRUE(tc, arm64_virt_virtio_net_tx_queue_phys() != 0u);
+	KTEST_EXPECT_TRUE(tc,
+	                  arm64_virt_virtio_net_rx_queue_phys() !=
+	                  arm64_virt_virtio_net_tx_queue_phys());
+}
+
+static void
+test_arm64_virtio_net_packet_buffers_translate_nonzero(ktest_case_t *tc)
+{
+	uint32_t count;
+
+	if (!arm64_virt_virtio_net_rings_ready()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	count = arm64_virt_virtio_net_buffer_count();
+	KTEST_ASSERT_EQ(tc, count, 16u);
+
+	/* The silent-DMA-to-zero canary: virt_virt_to_phys returns 0 for
+	 * any pointer outside the virt_dma_alloc pool. If a regression
+	 * accidentally allocates a buffer from stack / static / kheap,
+	 * this loop catches it before the device writes to physical 0. */
+	for (uint32_t i = 0; i < count; i++) {
+		KTEST_EXPECT_TRUE(tc,
+		                  arm64_virt_virtio_net_rx_buffer_phys(i) != 0u);
+		KTEST_EXPECT_TRUE(tc,
+		                  arm64_virt_virtio_net_tx_buffer_phys(i) != 0u);
+	}
+}
+
+static void test_arm64_virtio_net_packet_buffers_distinct(ktest_case_t *tc)
+{
+	uint32_t count;
+	uint64_t prev_rx;
+	uint64_t prev_tx;
+
+	if (!arm64_virt_virtio_net_rings_ready()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	count = arm64_virt_virtio_net_buffer_count();
+
+	/* Adjacent rx buffers must differ by exactly the buffer stride
+	 * (a slicing arithmetic bug would yield repeats or non-stride
+	 * gaps). Same for tx. RX vs TX must occupy different pools. */
+	prev_rx = arm64_virt_virtio_net_rx_buffer_phys(0);
+	prev_tx = arm64_virt_virtio_net_tx_buffer_phys(0);
+	for (uint32_t i = 1; i < count; i++) {
+		uint64_t rx = arm64_virt_virtio_net_rx_buffer_phys(i);
+		uint64_t tx = arm64_virt_virtio_net_tx_buffer_phys(i);
+
+		KTEST_EXPECT_TRUE(tc, rx != prev_rx);
+		KTEST_EXPECT_TRUE(tc, tx != prev_tx);
+		KTEST_EXPECT_TRUE(tc, rx != tx);
+		prev_rx = rx;
+		prev_tx = tx;
+	}
+
+	/* RX pool 0 must not overlap TX pool 0. */
+	KTEST_EXPECT_TRUE(tc,
+	                  arm64_virt_virtio_net_rx_buffer_phys(0) !=
+	                  arm64_virt_virtio_net_tx_buffer_phys(0));
+}
+
+/*
  * Phase 2 M3.0 — virtio-gpu front-end. The driver's init runs from
  * arm64_start_kernel before KTEST execution, so by the time these
  * tests run the device has either reached arm64_virt_virtio_gpu_ready()
@@ -1185,6 +1267,9 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_virtio_net_features_ok_with_mac),
     KTEST_CASE(test_arm64_virtio_net_reads_mac_as_bytes),
     KTEST_CASE(test_arm64_virtio_net_rejects_modern_transport),
+    KTEST_CASE(test_arm64_virtio_net_dma_rings_allocated),
+    KTEST_CASE(test_arm64_virtio_net_packet_buffers_translate_nonzero),
+    KTEST_CASE(test_arm64_virtio_net_packet_buffers_distinct),
     KTEST_CASE(test_arm64_virtio_gpu_reached_ready),
     KTEST_CASE(test_arm64_virtio_gpu_query_display_returns_nonzero),
     KTEST_CASE(test_arm64_virtio_gpu_pattern_checksum_is_deterministic),

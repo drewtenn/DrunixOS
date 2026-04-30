@@ -28,7 +28,12 @@
 #include "dma.h"
 #include <stdint.h>
 
-#define VIRT_DMA_POOL_PAGES 24u
+/* M4 (virtio-net) raised the pool from 24 to 64 pages. The previous
+ * 24-page footprint was right at the edge: virtio-blk + virtio-gpu +
+ * virtio-input together consumed enough to leave less than 8 free
+ * pages, so virtio-net's RX packet pool (8 pages) could not fit. The
+ * BSS cost is 160 KiB extra for the slack, well within budget. */
+#define VIRT_DMA_POOL_PAGES 64u
 #define VIRT_DMA_POOL_BYTES (VIRT_DMA_POOL_PAGES * VIRT_DMA_PAGE_SIZE)
 
 /* BSS-resident, page-aligned. boot.S zeroes BSS, so g_in_use starts
