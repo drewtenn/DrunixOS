@@ -121,11 +121,13 @@ void virt_ram_layout_init(void)
 	                     (uint64_t)VIRT_HEAP_TAIL_RESERVE - g_layout.heap_base;
 
 	/*
-	 * M2.5a framebuffer carve-out. Place at top of RAM, sandwiched
-	 * between the heap-tail reserve and end-of-RAM. The reservation
-	 * lives inside the heap-tail-reserved region (so PMM never owned
-	 * it; kheap also never sees it). Skip if RAM is too small to
-	 * hold both the heap and an 8 MiB FB.
+	 * Framebuffer reservation. Originally introduced for ramfb (M2.5a);
+	 * M3.1 reuses the same carve-out as the virtio-gpu scanout backing.
+	 * The provider that publishes /dev/fb0 (virtio-gpu first, ramfb as
+	 * fallback) maps the same physical region. Place at top of RAM,
+	 * sandwiched between the heap-tail reserve and end-of-RAM, so PMM
+	 * never owned it and kheap also never sees it. Skip if RAM is too
+	 * small to hold both the heap and an 8 MiB FB.
 	 */
 	g_layout.framebuffer_base = 0;
 	g_layout.framebuffer_size = 0;
@@ -140,7 +142,7 @@ void virt_ram_layout_init(void)
 			g_layout.framebuffer_size = (uint64_t)VIRT_RAMFB_BYTES;
 		} else {
 			platform_uart_puts(
-			    "virt: RAM too small for ramfb reservation; "
+			    "virt: RAM too small for framebuffer reservation; "
 			    "/dev/fb0 will be unavailable\n");
 		}
 	}

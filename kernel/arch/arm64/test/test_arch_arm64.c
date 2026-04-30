@@ -518,7 +518,7 @@ static void test_arm64_fwcfg_rejects_unknown_file(ktest_case_t *tc)
 	                0u);
 }
 
-static void test_arm64_ramfb_layout_reserves_8mib(ktest_case_t *tc)
+static void test_arm64_framebuffer_reservation_is_8mib(ktest_case_t *tc)
 {
 	const platform_ram_layout_t *l = platform_ram_layout();
 
@@ -535,7 +535,7 @@ static void test_arm64_ramfb_layout_reserves_8mib(ktest_case_t *tc)
 	                0u);
 }
 
-static void test_arm64_ramfb_classifier_returns_framebuffer(ktest_case_t *tc)
+static void test_arm64_framebuffer_reservation_classifier(ktest_case_t *tc)
 {
 	const platform_ram_layout_t *l = platform_ram_layout();
 	uint64_t mid;
@@ -558,15 +558,16 @@ static void test_arm64_ramfb_classifier_returns_framebuffer(ktest_case_t *tc)
 	                (uint32_t)PLATFORM_MM_FRAMEBUFFER);
 }
 
-static void test_arm64_ramfb_kernel_alias_is_normal_nc(ktest_case_t *tc)
+static void test_arm64_framebuffer_kernel_alias_is_normal_nc(ktest_case_t *tc)
 {
 	const platform_ram_layout_t *l = platform_ram_layout();
 	arch_mm_mapping_t map;
 	int rc;
 
 	if (l->framebuffer_size == 0 || chardev_get("fb0") == 0) {
-		/* ramfb path was skipped at boot — kernel-alias remap did
-		 * not run, so the assertion below is vacuously inapplicable. */
+		/* No active framebuffer provider: the kernel-alias remap
+		 * (owned by whichever provider published /dev/fb0) did not
+		 * run, so the assertion below is vacuously inapplicable. */
 		KTEST_EXPECT_EQ(tc, 0u, 0u);
 		return;
 	}
@@ -892,9 +893,9 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_fwcfg_present_after_init),
     KTEST_CASE(test_arm64_fwcfg_finds_etc_ramfb),
     KTEST_CASE(test_arm64_fwcfg_rejects_unknown_file),
-    KTEST_CASE(test_arm64_ramfb_layout_reserves_8mib),
-    KTEST_CASE(test_arm64_ramfb_classifier_returns_framebuffer),
-    KTEST_CASE(test_arm64_ramfb_kernel_alias_is_normal_nc),
+    KTEST_CASE(test_arm64_framebuffer_reservation_is_8mib),
+    KTEST_CASE(test_arm64_framebuffer_reservation_classifier),
+    KTEST_CASE(test_arm64_framebuffer_kernel_alias_is_normal_nc),
     KTEST_CASE(test_arm64_fbdev_chardev_published),
     KTEST_CASE(test_arm64_fbdev_geometry_matches_ramfb_config),
     KTEST_CASE(test_arm64_virtio_input_devices_enumerated),
