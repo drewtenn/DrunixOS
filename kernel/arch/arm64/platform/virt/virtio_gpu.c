@@ -994,6 +994,15 @@ void arm64_virt_virtio_gpu_pump_flush(void)
 	}
 	g_flush_failures = 0u;
 	g_flush_runs++;
+
+	/* Diagnostic: log the first pump-driven flush so the boot log
+	 * confirms the deferred-flush path is alive. */
+	if (g_flush_runs == 1u)
+		platform_uart_puts(
+		    "virtio-gpu: first pump-driven flush succeeded\n");
+	else if (g_flush_runs == 60u)
+		platform_uart_puts(
+		    "virtio-gpu: pump steady-state (60 flushes)\n");
 }
 
 uint32_t arm64_virt_virtio_gpu_pump_runs(void)

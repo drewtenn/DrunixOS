@@ -7,6 +7,9 @@
 #include "../../../proc/process.h"
 #include "../../../mm/pmm_core.h"
 #include "../mm/pmm.h"
+#if DRUNIX_ARM64_PLATFORM_VIRT
+#include "../platform/virt/virtio_gpu.h"
+#endif
 #include "kstring.h"
 #include "init_layout.h"
 #include <stdint.h>
@@ -347,6 +350,16 @@ void arch_context_switch(arch_context_t *old_ctx,
 void arch_idle_wait(void)
 {
 	arch_poll_input();
+#if DRUNIX_ARM64_PLATFORM_VIRT
+	/* M3.1 Commit 4 follow-up: drain any pending virtio-gpu scanout
+	 * flush before sleeping. Without this trigger, a compositor that
+	 * blocks in a long read (waiting for input) would never run the
+	 * pump on syscall return, so the display would stay frozen at
+	 * the last successful flush. The pump is a no-op when the driver
+	 * isn't ready or no flush is requested, so this call is safe on
+	 * the ramfb-fallback path too. */
+	arm64_virt_virtio_gpu_pump_flush();
+#endif
 	__asm__ volatile("msr daifclr, #2");
 	__asm__ volatile("wfi");
 	arch_poll_input();
