@@ -329,6 +329,15 @@ static int virtio_gpu_submit_cmd(uint32_t req_len,
 	arm64_dma_rmb();
 	arm64_dma_cache_invalidate(g_resp, resp_len);
 
+	/*
+	 * Validate the entire response header, not just hdr.type. A
+	 * well-behaved QEMU echoes the request's flags / fence_id / ctx_id
+	 * unchanged when no fence was requested, and writes exactly
+	 * resp_len bytes. Any deviation means either the device is
+	 * misbehaving or a future change introduced a fence path without
+	 * teaching this validator about it; either way, fail loud.
+	 * (Codex M3.0 delivery review #3.)
+	 */
 	if (g_resp->hdr.type != expected_type) {
 		k_snprintf(line,
 		           sizeof(line),
@@ -337,12 +346,43 @@ static int virtio_gpu_submit_cmd(uint32_t req_len,
 		           (unsigned int)g_resp->hdr.type,
 		           (unsigned int)expected_type);
 		platform_uart_puts(line);
-		virtq_free_chain(&g_controlq, head);
-		return -1;
+		goto bad_resp;
+	}
+
+	if (g_resp->hdr.flags != 0u) {
+		k_snprintf(line,
+		           sizeof(line),
+		           "virtio-gpu: cmd 0x%X resp flags 0x%X (want 0)\n",
+		           (unsigned int)cmd_type,
+		           (unsigned int)g_resp->hdr.flags);
+		platform_uart_puts(line);
+		goto bad_resp;
+	}
+	if (g_resp->hdr.fence_id != 0u || g_resp->hdr.ctx_id != 0u) {
+		k_snprintf(line,
+		           sizeof(line),
+		           "virtio-gpu: cmd 0x%X resp fence_id/ctx_id nonzero\n",
+		           (unsigned int)cmd_type);
+		platform_uart_puts(line);
+		goto bad_resp;
+	}
+	if (completed_len != resp_len) {
+		k_snprintf(line,
+		           sizeof(line),
+		           "virtio-gpu: cmd 0x%X short resp (%u of %u)\n",
+		           (unsigned int)cmd_type,
+		           (unsigned int)completed_len,
+		           (unsigned int)resp_len);
+		platform_uart_puts(line);
+		goto bad_resp;
 	}
 
 	virtq_free_chain(&g_controlq, head);
 	return 0;
+
+bad_resp:
+	virtq_free_chain(&g_controlq, head);
+	return -1;
 }
 
 static int virtio_gpu_get_display_info(void)

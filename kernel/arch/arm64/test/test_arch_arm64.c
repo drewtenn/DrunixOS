@@ -771,6 +771,44 @@ static void test_arm64_virtio_gpu_dma_pages_held_within_budget(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc, held, 7u);
 }
 
+static void test_arm64_virtio_gpu_init_is_idempotent(ktest_case_t *tc)
+{
+	uint32_t before_pages;
+	int rc;
+
+	if (!arm64_virt_virtio_gpu_ready())
+		return;
+
+	/* A second call to init must short-circuit (g_initialized == 1)
+	 * and must not allocate additional DMA pages. The post-fix
+	 * f7969e2 cleanup made this property hold even after a partial-
+	 * init failure; the success path was always idempotent and this
+	 * test pins that contract. (Codex M3.0 delivery review #6.) */
+	before_pages = arm64_virt_virtio_gpu_dma_pages_held();
+	rc = arm64_virt_virtio_gpu_init();
+	KTEST_EXPECT_EQ(tc, (uint32_t)rc, 0u);
+	KTEST_EXPECT_EQ(tc, arm64_virt_virtio_gpu_dma_pages_held(), before_pages);
+	KTEST_EXPECT_TRUE(tc, arm64_virt_virtio_gpu_ready());
+}
+
+static void test_arm64_virtio_gpu_display_can_host_scanout(ktest_case_t *tc)
+{
+	uint32_t w = 0;
+	uint32_t h = 0;
+
+	if (!arm64_virt_virtio_gpu_ready())
+		return;
+
+	/* The 32x32 BGRA M3.0 scanout sits inside scanout 0; the display
+	 * must therefore be at least that big. QEMU's default virt
+	 * display reports 1280x800; the assertion here is just the
+	 * inequality so a future host with a smaller default still passes
+	 * as long as the scanout fits. */
+	(void)arm64_virt_virtio_gpu_query_display(&w, &h);
+	KTEST_EXPECT_GE(tc, w, 32u);
+	KTEST_EXPECT_GE(tc, h, 32u);
+}
+
 #endif /* DRUNIX_ARM64_PLATFORM_VIRT */
 
 /* FDT-parser tests. Phase 1 M2.4a / FR-002. The snapshot blob is a
@@ -867,6 +905,8 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_virtio_gpu_pattern_checksum_is_deterministic),
     KTEST_CASE(test_arm64_virtio_gpu_partial_flush_smoke_passes),
     KTEST_CASE(test_arm64_virtio_gpu_dma_pages_held_within_budget),
+    KTEST_CASE(test_arm64_virtio_gpu_init_is_idempotent),
+    KTEST_CASE(test_arm64_virtio_gpu_display_can_host_scanout),
 #endif
 };
 
