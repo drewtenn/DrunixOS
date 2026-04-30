@@ -86,7 +86,7 @@ _VIRT_DEFAULT_DEVICES: list[str] = [
     # networking and no privileges. Later M4 commits add a socket
     # netdev for the run-net target where the harness drives raw
     # frames between guest and host.
-    "virtio-net-device,netdev=n0",
+    "virtio-net-device,netdev=n0,mac=52:54:00:0d:00:01",
 ]
 
 

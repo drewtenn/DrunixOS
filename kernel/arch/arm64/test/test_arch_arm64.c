@@ -741,6 +741,72 @@ static void test_arm64_virtio_net_mmio_device_enumerated(ktest_case_t *tc)
 }
 
 /*
+ * M4 commit 2 — virtio-net feature negotiation + MAC discovery.
+ * arm64_virt_virtio_net_init now drives the legacy handshake; these
+ * tests assert the post-handshake state when a device is present.
+ * The KTEST harness advertises -device virtio-net-device,netdev=n0
+ * with mac=52:54:00:0d:00:01, so the found-path runs end-to-end.
+ */
+static void test_arm64_virtio_net_features_ok_with_mac(ktest_case_t *tc)
+{
+	const uint8_t *mac;
+
+	if (!arm64_virt_virtio_net_device_found()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	KTEST_EXPECT_TRUE(tc, arm64_virt_virtio_net_features_ok());
+
+	/* MAC must be non-zero post-handshake. */
+	mac = arm64_virt_virtio_net_mac();
+	KTEST_ASSERT_NOT_NULL(tc, mac);
+	KTEST_EXPECT_TRUE(tc,
+	                  (mac[0] | mac[1] | mac[2] |
+	                   mac[3] | mac[4] | mac[5]) != 0u);
+}
+
+static void test_arm64_virtio_net_reads_mac_as_bytes(ktest_case_t *tc)
+{
+	const uint8_t *mac;
+
+	if (!arm64_virt_virtio_net_device_found() ||
+	    !arm64_virt_virtio_net_features_ok()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	/* Harness MAC is 52:54:00:0d:00:01. Verify byte order is correct,
+	 * which catches a regression where the driver reads MAC as a
+	 * packed 32+16 bit load and gets the bytes in the wrong order. */
+	mac = arm64_virt_virtio_net_mac();
+	KTEST_EXPECT_EQ(tc, (uint32_t)mac[0], 0x52u);
+	KTEST_EXPECT_EQ(tc, (uint32_t)mac[1], 0x54u);
+	KTEST_EXPECT_EQ(tc, (uint32_t)mac[2], 0x00u);
+	KTEST_EXPECT_EQ(tc, (uint32_t)mac[3], 0x0du);
+	KTEST_EXPECT_EQ(tc, (uint32_t)mac[4], 0x00u);
+	KTEST_EXPECT_EQ(tc, (uint32_t)mac[5], 0x01u);
+}
+
+static void test_arm64_virtio_net_rejects_modern_transport(ktest_case_t *tc)
+{
+	uint32_t version;
+
+	if (!arm64_virt_virtio_net_device_found()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	/* Commit 2 only accepts version == 1 (legacy). The harness uses
+	 * QEMU virt's default which is legacy mmio (version 1). If a
+	 * future harness change advertises modern transport this test
+	 * will fail, signalling the version-2 branch needs implementation
+	 * before the harness flips. */
+	version = arm64_virt_virtio_net_version();
+	KTEST_EXPECT_EQ(tc, version, 1u);
+}
+
+/*
  * Phase 2 M3.0 — virtio-gpu front-end. The driver's init runs from
  * arm64_start_kernel before KTEST execution, so by the time these
  * tests run the device has either reached arm64_virt_virtio_gpu_ready()
@@ -1116,6 +1182,9 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_virtio_keyboard_event_to_kbdev),
     KTEST_CASE(test_arm64_virtio_mouse_event_to_mousedev),
     KTEST_CASE(test_arm64_virtio_net_mmio_device_enumerated),
+    KTEST_CASE(test_arm64_virtio_net_features_ok_with_mac),
+    KTEST_CASE(test_arm64_virtio_net_reads_mac_as_bytes),
+    KTEST_CASE(test_arm64_virtio_net_rejects_modern_transport),
     KTEST_CASE(test_arm64_virtio_gpu_reached_ready),
     KTEST_CASE(test_arm64_virtio_gpu_query_display_returns_nonzero),
     KTEST_CASE(test_arm64_virtio_gpu_pattern_checksum_is_deterministic),
