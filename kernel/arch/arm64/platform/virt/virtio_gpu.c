@@ -2,23 +2,34 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  * virtio_gpu.c - virtio-gpu 2D front-end for the QEMU virt platform.
  *
- * Phase 2 M3.0 of docs/superpowers/specs/2026-04-29-gpu-h264-mvp.md.
- * M3.0 brings up the controlq + cursorq, runs the six-command 2D
- * sequence on a 32x32 BGRA scanout resource, draws a deterministic
- * kernel-side test pattern, and verifies dirty-rect partial flushes.
- * /dev/fb0 stays on ramfb in M3.0; M3.1 swaps the backing.
+ * Phase 2 of docs/superpowers/specs/2026-04-29-gpu-h264-mvp.md. M3.0
+ * brought up the controlq + cursorq and ran the six-command 2D
+ * sequence on a 32x32 BGRA scratch resource. M3.1 retires the
+ * scratch resource and drives the 1024x768 BGRA framebuffer that
+ * /dev/fb0 publishes — virtio-gpu now owns the chardev when its init
+ * succeeds, with ramfb falling back when virtio-gpu is absent.
  *
- * Completion is polled in M3.0. virtio-blk-style IRQ delivery on a
- * GICv3 SPI lands later — codex's Define-phase review explicitly
- * recommended polled-first so protocol semantics are debugged in a
- * deterministic loop before IRQ plumbing piles on its own failure
- * modes.
+ * Scanout backing: the existing 8 MiB reservation in
+ * platform_ram_layout()->framebuffer_base/size, reused from ramfb
+ * (M2.5a). Mapped Normal-NC by the existing PLATFORM_MM_FRAMEBUFFER
+ * classifier; the kernel-alias remap walks the page tables once
+ * during init to drop any leftover Normal-WB block coverage. The
+ * /dev/fb0 mmap policy stays CHARDEV_CACHE_NC (no userspace change).
+ *
+ * Completion is polled. The polled controlq wait runs in process
+ * context; the timer-tick path will set a request flag in M3.1
+ * Commit 4, with the deferred pump running TRANSFER+FLUSH from
+ * arm64_sync_handler() on syscall return. virtio-blk-style IRQ
+ * delivery on a GICv3 SPI is a later milestone.
  */
 
 #include "../platform.h"
 #include "../../dma.h"
+#include "../../mm/mmu.h"
 #include "dma.h"
+#include "fbdev.h"
 #include "kprintf.h"
+#include "kstring.h"
 #include "virtio_gpu.h"
 #include "virtio_mmio.h"
 #include "virtio_queue.h"
@@ -39,35 +50,40 @@
 #define VIRTIO_GPU_RESP_OK_DISPLAY_INFO 0x1101u
 
 /* §5.7.4 device config: VIRTIO_GPU_MAX_SCANOUTS = 16, but 1 is plenty
- * for M3.0. */
-#define VIRTIO_GPU_MAX_SCANOUTS_M3_0 1u
+ * for the v1.2 path. */
+#define VIRTIO_GPU_MAX_SCANOUTS 1u
 
 /* §5.7.6.7 Format codes (subset). B8G8R8X8_UNORM matches Drunix's
  * existing 32-bpp BGRA framebuffer 1:1 (X = unused alpha byte). */
 #define VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM 2u
 
-/* Fixed resource id used by M3.0. 0 is reserved as "no resource";
- * M3.0 only ever has one live resource so a static id keeps the
+/* Fixed resource id and scanout id. 0 is reserved as "no resource";
+ * the driver only ever has one live resource so a static id keeps the
  * lifecycle obvious. */
-#define VIRTIO_GPU_M3_0_RESOURCE_ID 1u
-#define VIRTIO_GPU_M3_0_SCANOUT_ID 0u
+#define VIRTIO_GPU_RESOURCE_ID 1u
+#define VIRTIO_GPU_SCANOUT_ID 0u
 
-/* M3.0 scanout dimensions: 32x32 BGRA = 4 KiB = exactly one DMA page.
- * The DMA pool is 16 pages and is shared with virtio-blk and
- * virtio-input. M3.1 grows this once a dedicated reservation lands. */
-#define VIRTIO_GPU_M3_0_WIDTH 32u
-#define VIRTIO_GPU_M3_0_HEIGHT 32u
-#define VIRTIO_GPU_M3_0_BPP 4u
-#define VIRTIO_GPU_M3_0_PITCH (VIRTIO_GPU_M3_0_WIDTH * VIRTIO_GPU_M3_0_BPP)
-#define VIRTIO_GPU_M3_0_SCANOUT_BYTES                                          \
-	(VIRTIO_GPU_M3_0_PITCH * VIRTIO_GPU_M3_0_HEIGHT)
+/* Scanout dimensions. M3.1 keeps the same 1024x768 BGRA size that
+ * ramfb (M2.5a) used so the userspace compositor (user/apps/desktop)
+ * doesn't need to recompile. The 8 MiB framebuffer reservation
+ * (platform_mm.c VIRT_RAMFB_BYTES) covers up to ~1448x1448 BGRA;
+ * growing to display-info-reported dimensions (1280x800 or larger)
+ * is a separate milestone gated on the compositor handling dynamic
+ * geometry.
+ */
+#define VIRTIO_GPU_WIDTH 1024u
+#define VIRTIO_GPU_HEIGHT 768u
+#define VIRTIO_GPU_BPP 4u
+#define VIRTIO_GPU_PITCH (VIRTIO_GPU_WIDTH * VIRTIO_GPU_BPP)
+#define VIRTIO_GPU_SCANOUT_BYTES (VIRTIO_GPU_PITCH * VIRTIO_GPU_HEIGHT)
 
-/* Page budgets — see plan doc for the budget rationale. */
+/* Page budgets — see docs/design/m3.1-virtio-gpu-fbdev-swap.md.
+ * The scanout buffer no longer comes from the DMA pool; it lives in
+ * the platform_ram_layout()->framebuffer_base/size reservation. */
 #define VIRTIO_GPU_CONTROLQ_PAGES 2u
 #define VIRTIO_GPU_CURSORQ_PAGES 2u
 #define VIRTIO_GPU_REQ_PAGES 1u
 #define VIRTIO_GPU_RESP_PAGES 1u
-#define VIRTIO_GPU_SCANOUT_PAGES 1u
 
 /* Bounded poll on the used ring after a controlq submit. Same shape
  * as virtio-blk's POLL_TIMEOUT_ITERS so a stuck device shows up in
@@ -218,10 +234,21 @@ static void *g_controlq_backing;
 static void *g_cursorq_backing;
 static union virtio_gpu_req_page *g_req;
 static union virtio_gpu_resp_page *g_resp;
-static uint8_t *g_scanout;
 
-static uint32_t g_display_width = VIRTIO_GPU_M3_0_WIDTH;
-static uint32_t g_display_height = VIRTIO_GPU_M3_0_HEIGHT;
+/* Scanout buffer in the framebuffer reservation. virt_to_phys is an
+ * identity mapping on this platform, so g_scanout (kernel virtual)
+ * equals g_scanout_phys (guest physical) numerically. The driver
+ * keeps both for clarity at the protocol boundary. */
+static uint8_t *g_scanout;
+static uint64_t g_scanout_phys;
+
+static uint32_t g_display_width = VIRTIO_GPU_WIDTH;
+static uint32_t g_display_height = VIRTIO_GPU_HEIGHT;
+
+/* framebuffer_info_t handed to fbdev_init() once the protocol path
+ * is alive. Lives in BSS so its address is stable across the lifetime
+ * of the kernel image. */
+static framebuffer_info_t g_fbdev_info;
 
 static uint32_t g_dma_pages_held;
 
@@ -428,10 +455,10 @@ static int virtio_gpu_get_display_info(void)
 static int virtio_gpu_resource_create_2d(void)
 {
 	g_req->hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_2D;
-	g_req->create_2d.resource_id = VIRTIO_GPU_M3_0_RESOURCE_ID;
+	g_req->create_2d.resource_id = VIRTIO_GPU_RESOURCE_ID;
 	g_req->create_2d.format = VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM;
-	g_req->create_2d.width = VIRTIO_GPU_M3_0_WIDTH;
-	g_req->create_2d.height = VIRTIO_GPU_M3_0_HEIGHT;
+	g_req->create_2d.width = VIRTIO_GPU_WIDTH;
+	g_req->create_2d.height = VIRTIO_GPU_HEIGHT;
 
 	return virtio_gpu_submit_cmd(sizeof(struct virtio_gpu_resource_create_2d),
 	                             sizeof(struct virtio_gpu_ctrl_hdr),
@@ -441,10 +468,10 @@ static int virtio_gpu_resource_create_2d(void)
 static int virtio_gpu_attach_backing(void)
 {
 	g_req->hdr.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING;
-	g_req->attach.hdr.resource_id = VIRTIO_GPU_M3_0_RESOURCE_ID;
+	g_req->attach.hdr.resource_id = VIRTIO_GPU_RESOURCE_ID;
 	g_req->attach.hdr.nr_entries = 1u;
 	g_req->attach.entry.addr = virt_virt_to_phys(g_scanout);
-	g_req->attach.entry.length = VIRTIO_GPU_M3_0_SCANOUT_BYTES;
+	g_req->attach.entry.length = VIRTIO_GPU_SCANOUT_BYTES;
 	g_req->attach.entry.padding = 0;
 
 	return virtio_gpu_submit_cmd(sizeof(g_req->attach),
@@ -459,8 +486,8 @@ static int virtio_gpu_set_scanout(uint32_t width, uint32_t height)
 	g_req->set_scanout.r.y = 0;
 	g_req->set_scanout.r.width = width;
 	g_req->set_scanout.r.height = height;
-	g_req->set_scanout.scanout_id = VIRTIO_GPU_M3_0_SCANOUT_ID;
-	g_req->set_scanout.resource_id = VIRTIO_GPU_M3_0_RESOURCE_ID;
+	g_req->set_scanout.scanout_id = VIRTIO_GPU_SCANOUT_ID;
+	g_req->set_scanout.resource_id = VIRTIO_GPU_RESOURCE_ID;
 
 	return virtio_gpu_submit_cmd(sizeof(struct virtio_gpu_set_scanout),
 	                             sizeof(struct virtio_gpu_ctrl_hdr),
@@ -472,8 +499,8 @@ static int virtio_gpu_transfer_to_host(uint32_t x,
                                        uint32_t width,
                                        uint32_t height)
 {
-	uint64_t offset = ((uint64_t)y * (uint64_t)VIRTIO_GPU_M3_0_PITCH) +
-	                  (uint64_t)x * (uint64_t)VIRTIO_GPU_M3_0_BPP;
+	uint64_t offset = ((uint64_t)y * (uint64_t)VIRTIO_GPU_PITCH) +
+	                  (uint64_t)x * (uint64_t)VIRTIO_GPU_BPP;
 
 	g_req->hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D;
 	g_req->xfer.r.x = x;
@@ -481,14 +508,14 @@ static int virtio_gpu_transfer_to_host(uint32_t x,
 	g_req->xfer.r.width = width;
 	g_req->xfer.r.height = height;
 	g_req->xfer.offset = offset;
-	g_req->xfer.resource_id = VIRTIO_GPU_M3_0_RESOURCE_ID;
+	g_req->xfer.resource_id = VIRTIO_GPU_RESOURCE_ID;
 	g_req->xfer.padding = 0;
 
 	/* Make sure the CPU's writes to g_scanout are visible to the device
 	 * before TRANSFER_TO_HOST_2D processes them. arm64_dma_cache_clean
 	 * issues `dc cvac` + `dsb ish` per the M2.4b cache-discipline rules
 	 * shared with virtio-blk. */
-	arm64_dma_cache_clean(g_scanout, VIRTIO_GPU_M3_0_SCANOUT_BYTES);
+	arm64_dma_cache_clean(g_scanout, VIRTIO_GPU_SCANOUT_BYTES);
 
 	return virtio_gpu_submit_cmd(sizeof(struct virtio_gpu_transfer_to_host_2d),
 	                             sizeof(struct virtio_gpu_ctrl_hdr),
@@ -505,7 +532,7 @@ static int virtio_gpu_resource_flush(uint32_t x,
 	g_req->flush.r.y = y;
 	g_req->flush.r.width = width;
 	g_req->flush.r.height = height;
-	g_req->flush.resource_id = VIRTIO_GPU_M3_0_RESOURCE_ID;
+	g_req->flush.resource_id = VIRTIO_GPU_RESOURCE_ID;
 	g_req->flush.padding = 0;
 
 	return virtio_gpu_submit_cmd(sizeof(struct virtio_gpu_resource_flush),
@@ -514,37 +541,17 @@ static int virtio_gpu_resource_flush(uint32_t x,
 }
 
 /*
- * Draw a deterministic 32x32 BGRA test pattern into g_scanout. The
- * pattern is four 16x16 quadrants in distinct primary colors so a
- * checksum gate in KTEST has a non-degenerate value to compare.
- *
- * Layout: top-left red, top-right green, bottom-left blue, bottom-right
- * white. BGRA pixel layout: byte 0 = blue, 1 = green, 2 = red, 3 = X.
+ * Zero the scanout buffer. The compositor (user/apps/desktop) draws
+ * over this within a few frames; a black framebuffer at boot is the
+ * least-confusing starting state. M3.0's color-quadrant test pattern
+ * was useful when the resource was a small scratch buffer outside
+ * /dev/fb0; with M3.1 the scanout IS the displayed framebuffer, so
+ * any kernel-side art would just be a brief flicker before the
+ * desktop overwrites it.
  */
-static void virtio_gpu_draw_test_pattern(void)
+static void virtio_gpu_zero_scanout(void)
 {
-	uint32_t row;
-	uint32_t col;
-	uint32_t *pixels = (uint32_t *)g_scanout;
-
-	for (row = 0; row < VIRTIO_GPU_M3_0_HEIGHT; row++) {
-		for (col = 0; col < VIRTIO_GPU_M3_0_WIDTH; col++) {
-			uint32_t bgra;
-			int top = row < VIRTIO_GPU_M3_0_HEIGHT / 2u;
-			int left = col < VIRTIO_GPU_M3_0_WIDTH / 2u;
-
-			if (top && left)
-				bgra = 0x000000FFu; /* red */
-			else if (top && !left)
-				bgra = 0x0000FF00u; /* green */
-			else if (!top && left)
-				bgra = 0x00FF0000u; /* blue */
-			else
-				bgra = 0x00FFFFFFu; /* white */
-
-			pixels[row * VIRTIO_GPU_M3_0_WIDTH + col] = bgra;
-		}
-	}
+	k_memset(g_scanout, 0, VIRTIO_GPU_SCANOUT_BYTES);
 }
 
 /*
@@ -583,13 +590,6 @@ static int virtio_gpu_alloc_buffers(void)
 	}
 	g_dma_pages_held += VIRTIO_GPU_RESP_PAGES;
 
-	g_scanout = virt_dma_alloc(VIRTIO_GPU_SCANOUT_PAGES);
-	if (!g_scanout) {
-		platform_uart_puts("virtio-gpu: scanout buffer alloc failed\n");
-		return -1;
-	}
-	g_dma_pages_held += VIRTIO_GPU_SCANOUT_PAGES;
-
 	if (virtq_init(&g_controlq,
 	               g_controlq_backing,
 	               VIRTIO_GPU_CONTROLQ_PAGES * VIRT_DMA_PAGE_SIZE) != 0) {
@@ -609,11 +609,13 @@ static int virtio_gpu_alloc_buffers(void)
 
 static void virtio_gpu_free_buffers(void)
 {
-	if (g_scanout) {
-		virt_dma_free(g_scanout, VIRTIO_GPU_SCANOUT_PAGES);
-		g_dma_pages_held -= VIRTIO_GPU_SCANOUT_PAGES;
-		g_scanout = 0;
-	}
+	/* Scanout backing lives in the framebuffer reservation (owned by
+	 * platform_ram_layout()), not the DMA pool. The reservation
+	 * persists across init failures; just drop the pointer so a
+	 * future init call recomputes it. */
+	g_scanout = 0;
+	g_scanout_phys = 0;
+
 	if (g_resp) {
 		virt_dma_free(g_resp, VIRTIO_GPU_RESP_PAGES);
 		g_dma_pages_held -= VIRTIO_GPU_RESP_PAGES;
@@ -673,14 +675,17 @@ int arm64_virt_virtio_gpu_init(void)
 	uint32_t version;
 	uint32_t slot;
 	uint32_t spi;
-	char line[96];
+	const platform_ram_layout_t *layout;
+	uint64_t fb_base;
+	uint64_t fb_size;
+	char line[128];
 
 	if (g_initialized)
 		return 0;
 
 	if (!virtio_mmio_find(VIRTIO_DEV_ID_GPU, &base, &version)) {
 		platform_uart_puts(
-		    "virtio-gpu: no device found on bus (skipping M3.0)\n");
+		    "virtio-gpu: no device found on bus (skipping)\n");
 		return -1;
 	}
 
@@ -694,11 +699,24 @@ int arm64_virt_virtio_gpu_init(void)
 		return -1;
 	}
 
+	/* M3.1: scanout backing comes from the framebuffer reservation
+	 * carved by platform_mm_init (M2.5a). If the reservation is
+	 * absent (RAM too small) or smaller than what the configured
+	 * resolution needs, fall through to ramfb fallback. */
+	layout = platform_ram_layout();
+	fb_base = layout->framebuffer_base;
+	fb_size = layout->framebuffer_size;
+	if (fb_size < VIRTIO_GPU_SCANOUT_BYTES || fb_base == 0) {
+		platform_uart_puts(
+		    "virtio-gpu: framebuffer reservation too small or absent; skipping\n");
+		return -1;
+	}
+
 	g_dev_base = base;
 	slot = (uint32_t)((base - VIRTIO_GPU_MMIO_BASE_ADDR) /
 	                  VIRTIO_GPU_MMIO_STRIDE_BYTES);
 	spi = VIRTIO_GPU_MMIO_SPI_BASE + slot;
-	(void)spi; /* M3.0 polls; SPI computed for diagnostic completeness. */
+	(void)spi; /* polled mode; SPI computed for diagnostic completeness. */
 
 	k_snprintf(line,
 	           sizeof(line),
@@ -711,6 +729,25 @@ int arm64_virt_virtio_gpu_init(void)
 		virtio_gpu_free_buffers();
 		return -1;
 	}
+
+	/* Drop the Normal-WB Inner-Shareable kernel alias for the FB
+	 * span. The platform classifier already returns
+	 * PLATFORM_MM_FRAMEBUFFER for these pages; the remap walks the
+	 * kernel page tables and stamps Normal-NC leaves where the L1[1]
+	 * 1 GiB block previously covered them with Normal-WB. Idempotent
+	 * — if ramfb already remapped (it won't, since we run first now,
+	 * but the contract should survive future reordering), this is a
+	 * no-op. */
+	if (arm64_mmu_kernel_remap_range(fb_base, fb_size) != 0) {
+		platform_uart_puts(
+		    "virtio-gpu: kernel-alias remap failed; refusing to publish\n");
+		virtio_gpu_free_buffers();
+		return -1;
+	}
+
+	g_scanout_phys = fb_base;
+	g_scanout = (uint8_t *)(uintptr_t)fb_base;
+	virtio_gpu_zero_scanout();
 
 	/* Per Virtio 1.0 §3.1.1: reset → ack → driver → feature negotiation
 	 * (we accept zero features, explicitly rejecting VIRGL/EDID/UUID/BLOB
@@ -754,26 +791,62 @@ int arm64_virt_virtio_gpu_init(void)
 		goto out_cleanup;
 	if (virtio_gpu_attach_backing() != 0)
 		goto out_cleanup;
-	if (virtio_gpu_set_scanout(VIRTIO_GPU_M3_0_WIDTH, VIRTIO_GPU_M3_0_HEIGHT) !=
+	if (virtio_gpu_set_scanout(VIRTIO_GPU_WIDTH, VIRTIO_GPU_HEIGHT) !=
 	    0)
 		goto out_cleanup;
 
-	virtio_gpu_draw_test_pattern();
-
 	if (virtio_gpu_transfer_to_host(
-	        0, 0, VIRTIO_GPU_M3_0_WIDTH, VIRTIO_GPU_M3_0_HEIGHT) != 0)
+	        0, 0, VIRTIO_GPU_WIDTH, VIRTIO_GPU_HEIGHT) != 0)
 		goto out_cleanup;
 	if (virtio_gpu_resource_flush(
-	        0, 0, VIRTIO_GPU_M3_0_WIDTH, VIRTIO_GPU_M3_0_HEIGHT) != 0)
+	        0, 0, VIRTIO_GPU_WIDTH, VIRTIO_GPU_HEIGHT) != 0)
 		goto out_cleanup;
 
-	/* All six commands succeeded — only now mark the driver init'd
-	 * and ready. Setting g_initialized earlier would let a future
-	 * init call short-circuit with success after a partial failure. */
+	/* Build the framebuffer_info_t and publish /dev/fb0. fbdev_init
+	 * registers the chardevs once; ramfb's skip-on-fb0-already-
+	 * registered check (M3.1 Commit 2) keeps the fallback provider
+	 * out of the way when this path wins. */
+	g_fbdev_info.phys_address = (uintptr_t)g_scanout_phys;
+	g_fbdev_info.address = (uintptr_t)g_scanout_phys;
+	g_fbdev_info.pitch = VIRTIO_GPU_PITCH;
+	g_fbdev_info.width = VIRTIO_GPU_WIDTH;
+	g_fbdev_info.height = VIRTIO_GPU_HEIGHT;
+	g_fbdev_info.bpp = VIRTIO_GPU_BPP * 8u;
+	g_fbdev_info.red_pos = 16;
+	g_fbdev_info.red_size = 8;
+	g_fbdev_info.green_pos = 8;
+	g_fbdev_info.green_size = 8;
+	g_fbdev_info.blue_pos = 0;
+	g_fbdev_info.blue_size = 8;
+	g_fbdev_info.cell_cols = 0;
+	g_fbdev_info.cell_rows = 0;
+	g_fbdev_info.back_address = 0;
+	g_fbdev_info.back_pitch = 0;
+	g_fbdev_info.cursor.x = 0;
+	g_fbdev_info.cursor.y = 0;
+	g_fbdev_info.cursor.fg = 0;
+	g_fbdev_info.cursor.shadow = 0;
+	g_fbdev_info.cursor.visible = 0;
+
+	if (fbdev_init(&g_fbdev_info) != 0) {
+		platform_uart_puts(
+		    "virtio-gpu: fbdev_init refused; refusing to publish\n");
+		goto out_cleanup;
+	}
+
+	/* All steps succeeded — only now mark the driver init'd and
+	 * ready. Setting g_initialized earlier would let a future init
+	 * call short-circuit with success after a partial failure. */
 	g_initialized = 1;
 	g_ready = 1;
-	platform_uart_puts("virtio-gpu: M3.0 sequence complete (32x32 BGRA test "
-	                   "pattern flushed)\n");
+	k_snprintf(line,
+	           sizeof(line),
+	           "virtio-gpu: %ux%ux%u @ phys 0x%lx published as /dev/fb0\n",
+	           (unsigned int)VIRTIO_GPU_WIDTH,
+	           (unsigned int)VIRTIO_GPU_HEIGHT,
+	           (unsigned int)(VIRTIO_GPU_BPP * 8u),
+	           (unsigned long)g_scanout_phys);
+	platform_uart_puts(line);
 	return 0;
 
 out_cleanup:
@@ -811,31 +884,27 @@ int arm64_virt_virtio_gpu_partial_flush_smoke(void)
 	uint32_t *pixels;
 	uint32_t row;
 	uint32_t col;
+	const uint32_t patch_w = 64u;
+	const uint32_t patch_h = 64u;
+	const uint32_t patch_x = VIRTIO_GPU_WIDTH / 4u;
+	const uint32_t patch_y = VIRTIO_GPU_HEIGHT / 4u;
 
 	if (!g_ready)
 		return -1;
 
-	/* Overwrite a 16x16 patch in the bottom-right quadrant with a
-	 * known sentinel color so a later checksum can confirm the path
-	 * actually mutated the buffer end-to-end. */
+	/* Overwrite a small fixed 64x64 patch with a known sentinel so the
+	 * checksum can confirm the partial-flush path actually mutated the
+	 * buffer end-to-end. Smaller than the surrounding display so the
+	 * KTEST cost stays bounded regardless of resolution. */
 	pixels = (uint32_t *)g_scanout;
-	for (row = VIRTIO_GPU_M3_0_HEIGHT / 2u; row < VIRTIO_GPU_M3_0_HEIGHT;
-	     row++) {
-		for (col = VIRTIO_GPU_M3_0_WIDTH / 2u; col < VIRTIO_GPU_M3_0_WIDTH;
-		     col++) {
-			pixels[row * VIRTIO_GPU_M3_0_WIDTH + col] = 0x00010203u;
-		}
+	for (row = patch_y; row < patch_y + patch_h; row++) {
+		for (col = patch_x; col < patch_x + patch_w; col++)
+			pixels[row * VIRTIO_GPU_WIDTH + col] = 0x00010203u;
 	}
 
-	if (virtio_gpu_transfer_to_host(VIRTIO_GPU_M3_0_WIDTH / 2u,
-	                                VIRTIO_GPU_M3_0_HEIGHT / 2u,
-	                                VIRTIO_GPU_M3_0_WIDTH / 2u,
-	                                VIRTIO_GPU_M3_0_HEIGHT / 2u) != 0)
+	if (virtio_gpu_transfer_to_host(patch_x, patch_y, patch_w, patch_h) != 0)
 		return -1;
-	if (virtio_gpu_resource_flush(VIRTIO_GPU_M3_0_WIDTH / 2u,
-	                              VIRTIO_GPU_M3_0_HEIGHT / 2u,
-	                              VIRTIO_GPU_M3_0_WIDTH / 2u,
-	                              VIRTIO_GPU_M3_0_HEIGHT / 2u) != 0)
+	if (virtio_gpu_resource_flush(patch_x, patch_y, patch_w, patch_h) != 0)
 		return -1;
 
 	return 0;
@@ -851,7 +920,7 @@ uint32_t arm64_virt_virtio_gpu_checksum_pattern(void)
 		return 0;
 
 	pixels = (uint32_t *)g_scanout;
-	for (i = 0; i < (VIRTIO_GPU_M3_0_SCANOUT_BYTES / 4u); i++)
+	for (i = 0; i < (VIRTIO_GPU_SCANOUT_BYTES / 4u); i++)
 		sum = (sum * 1664525u) + pixels[i] + 1013904223u;
 	return sum;
 }

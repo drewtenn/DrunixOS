@@ -766,10 +766,34 @@ static void test_arm64_virtio_gpu_dma_pages_held_within_budget(ktest_case_t *tc)
 	if (!arm64_virt_virtio_gpu_ready())
 		return;
 
-	/* M3.0 budget: 2 controlq + 2 cursorq + 1 req + 1 resp + 1 scanout
-	 * = 7 pages. Anything more means the cleanup path leaked. */
+	/* M3.1 budget: 2 controlq + 2 cursorq + 1 req + 1 resp = 6 pages.
+	 * The scanout buffer no longer comes from the DMA pool — it lives
+	 * in platform_ram_layout()->framebuffer_base/size. Anything other
+	 * than 6 means either the cleanup path leaked or the budget
+	 * accounting is stale. */
 	held = arm64_virt_virtio_gpu_dma_pages_held();
-	KTEST_EXPECT_EQ(tc, held, 7u);
+	KTEST_EXPECT_EQ(tc, held, 6u);
+}
+
+static void test_arm64_virtio_gpu_owns_fb0_post_init(ktest_case_t *tc)
+{
+	const platform_ram_layout_t *l = platform_ram_layout();
+	const chardev_ops_t *fb0;
+
+	if (!arm64_virt_virtio_gpu_ready())
+		return;
+
+	/* M3.1: virtio-gpu must publish /dev/fb0 when it reaches DRIVER_OK
+	 * + fbdev_init succeeds. ramfb's chardev_get("fb0") skip check
+	 * fires AFTER virtio-gpu has registered, so on the gpu path
+	 * /dev/fb0 is owned by virtio-gpu. */
+	fb0 = chardev_get("fb0");
+	KTEST_ASSERT_NOT_NULL(tc, fb0);
+	/* The published phys equals the platform's framebuffer reservation
+	 * — the same physical region ramfb would have used on the fallback
+	 * path. */
+	KTEST_EXPECT_NE(tc, (uint32_t)l->framebuffer_base, 0u);
+	KTEST_EXPECT_GE(tc, (uint32_t)l->framebuffer_size, 0x300000u);
 }
 
 static void test_arm64_virtio_gpu_init_is_idempotent(ktest_case_t *tc)
@@ -908,6 +932,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_virtio_gpu_dma_pages_held_within_budget),
     KTEST_CASE(test_arm64_virtio_gpu_init_is_idempotent),
     KTEST_CASE(test_arm64_virtio_gpu_display_can_host_scanout),
+    KTEST_CASE(test_arm64_virtio_gpu_owns_fb0_post_init),
 #endif
 };
 
