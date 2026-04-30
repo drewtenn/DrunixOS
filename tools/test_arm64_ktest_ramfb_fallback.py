@@ -42,7 +42,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.parse_args()
 
-    build_args = ["KTEST=1", "ROOT_FS=dufs", "PLATFORM=virt"]
+    build_args = [
+        "KTEST=1",
+        "ROOT_FS=dufs",
+        "PLATFORM=virt",
+        "DRUNIX_ARM64_VIRT_HW_CURSOR=1",
+    ]
     harness.build(build_args)
 
     serial_log = (

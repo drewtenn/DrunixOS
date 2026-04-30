@@ -970,14 +970,29 @@ int arm64_virt_virtio_gpu_init(void)
 	 * the host scans guest pages directly there. */
 	fbdev_set_publish_dirty_rect(arm64_virt_virtio_gpu_publish_dirty_rect);
 
-	/* M3.3: hardware cursor. Best-effort — failure leaves
-	 * g_cursor_ready = 0; the fbdev cursor ioctl returns -1 in that
-	 * case and userspace falls back to drawing the cursor in
-	 * software. The fbdev move-cursor hook is registered ONLY on
-	 * success so userspace gets a deterministic "hardware cursor
-	 * available" signal. */
+	/* M3.3: hardware cursor. Disabled by default because the only
+	 * graphical display backend Homebrew QEMU on macOS supports
+	 * (Cocoa) does not visibly render the virtio-gpu cursor plane:
+	 * even after click-into-window or mouse-grab, the guest cursor
+	 * never appears. Activating the hw cursor anyway makes Cocoa
+	 * hide the host pointer (because "guest has a cursor") and
+	 * leaves a frozen guest sprite at the initial position, which
+	 * is worse UX than the M2.5b software cursor.
+	 *
+	 * The kernel infrastructure stays compiled in (KTEST exercises
+	 * the cursorq submit path under DRUNIX_ARM64_VIRT_HW_CURSOR);
+	 * activate by passing DRUNIX_ARM64_VIRT_HW_CURSOR=1 to make on
+	 * a host where the cursor plane actually renders.
+	 *
+	 * Best-effort — failure leaves g_cursor_ready = 0; the fbdev
+	 * cursor ioctl returns -1 in that case and userspace falls
+	 * back to drawing the cursor in software. The fbdev move-cursor
+	 * hook is registered ONLY on success so userspace gets a
+	 * deterministic "hardware cursor available" signal. */
+#if DRUNIX_ARM64_VIRT_HW_CURSOR
 	if (virtio_gpu_cursor_init() == 0)
 		fbdev_set_move_cursor(virtio_gpu_move_cursor_hook);
+#endif
 
 	/* All steps succeeded — only now mark the driver init'd and
 	 * ready. Setting g_initialized earlier would let a future init
@@ -1411,7 +1426,7 @@ static int virtio_gpu_cursor_create_resource(void)
  * g_cursor_ready=0 so the fbdev ioctl handler returns -1, signalling
  * the compositor to keep its software cursor.
  */
-static int virtio_gpu_cursor_init(void)
+__attribute__((unused)) static int virtio_gpu_cursor_init(void)
 {
 	uint32_t init_x = g_display_width / 2u;
 	uint32_t init_y = g_display_height / 2u;
@@ -1465,7 +1480,7 @@ static int virtio_gpu_cursor_init(void)
 	return 0;
 }
 
-static void virtio_gpu_move_cursor_hook(drunix_point_t pt)
+__attribute__((unused)) static void virtio_gpu_move_cursor_hook(drunix_point_t pt)
 {
 	arm64_virt_virtio_gpu_move_cursor(pt.x, pt.y);
 }

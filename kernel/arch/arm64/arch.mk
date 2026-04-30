@@ -38,6 +38,14 @@ else
 ARM_LINKER_LD := kernel/arch/arm64/linker.ld
 endif
 
+# M3.3 hardware cursor. Disabled by default — see comment in
+# kernel/arch/arm64/platform/virt/virtio_gpu.c around the
+# DRUNIX_ARM64_VIRT_HW_CURSOR guard for the macOS Cocoa rationale.
+# Override with `make ... DRUNIX_ARM64_VIRT_HW_CURSOR=1` on hosts
+# where the cursor plane visibly renders (typical Linux + GTK/SDL).
+DRUNIX_ARM64_VIRT_HW_CURSOR ?= 0
+ARM_CFLAGS += -DDRUNIX_ARM64_VIRT_HW_CURSOR=$(DRUNIX_ARM64_VIRT_HW_CURSOR)
+
 ARM_LDFLAGS ?= -nostdlib -T $(ARM_LINKER_LD)
 
 ARM_PLATFORM_INC := -I kernel/arch/arm64/platform/$(PLATFORM)

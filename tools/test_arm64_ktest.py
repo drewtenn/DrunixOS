@@ -33,7 +33,12 @@ def main() -> int:
     # Both platforms use this in KTEST so the fs test suite (which expects
     # sdb1 when the live root is on sda1) and the dev-namespace tests
     # (which expect sdb) have the disks they need.
-    build_args = ["KTEST=1", "ROOT_FS=dufs", f"PLATFORM={args.platform}"]
+    build_args = [
+        "KTEST=1",
+        "ROOT_FS=dufs",
+        f"PLATFORM={args.platform}",
+        "DRUNIX_ARM64_VIRT_HW_CURSOR=1",
+    ]
     harness.build(build_args)
 
     serial_log = harness.ROOT / "logs" / f"serial-arm64-ktest-{args.platform}.log"
