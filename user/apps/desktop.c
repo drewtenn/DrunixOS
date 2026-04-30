@@ -81,6 +81,7 @@ typedef struct {
 
 static uint32_t *g_fb;
 static int g_fb_fd = -1;
+static int g_hw_cursor_active;
 static uint32_t *g_scene;
 static uint32_t *g_wallpaper;
 static fbinfo_t g_info;
@@ -711,15 +712,39 @@ static void publish_dirty_rect(drunix_rect_t rect)
 		(void)sys_ioctl(g_fb_fd, DRUNIX_FBIO_FLUSH_RECT, &rect);
 }
 
+static void publish_cursor_position(void)
+{
+	/* M3.3: when the kernel has a hardware cursor (virtio-gpu cursor
+	 * plane uploaded successfully at boot), tell it where to put the
+	 * cursor. Userspace stops drawing the cursor sprite into the
+	 * framebuffer; the host overlays it. If the ioctl fails (kernel
+	 * pre-M3.3, or virtio-gpu cursor init failed, or off-screen
+	 * coords), the caller's own fallback path keeps software cursor
+	 * working. */
+	drunix_point_t pt;
+
+	if (g_fb_fd < 0 || !g_hw_cursor_active)
+		return;
+	pt.x = g_pointer_x;
+	pt.y = g_pointer_y;
+	(void)sys_ioctl(g_fb_fd, DRUNIX_FBIO_MOVE_CURSOR, &pt);
+}
+
 static void present_dirty_rect(drunix_rect_t rect)
 {
 	drunix_rect_t dirty = rect;
 
-	dirty = drunix_rect_union(dirty,
-	                          pointer_rect_at(g_pointer_old_x, g_pointer_old_y));
-	dirty = drunix_rect_union(dirty, pointer_rect_at(g_pointer_x, g_pointer_y));
+	if (!g_hw_cursor_active) {
+		dirty = drunix_rect_union(
+		    dirty, pointer_rect_at(g_pointer_old_x, g_pointer_old_y));
+		dirty = drunix_rect_union(
+		    dirty, pointer_rect_at(g_pointer_x, g_pointer_y));
+	}
 	if (!drunix_rect_clip(dirty, screen_rect(), &dirty)) {
-		render_pointer();
+		if (g_hw_cursor_active)
+			publish_cursor_position();
+		else
+			render_pointer();
 		return;
 	}
 
@@ -728,23 +753,31 @@ static void present_dirty_rect(drunix_rect_t rect)
 		return;
 	}
 	copy_scene_rect_to_fb(dirty);
-	draw_pointer_sprite();
-	g_pointer_old_x = g_pointer_x;
-	g_pointer_old_y = g_pointer_y;
+	if (!g_hw_cursor_active) {
+		draw_pointer_sprite();
+		g_pointer_old_x = g_pointer_x;
+		g_pointer_old_y = g_pointer_y;
+	}
 	publish_dirty_rect(dirty);
+	if (g_hw_cursor_active)
+		publish_cursor_position();
 }
 
 static void present_scene(void)
 {
 	compose_scene();
 	memcpy(g_fb, g_scene, g_fb_bytes);
-	draw_pointer_sprite();
-	g_pointer_old_x = g_pointer_x;
-	g_pointer_old_y = g_pointer_y;
+	if (!g_hw_cursor_active) {
+		draw_pointer_sprite();
+		g_pointer_old_x = g_pointer_x;
+		g_pointer_old_y = g_pointer_y;
+	}
 	/* Whole-screen update: publish a full-screen dirty rect so the
 	 * kernel knows to flush everything, not just the last sub-rect
 	 * present_dirty_rect issued. */
 	publish_dirty_rect(screen_rect());
+	if (g_hw_cursor_active)
+		publish_cursor_position();
 }
 
 static void draw_pointer_sprite(void)
@@ -766,6 +799,10 @@ static void draw_pointer_sprite(void)
 
 static void render_pointer(void)
 {
+	if (g_hw_cursor_active) {
+		publish_cursor_position();
+		return;
+	}
 	if (g_pointer_old_x != g_pointer_x || g_pointer_old_y != g_pointer_y)
 		copy_rect_from_scene(
 		    g_pointer_old_x, g_pointer_old_y, POINTER_W, POINTER_H);
@@ -1414,10 +1451,29 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	/* Keep fbfd open for the lifetime of the compositor so M3.2
-	 * DRUNIX_FBIO_FLUSH_RECT ioctls can target it. The mmap itself
-	 * is independent of the fd's lifetime, so leaving fbfd open
-	 * costs only one fd-table slot. */
+	 * DRUNIX_FBIO_FLUSH_RECT and M3.3 DRUNIX_FBIO_MOVE_CURSOR
+	 * ioctls can target it. The mmap itself is independent of the
+	 * fd's lifetime, so leaving fbfd open costs only one fd-table
+	 * slot. */
 	g_fb_fd = fbfd;
+
+	/* M3.3: probe for hardware cursor support. If the kernel has a
+	 * virtio-gpu cursor plane uploaded (see virtio_gpu_cursor_init
+	 * in the kernel), the move-cursor ioctl returns 0; we then stop
+	 * drawing the cursor in software and let the host overlay it.
+	 * On any failure (kernel pre-M3.3, virtio-gpu cursor init
+	 * failed, ramfb fallback path, etc.), keep the M2.5b software
+	 * cursor. */
+	{
+		drunix_point_t initial = {(int)g_info.width / 2,
+		                           (int)g_info.height / 2};
+		if (sys_ioctl(g_fb_fd, DRUNIX_FBIO_MOVE_CURSOR, &initial) == 0) {
+			g_hw_cursor_active = 1;
+			g_pointer_x = initial.x;
+			g_pointer_y = initial.y;
+			sys_write("desktop: hardware cursor active\n");
+		}
+	}
 
 	g_scene = (uint32_t *)malloc(g_fb_bytes);
 	if (!g_scene) {
