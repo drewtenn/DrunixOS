@@ -799,16 +799,30 @@ static void draw_pointer_sprite(void)
 
 static void render_pointer(void)
 {
+	drunix_rect_t dirty;
+
 	if (g_hw_cursor_active) {
 		publish_cursor_position();
 		return;
 	}
-	if (g_pointer_old_x != g_pointer_x || g_pointer_old_y != g_pointer_y)
+
+	dirty = pointer_rect_at(g_pointer_x, g_pointer_y);
+	if (g_pointer_old_x != g_pointer_x || g_pointer_old_y != g_pointer_y) {
 		copy_rect_from_scene(
 		    g_pointer_old_x, g_pointer_old_y, POINTER_W, POINTER_H);
+		dirty = drunix_rect_union(
+		    dirty, pointer_rect_at(g_pointer_old_x, g_pointer_old_y));
+	}
 	draw_pointer_sprite();
 	g_pointer_old_x = g_pointer_x;
 	g_pointer_old_y = g_pointer_y;
+
+	/* Publish the union of old + new pointer rects. Without this, the
+	 * kernel only sees a flush at the transitional ~3 Hz fallback rate
+	 * (kernel/arch/arm64/platform/virt/virtio_gpu.c) — which is the
+	 * lag users see while moving the mouse. */
+	if (drunix_rect_clip(dirty, screen_rect(), &dirty))
+		publish_dirty_rect(dirty);
 }
 
 static int read_fb_info(void)
