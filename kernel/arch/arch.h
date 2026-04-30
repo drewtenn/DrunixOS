@@ -71,7 +71,10 @@ void arch_aspace_switch(arch_aspace_t aspace);
 void arch_aspace_destroy(arch_aspace_t aspace);
 void arch_user_sync_from_active(void);
 void arch_user_sync_to_active(void);
-int arch_mm_map(arch_aspace_t aspace, uintptr_t virt, uint64_t phys, uint32_t flags);
+int arch_mm_map(arch_aspace_t aspace,
+                uintptr_t virt,
+                uint64_t phys,
+                uint32_t flags);
 int arch_mm_unmap(arch_aspace_t aspace, uintptr_t virt);
 int arch_mm_query(arch_aspace_t aspace, uintptr_t virt, arch_mm_mapping_t *out);
 /*

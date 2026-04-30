@@ -21,6 +21,7 @@
 #include "platform/platform.h"
 #include "platform/virt/dma.h"
 #include "platform/virt/fwcfg.h"
+#include "platform/virt/virtio_gpu.h"
 #endif
 
 extern const uint8_t virt_snapshot_dtb[];
@@ -500,8 +501,7 @@ static void test_arm64_fwcfg_finds_etc_ramfb(ktest_case_t *tc)
 	uint16_t selector = 0;
 	uint32_t size = 0;
 
-	KTEST_ASSERT_EQ(tc,
-	                fwcfg_find_file("etc/ramfb", &selector, &size), 0);
+	KTEST_ASSERT_EQ(tc, fwcfg_find_file("etc/ramfb", &selector, &size), 0);
 	/* QEMU's RAMFBCfg is 28 bytes (be64 + 5 × be32). */
 	KTEST_EXPECT_EQ(tc, size, 28u);
 	KTEST_EXPECT_NE(tc, (uint32_t)selector, 0u);
@@ -512,11 +512,10 @@ static void test_arm64_fwcfg_rejects_unknown_file(ktest_case_t *tc)
 	uint16_t selector = 0xBEEF;
 	uint32_t size = 0xDEADBEEFu;
 
-	KTEST_EXPECT_NE(
-	    tc,
-	    (uint32_t)fwcfg_find_file("etc/this-key-does-not-exist",
-	                              &selector, &size),
-	    0u);
+	KTEST_EXPECT_NE(tc,
+	                (uint32_t)fwcfg_find_file(
+	                    "etc/this-key-does-not-exist", &selector, &size),
+	                0u);
 }
 
 static void test_arm64_ramfb_layout_reserves_8mib(ktest_case_t *tc)
@@ -530,11 +529,10 @@ static void test_arm64_ramfb_layout_reserves_8mib(ktest_case_t *tc)
 	KTEST_EXPECT_GE(tc,
 	                (uint32_t)l->framebuffer_base,
 	                (uint32_t)(l->heap_base + l->heap_size));
-	KTEST_EXPECT_GE(
-	    tc,
-	    (uint32_t)((l->ram_base + l->ram_size) -
-	               (l->framebuffer_base + l->framebuffer_size)),
-	    0u);
+	KTEST_EXPECT_GE(tc,
+	                (uint32_t)((l->ram_base + l->ram_size) -
+	                           (l->framebuffer_base + l->framebuffer_size)),
+	                0u);
 }
 
 static void test_arm64_ramfb_classifier_returns_framebuffer(ktest_case_t *tc)
@@ -555,8 +553,8 @@ static void test_arm64_ramfb_classifier_returns_framebuffer(ktest_case_t *tc)
 	                (uint32_t)PLATFORM_MM_FRAMEBUFFER);
 	/* One byte past the FB span must NOT be classified as FB. */
 	KTEST_EXPECT_NE(tc,
-	                (uint32_t)platform_mm_classify(
-	                    l->framebuffer_base + l->framebuffer_size),
+	                (uint32_t)platform_mm_classify(l->framebuffer_base +
+	                                               l->framebuffer_size),
 	                (uint32_t)PLATFORM_MM_FRAMEBUFFER);
 }
 
@@ -572,8 +570,8 @@ static void test_arm64_ramfb_kernel_alias_is_normal_nc(ktest_case_t *tc)
 		KTEST_EXPECT_EQ(tc, 0u, 0u);
 		return;
 	}
-	rc = arch_mm_query(arch_aspace_kernel(),
-	                   (uintptr_t)l->framebuffer_base, &map);
+	rc = arch_mm_query(
+	    arch_aspace_kernel(), (uintptr_t)l->framebuffer_base, &map);
 	KTEST_ASSERT_EQ(tc, rc, 0);
 	KTEST_EXPECT_NE(tc, map.flags & ARCH_MM_MAP_NC, 0u);
 	KTEST_EXPECT_EQ(tc, map.flags & ARCH_MM_MAP_IO, 0u);
@@ -688,6 +686,129 @@ static void test_arm64_virtio_mouse_event_to_mousedev(ktest_case_t *tc)
 	(void)mouse->read(0u, (uint8_t *)&evt, (uint32_t)sizeof(evt));
 }
 
+/*
+ * Phase 2 M3.0 — virtio-gpu front-end. The driver's init runs from
+ * arm64_start_kernel before KTEST execution, so by the time these
+ * tests run the device has either reached arm64_virt_virtio_gpu_ready()
+ * (DRIVER_OK + six-command sequence complete) or skipped because no
+ * `-device virtio-gpu-device` was on the QEMU command line. The
+ * harness in tools/arm64_qemu_harness.py advertises the device, so the
+ * checked-in CI run exercises the protocol path; an environment that
+ * skips the device still keeps the rest of the suite green.
+ */
+
+static void test_arm64_virtio_gpu_reached_ready(ktest_case_t *tc)
+{
+	KTEST_EXPECT_TRUE(tc, arm64_virt_virtio_gpu_ready());
+}
+
+static void
+test_arm64_virtio_gpu_query_display_returns_nonzero(ktest_case_t *tc)
+{
+	uint32_t w = 0;
+	uint32_t h = 0;
+	int rc;
+
+	if (!arm64_virt_virtio_gpu_ready()) {
+		/* Skip silently — the ready test above already records the
+		 * absence; failing here would double-count the same skip. */
+		return;
+	}
+	rc = arm64_virt_virtio_gpu_query_display(&w, &h);
+	KTEST_EXPECT_EQ(tc, (uint32_t)rc, 0u);
+	KTEST_EXPECT_NE(tc, w, 0u);
+	KTEST_EXPECT_NE(tc, h, 0u);
+}
+
+static void
+test_arm64_virtio_gpu_pattern_checksum_is_deterministic(ktest_case_t *tc)
+{
+	uint32_t a;
+	uint32_t b;
+
+	if (!arm64_virt_virtio_gpu_ready())
+		return;
+
+	/* The kernel-side test pattern is written once during init and is
+	 * static after that. Two consecutive checksum reads must agree;
+	 * the absolute value is left unchecked here so subtle pixel-format
+	 * tweaks don't require an opaque magic-number rebase. */
+	a = arm64_virt_virtio_gpu_checksum_pattern();
+	b = arm64_virt_virtio_gpu_checksum_pattern();
+	KTEST_EXPECT_EQ(tc, a, b);
+	KTEST_EXPECT_NE(tc, a, 0u);
+}
+
+static void test_arm64_virtio_gpu_partial_flush_smoke_passes(ktest_case_t *tc)
+{
+	uint32_t before;
+	uint32_t after;
+	int rc;
+
+	if (!arm64_virt_virtio_gpu_ready())
+		return;
+
+	before = arm64_virt_virtio_gpu_checksum_pattern();
+	rc = arm64_virt_virtio_gpu_partial_flush_smoke();
+	after = arm64_virt_virtio_gpu_checksum_pattern();
+
+	KTEST_EXPECT_EQ(tc, (uint32_t)rc, 0u);
+	/* Partial flush mutates a 16x16 patch in the bottom-right quadrant
+	 * to a sentinel color, so the checksum must change. */
+	KTEST_EXPECT_NE(tc, before, after);
+}
+
+static void test_arm64_virtio_gpu_dma_pages_held_within_budget(ktest_case_t *tc)
+{
+	uint32_t held;
+
+	if (!arm64_virt_virtio_gpu_ready())
+		return;
+
+	/* M3.0 budget: 2 controlq + 2 cursorq + 1 req + 1 resp + 1 scanout
+	 * = 7 pages. Anything more means the cleanup path leaked. */
+	held = arm64_virt_virtio_gpu_dma_pages_held();
+	KTEST_EXPECT_EQ(tc, held, 7u);
+}
+
+static void test_arm64_virtio_gpu_init_is_idempotent(ktest_case_t *tc)
+{
+	uint32_t before_pages;
+	int rc;
+
+	if (!arm64_virt_virtio_gpu_ready())
+		return;
+
+	/* A second call to init must short-circuit (g_initialized == 1)
+	 * and must not allocate additional DMA pages. The post-fix
+	 * f7969e2 cleanup made this property hold even after a partial-
+	 * init failure; the success path was always idempotent and this
+	 * test pins that contract. (Codex M3.0 delivery review #6.) */
+	before_pages = arm64_virt_virtio_gpu_dma_pages_held();
+	rc = arm64_virt_virtio_gpu_init();
+	KTEST_EXPECT_EQ(tc, (uint32_t)rc, 0u);
+	KTEST_EXPECT_EQ(tc, arm64_virt_virtio_gpu_dma_pages_held(), before_pages);
+	KTEST_EXPECT_TRUE(tc, arm64_virt_virtio_gpu_ready());
+}
+
+static void test_arm64_virtio_gpu_display_can_host_scanout(ktest_case_t *tc)
+{
+	uint32_t w = 0;
+	uint32_t h = 0;
+
+	if (!arm64_virt_virtio_gpu_ready())
+		return;
+
+	/* The 32x32 BGRA M3.0 scanout sits inside scanout 0; the display
+	 * must therefore be at least that big. QEMU's default virt
+	 * display reports 1280x800; the assertion here is just the
+	 * inequality so a future host with a smaller default still passes
+	 * as long as the scanout fits. */
+	(void)arm64_virt_virtio_gpu_query_display(&w, &h);
+	KTEST_EXPECT_GE(tc, w, 32u);
+	KTEST_EXPECT_GE(tc, h, 32u);
+}
+
 #endif /* DRUNIX_ARM64_PLATFORM_VIRT */
 
 /* FDT-parser tests. Phase 1 M2.4a / FR-002. The snapshot blob is a
@@ -779,6 +900,13 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_virtio_input_devices_enumerated),
     KTEST_CASE(test_arm64_virtio_keyboard_event_to_kbdev),
     KTEST_CASE(test_arm64_virtio_mouse_event_to_mousedev),
+    KTEST_CASE(test_arm64_virtio_gpu_reached_ready),
+    KTEST_CASE(test_arm64_virtio_gpu_query_display_returns_nonzero),
+    KTEST_CASE(test_arm64_virtio_gpu_pattern_checksum_is_deterministic),
+    KTEST_CASE(test_arm64_virtio_gpu_partial_flush_smoke_passes),
+    KTEST_CASE(test_arm64_virtio_gpu_dma_pages_held_within_budget),
+    KTEST_CASE(test_arm64_virtio_gpu_init_is_idempotent),
+    KTEST_CASE(test_arm64_virtio_gpu_display_can_host_scanout),
 #endif
 };
 

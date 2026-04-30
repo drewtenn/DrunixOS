@@ -22,25 +22,25 @@
 #include "kstring.h"
 #include <stdint.h>
 
-#define FWCFG_BASE        0x09020000UL
-#define FWCFG_DATA        (FWCFG_BASE + 0x00u)
-#define FWCFG_SELECTOR    (FWCFG_BASE + 0x08u)
-#define FWCFG_DMA_ADDR    (FWCFG_BASE + 0x10u)
+#define FWCFG_BASE 0x09020000UL
+#define FWCFG_DATA (FWCFG_BASE + 0x00u)
+#define FWCFG_SELECTOR (FWCFG_BASE + 0x08u)
+#define FWCFG_DMA_ADDR (FWCFG_BASE + 0x10u)
 
 #define FWCFG_KEY_SIGNATURE 0x0000u
-#define FWCFG_KEY_ID        0x0001u
-#define FWCFG_KEY_FILE_DIR  0x0019u
+#define FWCFG_KEY_ID 0x0001u
+#define FWCFG_KEY_FILE_DIR 0x0019u
 
 /* FWCfgDmaAccess.control bits (big-endian on the wire). */
-#define FWCFG_DMA_CTL_ERR    (1u << 0)
-#define FWCFG_DMA_CTL_READ   (1u << 1)
-#define FWCFG_DMA_CTL_SKIP   (1u << 2)
+#define FWCFG_DMA_CTL_ERR (1u << 0)
+#define FWCFG_DMA_CTL_READ (1u << 1)
+#define FWCFG_DMA_CTL_SKIP (1u << 2)
 #define FWCFG_DMA_CTL_SELECT (1u << 3)
-#define FWCFG_DMA_CTL_WRITE  (1u << 4)
+#define FWCFG_DMA_CTL_WRITE (1u << 4)
 
 /* Optional ID feature flags (selector 0x0001, big-endian on wire). */
 #define FWCFG_ID_VERSION_BIT (1u << 0)
-#define FWCFG_ID_DMA_BIT     (1u << 1)
+#define FWCFG_ID_DMA_BIT (1u << 1)
 
 /* fw_cfg DMA spin bound. The transport completes in low microseconds for
  * the small payloads we use; cap at a couple million iterations to keep
@@ -171,8 +171,7 @@ static int fwcfg_dma_run(uint32_t control_bits,
 
 	control_word = control_bits;
 	if (want_select)
-		control_word |=
-		    FWCFG_DMA_CTL_SELECT | ((uint32_t)selector << 16);
+		control_word |= FWCFG_DMA_CTL_SELECT | ((uint32_t)selector << 16);
 
 	g_dma.control_be32 = cpu_to_be32(control_word);
 	g_dma.length_be32 = cpu_to_be32(len);
@@ -221,7 +220,10 @@ int fwcfg_init(void)
 		k_snprintf(line,
 		           sizeof(line),
 		           "fw_cfg: signature mismatch %c%c%c%c; absent\n",
-		           sig[0], sig[1], sig[2], sig[3]);
+		           sig[0],
+		           sig[1],
+		           sig[2],
+		           sig[3]);
 		platform_uart_puts(line);
 		return -1;
 	}
@@ -229,10 +231,8 @@ int fwcfg_init(void)
 	/* ID is little-endian uint32_t per QEMU's fw_cfg spec. */
 	fwcfg_select(FWCFG_KEY_ID);
 	fwcfg_read_data_bytes(id_bytes, sizeof(id_bytes));
-	id = (uint32_t)id_bytes[0] |
-	     ((uint32_t)id_bytes[1] << 8) |
-	     ((uint32_t)id_bytes[2] << 16) |
-	     ((uint32_t)id_bytes[3] << 24);
+	id = (uint32_t)id_bytes[0] | ((uint32_t)id_bytes[1] << 8) |
+	     ((uint32_t)id_bytes[2] << 16) | ((uint32_t)id_bytes[3] << 24);
 	if ((id & FWCFG_ID_DMA_BIT) == 0) {
 		k_snprintf(line,
 		           sizeof(line),
@@ -265,8 +265,11 @@ int fwcfg_find_file(const char *name,
 
 	/* SELECT FW_CFG_FILE_DIR and read the be32 entry count from the
 	 * head of the stream. The device cursor advances to 4 after this. */
-	if (fwcfg_dma_run(FWCFG_DMA_CTL_READ, 1, FWCFG_KEY_FILE_DIR,
-	                  &count_be, sizeof(count_be)) != 0)
+	if (fwcfg_dma_run(FWCFG_DMA_CTL_READ,
+	                  1,
+	                  FWCFG_KEY_FILE_DIR,
+	                  &count_be,
+	                  sizeof(count_be)) != 0)
 		return -1;
 	count = be32_to_cpu(count_be);
 	if (count == 0)
@@ -277,13 +280,11 @@ int fwcfg_find_file(const char *name,
 
 		/* No SELECT: continue from the device cursor so each iter
 		 * reads the next 64-byte entry. */
-		if (fwcfg_dma_run(FWCFG_DMA_CTL_READ, 0, 0,
-		                  &entry, sizeof(entry)) != 0)
+		if (fwcfg_dma_run(FWCFG_DMA_CTL_READ, 0, 0, &entry, sizeof(entry)) != 0)
 			return -1;
 
 		name_len = 0;
-		while (name_len < FWCFG_NAME_MAX &&
-		       entry.name[name_len] != '\0')
+		while (name_len < FWCFG_NAME_MAX && entry.name[name_len] != '\0')
 			name_len++;
 		if (name_len == k_strlen(name) &&
 		    k_memcmp(entry.name, name, name_len) == 0) {
@@ -305,6 +306,5 @@ int fwcfg_dma_write(uint16_t selector, const void *src, uint32_t len)
 		return -1;
 	/* fwcfg_dma_run takes a non-const buf; cast away const since
 	 * WRITE only reads from it. */
-	return fwcfg_dma_run(FWCFG_DMA_CTL_WRITE, 1, selector,
-	                     (void *)src, len);
+	return fwcfg_dma_run(FWCFG_DMA_CTL_WRITE, 1, selector, (void *)src, len);
 }

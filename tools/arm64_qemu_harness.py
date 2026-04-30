@@ -84,6 +84,13 @@ def qemu_command(serial_log: Path, platform: str = "raspi3b") -> list[str]:
             # exercises virtio-input enumeration + ringbuffer setup.
             "-device", "virtio-keyboard-device",
             "-device", "virtio-mouse-device",
+            # M3.0: advertise virtio-gpu-device so the in-kernel KTEST
+            # exercises the virtio-gpu controlq + cursorq queue setup
+            # and the M3.0 six-command 2D bring-up sequence (the host-
+            # visible scanout works in -display none too: QEMU's
+            # virtio-gpu backend processes TRANSFER_TO_HOST_2D and
+            # RESOURCE_FLUSH whether or not a display is attached).
+            "-device", "virtio-gpu-device",
             "-serial", f"file:{serial_log}",
             "-monitor", "none",
             "-no-reboot",

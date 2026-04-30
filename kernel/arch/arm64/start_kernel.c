@@ -17,6 +17,7 @@
 #include "platform/virt/dma.h"
 #include "platform/virt/fwcfg.h"
 #include "platform/virt/ramfb.h"
+#include "platform/virt/virtio_gpu.h"
 #include "platform/virt/virtio_input.h"
 #include "platform/virt/virtio_mmio.h"
 #include "platform/virt/virtio_blk.h"
@@ -196,10 +197,8 @@ static void arm64_launch_init_or_fallback(void)
 	sched_init();
 	arm64_mount_root_namespace();
 	arm64_mount_synthetic_filesystems();
-	init_pid = boot_launch_init_process(init_prog,
-	                                    init_arg0,
-	                                    DRUNIX_INIT_ENV0,
-	                                    BOOT_LAUNCH_INIT_STANDALONE);
+	init_pid = boot_launch_init_process(
+	    init_prog, init_arg0, DRUNIX_INIT_ENV0, BOOT_LAUNCH_INIT_STANDALONE);
 	if (init_pid < 0) {
 		platform_uart_puts("ARM64 init launch failed: ");
 		platform_uart_puts(init_prog);
@@ -333,6 +332,14 @@ void arm64_start_kernel(void)
 		platform_uart_puts("/dev/mouse registration failed\n");
 	if (arm64_virt_input_register_all() < 0)
 		platform_uart_puts("virtio-input: hard failure; continuing\n");
+
+	/* M3.0: virtio-gpu MMIO discovery + kernel-owned scanout rectangle.
+	 * Tolerates "no device on bus" so headless KTEST builds without
+	 * `-device virtio-gpu-device` and raspi3b builds continue cleanly.
+	 * The /dev/fb0 swap stays on ramfb in M3.0; M3.1 retires ramfb. */
+	if (arm64_virt_virtio_gpu_init() != 0)
+		platform_uart_puts(
+		    "virtio-gpu: M3.0 init skipped or failed; continuing\n");
 
 #if DRUNIX_ARM64_VIRT_NO_INIT
 	/* Emergency rollback: stop at the M2.4b boot envelope. */

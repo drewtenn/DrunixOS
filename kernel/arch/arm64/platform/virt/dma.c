@@ -14,17 +14,21 @@
  * locking is needed in M2.3. M2.4 keeps the API but moves backing
  * to kheap and adds the appropriate guards.
  *
- * Sizing rationale: 16 pages (64 KiB) covers M2.3 callers (one
- * 8 KiB virtq backing, one 4 KiB request header, one 4 KiB data
- * scratch) with comfortable headroom for Phase 2/3 virtio devices
- * landing later. Adjust VIRT_DMA_POOL_PAGES if a Phase 2 driver
- * needs more before M2.4's heap-backed allocator arrives.
+ * Sizing rationale: 24 pages (96 KiB) covers Phase 2 M3.0 — virtio-blk
+ * (4 pages: queue 2, req hdr 1, data 1), virtio-input × 2 (6 pages),
+ * virtio-gpu (7 pages: controlq 2, cursorq 2, req 1, resp 1, scanout 1)
+ * = 17 pages live, with 7 pages of headroom for future small allocs.
+ * M2.3 launched with a 16-page pool; M3.0 bumps to 24 because the gpu
+ * driver tipped the budget over the previous ceiling. Adjust again if
+ * a future driver needs more before M2.4's heap-backed allocator
+ * arrives — the API surface here is the contract for that switch and
+ * does not change.
  */
 
 #include "dma.h"
 #include <stdint.h>
 
-#define VIRT_DMA_POOL_PAGES 16u
+#define VIRT_DMA_POOL_PAGES 24u
 #define VIRT_DMA_POOL_BYTES (VIRT_DMA_POOL_PAGES * VIRT_DMA_PAGE_SIZE)
 
 /* BSS-resident, page-aligned. boot.S zeroes BSS, so g_in_use starts

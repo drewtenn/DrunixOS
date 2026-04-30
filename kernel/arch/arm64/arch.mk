@@ -60,6 +60,7 @@ ARM_PLATFORM_OBJS := kernel/arch/arm64/platform/virt/dma.o \
                      kernel/arch/arm64/platform/virt/stubs.o \
                      kernel/arch/arm64/platform/virt/uart.o \
                      kernel/arch/arm64/platform/virt/virtio_blk.o \
+                     kernel/arch/arm64/platform/virt/virtio_gpu.o \
                      kernel/arch/arm64/platform/virt/virtio_input.o \
                      kernel/arch/arm64/platform/virt/virtio_mmio.o \
                      kernel/arch/arm64/platform/virt/virtio_queue.o

@@ -71,6 +71,16 @@ int virtq_init(virtq_t *q, void *backing, uint32_t backing_len)
 	 * descriptors have predictable defaults. */
 	k_memset(base, 0, VIRTQ_BACKING_LEN);
 
+	/* Push the freshly-zeroed bytes to PoC. After memset the kernel
+	 * holds these lines dirty in the CPU cache; without this clean a
+	 * later eviction could drop a stale-zero cache line over a used
+	 * ring entry the device has since written, masking a completion.
+	 * Per-poll virtq_drain_one already invalidates before reading the
+	 * used ring, but invalidate alone cannot recover from a dirty-zero
+	 * eviction that happens between two polls. (Codex M3.0 delivery
+	 * review #2.) */
+	arm64_dma_cache_clean(base, VIRTQ_BACKING_LEN);
+
 	/* Build a free list through the desc->next pointers. The free
 	 * head is descriptor 0; descriptor i's `next` points to i+1; the
 	 * last descriptor's `next` is 0 (terminator value, distinguished
