@@ -187,13 +187,17 @@ static int fdt_cursor_read_prop(struct fdt_cursor *c,
  *
  * `target_prefix` is matched against the node name up to the '@'
  * separator so "memory@40000000" matches the prefix "memory".
+ *
+ * Callers position the cursor just past the root's FDT_BEGIN_NODE +
+ * name (i.e., inside the root node), so we start at depth 1. The
+ * `depth == 1` check below then fires on direct children of root.
  */
 static int fdt_find_top_level_node(struct fdt_cursor *c,
                                    const char *target,
                                    uint32_t target_len,
                                    struct fdt_cursor *out_cur)
 {
-	int depth = 0;
+	int depth = 1;
 
 	while (c->cur < c->end) {
 		uint32_t token;
