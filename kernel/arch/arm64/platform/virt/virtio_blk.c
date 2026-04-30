@@ -251,14 +251,33 @@ static int virtio_blk_perform_io(uint32_t lba,
 	virtq_submit(&g_queue, head);
 	mmio_write32(g_dev_base + VIRTIO_MMIO_QUEUE_NOTIFY, 0u);
 
-	/* Wait for the device IRQ. WFI sleeps until any unmasked
-	 * interrupt fires; a bounded fallback poll handles the
-	 * unlikely "no IRQ ever arrives" case. */
+	/*
+	 * Wait for the device IRQ. WFI returns when any IRQ is pending in
+	 * the GIC regardless of DAIF mask state, but the IRQ handler that
+	 * sets g_completion_pending only runs when DAIF.I is clear.
+	 *
+	 * Syscall and exception entry on arm64 enters EL1 with DAIF.I set
+	 * (HW-imposed). M2.5b's desktop launch is the first user→user exec
+	 * to call vfs_read from syscall context — older boot-time loads
+	 * worked because the boot path runs with IRQs already unmasked
+	 * (arch_interrupts_enable → daifclr in start_kernel). Without this
+	 * temporary unmask, virtio_blk_perform_io spins on WFI returns
+	 * that wake but never advance, and times out after 1M iters.
+	 *
+	 * Save and restore DAIF so we don't accidentally leave IRQs
+	 * unmasked in a caller that depended on them being masked.
+	 */
+	uint64_t saved_daif;
+	__asm__ volatile("mrs %0, daif" : "=r"(saved_daif));
+	__asm__ volatile("msr daifclr, #2");
+
 	for (poll = 0; poll < POLL_TIMEOUT_ITERS; poll++) {
 		__asm__ volatile("wfi");
 		if (g_completion_pending)
 			break;
 	}
+
+	__asm__ volatile("msr daif, %0" : : "r"(saved_daif) : "memory");
 
 	rc = -1;
 	if (!g_completion_pending) {
