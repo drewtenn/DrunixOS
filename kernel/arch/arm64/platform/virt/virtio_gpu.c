@@ -26,6 +26,7 @@
 #include "../platform.h"
 #include "../../dma.h"
 #include "../../mm/mmu.h"
+#include "../../timer.h"
 #include "dma.h"
 #include "fbdev.h"
 #include "kprintf.h"
@@ -85,11 +86,12 @@
 #define VIRTIO_GPU_REQ_PAGES 1u
 #define VIRTIO_GPU_RESP_PAGES 1u
 
-/* Bounded poll on the used ring after a controlq submit. Same shape
- * as virtio-blk's POLL_TIMEOUT_ITERS so a stuck device shows up in
- * the boot log instead of hanging silently. Codex's debate-gate review
- * called this out explicitly. */
-#define VIRTIO_GPU_POLL_TIMEOUT_ITERS 0x100000u
+/* Wall-clock-based bounded poll on the used ring after a controlq
+ * submit. Replaces the M3.0 iteration-count timeout — codex's M3.0
+ * delivery review #5 (deferred at the time, fixed now) flagged that
+ * iteration counts are host-speed-dependent. CNTPCT_EL0 backs this:
+ * see arm64_timer_now_cycles + arm64_timer_cntfrq_hz. */
+#define VIRTIO_GPU_POLL_TIMEOUT_NS 1000000000u
 
 /* Slot/SPI mapping mirrors virtio-blk. Even though M3.0 polls and
  * doesn't register an SPI handler, we still compute the slot index
@@ -323,7 +325,9 @@ static int virtio_gpu_submit_cmd(uint32_t req_len,
 	uint16_t resp_idx;
 	uint16_t completed;
 	uint32_t completed_len = 0;
-	uint32_t poll;
+	uint64_t deadline_cycles;
+	uint64_t freq_hz;
+	int timed_out;
 	char line[96];
 	uint32_t cmd_type = g_req->hdr.type;
 
@@ -363,13 +367,27 @@ static int virtio_gpu_submit_cmd(uint32_t req_len,
 	virtq_submit(&g_controlq, head);
 	mmio_write32(g_dev_base + VIRTIO_MMIO_QUEUE_NOTIFY, 0u);
 
-	for (poll = 0; poll < VIRTIO_GPU_POLL_TIMEOUT_ITERS; poll++) {
+	/* Wall-clock-bounded polled wait: compute a deadline `freq * ns /
+	 * 1e9` cycles ahead of the current count, then loop reading the
+	 * used ring until the device responds or we cross the deadline.
+	 * Replaces the M3.0 iteration-count loop (codex MEDIUM #5). */
+	freq_hz = arm64_timer_cntfrq_hz();
+	deadline_cycles =
+	    arm64_timer_now_cycles() +
+	    ((uint64_t)VIRTIO_GPU_POLL_TIMEOUT_NS * freq_hz) / 1000000000u;
+
+	timed_out = 1;
+	for (;;) {
 		completed = virtq_drain_one(&g_controlq, &completed_len);
-		if (completed != 0xFFFFu)
+		if (completed != 0xFFFFu) {
+			timed_out = 0;
+			break;
+		}
+		if (arm64_timer_now_cycles() >= deadline_cycles)
 			break;
 	}
 
-	if (poll == VIRTIO_GPU_POLL_TIMEOUT_ITERS) {
+	if (timed_out) {
 		k_snprintf(line,
 		           sizeof(line),
 		           "virtio-gpu: timeout polling for cmd 0x%X\n",
