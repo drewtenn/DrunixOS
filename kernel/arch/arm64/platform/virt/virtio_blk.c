@@ -17,6 +17,7 @@
 
 #include "../platform.h"
 #include "../../dma.h"
+#include "../../timer.h"
 #include "blkdev.h"
 #include "dma.h"
 #include "irq.h"
@@ -39,12 +40,18 @@
 
 #define VIRTIO_BLK_SECTOR_BYTES 512u
 
-/* Bounded fallback so a wedged device shows up in the boot log instead
- * of hanging forever. WFI returns on any unmasked IRQ, so on a healthy
- * device the loop exits on the first iteration. 0x100000 (~1M) is plenty
- * of slack for a single I/O; M2.4 should switch to a CNTP_EL0 wall-
- * clock deadline once the timer subsystem is the source of truth. */
-#define POLL_TIMEOUT_ITERS 0x100000u
+/* Bounded fallback so a wedged device shows up in the boot log
+ * instead of hanging forever. WFI wakes on any pending IRQ; the
+ * loop also checks the completion flag BEFORE WFI to handle the
+ * race where the IRQ fires between QUEUE_NOTIFY and WFI (handler
+ * runs, ACKs the IRQ, and the subsequent WFI would otherwise block
+ * forever waiting for an IRQ that has already been delivered).
+ *
+ * Wall-clock-based deadline replaces the M3.0-era iteration count
+ * (codex MEDIUM #5 follow-up). 1 second matches virtio-gpu's
+ * VIRTIO_GPU_POLL_TIMEOUT_NS; same arm64_timer_now_cycles +
+ * arm64_timer_cntfrq_hz primitives. */
+#define VIRTIO_BLK_POLL_TIMEOUT_NS 1000000000u
 
 /* QEMU virt machine maps virtio-mmio slot N to SPI (16 + N), per
  * hw/arm/virt.c's VIRT_MMIO_IRQ + slot index. */
@@ -187,7 +194,8 @@ static int virtio_blk_perform_io(uint32_t lba,
 	uint16_t status_idx;
 	uint16_t completed;
 	uint32_t completed_len = 0;
-	uint32_t poll;
+	uint64_t deadline_cycles;
+	uint64_t freq_hz;
 	int rc;
 	char line[64];
 
@@ -271,7 +279,30 @@ static int virtio_blk_perform_io(uint32_t lba,
 	__asm__ volatile("mrs %0, daif" : "=r"(saved_daif));
 	__asm__ volatile("msr daifclr, #2");
 
-	for (poll = 0; poll < POLL_TIMEOUT_ITERS; poll++) {
+	/*
+	 * Wall-clock-bounded WFI loop. CRITICAL: check the completion
+	 * flag BEFORE WFI on each iteration. If the device IRQ fires
+	 * between QUEUE_NOTIFY and the first WFI, the handler runs (DAIF.I
+	 * is unmasked above), ACKs the line, and sets g_completion_pending.
+	 * The next WFI then blocks indefinitely because no IRQ is pending.
+	 * The pre-WFI check catches that race; subsequent iterations
+	 * continue to test the flag both pre- and post-WFI.
+	 *
+	 * Tight pre-/post-checks aren't perfect — there is still a hairline
+	 * window between the pre-check and WFI where an IRQ could be
+	 * delivered and consumed — but the deadline below bounds the
+	 * worst case to 1 second instead of forever.
+	 */
+	freq_hz = arm64_timer_cntfrq_hz();
+	deadline_cycles =
+	    arm64_timer_now_cycles() +
+	    ((uint64_t)VIRTIO_BLK_POLL_TIMEOUT_NS * freq_hz) / 1000000000u;
+
+	for (;;) {
+		if (g_completion_pending)
+			break;
+		if (arm64_timer_now_cycles() >= deadline_cycles)
+			break;
 		__asm__ volatile("wfi");
 		if (g_completion_pending)
 			break;
