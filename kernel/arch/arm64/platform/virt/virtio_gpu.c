@@ -561,40 +561,17 @@ static int virtio_gpu_resource_flush(uint32_t x,
 }
 
 /*
- * Fill the scanout buffer with a kernel-side test pattern. The
- * compositor overwrites this within a few frames; the diagnostic
- * value is that the boot path proves the kernel→host pipeline by
- * making the display visibly non-black before any user code runs.
- *
- * Layout: four-quadrant primary colors so corner-pixel observation
- * disambiguates (a) we're hitting the right PA, (b) the cache
- * attribute is consistent between kernel and host, (c) virtio-gpu
- * is actually scanning the resource we attached.
+ * Zero the scanout buffer. The compositor (user/apps/desktop) draws
+ * over this within a few frames; a black framebuffer at boot is the
+ * least-confusing starting state. M3.0's color-quadrant test pattern
+ * was useful when the resource was a small scratch buffer outside
+ * /dev/fb0; with M3.1 the scanout IS the displayed framebuffer, so
+ * any kernel-side art would just be a brief flicker before the
+ * desktop overwrites it.
  */
 static void virtio_gpu_zero_scanout(void)
 {
-	uint32_t *pixels = (uint32_t *)g_scanout;
-	uint32_t row;
-	uint32_t col;
-
-	for (row = 0; row < VIRTIO_GPU_HEIGHT; row++) {
-		for (col = 0; col < VIRTIO_GPU_WIDTH; col++) {
-			uint32_t bgra;
-			int top = row < VIRTIO_GPU_HEIGHT / 2u;
-			int left = col < VIRTIO_GPU_WIDTH / 2u;
-
-			if (top && left)
-				bgra = 0x000000FFu; /* red */
-			else if (top && !left)
-				bgra = 0x0000FF00u; /* green */
-			else if (!top && left)
-				bgra = 0x00FF0000u; /* blue */
-			else
-				bgra = 0x00FFFFFFu; /* white */
-
-			pixels[row * VIRTIO_GPU_WIDTH + col] = bgra;
-		}
-	}
+	k_memset(g_scanout, 0, VIRTIO_GPU_SCANOUT_BYTES);
 }
 
 /*
