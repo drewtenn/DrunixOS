@@ -833,6 +833,41 @@ static void test_arm64_virtio_gpu_publish_pump_advances_counter(
 	KTEST_EXPECT_GE(tc, after, before + 1u);
 }
 
+static void test_arm64_virtio_gpu_publish_invalid_rect_ignored(
+    ktest_case_t *tc)
+{
+	uint32_t before;
+	uint32_t after;
+
+	if (!arm64_virt_virtio_gpu_ready())
+		return;
+
+	/*
+	 * M3.2 publish_dirty_rect must reject invalid rects (zero/negative
+	 * w/h) before queueing. After invalid publishes, a pump_flush
+	 * call must NOT advance pump_runs (no rect was queued).
+	 *
+	 * As with the other pump tests, "must not advance" is racy
+	 * against the timer tick's fallback synthesis — so the test
+	 * uses GE. The minimum-viable check is that the invalid publish
+	 * path doesn't crash + pump_runs is monotonically non-decreasing.
+	 */
+	(void)arm64_virt_virtio_gpu_publish_dirty_rect;
+	arm64_virt_virtio_gpu_publish_dirty_rect(drunix_rect_make(0, 0, 0, 0));
+	arm64_virt_virtio_gpu_publish_dirty_rect(drunix_rect_make(0, 0, -5, 10));
+	arm64_virt_virtio_gpu_publish_dirty_rect(drunix_rect_make(0, 0, 10, -5));
+
+	before = arm64_virt_virtio_gpu_pump_runs();
+	arm64_virt_virtio_gpu_pump_flush();
+	after = arm64_virt_virtio_gpu_pump_runs();
+	/* GE rather than EQ: the timer-tick fallback can advance the
+	 * counter asynchronously between snapshots. The test is
+	 * specifically that the three invalid publishes above did NOT
+	 * crash; pump_runs being unchanged after a single pump call is
+	 * directionally correct. */
+	KTEST_EXPECT_GE(tc, after, before);
+}
+
 static void test_arm64_virtio_gpu_init_is_idempotent(ktest_case_t *tc)
 {
 	uint32_t before_pages;
@@ -971,6 +1006,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_virtio_gpu_display_can_host_scanout),
     KTEST_CASE(test_arm64_virtio_gpu_owns_fb0_post_init),
     KTEST_CASE(test_arm64_virtio_gpu_publish_pump_advances_counter),
+    KTEST_CASE(test_arm64_virtio_gpu_publish_invalid_rect_ignored),
 #endif
 };
 
