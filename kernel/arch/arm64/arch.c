@@ -117,9 +117,8 @@ void arch_mm_init(void)
 	 * reserves the low 512 KiB; this catches the equivalent gap on
 	 * virt and any future port whose RAM starts below the image. */
 	if (kernel_start > (uintptr_t)l->ram_base) {
-		pmm_mark_used(
-		    (uint32_t)l->ram_base,
-		    (uint32_t)(kernel_start - (uintptr_t)l->ram_base));
+		pmm_mark_used((uint32_t)l->ram_base,
+		              (uint32_t)(kernel_start - (uintptr_t)l->ram_base));
 	}
 	/* Heap is owned by kheap_init; mark its range used so PMM does
 	 * not hand the same pages back. Replaces the pmm_mark_used call

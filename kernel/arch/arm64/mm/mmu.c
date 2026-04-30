@@ -154,8 +154,9 @@ static arm64_mmu_leaf_attr_t arm64_mmu_desc_leaf_attr(arm64_mmu_desc_t desc)
 	return ARM64_MMU_LEAF_NORMAL;
 }
 
-static arm64_mmu_desc_t
-arm64_mmu_kernel_leaf_desc(uint64_t phys, uint32_t level, arm64_mmu_leaf_attr_t attr)
+static arm64_mmu_desc_t arm64_mmu_kernel_leaf_desc(uint64_t phys,
+                                                   uint32_t level,
+                                                   arm64_mmu_leaf_attr_t attr)
 {
 	arm64_mmu_desc_t desc;
 	uint64_t size = arm64_mmu_leaf_size(level);
@@ -174,8 +175,8 @@ arm64_mmu_kernel_leaf_desc(uint64_t phys, uint32_t level, arm64_mmu_leaf_attr_t 
 		/* Normal-NC: no shareability — host (QEMU) reads guest RAM
 		 * directly so cache-line ownership and store-buffer drain
 		 * are sufficient. */
-		desc |= ARM64_MMU_DESC_ATTR_NC | ARM64_MMU_DESC_PXN |
-		        ARM64_MMU_DESC_UXN;
+		desc |=
+		    ARM64_MMU_DESC_ATTR_NC | ARM64_MMU_DESC_PXN | ARM64_MMU_DESC_UXN;
 		break;
 	case ARM64_MMU_LEAF_NORMAL:
 	default:
@@ -328,8 +329,8 @@ static void arm64_mmu_build_kernel_tables(void)
 
 		if (!arm64_mmu_block_is_present(phys))
 			continue;
-		g_kernel_l2_low[i] = arm64_mmu_kernel_leaf_desc(
-		    phys, 2, arm64_mmu_block_attr(phys));
+		g_kernel_l2_low[i] =
+		    arm64_mmu_kernel_leaf_desc(phys, 2, arm64_mmu_block_attr(phys));
 	}
 	g_kernel_l1[0] = arm64_mmu_table_desc((uintptr_t)g_kernel_l2_low);
 
@@ -402,7 +403,6 @@ static int arm64_mmu_split_l2_block(arm64_mmu_desc_t *slot)
 	*slot = arm64_mmu_table_desc(l3_phys);
 	return 0;
 }
-
 
 static int arm64_mmu_clone_l2_table(arm64_mmu_desc_t *l1_slot)
 {
@@ -568,20 +568,17 @@ int arm64_mmu_kernel_remap_range(uint64_t phys_base, uint64_t size)
 
 	if (size == 0)
 		return 0;
-	if ((phys_base & (PAGE_SIZE - 1u)) != 0 ||
-	    (size & (PAGE_SIZE - 1u)) != 0)
+	if ((phys_base & (PAGE_SIZE - 1u)) != 0 || (size & (PAGE_SIZE - 1u)) != 0)
 		return -1;
 
 	for (va = phys_base; va < end; va += PAGE_SIZE) {
 		arm64_mmu_desc_t *pte = (arm64_mmu_desc_t *)0;
 
-		if (arm64_mmu_ensure_l3_slot(kernel, (uintptr_t)va, 0, &pte) !=
-		    0)
+		if (arm64_mmu_ensure_l3_slot(kernel, (uintptr_t)va, 0, &pte) != 0)
 			return -1;
 		if (!pte)
 			return -1;
-		*pte = arm64_mmu_kernel_leaf_desc(
-		    va, 3, arm64_mmu_block_attr(va));
+		*pte = arm64_mmu_kernel_leaf_desc(va, 3, arm64_mmu_block_attr(va));
 	}
 	arm64_mmu_tlb_flush_all();
 	return 0;

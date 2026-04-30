@@ -20,45 +20,45 @@
 
 #include "irq.h"
 
-#define GICD_BASE                0x08000000UL
-#define GICR_BASE_CPU0           0x080A0000UL
-#define GICR_SGI_OFFSET          0x10000UL
+#define GICD_BASE 0x08000000UL
+#define GICR_BASE_CPU0 0x080A0000UL
+#define GICR_SGI_OFFSET 0x10000UL
 
-#define GICD_CTLR_OFFSET         0x0000u
-#define GICD_TYPER_OFFSET        0x0004u
-#define GICD_IGROUPR0_OFFSET     0x0080u
-#define GICD_ISENABLER0_OFFSET   0x0100u
-#define GICD_ICENABLER0_OFFSET   0x0180u
-#define GICD_ICPENDR0_OFFSET     0x0280u
-#define GICD_IPRIORITYR0_OFFSET  0x0400u
-#define GICD_IROUTER0_OFFSET     0x6000u
+#define GICD_CTLR_OFFSET 0x0000u
+#define GICD_TYPER_OFFSET 0x0004u
+#define GICD_IGROUPR0_OFFSET 0x0080u
+#define GICD_ISENABLER0_OFFSET 0x0100u
+#define GICD_ICENABLER0_OFFSET 0x0180u
+#define GICD_ICPENDR0_OFFSET 0x0280u
+#define GICD_IPRIORITYR0_OFFSET 0x0400u
+#define GICD_IROUTER0_OFFSET 0x6000u
 
-#define GICD_CTLR_ARE_NS         (1u << 4)
+#define GICD_CTLR_ARE_NS (1u << 4)
 #define GICD_CTLR_ENABLE_GRP1_NS (1u << 1)
-#define GICD_CTLR_RWP            (1u << 31)
+#define GICD_CTLR_RWP (1u << 31)
 
-#define GICR_CTLR_OFFSET         0x0000u
-#define GICR_TYPER_OFFSET        0x0008u
-#define GICR_WAKER_OFFSET        0x0014u
+#define GICR_CTLR_OFFSET 0x0000u
+#define GICR_TYPER_OFFSET 0x0008u
+#define GICR_WAKER_OFFSET 0x0014u
 
 #define GICR_WAKER_PROCESSOR_SLEEP (1u << 1)
 #define GICR_WAKER_CHILDREN_ASLEEP (1u << 2)
 
-#define GICR_SGI_IGROUPR0_OFFSET     0x0080u
-#define GICR_SGI_ISENABLER0_OFFSET   0x0100u
-#define GICR_SGI_ICENABLER0_OFFSET   0x0180u
-#define GICR_SGI_ICPENDR0_OFFSET     0x0280u
-#define GICR_SGI_IPRIORITYR0_OFFSET  0x0400u
+#define GICR_SGI_IGROUPR0_OFFSET 0x0080u
+#define GICR_SGI_ISENABLER0_OFFSET 0x0100u
+#define GICR_SGI_ICENABLER0_OFFSET 0x0180u
+#define GICR_SGI_ICPENDR0_OFFSET 0x0280u
+#define GICR_SGI_IPRIORITYR0_OFFSET 0x0400u
 
-#define ARCH_INTID_CNTP_EL1      30u
+#define ARCH_INTID_CNTP_EL1 30u
 #define ARCH_INTID_SPECIAL_FIRST 1020u
-#define ARCH_INTID_SPURIOUS      1023u
-#define ARCH_INTID_SPI_FIRST     32u
-#define ARCH_INTID_MAX           1019u
+#define ARCH_INTID_SPURIOUS 1023u
+#define ARCH_INTID_SPI_FIRST 32u
+#define ARCH_INTID_MAX 1019u
 
-#define GICD_RWP_TIMEOUT_ITERS   0x100000u
+#define GICD_RWP_TIMEOUT_ITERS 0x100000u
 
-#define VIRT_SPI_HANDLER_SLOTS   8u
+#define VIRT_SPI_HANDLER_SLOTS 8u
 
 static platform_irq_handler_fn g_timer_handler;
 
@@ -170,8 +170,7 @@ static void gicd_init(void)
 	for (i = 32u; i < lines; i += 32u) {
 		mmio_write32(GICD_BASE + GICD_ICENABLER0_OFFSET + (i / 8u),
 		             0xFFFFFFFFu);
-		mmio_write32(GICD_BASE + GICD_ICPENDR0_OFFSET + (i / 8u),
-		             0xFFFFFFFFu);
+		mmio_write32(GICD_BASE + GICD_ICPENDR0_OFFSET + (i / 8u), 0xFFFFFFFFu);
 	}
 }
 
@@ -188,8 +187,8 @@ static void gicr_init_cpu0(void)
 	waker &= ~GICR_WAKER_PROCESSOR_SLEEP;
 	mmio_write32(rd + GICR_WAKER_OFFSET, waker);
 
-	while ((mmio_read32(rd + GICR_WAKER_OFFSET) & GICR_WAKER_CHILDREN_ASLEEP)
-	       != 0u) {
+	while ((mmio_read32(rd + GICR_WAKER_OFFSET) & GICR_WAKER_CHILDREN_ASLEEP) !=
+	       0u) {
 		if (++i > 0x100000u)
 			break; /* Defensive: loop forever risk. */
 	}
@@ -203,8 +202,7 @@ static void gicr_init_cpu0(void)
 	*(volatile uint8_t *)(sgi + GICR_SGI_IPRIORITYR0_OFFSET +
 	                      ARCH_INTID_CNTP_EL1) = 0xA0u;
 
-	mmio_write32(sgi + GICR_SGI_ISENABLER0_OFFSET,
-	             1u << ARCH_INTID_CNTP_EL1);
+	mmio_write32(sgi + GICR_SGI_ISENABLER0_OFFSET, 1u << ARCH_INTID_CNTP_EL1);
 }
 
 static void cpu_iface_init(void)
@@ -298,8 +296,7 @@ int platform_irq_dispatch(void)
 			g_timer_handler();
 	} else if (intid >= ARCH_INTID_SPI_FIRST) {
 		for (uint32_t i = 0; i < VIRT_SPI_HANDLER_SLOTS; i++) {
-			if (g_spi_handlers[i].intid == intid &&
-			    g_spi_handlers[i].fn) {
+			if (g_spi_handlers[i].intid == intid && g_spi_handlers[i].fn) {
 				g_spi_handlers[i].fn();
 				break;
 			}
