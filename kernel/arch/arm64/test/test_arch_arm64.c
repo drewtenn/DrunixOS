@@ -1023,6 +1023,102 @@ static void test_arm64_virtio_net_tx_rejects_oversize(ktest_case_t *tc)
 }
 
 /*
+ * M4 commit 6 — /dev/net0 raw frame chardev. The netdev layer
+ * registers /dev/net0 from start_kernel, and the virtio-net driver
+ * registers its ops via netdev_register at the end of init. These
+ * tests assert the chardev is published and that read/write route
+ * through to the transport.
+ */
+static void test_arm64_virtio_net_chardev_published(ktest_case_t *tc)
+{
+	const chardev_ops_t *net0;
+
+	if (!arm64_virt_virtio_net_driver_ok()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	net0 = chardev_get("net0");
+	KTEST_ASSERT_NOT_NULL(tc, net0);
+	KTEST_EXPECT_NOT_NULL(tc, net0->read);
+	KTEST_EXPECT_NOT_NULL(tc, net0->write);
+}
+
+static void test_arm64_virtio_net_chardev_write_submits_tx(ktest_case_t *tc)
+{
+	const chardev_ops_t *net0;
+	uint32_t before;
+	int n;
+	uint8_t frame[14] = {
+	    0x52, 0x54, 0x00, 0x0d, 0x00, 0x02,
+	    0x52, 0x54, 0x00, 0x0d, 0x00, 0x01,
+	    0x88, 0xb5,
+	};
+
+	if (!arm64_virt_virtio_net_driver_ok()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	net0 = chardev_get("net0");
+	KTEST_ASSERT_NOT_NULL(tc, net0);
+	KTEST_ASSERT_NOT_NULL(tc, net0->write);
+
+	before = arm64_virt_virtio_net_tx_packets();
+	n = net0->write(0u, frame, (uint32_t)sizeof(frame));
+	KTEST_EXPECT_EQ(tc, (uint32_t)n, (uint32_t)sizeof(frame));
+	KTEST_EXPECT_EQ(tc, arm64_virt_virtio_net_tx_packets(), before + 1u);
+}
+
+static void test_arm64_virtio_net_chardev_rejects_oversize(ktest_case_t *tc)
+{
+	const chardev_ops_t *net0;
+	uint32_t before_drops;
+	int n;
+
+	if (!arm64_virt_virtio_net_driver_ok()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	net0 = chardev_get("net0");
+	KTEST_ASSERT_NOT_NULL(tc, net0);
+
+	before_drops = arm64_virt_virtio_net_tx_drops_busy();
+	/* 1515 byte frame > MTU 1514 must reject. Use a non-NULL pointer
+	 * to dodge the early NULL check; length validation runs first. */
+	n = net0->write(0u, (const uint8_t *)0x100, 1515u);
+	KTEST_EXPECT_EQ(tc, (uint32_t)(int32_t)n, (uint32_t)-1);
+	KTEST_EXPECT_EQ(tc,
+	                arm64_virt_virtio_net_tx_drops_busy(),
+	                before_drops + 1u);
+}
+
+static void test_arm64_virtio_net_chardev_rejects_short(ktest_case_t *tc)
+{
+	const chardev_ops_t *net0;
+	uint8_t frame[13];
+	uint32_t before_drops;
+	int n;
+
+	if (!arm64_virt_virtio_net_driver_ok()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	net0 = chardev_get("net0");
+	KTEST_ASSERT_NOT_NULL(tc, net0);
+
+	k_memset(frame, 0xff, sizeof(frame));
+	before_drops = arm64_virt_virtio_net_tx_drops_busy();
+	n = net0->write(0u, frame, (uint32_t)sizeof(frame));
+	KTEST_EXPECT_EQ(tc, (uint32_t)(int32_t)n, (uint32_t)-1);
+	KTEST_EXPECT_EQ(tc,
+	                arm64_virt_virtio_net_tx_drops_busy(),
+	                before_drops + 1u);
+}
+
+/*
  * Phase 2 M3.0 — virtio-gpu front-end. The driver's init runs from
  * arm64_start_kernel before KTEST execution, so by the time these
  * tests run the device has either reached arm64_virt_virtio_gpu_ready()
@@ -1410,6 +1506,10 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_virtio_net_tx_send_returns_len),
     KTEST_CASE(test_arm64_virtio_net_tx_rejects_short),
     KTEST_CASE(test_arm64_virtio_net_tx_rejects_oversize),
+    KTEST_CASE(test_arm64_virtio_net_chardev_published),
+    KTEST_CASE(test_arm64_virtio_net_chardev_write_submits_tx),
+    KTEST_CASE(test_arm64_virtio_net_chardev_rejects_oversize),
+    KTEST_CASE(test_arm64_virtio_net_chardev_rejects_short),
     KTEST_CASE(test_arm64_virtio_gpu_reached_ready),
     KTEST_CASE(test_arm64_virtio_gpu_query_display_returns_nonzero),
     KTEST_CASE(test_arm64_virtio_gpu_pattern_checksum_is_deterministic),

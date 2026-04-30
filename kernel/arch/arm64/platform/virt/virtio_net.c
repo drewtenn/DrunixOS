@@ -35,6 +35,7 @@
 #include "../../dma.h"
 #include "dma.h"
 #include "irq.h"
+#include "netdev.h"
 #include "virtio_mmio.h"
 #include "virtio_net.h"
 #include "virtio_queue.h"
@@ -341,7 +342,8 @@ static int virtio_net_rx_invalidate_and_take(uint16_t buf_index,
  * Publish a validated frame to the driver-local RX ring. Takes the
  * token by value, which is the structural enforcement that the
  * caller went through invalidate_and_take. Increments rx_packets on
- * success or rx_drops_ring_full on consumer back-pressure.
+ * success or rx_drops_ring_full on consumer back-pressure. Wakes any
+ * reader blocked on /dev/net0.
  */
 static void virtio_net_publish_frame(const virtio_net_rx_token_t *token)
 {
@@ -362,6 +364,7 @@ static void virtio_net_publish_frame(const virtio_net_rx_token_t *token)
 	g_state.driver_rx_count =
 	    (uint16_t)(g_state.driver_rx_count + 1u);
 	g_state.rx_packets++;
+	netdev_signal_rx();
 }
 
 /*
@@ -754,6 +757,25 @@ int arm64_virt_virtio_net_init(void)
 
 		platform_uart_puts(
 		    "virtio-net: driver_ok; receive queue primed\n");
+
+		/* M4 commit 6: register with the netdev framework so
+		 * /dev/net0's chardev read/write dispatch through this
+		 * driver. netdev_init must have already published the
+		 * /dev/net0 chardev (called from start_kernel before
+		 * arm64_virt_virtio_net_init). */
+		{
+			static const netdev_ops_t virtio_net_netdev_ops = {
+			    .recv_frame = arm64_virt_virtio_net_rx_dequeue,
+			    .send_frame = arm64_virt_virtio_net_send_frame,
+			};
+
+			if (netdev_register(&virtio_net_netdev_ops) != 0)
+				platform_uart_puts(
+				    "virtio-net: netdev_register failed\n");
+			else
+				platform_uart_puts(
+				    "virtio-net: netdev registered (/dev/net0)\n");
+		}
 		return 1;
 	}
 

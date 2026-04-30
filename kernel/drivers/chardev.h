@@ -50,6 +50,22 @@ typedef struct {
 	void (*write_char)(char c);
 
 	/*
+	 * Multi-byte write. Returns the number of bytes consumed by the
+	 * device on success (1..count), 0 if the device declined the
+	 * write, or -1 on error (e.g. invalid length, device busy). The
+	 * fd dispatch path returns this value to userspace as the byte
+	 * count of write(2).
+	 *
+	 * `offset` is the per-fd cursor; stream devices ignore it. Net
+	 * (commit 6's /dev/net0) treats `count` as a packet boundary —
+	 * one write submits exactly one Ethernet frame.
+	 *
+	 * May be NULL for read-only devices. Drivers should implement
+	 * either `write` or `write_char`, not both.
+	 */
+	int (*write)(uint32_t offset, const uint8_t *buf, uint32_t count);
+
+	/*
 	 * Blocking multi-byte read.  Returns the number of bytes copied into
 	 * buf (1..count) on success, 0 if the device is at end-of-stream, or
 	 * a negative value on error.  Drivers that implement this op should

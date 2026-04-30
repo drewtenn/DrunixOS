@@ -227,6 +227,30 @@ static uint32_t syscall_write_fd(uint32_t fd, uint32_t user_buf, uint32_t count)
 		return copied;
 	}
 
+	if (fh->type == FD_TYPE_CHARDEV) {
+		const chardev_ops_t *dev = chardev_get(fh->u.chardev.name);
+		uint8_t kbuf[USER_IO_CHUNK];
+		uint32_t chunk;
+		int n;
+
+		if (!dev || !dev->write)
+			return (uint32_t)-1;
+		if (count == 0)
+			return 0;
+		chunk = count;
+		if (chunk > USER_IO_CHUNK)
+			chunk = USER_IO_CHUNK;
+		if (uaccess_prepare(cur, user_buf, chunk, 0) != 0)
+			return (uint32_t)-1;
+		if (uaccess_copy_from_user(cur, kbuf, user_buf, chunk) != 0)
+			return (uint32_t)-1;
+		n = dev->write(fh->u.chardev.offset, kbuf, chunk);
+		if (n < 0)
+			return (uint32_t)-1;
+		fh->u.chardev.offset += (uint32_t)n;
+		return (uint32_t)n;
+	}
+
 	if (fh->type == FD_TYPE_FILE || fh->type == FD_TYPE_SYSFILE) {
 		uint8_t kbuf[USER_IO_CHUNK];
 		uint32_t written = 0;

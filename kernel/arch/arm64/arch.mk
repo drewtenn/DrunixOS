@@ -130,6 +130,7 @@ ARM_SHARED_KOBJS := kernel/lib/klog.arm64.o \
                     kernel/drivers/chardev.arm64.o \
                     kernel/drivers/fbdev.arm64.o \
                     kernel/drivers/inputdev.arm64.o \
+                    kernel/drivers/netdev.arm64.o \
                     kernel/drivers/tty.arm64.o \
                     kernel/drivers/wmdev.arm64.o \
                     kernel/proc/elf.arm64.o \

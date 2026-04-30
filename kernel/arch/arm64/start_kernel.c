@@ -20,6 +20,7 @@
 #include "platform/virt/virtio_gpu.h"
 #include "platform/virt/virtio_input.h"
 #include "platform/virt/virtio_net.h"
+#include "netdev.h"
 #include "platform/virt/virtio_mmio.h"
 #include "platform/virt/virtio_blk.h"
 #include "../../drivers/chardev.h"
@@ -360,10 +361,17 @@ void arm64_start_kernel(void)
 	if (arm64_virt_input_register_all() < 0)
 		platform_uart_puts("virtio-input: hard failure; continuing\n");
 
-	/* M4 commit 1: virtio-net device enumeration only. Records MMIO
-	 * base, slot, and transport version. The device is left un-driven
-	 * here; later M4 commits add feature negotiation, DMA rings,
-	 * IRQ-driven RX/TX, and the /dev/net0 raw-frame chardev. */
+	/* M4 commit 6: register /dev/net0 chardev BEFORE virtio-net's
+	 * init, so the transport's netdev_register call in init lands
+	 * on a published chardev. */
+	if (netdev_init() != 0)
+		platform_uart_puts("/dev/net0 registration failed\n");
+
+	/* M4 commit 1-5: virtio-net device enumeration, feature
+	 * negotiation, DMA-pool ring + buffer allocation, IRQ-driven
+	 * RX refill, and TX submission. Init returns 1 on success and
+	 * registers itself with the netdev layer; -1 on hard failure;
+	 * 0 if no virtio-net device is advertised on the bus. */
 	if (arm64_virt_virtio_net_init() < 0)
 		platform_uart_puts("virtio-net: hard failure; continuing\n");
 
