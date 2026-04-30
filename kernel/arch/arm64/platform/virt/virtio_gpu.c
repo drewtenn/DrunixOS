@@ -265,15 +265,29 @@ static int g_flush_disabled;
 #define VIRTIO_GPU_FLUSH_FAIL_THRESHOLD 60u
 
 /* M3.2 — coalesced dirty-rect state. publish_dirty_rect (called from
- * fbdev ioctl in process context, but the timer-tick fallback in
- * Commit 4 will also publish from IRQ context) unions rects into
- * g_pending_dirty. The pump consumes the union under a brief
- * IRQ-mask critical section so IRQ-context publishes can't tear the
- * consume; the actual TRANSFER+FLUSH runs with IRQs enabled. */
+ * fbdev ioctl in process context, and from the timer-tick fallback
+ * in IRQ context) unions rects into g_pending_dirty. The pump
+ * consumes the union under a brief IRQ-mask critical section so
+ * IRQ-context publishes can't tear the consume; the actual
+ * TRANSFER+FLUSH runs with IRQs enabled. */
 static struct {
 	drunix_rect_t rect;
 	int valid;
 } g_pending_dirty;
+
+/* M3.2 Commit 4 — transitional full-frame fallback. arm64_timer_tick
+ * calls request_flush every other tick (~50 Hz at SCHED_HZ=100);
+ * when no userspace ioctl has fired in the last
+ * VIRTIO_GPU_FALLBACK_TICK_THRESHOLD ticks (~340 ms), synthesize a
+ * full-frame dirty rect so M3.1-built compositor binaries (which
+ * don't issue DRUNIX_FBIO_FLUSH_RECT) still get the display refreshed
+ * at ~3 Hz. publish_dirty_rect resets the counter to 0, so the
+ * fallback never fires for an M3.2-aware userspace.
+ *
+ * Remove this whole mechanism in M3.x once the compositor is always
+ * rebuilt with the M3.2 ioctl path. */
+static uint32_t g_no_ioctl_ticks;
+#define VIRTIO_GPU_FALLBACK_TICK_THRESHOLD 17u
 
 static uint32_t mmio_read32(uintptr_t addr)
 {
@@ -974,14 +988,33 @@ uint32_t arm64_virt_virtio_gpu_dma_pages_held(void)
 }
 
 /*
- * IRQ-safe: just set the flag. No submission, no polling. The
- * timer tick calls this; the actual TRANSFER+FLUSH runs from
- * arm64_virt_virtio_gpu_pump_flush() in process context.
+ * IRQ-safe: M3.2 Commit 4 transitional fallback. The timer tick
+ * calls this; under M3.1's contract it set g_flush_needed
+ * unconditionally and the pump did a full-frame TRANSFER. Under
+ * M3.2 this is the no-ioctl-recent fallback: increment a counter,
+ * and only when the counter exceeds the threshold synthesize a
+ * full-frame dirty rect. Userspace that calls
+ * DRUNIX_FBIO_FLUSH_RECT regularly resets the counter to 0 in
+ * publish_dirty_rect, so the fallback never fires.
  */
 void arm64_virt_virtio_gpu_request_flush(void)
 {
 	if (!g_ready || g_flush_disabled)
 		return;
+
+	g_no_ioctl_ticks++;
+	if (g_no_ioctl_ticks < VIRTIO_GPU_FALLBACK_TICK_THRESHOLD)
+		return;
+
+	g_no_ioctl_ticks = 0u;
+
+	/* Synthesize a full-frame dirty rect. We're in IRQ context (timer
+	 * tick) so concurrent process-context publishes can't interleave;
+	 * a no-op union with an existing pending rect just collapses to
+	 * full-frame. */
+	g_pending_dirty.rect = drunix_rect_make(0, 0, (int)VIRTIO_GPU_WIDTH,
+	                                         (int)VIRTIO_GPU_HEIGHT);
+	g_pending_dirty.valid = 1;
 	g_flush_needed = 1u;
 }
 
@@ -1063,6 +1096,9 @@ void arm64_virt_virtio_gpu_publish_dirty_rect(drunix_rect_t rect)
 		g_pending_dirty.rect = rect;
 	g_pending_dirty.valid = 1;
 	g_flush_needed = 1u;
+	/* Reset the fallback counter so the timer-tick fallback never
+	 * fires while userspace is actively driving the ioctl. */
+	g_no_ioctl_ticks = 0u;
 
 	__asm__ volatile("msr daif, %0" : : "r"(saved_daif) : "memory");
 }
@@ -1086,13 +1122,14 @@ void arm64_virt_virtio_gpu_pump_flush(void)
 	 * conditional on the no-ioctl-recent fallback timer.
 	 */
 	had_pending = virtio_gpu_take_pending_rect(&rect);
-	if (had_pending) {
-		rc = virtio_gpu_pump_rect(rect);
-	} else {
-		rect = drunix_rect_make(0, 0, (int)VIRTIO_GPU_WIDTH,
-		                        (int)VIRTIO_GPU_HEIGHT);
-		rc = virtio_gpu_pump_rect(rect);
+	if (!had_pending) {
+		/* g_flush_needed was set but no rect is pending — should not
+		 * happen after Commit 4 (request_flush only sets the flag
+		 * when it has just published a fallback rect), but stay
+		 * defensive: drop the spurious flush request. */
+		return;
 	}
+	rc = virtio_gpu_pump_rect(rect);
 
 	if (rc != 0) {
 		g_flush_failures++;
