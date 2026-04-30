@@ -72,8 +72,10 @@ uint64_t arm64_virt_virtio_net_tx_queue_phys(void);
  * `_rx_dequeue(out, max_len)` pulls one frame from the driver-local
  * RX ring into `out`, returns the byte count copied (Ethernet payload
  * only; the virtio_net_hdr has already been stripped). Returns 0 if
- * no frame is available, -1 if the caller's buffer is too small.
- * Commit 6's /dev/net0 chardev calls this from read().
+ * no frame is available, -1 if the caller's buffer is too small. On
+ * the -1 path the slot is NOT consumed; the caller should retry with
+ * a larger buffer (the slot stays head-of-queue). Commit 6's /dev/net0
+ * chardev calls this from read().
  *
  * Counter accessors return current values for KTEST and diagnostics.
  * `_rx_packets()` counts successful publishes; `_rx_drops_short()`

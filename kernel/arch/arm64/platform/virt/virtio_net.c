@@ -264,7 +264,7 @@ static int virtio_net_setup_queue(uintptr_t base,
 
 /*
  * Refill descriptor `head` with a writable RX buffer (1:1 mapping
- * descriptor i <-> rx_buffers[i]). Marks the descriptor VRITQ_DESC_F_
+ * descriptor i <-> rx_buffers[i]). Marks the descriptor VIRTQ_DESC_F_
  * WRITE so the device fills it on the next packet, and submits it via
  * virtq_submit. The submit path performs the desc cache_clean and
  * dma_wmb required by aarch64-dma.md.
@@ -361,6 +361,14 @@ static void virtio_net_publish_frame(const virtio_net_rx_token_t *token)
  * commit). Drains the receiveq used ring, validates and publishes
  * each frame, refills the descriptor regardless of validation
  * outcome, and notifies queue 0 to keep the device fed.
+ *
+ * Race avoidance: the ISR is acked once at entry, then the drain loop
+ * runs until the used ring is empty. After the inner loop exits the
+ * handler re-checks used->idx (via virtq_drain_one) and re-loops if
+ * the device published more completions between drain-empty and now.
+ * Without this re-check a publish that lands after ACK but before the
+ * outer return would not raise a fresh interrupt edge and the
+ * completion would be stuck until the next traffic-driven IRQ.
  */
 static void virtio_net_irq_handler(void)
 {
@@ -376,19 +384,34 @@ static void virtio_net_irq_handler(void)
 	if ((isr & VIRTIO_MMIO_ISR_USED_RING) == 0u)
 		return;
 
-	for (;;) {
-		uint32_t used_len = 0;
-		uint16_t head = virtq_drain_one(&g_state.rx_queue, &used_len);
-		virtio_net_rx_token_t token;
+	/* Outer loop closes the ack-then-drain race: after the inner
+	 * drain returns "empty" we re-poll once. If the device published
+	 * a completion between the inner exit and here, the next
+	 * virtq_drain_one returns it and we loop back. Bounded by
+	 * VIRTQ_SIZE iterations as a paranoia stop. */
+	for (uint32_t guard = 0; guard <= VIRTQ_SIZE; guard++) {
+		int drained_any = 0;
 
-		if (head == 0xFFFFu)
+		for (;;) {
+			uint32_t used_len = 0;
+			uint16_t head = virtq_drain_one(&g_state.rx_queue,
+			                                &used_len);
+			virtio_net_rx_token_t token;
+
+			if (head == 0xFFFFu)
+				break;
+			drained_any = 1;
+
+			if (virtio_net_rx_invalidate_and_take(head, used_len,
+			                                      &token))
+				virtio_net_publish_frame(&token);
+			/* else: drop counters already incremented */
+
+			virtio_net_rx_refill_one(head);
+		}
+
+		if (!drained_any)
 			break;
-
-		if (virtio_net_rx_invalidate_and_take(head, used_len, &token))
-			virtio_net_publish_frame(&token);
-		/* else: drop counters incremented in invalidate_and_take */
-
-		virtio_net_rx_refill_one(head);
 	}
 
 	mmio_write32(base + VIRTIO_MMIO_QUEUE_NOTIFY, VIRTIO_NET_QUEUE_RX);
