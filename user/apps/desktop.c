@@ -1457,23 +1457,17 @@ int main(int argc, char **argv)
 	 * slot. */
 	g_fb_fd = fbfd;
 
-	/* M3.3: probe for hardware cursor support. If the kernel has a
-	 * virtio-gpu cursor plane uploaded (see virtio_gpu_cursor_init
-	 * in the kernel), the move-cursor ioctl returns 0; we then stop
-	 * drawing the cursor in software and let the host overlay it.
-	 * On any failure (kernel pre-M3.3, virtio-gpu cursor init
-	 * failed, ramfb fallback path, etc.), keep the M2.5b software
-	 * cursor. */
-	{
-		drunix_point_t initial = {(int)g_info.width / 2,
-		                           (int)g_info.height / 2};
-		if (sys_ioctl(g_fb_fd, DRUNIX_FBIO_MOVE_CURSOR, &initial) == 0) {
-			g_hw_cursor_active = 1;
-			g_pointer_x = initial.x;
-			g_pointer_y = initial.y;
-			sys_write("desktop: hardware cursor active\n");
-		}
-	}
+	/* M3.3 follow-up: the compositor stays on the M2.5b software
+	 * cursor for visibility on the macOS Cocoa display backend
+	 * (which hides the virtio-gpu cursor plane under the host's
+	 * pointer; even mouse-grab leaves it invisible). The kernel-side
+	 * hw cursor infrastructure is still uploaded at boot — KTESTs
+	 * exercise the cursorq submit path — but the compositor doesn't
+	 * adopt it yet. Future work: detect a display backend where the
+	 * hw cursor is actually visible and switch automatically, or
+	 * gate adoption on a build/runtime flag. See
+	 * docs/design/m3.3-hardware-cursor.md "Known limitation". */
+	g_hw_cursor_active = 0;
 
 	g_scene = (uint32_t *)malloc(g_fb_bytes);
 	if (!g_scene) {
