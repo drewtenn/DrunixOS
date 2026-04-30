@@ -21,6 +21,7 @@
 #include "platform/platform.h"
 #include "platform/virt/dma.h"
 #include "platform/virt/fwcfg.h"
+#include "platform/virt/virtio_gpu.h"
 #endif
 
 extern const uint8_t virt_snapshot_dtb[];
@@ -688,6 +689,93 @@ static void test_arm64_virtio_mouse_event_to_mousedev(ktest_case_t *tc)
 	(void)mouse->read(0u, (uint8_t *)&evt, (uint32_t)sizeof(evt));
 }
 
+/*
+ * Phase 2 M3.0 — virtio-gpu front-end. The driver's init runs from
+ * arm64_start_kernel before KTEST execution, so by the time these
+ * tests run the device has either reached arm64_virt_virtio_gpu_ready()
+ * (DRIVER_OK + six-command sequence complete) or skipped because no
+ * `-device virtio-gpu-device` was on the QEMU command line. The
+ * harness in tools/arm64_qemu_harness.py advertises the device, so the
+ * checked-in CI run exercises the protocol path; an environment that
+ * skips the device still keeps the rest of the suite green.
+ */
+
+static void test_arm64_virtio_gpu_reached_ready(ktest_case_t *tc)
+{
+	KTEST_EXPECT_TRUE(tc, arm64_virt_virtio_gpu_ready());
+}
+
+static void test_arm64_virtio_gpu_query_display_returns_nonzero(
+    ktest_case_t *tc)
+{
+	uint32_t w = 0;
+	uint32_t h = 0;
+	int rc;
+
+	if (!arm64_virt_virtio_gpu_ready()) {
+		/* Skip silently — the ready test above already records the
+		 * absence; failing here would double-count the same skip. */
+		return;
+	}
+	rc = arm64_virt_virtio_gpu_query_display(&w, &h);
+	KTEST_EXPECT_EQ(tc, (uint32_t)rc, 0u);
+	KTEST_EXPECT_NE(tc, w, 0u);
+	KTEST_EXPECT_NE(tc, h, 0u);
+}
+
+static void test_arm64_virtio_gpu_pattern_checksum_is_deterministic(
+    ktest_case_t *tc)
+{
+	uint32_t a;
+	uint32_t b;
+
+	if (!arm64_virt_virtio_gpu_ready())
+		return;
+
+	/* The kernel-side test pattern is written once during init and is
+	 * static after that. Two consecutive checksum reads must agree;
+	 * the absolute value is left unchecked here so subtle pixel-format
+	 * tweaks don't require an opaque magic-number rebase. */
+	a = arm64_virt_virtio_gpu_checksum_pattern();
+	b = arm64_virt_virtio_gpu_checksum_pattern();
+	KTEST_EXPECT_EQ(tc, a, b);
+	KTEST_EXPECT_NE(tc, a, 0u);
+}
+
+static void test_arm64_virtio_gpu_partial_flush_smoke_passes(
+    ktest_case_t *tc)
+{
+	uint32_t before;
+	uint32_t after;
+	int rc;
+
+	if (!arm64_virt_virtio_gpu_ready())
+		return;
+
+	before = arm64_virt_virtio_gpu_checksum_pattern();
+	rc = arm64_virt_virtio_gpu_partial_flush_smoke();
+	after = arm64_virt_virtio_gpu_checksum_pattern();
+
+	KTEST_EXPECT_EQ(tc, (uint32_t)rc, 0u);
+	/* Partial flush mutates a 16x16 patch in the bottom-right quadrant
+	 * to a sentinel color, so the checksum must change. */
+	KTEST_EXPECT_NE(tc, before, after);
+}
+
+static void test_arm64_virtio_gpu_dma_pages_held_within_budget(
+    ktest_case_t *tc)
+{
+	uint32_t held;
+
+	if (!arm64_virt_virtio_gpu_ready())
+		return;
+
+	/* M3.0 budget: 2 controlq + 2 cursorq + 1 req + 1 resp + 1 scanout
+	 * = 7 pages. Anything more means the cleanup path leaked. */
+	held = arm64_virt_virtio_gpu_dma_pages_held();
+	KTEST_EXPECT_EQ(tc, held, 7u);
+}
+
 #endif /* DRUNIX_ARM64_PLATFORM_VIRT */
 
 /* FDT-parser tests. Phase 1 M2.4a / FR-002. The snapshot blob is a
@@ -779,6 +867,11 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_virtio_input_devices_enumerated),
     KTEST_CASE(test_arm64_virtio_keyboard_event_to_kbdev),
     KTEST_CASE(test_arm64_virtio_mouse_event_to_mousedev),
+    KTEST_CASE(test_arm64_virtio_gpu_reached_ready),
+    KTEST_CASE(test_arm64_virtio_gpu_query_display_returns_nonzero),
+    KTEST_CASE(test_arm64_virtio_gpu_pattern_checksum_is_deterministic),
+    KTEST_CASE(test_arm64_virtio_gpu_partial_flush_smoke_passes),
+    KTEST_CASE(test_arm64_virtio_gpu_dma_pages_held_within_budget),
 #endif
 };
 
