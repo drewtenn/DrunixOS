@@ -53,8 +53,10 @@ ARM_INC := -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 \
 # provides PL011 + stubs for M0 (irq/fb/usb/blk). M1+ replace the stubs.
 ifeq ($(PLATFORM),virt)
 ARM_PLATFORM_OBJS := kernel/arch/arm64/platform/virt/dma.o \
+                     kernel/arch/arm64/platform/virt/fwcfg.o \
                      kernel/arch/arm64/platform/virt/irq.o \
                      kernel/arch/arm64/platform/virt/platform_mm.o \
+                     kernel/arch/arm64/platform/virt/ramfb.o \
                      kernel/arch/arm64/platform/virt/stubs.o \
                      kernel/arch/arm64/platform/virt/uart.o \
                      kernel/arch/arm64/platform/virt/virtio_blk.o \
@@ -110,6 +112,7 @@ ARM_SHARED_KOBJS := kernel/lib/klog.arm64.o \
                     kernel/drivers/blkdev_part.arm64.o \
                     kernel/blk/bcache.arm64.o \
                     kernel/drivers/chardev.arm64.o \
+                    kernel/drivers/fbdev.arm64.o \
                     kernel/drivers/tty.arm64.o \
                     kernel/drivers/wmdev.arm64.o \
                     kernel/proc/elf.arm64.o \

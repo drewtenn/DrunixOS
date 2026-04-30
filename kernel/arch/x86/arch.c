@@ -76,6 +76,17 @@ static uint32_t arch_mm_to_paging_flags(uint32_t flags)
 		paging_flags |= PG_COW;
 	if (flags & ARCH_MM_MAP_IO)
 		paging_flags |= PG_IO;
+	if (flags & ARCH_MM_MAP_NC) {
+		/*
+		 * M2.5a: Normal-NC on arm64 maps to x86 PAT slot 4 (WC).
+		 * paging_prepare_wc_slot() configures slot 4 with WC; the
+		 * 4 KiB PTE encoding for slot 4 is PAT=1 (PG_PAT_4K), PCD=0,
+		 * PWT=0. We also keep PG_IO so the unmap path does not
+		 * decref the underlying frame (chardev mmap apertures are
+		 * not PMM-managed on x86).
+		 */
+		paging_flags |= PG_IO | PG_PAT_4K;
+	}
 	if (flags & ARCH_MM_MAP_SHARED)
 		paging_flags |= PG_SHARED;
 

@@ -338,7 +338,31 @@ static int syscall_mmap_chardev(process_t *cur,
 		return -1;
 
 	aspace = (arch_aspace_t)cur->pd_phys;
-	map_flags = ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ | ARCH_MM_MAP_IO;
+	map_flags = ARCH_MM_MAP_PRESENT | ARCH_MM_MAP_READ;
+	/*
+	 * M2.5a: drivers may opt into a specific cache attribute for their
+	 * mmap aperture. Drivers without an mmap_cache_policy op keep the
+	 * historical Device-memory mapping (ARCH_MM_MAP_IO).
+	 */
+	if (dev->mmap_cache_policy) {
+		switch (dev->mmap_cache_policy(file_offset, map_len)) {
+		case CHARDEV_CACHE_DEFAULT:
+			break;
+		case CHARDEV_CACHE_DEVICE:
+			map_flags |= ARCH_MM_MAP_IO;
+			break;
+		case CHARDEV_CACHE_NC:
+			map_flags |= ARCH_MM_MAP_NC;
+			break;
+		case CHARDEV_CACHE_WB_FLUSH:
+		default:
+			/* Unsupported in M2.5a; fall back to Device. */
+			map_flags |= ARCH_MM_MAP_IO;
+			break;
+		}
+	} else {
+		map_flags |= ARCH_MM_MAP_IO;
+	}
 	if (prot_has_user_access(prot))
 		map_flags |= ARCH_MM_MAP_USER;
 	if (prot & LINUX_PROT_WRITE)

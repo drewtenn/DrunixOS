@@ -47,6 +47,20 @@ static int fbdev_mmap_phys(uint32_t offset,
 	return 0;
 }
 
+static chardev_cache_policy_t fbdev_cache_policy(uint32_t offset, uint32_t length)
+{
+	(void)offset;
+	(void)length;
+	/*
+	 * M2.5a: framebuffer pages must be mapped Normal-NC on arm64
+	 * (so QEMU ramfb reads see fresh writes without explicit dcache
+	 * cleans) and PAT slot 4 / WC on x86 (so user mappings inherit
+	 * the WC policy the kernel already configures for its identity
+	 * map). CHARDEV_CACHE_NC selects both.
+	 */
+	return CHARDEV_CACHE_NC;
+}
+
 static int fbdev_info_read(uint32_t offset, uint8_t *buf, uint32_t count)
 {
 	uint32_t total = (uint32_t)sizeof(fbdev_info_t);
@@ -68,6 +82,7 @@ static const chardev_ops_t fbdev_ops = {
     .write_char = 0,
     .read = 0,
     .mmap_phys = fbdev_mmap_phys,
+    .mmap_cache_policy = fbdev_cache_policy,
 };
 
 static const chardev_ops_t fbdev_info_ops = {

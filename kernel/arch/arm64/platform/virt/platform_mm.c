@@ -28,6 +28,16 @@
 #define VIRT_HEAP_OFFSET_FROM_KERNEL_END (16u * 0x100000u)
 #define VIRT_HEAP_TAIL_RESERVE (16u * 0x100000u)
 
+/*
+ * M2.5a: software framebuffer reservation at the top of RAM, just below
+ * the existing 16 MiB heap-tail reserve. 8 MiB is enough for a
+ * 1024×768×32 (3 MiB) ramfb plus headroom for future double-buffering or
+ * 1080p experiments. The classifier returns PLATFORM_MM_FRAMEBUFFER for
+ * this span so MMU bring-up stamps Normal-NC PTEs into both the kernel
+ * linear map and any user mmap of /dev/fb0.
+ */
+#define VIRT_RAMFB_BYTES (8u * 0x100000u)
+
 #define VIRT_PAGE_SIZE 0x1000u
 
 extern char _kernel_end[];
@@ -98,6 +108,31 @@ void virt_ram_layout_init(void)
 	g_layout.heap_size = (g_layout.ram_base + g_layout.ram_size) -
 	                     (uint64_t)VIRT_HEAP_TAIL_RESERVE - g_layout.heap_base;
 
+	/*
+	 * M2.5a framebuffer carve-out. Place at top of RAM, sandwiched
+	 * between the heap-tail reserve and end-of-RAM. The reservation
+	 * lives inside the heap-tail-reserved region (so PMM never owned
+	 * it; kheap also never sees it). Skip if RAM is too small to
+	 * hold both the heap and an 8 MiB FB.
+	 */
+	g_layout.framebuffer_base = 0;
+	g_layout.framebuffer_size = 0;
+	{
+		uint64_t ram_top = g_layout.ram_base + g_layout.ram_size;
+		uint64_t fb_base = ram_top - (uint64_t)VIRT_RAMFB_BYTES;
+		uint64_t heap_end = g_layout.heap_base + g_layout.heap_size;
+
+		if (fb_base >= heap_end &&
+		    fb_base + (uint64_t)VIRT_RAMFB_BYTES <= ram_top) {
+			g_layout.framebuffer_base = fb_base;
+			g_layout.framebuffer_size = (uint64_t)VIRT_RAMFB_BYTES;
+		} else {
+			platform_uart_puts(
+			    "virt: RAM too small for ramfb reservation; "
+			    "/dev/fb0 will be unavailable\n");
+		}
+	}
+
 	g_layout_ready = 1;
 }
 
@@ -106,6 +141,12 @@ platform_mm_attr_t platform_mm_classify(uint64_t phys)
 	if (!g_layout_ready)
 		virt_ram_layout_init();
 
+	/* M2.5a: the framebuffer span gets Normal-NC. Must be checked
+	 * before the generic RAM range, since the FB lives inside RAM. */
+	if (g_layout.framebuffer_size != 0 &&
+	    phys >= g_layout.framebuffer_base &&
+	    phys < g_layout.framebuffer_base + g_layout.framebuffer_size)
+		return PLATFORM_MM_FRAMEBUFFER;
 	if (phys >= g_layout.ram_base &&
 	    phys < g_layout.ram_base + g_layout.ram_size)
 		return PLATFORM_MM_NORMAL;

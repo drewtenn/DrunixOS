@@ -131,6 +131,19 @@ void arch_mm_init(void)
 	pmm_mark_used((uint32_t)ARM64_INIT_STACK_BASE,
 	              (uint32_t)(ARM64_INIT_STACK_TOP - ARM64_INIT_STACK_BASE));
 
+	/*
+	 * M2.5a: pin the software-framebuffer carve-out before the MMU
+	 * walks the RAM map. arm64_mmu_build_kernel_tables consults
+	 * platform_mm_classify(); the classifier returns
+	 * PLATFORM_MM_FRAMEBUFFER for this span, so the kernel linear map
+	 * for those pages becomes Normal-NC at attribute-stamp time —
+	 * never staging a Normal-WB alias.
+	 */
+	if (l->framebuffer_size != 0) {
+		pmm_mark_used((uint32_t)l->framebuffer_base,
+		              (uint32_t)l->framebuffer_size);
+	}
+
 	arm64_mmu_init();
 	if (arm64_mmu_enabled())
 		platform_uart_puts("ARM64 MMU enabled\n");

@@ -13,14 +13,28 @@ run-grub-menu run-stdio: run
 
 ifeq ($(PLATFORM),virt)
 # QEMU `-M virt,gic-version=3` is the v1.2 GPU/media MVP test machine.
-# M2.4c attaches img/disk.img via virtio-blk-device so the run target
-# boots to a TTY shell on /dev/sda1. virtio-blk-device exposes the raw
-# bytes of the same MBR-wrapped ext3 image used by raspi3b — no separate
-# arm64-virt disk artefact. `-nographic` routes PL011 to the controlling
-# terminal and lets Ctrl-A x exit cleanly.
+# M2.5a adds `-device ramfb` and a windowed display, so `make run` boots
+# to a 1024x768x32 framebuffer plus a TTY shell on the controlling
+# terminal (serial routed via -serial mon:stdio). Use `make run-headless`
+# for KTEST/CI runs that need to keep -nographic.
+ifeq ($(shell uname -s),Darwin)
+QEMU_ARM_VIRT_DISPLAY ?= cocoa
+else
+QEMU_ARM_VIRT_DISPLAY ?= gtk
+endif
+
 build-virt: kernel-arm64.elf $(ROOT_DISK_IMG)
 
 run: build-virt | $(LOG_DIR)
+	$(QEMU_ARM) -M virt,gic-version=3 -cpu cortex-a53 -smp 1 -m 1G \
+	    -kernel kernel-arm64.elf \
+	    -drive file=$(ROOT_DISK_IMG),if=none,format=raw,id=hd0 \
+	    -device virtio-blk-device,drive=hd0 \
+	    -device ramfb \
+	    -display $(QEMU_ARM_VIRT_DISPLAY) \
+	    -serial mon:stdio -no-reboot
+
+run-headless: build-virt | $(LOG_DIR)
 	$(QEMU_ARM) -M virt,gic-version=3 -cpu cortex-a53 -smp 1 -m 1G \
 	    -kernel kernel-arm64.elf \
 	    -drive file=$(ROOT_DISK_IMG),if=none,format=raw,id=hd0 \

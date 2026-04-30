@@ -42,6 +42,15 @@ typedef enum {
 	PLATFORM_MM_UNMAPPED = 0,
 	PLATFORM_MM_NORMAL = 1,
 	PLATFORM_MM_DEVICE = 2,
+	/*
+	 * M2.5a: software-framebuffer reservation. The classifier returns
+	 * this for pages that must be mapped Normal-NC (Inner-NC Outer-NC)
+	 * by both the kernel linear map and any user mmap aperture, so a
+	 * host-side reader (QEMU ramfb) sees fresh pixel writes without
+	 * explicit dcache cleans. Only the virt platform returns this
+	 * attribute today; raspi3b uses framebuffer pages from VideoCore.
+	 */
+	PLATFORM_MM_FRAMEBUFFER = 3,
 } platform_mm_attr_t;
 
 platform_mm_attr_t platform_mm_classify(uint64_t phys);
@@ -52,6 +61,13 @@ typedef struct platform_ram_layout {
 	uint64_t heap_base;
 	uint64_t heap_size;
 	uint64_t kernel_image_end;
+	/*
+	 * M2.5a: optional framebuffer carve-out at the top of RAM.
+	 * framebuffer_size == 0 when the platform has no software FB
+	 * reservation (raspi3b: 0; virt: 8 MiB unless FDT overrides).
+	 */
+	uint64_t framebuffer_base;
+	uint64_t framebuffer_size;
 } platform_ram_layout_t;
 
 const platform_ram_layout_t *platform_ram_layout(void);

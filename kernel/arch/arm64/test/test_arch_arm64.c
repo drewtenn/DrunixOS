@@ -14,9 +14,12 @@
 #include "vma.h"
 #if DRUNIX_ARM64_PLATFORM_VIRT
 #include "blkdev.h"
+#include "chardev.h"
 #include "dma.h"
+#include "fbdev.h"
 #include "platform/platform.h"
 #include "platform/virt/dma.h"
+#include "platform/virt/fwcfg.h"
 #endif
 
 extern const uint8_t virt_snapshot_dtb[];
@@ -477,6 +480,139 @@ static void test_arm64_virt_root_mounted_as_ext3(ktest_case_t *tc)
 	KTEST_EXPECT_GE(tc, (uint32_t)blkdev_find_index("sda1"), 0u);
 }
 
+/*
+ * M2.5a ramfb acceptance. The KTEST runner attaches `-device ramfb`
+ * (see tools/arm64_qemu_harness.py), so by the time these cases run
+ * fwcfg has signalled present, ramfb has been published as /dev/fb0,
+ * and the kernel linear map for the framebuffer span has been
+ * downgraded to Normal-NC. The acceptance criteria for the milestone
+ * are that the boot envelope reaches all of those states without
+ * regressing M2.4c root mount or the existing arm64 KTEST suite.
+ */
+static void test_arm64_fwcfg_present_after_init(ktest_case_t *tc)
+{
+	KTEST_EXPECT_EQ(tc, (uint32_t)fwcfg_present(), 1u);
+}
+
+static void test_arm64_fwcfg_finds_etc_ramfb(ktest_case_t *tc)
+{
+	uint16_t selector = 0;
+	uint32_t size = 0;
+
+	KTEST_ASSERT_EQ(tc,
+	                fwcfg_find_file("etc/ramfb", &selector, &size), 0);
+	/* QEMU's RAMFBCfg is 28 bytes (be64 + 5 × be32). */
+	KTEST_EXPECT_EQ(tc, size, 28u);
+	KTEST_EXPECT_NE(tc, (uint32_t)selector, 0u);
+}
+
+static void test_arm64_fwcfg_rejects_unknown_file(ktest_case_t *tc)
+{
+	uint16_t selector = 0xBEEF;
+	uint32_t size = 0xDEADBEEFu;
+
+	KTEST_EXPECT_NE(
+	    tc,
+	    (uint32_t)fwcfg_find_file("etc/this-key-does-not-exist",
+	                              &selector, &size),
+	    0u);
+}
+
+static void test_arm64_ramfb_layout_reserves_8mib(ktest_case_t *tc)
+{
+	const platform_ram_layout_t *l = platform_ram_layout();
+
+	KTEST_ASSERT_NOT_NULL(tc, l);
+	KTEST_EXPECT_EQ(tc, (uint32_t)l->framebuffer_size, 0x800000u);
+	KTEST_EXPECT_NE(tc, (uint32_t)l->framebuffer_base, 0u);
+	/* FB lives strictly above the heap and strictly inside RAM. */
+	KTEST_EXPECT_GE(tc,
+	                (uint32_t)l->framebuffer_base,
+	                (uint32_t)(l->heap_base + l->heap_size));
+	KTEST_EXPECT_GE(
+	    tc,
+	    (uint32_t)((l->ram_base + l->ram_size) -
+	               (l->framebuffer_base + l->framebuffer_size)),
+	    0u);
+}
+
+static void test_arm64_ramfb_classifier_returns_framebuffer(ktest_case_t *tc)
+{
+	const platform_ram_layout_t *l = platform_ram_layout();
+	uint64_t mid;
+
+	if (l->framebuffer_size == 0) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u); /* layout absent — skip */
+		return;
+	}
+	mid = l->framebuffer_base + (l->framebuffer_size / 2u);
+	KTEST_EXPECT_EQ(tc,
+	                (uint32_t)platform_mm_classify(l->framebuffer_base),
+	                (uint32_t)PLATFORM_MM_FRAMEBUFFER);
+	KTEST_EXPECT_EQ(tc,
+	                (uint32_t)platform_mm_classify(mid),
+	                (uint32_t)PLATFORM_MM_FRAMEBUFFER);
+	/* One byte past the FB span must NOT be classified as FB. */
+	KTEST_EXPECT_NE(tc,
+	                (uint32_t)platform_mm_classify(
+	                    l->framebuffer_base + l->framebuffer_size),
+	                (uint32_t)PLATFORM_MM_FRAMEBUFFER);
+}
+
+static void test_arm64_ramfb_kernel_alias_is_normal_nc(ktest_case_t *tc)
+{
+	const platform_ram_layout_t *l = platform_ram_layout();
+	arch_mm_mapping_t map;
+	int rc;
+
+	if (l->framebuffer_size == 0 || chardev_get("fb0") == 0) {
+		/* ramfb path was skipped at boot — kernel-alias remap did
+		 * not run, so the assertion below is vacuously inapplicable. */
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+	rc = arch_mm_query(arch_aspace_kernel(),
+	                   (uintptr_t)l->framebuffer_base, &map);
+	KTEST_ASSERT_EQ(tc, rc, 0);
+	KTEST_EXPECT_NE(tc, map.flags & ARCH_MM_MAP_NC, 0u);
+	KTEST_EXPECT_EQ(tc, map.flags & ARCH_MM_MAP_IO, 0u);
+}
+
+static void test_arm64_fbdev_chardev_published(ktest_case_t *tc)
+{
+	/* `-device ramfb` is on; /dev/fb0 must be registered. */
+	const chardev_ops_t *ops = chardev_get("fb0");
+	const chardev_ops_t *info = chardev_get("fb0info");
+
+	KTEST_ASSERT_NOT_NULL(tc, ops);
+	KTEST_EXPECT_NOT_NULL(tc, ops->mmap_phys);
+	KTEST_EXPECT_NOT_NULL(tc, ops->mmap_cache_policy);
+	KTEST_ASSERT_NOT_NULL(tc, info);
+	KTEST_EXPECT_NOT_NULL(tc, info->read);
+}
+
+static void test_arm64_fbdev_geometry_matches_ramfb_config(ktest_case_t *tc)
+{
+	const chardev_ops_t *info = chardev_get("fb0info");
+	fbdev_info_t geom;
+	int rc;
+
+	if (!info || !info->read) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u); /* /dev/fb0 absent — skip */
+		return;
+	}
+	k_memset(&geom, 0xff, sizeof(geom));
+	rc = info->read(0u, (uint8_t *)&geom, (uint32_t)sizeof(geom));
+	KTEST_EXPECT_EQ(tc, (uint32_t)rc, (uint32_t)sizeof(geom));
+	KTEST_EXPECT_EQ(tc, geom.width, 1024u);
+	KTEST_EXPECT_EQ(tc, geom.height, 768u);
+	KTEST_EXPECT_EQ(tc, geom.pitch, 4096u);
+	KTEST_EXPECT_EQ(tc, geom.bpp, 32u);
+	KTEST_EXPECT_EQ(tc, geom.red_pos, (uint8_t)16);
+	KTEST_EXPECT_EQ(tc, geom.green_pos, (uint8_t)8);
+	KTEST_EXPECT_EQ(tc, geom.blue_pos, (uint8_t)0);
+}
+
 #endif /* DRUNIX_ARM64_PLATFORM_VIRT */
 
 /* FDT-parser tests. Phase 1 M2.4a / FR-002. The snapshot blob is a
@@ -557,6 +693,14 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_dma_phys_virt_round_trip_validates_bounds),
     KTEST_CASE(test_arm64_dma_barriers_compile_and_execute),
     KTEST_CASE(test_arm64_virt_root_mounted_as_ext3),
+    KTEST_CASE(test_arm64_fwcfg_present_after_init),
+    KTEST_CASE(test_arm64_fwcfg_finds_etc_ramfb),
+    KTEST_CASE(test_arm64_fwcfg_rejects_unknown_file),
+    KTEST_CASE(test_arm64_ramfb_layout_reserves_8mib),
+    KTEST_CASE(test_arm64_ramfb_classifier_returns_framebuffer),
+    KTEST_CASE(test_arm64_ramfb_kernel_alias_is_normal_nc),
+    KTEST_CASE(test_arm64_fbdev_chardev_published),
+    KTEST_CASE(test_arm64_fbdev_geometry_matches_ramfb_config),
 #endif
 };
 

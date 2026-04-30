@@ -17,6 +17,28 @@
 #define CHARDEV_NAME_MAX 8 /* max name length including NUL */
 #define CHARDEV_MAX 8      /* max registered char devices */
 
+/*
+ * Cache policy a chardev requests for its mmap aperture.
+ *
+ *  CHARDEV_CACHE_DEFAULT   ordinary cacheable memory; arm64 Normal-WB
+ *                          Inner-Shareable, x86 PAT default.
+ *  CHARDEV_CACHE_DEVICE    side-effect MMIO; arm64 Device-nGnRnE, x86 UC.
+ *                          Used by fbdev today via the ARCH_MM_MAP_IO path.
+ *  CHARDEV_CACHE_NC        non-cacheable normal memory with write-combining
+ *                          allowed; arm64 Normal-NC (MAIR slot 2), x86 PAT
+ *                          slot 4 (WC). Right answer for QEMU ramfb on
+ *                          arm64 and the framebuffer aperture on x86.
+ *  CHARDEV_CACHE_WB_FLUSH  reserved for the v1.2 GPU MVP — Normal-WB plus
+ *                          explicit dcache clean ranges from a future
+ *                          arch_dcache_clean_range hook. Not implemented.
+ */
+typedef enum {
+	CHARDEV_CACHE_DEFAULT = 0,
+	CHARDEV_CACHE_DEVICE = 1,
+	CHARDEV_CACHE_NC = 2,
+	CHARDEV_CACHE_WB_FLUSH = 3,
+} chardev_cache_policy_t;
+
 typedef struct {
 	/*
 	 * Read one character; returns 0 if no data is available (non-blocking).
@@ -61,6 +83,22 @@ typedef struct {
 	                 uint32_t length,
 	                 uint32_t prot,
 	                 uint64_t *phys_out);
+
+	/*
+	 * Optional: report the cache policy the syscall layer should use
+	 * when installing PTEs for the mmap range.
+	 *
+	 * Drivers that omit this op (mmap_cache_policy == NULL) get the
+	 * historical M2.4-era behaviour: the syscall path treats the
+	 * aperture as Device memory (ARCH_MM_MAP_IO).
+	 *
+	 * Today only fbdev uses this op (returns CHARDEV_CACHE_NC so QEMU
+	 * ramfb on arm64 sees fresh pixel writes without explicit cache
+	 * maintenance, and so x86 user mappings inherit the WC slot the
+	 * kernel already configured).
+	 */
+	chardev_cache_policy_t (*mmap_cache_policy)(uint32_t offset,
+	                                            uint32_t length);
 } chardev_ops_t;
 
 /*

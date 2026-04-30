@@ -15,6 +15,8 @@
 #include "platform/platform.h"
 #if DRUNIX_ARM64_PLATFORM_VIRT
 #include "platform/virt/dma.h"
+#include "platform/virt/fwcfg.h"
+#include "platform/virt/ramfb.h"
 #include "platform/virt/virtio_mmio.h"
 #include "platform/virt/virtio_blk.h"
 #endif
@@ -283,6 +285,19 @@ void arm64_start_kernel(void)
 	if (virtio_blk_cache_smoke() != 0)
 		platform_uart_puts("virtio-blk: cache torture failed; continuing\n");
 #endif
+
+	/* M2.5a: software framebuffer via QEMU ramfb. After kheap_init
+	 * (chardev metadata), before tty_init (so /dev/fb0 is registered
+	 * before init launches the desktop in M2.5b). Tolerates fw_cfg or
+	 * etc/ramfb being absent — KTEST and -display none builds simply
+	 * boot to TTY without /dev/fb0. */
+	if (fwcfg_init() == 0) {
+		if (arm64_virt_ramfb_init() != 0)
+			platform_uart_puts(
+			    "ramfb: init failed; continuing without /dev/fb0\n");
+	} else {
+		platform_uart_puts("fw_cfg: not detected; ramfb skipped\n");
+	}
 
 #if DRUNIX_ARM64_VIRT_NO_INIT
 	/* Emergency rollback: stop at the M2.4b boot envelope. */

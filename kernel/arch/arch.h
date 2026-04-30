@@ -41,6 +41,15 @@ typedef struct {
  * not PMM-managed.
  */
 #define ARCH_MM_MAP_SHARED 0x0080u
+/*
+ * ARCH_MM_MAP_NC selects non-cacheable normal memory: arm64 Normal-NC via
+ * MAIR slot 2, x86 PAT slot 4 (WC). Used by chardevs whose backing pages live
+ * in ordinary RAM but must be visible to a host-side reader without explicit
+ * cache maintenance — e.g. QEMU ramfb on arm64 virt, and the user-side fb0
+ * mapping on x86 (closes the open desktop-perf finding #2). Mutually
+ * exclusive with ARCH_MM_MAP_IO.
+ */
+#define ARCH_MM_MAP_NC 0x0100u
 
 uint32_t arch_time_unix_seconds(void);
 uint32_t arch_time_uptime_ticks(void);

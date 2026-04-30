@@ -75,6 +75,11 @@ def qemu_command(serial_log: Path, platform: str = "raspi3b") -> list[str]:
             "-kernel", "kernel-arm64.elf",
             "-drive", "file=img/disk.img,if=none,format=raw,id=hd0",
             "-device", "virtio-blk-device,drive=hd0",
+            # M2.5a: advertise the QEMU ramfb device so the in-kernel
+            # KTESTs exercise the fw_cfg + RAMFBCfg + classifier path.
+            # -display none keeps the test headless; the ramfb device
+            # is detected through fw_cfg regardless of display front-end.
+            "-device", "ramfb",
             "-serial", f"file:{serial_log}",
             "-monitor", "none",
             "-no-reboot",

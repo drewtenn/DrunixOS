@@ -23,6 +23,14 @@
 #define ARM64_MMU_DESC_TABLE (1ull << 1)
 #define ARM64_MMU_DESC_ATTR_NORMAL (0ull << 2)
 #define ARM64_MMU_DESC_ATTR_DEVICE (1ull << 2)
+/*
+ * MAIR slot 2 = 0x44 = Normal Inner-NC Outer-NC. Used by the QEMU ramfb
+ * framebuffer (M2.5a) so the host-side reader sees fresh pixel writes
+ * without explicit dcache cleans, and to back the ARCH_MM_MAP_NC user
+ * mapping path. Normal-NC has no shareability requirement; the leaf
+ * descriptor must omit SH_INNER for these pages.
+ */
+#define ARM64_MMU_DESC_ATTR_NC (2ull << 2)
 #define ARM64_MMU_DESC_AP_USER (1ull << 6)
 #define ARM64_MMU_DESC_AP_RO (1ull << 7)
 #define ARM64_MMU_DESC_SH_INNER (3ull << 8)
@@ -36,7 +44,15 @@
 #define ARM64_MMU_OUTPUT_ADDR_MASK 0x0000FFFFFFFFF000ull
 #define ARM64_MMU_ATTR_INDEX_MASK (7ull << 2)
 
-#define ARM64_MMU_MAIR_EL1 0x00000000000004FFull
+/*
+ * MAIR_EL1 layout:
+ *   slot 0 = 0xFF — Normal Inner-WB-RW-A Outer-WB-RW-A (RAM, the default).
+ *   slot 1 = 0x04 — Device-nGnRE (MMIO).
+ *   slot 2 = 0x44 — Normal Inner-NC Outer-NC (M2.5a: QEMU ramfb / WC user
+ *                   mappings).
+ * Slots 3-7 unprogrammed (Device-nGnRnE).
+ */
+#define ARM64_MMU_MAIR_EL1 0x00000000004404FFull
 #define ARM64_MMU_TCR_EL1                                                      \
 	((uint64_t)ARM64_MMU_T0SZ | (1ull << 8) | (1ull << 10) | (3ull << 12) |    \
 	 (1ull << 23))
@@ -121,13 +137,25 @@ static uint32_t arm64_mmu_leaf_size(uint32_t level)
 	return PAGE_SIZE;
 }
 
-static int arm64_mmu_desc_device(arm64_mmu_desc_t desc)
+typedef enum {
+	ARM64_MMU_LEAF_NORMAL = 0,
+	ARM64_MMU_LEAF_DEVICE = 1,
+	ARM64_MMU_LEAF_NC = 2,
+} arm64_mmu_leaf_attr_t;
+
+static arm64_mmu_leaf_attr_t arm64_mmu_desc_leaf_attr(arm64_mmu_desc_t desc)
 {
-	return (desc & ARM64_MMU_ATTR_INDEX_MASK) == ARM64_MMU_DESC_ATTR_DEVICE;
+	uint64_t idx = desc & ARM64_MMU_ATTR_INDEX_MASK;
+
+	if (idx == ARM64_MMU_DESC_ATTR_DEVICE)
+		return ARM64_MMU_LEAF_DEVICE;
+	if (idx == ARM64_MMU_DESC_ATTR_NC)
+		return ARM64_MMU_LEAF_NC;
+	return ARM64_MMU_LEAF_NORMAL;
 }
 
 static arm64_mmu_desc_t
-arm64_mmu_kernel_leaf_desc(uint64_t phys, uint32_t level, int device)
+arm64_mmu_kernel_leaf_desc(uint64_t phys, uint32_t level, arm64_mmu_leaf_attr_t attr)
 {
 	arm64_mmu_desc_t desc;
 	uint64_t size = arm64_mmu_leaf_size(level);
@@ -137,12 +165,23 @@ arm64_mmu_kernel_leaf_desc(uint64_t phys, uint32_t level, int device)
 	if (level == 3)
 		desc |= ARM64_MMU_DESC_TABLE;
 
-	if (device) {
+	switch (attr) {
+	case ARM64_MMU_LEAF_DEVICE:
 		desc |= ARM64_MMU_DESC_ATTR_DEVICE | ARM64_MMU_DESC_PXN |
 		        ARM64_MMU_DESC_UXN;
-	} else {
+		break;
+	case ARM64_MMU_LEAF_NC:
+		/* Normal-NC: no shareability — host (QEMU) reads guest RAM
+		 * directly so cache-line ownership and store-buffer drain
+		 * are sufficient. */
+		desc |= ARM64_MMU_DESC_ATTR_NC | ARM64_MMU_DESC_PXN |
+		        ARM64_MMU_DESC_UXN;
+		break;
+	case ARM64_MMU_LEAF_NORMAL:
+	default:
 		desc |= ARM64_MMU_DESC_ATTR_NORMAL | ARM64_MMU_DESC_SH_INNER |
 		        ARM64_MMU_DESC_UXN;
+		break;
 	}
 
 	return desc;
@@ -153,8 +192,22 @@ static arm64_mmu_desc_t arm64_mmu_page_desc_from_flags(uint64_t phys,
 {
 	arm64_mmu_desc_t desc = (phys & ARM64_MMU_OUTPUT_ADDR_MASK) |
 	                        ARM64_MMU_DESC_VALID | ARM64_MMU_DESC_TABLE |
-	                        ARM64_MMU_DESC_AF | ARM64_MMU_DESC_ATTR_NORMAL |
-	                        ARM64_MMU_DESC_SH_INNER;
+	                        ARM64_MMU_DESC_AF;
+
+	/*
+	 * Cache attribute selection. ARCH_MM_MAP_NC and ARCH_MM_MAP_IO are
+	 * mutually exclusive; default is Normal-WB Inner-Shareable.
+	 */
+	if (flags & ARCH_MM_MAP_NC) {
+		/* Normal-NC: no shareability — host-side readers see writes
+		 * as soon as the store buffer drains. */
+		desc |= ARM64_MMU_DESC_ATTR_NC;
+	} else if (flags & ARCH_MM_MAP_IO) {
+		/* Device-nGnRnE: side-effect MMIO. */
+		desc |= ARM64_MMU_DESC_ATTR_DEVICE;
+	} else {
+		desc |= ARM64_MMU_DESC_ATTR_NORMAL | ARM64_MMU_DESC_SH_INNER;
+	}
 
 	if (flags & ARCH_MM_MAP_USER)
 		desc |= ARM64_MMU_DESC_AP_USER | ARM64_MMU_DESC_NG | ARM64_MMU_DESC_PXN;
@@ -186,6 +239,19 @@ static uint32_t arm64_mmu_arch_flags_from_desc(arm64_mmu_desc_t desc)
 		flags |= ARCH_MM_MAP_SHARED;
 	if ((desc & ARM64_MMU_DESC_UXN) == 0)
 		flags |= ARCH_MM_MAP_EXEC;
+	/* M2.5a: surface the cache-attribute MAIR slot so KTESTs can
+	 * verify Normal-NC / Device mappings. */
+	switch (arm64_mmu_desc_leaf_attr(desc)) {
+	case ARM64_MMU_LEAF_NC:
+		flags |= ARCH_MM_MAP_NC;
+		break;
+	case ARM64_MMU_LEAF_DEVICE:
+		flags |= ARCH_MM_MAP_IO;
+		break;
+	case ARM64_MMU_LEAF_NORMAL:
+	default:
+		break;
+	}
 
 	return flags;
 }
@@ -236,9 +302,17 @@ static int arm64_mmu_block_is_present(uint64_t phys)
 	return platform_mm_classify(phys) != PLATFORM_MM_UNMAPPED;
 }
 
-static int arm64_mmu_block_is_device(uint64_t phys)
+static arm64_mmu_leaf_attr_t arm64_mmu_block_attr(uint64_t phys)
 {
-	return platform_mm_classify(phys) == PLATFORM_MM_DEVICE;
+	switch (platform_mm_classify(phys)) {
+	case PLATFORM_MM_DEVICE:
+		return ARM64_MMU_LEAF_DEVICE;
+	case PLATFORM_MM_FRAMEBUFFER:
+		return ARM64_MMU_LEAF_NC;
+	case PLATFORM_MM_NORMAL:
+	default:
+		return ARM64_MMU_LEAF_NORMAL;
+	}
 }
 
 static void arm64_mmu_build_kernel_tables(void)
@@ -255,17 +329,26 @@ static void arm64_mmu_build_kernel_tables(void)
 		if (!arm64_mmu_block_is_present(phys))
 			continue;
 		g_kernel_l2_low[i] = arm64_mmu_kernel_leaf_desc(
-		    phys, 2, arm64_mmu_block_is_device(phys));
+		    phys, 2, arm64_mmu_block_attr(phys));
 	}
 	g_kernel_l1[0] = arm64_mmu_table_desc((uintptr_t)g_kernel_l2_low);
 
 	/* L1[1]: 1..2 GiB as a single 1 GiB block, classified by platform.
 	 * raspi3b sees this as Device (legacy peripheral region above RAM);
 	 * virt sees it as Normal Inner-Shareable Cacheable (RAM at
-	 * [0x40000000, 0x80000000)). */
+	 * [0x40000000, 0x80000000)) — except for any FRAMEBUFFER carve-out
+	 * the platform classifier returns as Normal-NC. virt's framebuffer
+	 * span lives at the top of RAM; the L2 split below picks it up
+	 * page-by-page when arm64_mmu_split_l1_block runs.
+	 *
+	 * Phase 1 M2.5a note: virt's ramfb sits at 1 GiB - 8 MiB. That page
+	 * range is inside the L1[1] 1 GiB block today and shares that
+	 * block's attribute (Normal-WB) until the block is split. M2.5a
+	 * forces an L2 split for the FB span via arm64_mmu_init_split_fb()
+	 * to honour the Normal-NC requirement at the leaf granularity. */
 	if (arm64_mmu_block_is_present(0x40000000ull)) {
 		g_kernel_l1[1] = arm64_mmu_kernel_leaf_desc(
-		    0x40000000ull, 1, arm64_mmu_block_is_device(0x40000000ull));
+		    0x40000000ull, 1, arm64_mmu_block_attr(0x40000000ull));
 	}
 }
 
@@ -275,7 +358,6 @@ static int arm64_mmu_split_l1_block(arm64_mmu_desc_t *slot)
 	arm64_mmu_desc_t *l2;
 	uint32_t l2_phys;
 	uint64_t base;
-	int device;
 
 	l2_phys = pmm_alloc_page();
 	if (!l2_phys)
@@ -283,11 +365,14 @@ static int arm64_mmu_split_l1_block(arm64_mmu_desc_t *slot)
 
 	old_desc = *slot;
 	base = arm64_mmu_leaf_base(old_desc, 1);
-	device = arm64_mmu_desc_device(old_desc);
 	l2 = (arm64_mmu_desc_t *)(uintptr_t)l2_phys;
 	for (uint32_t i = 0; i < ARM64_MMU_ENTRIES; i++) {
+		uint64_t block_phys = base + (uint64_t)i * ARM64_MMU_L2_BLOCK_SIZE;
+		/* Re-classify per 2 MiB block so a FRAMEBUFFER carve-out
+		 * inside the block range gets Normal-NC instead of inheriting
+		 * the parent's Normal-WB attribute. */
 		l2[i] = arm64_mmu_kernel_leaf_desc(
-		    base + (uint64_t)i * ARM64_MMU_L2_BLOCK_SIZE, 2, device);
+		    block_phys, 2, arm64_mmu_block_attr(block_phys));
 	}
 
 	*slot = arm64_mmu_table_desc(l2_phys);
@@ -300,7 +385,6 @@ static int arm64_mmu_split_l2_block(arm64_mmu_desc_t *slot)
 	arm64_mmu_desc_t *l3;
 	uint32_t l3_phys;
 	uint64_t base;
-	int device;
 
 	l3_phys = pmm_alloc_page();
 	if (!l3_phys)
@@ -308,16 +392,17 @@ static int arm64_mmu_split_l2_block(arm64_mmu_desc_t *slot)
 
 	old_desc = *slot;
 	base = arm64_mmu_leaf_base(old_desc, 2);
-	device = arm64_mmu_desc_device(old_desc);
 	l3 = (arm64_mmu_desc_t *)(uintptr_t)l3_phys;
 	for (uint32_t i = 0; i < ARM64_MMU_ENTRIES; i++) {
+		uint64_t page_phys = base + (uint64_t)i * PAGE_SIZE;
 		l3[i] = arm64_mmu_kernel_leaf_desc(
-		    base + (uint64_t)i * PAGE_SIZE, 3, device);
+		    page_phys, 3, arm64_mmu_block_attr(page_phys));
 	}
 
 	*slot = arm64_mmu_table_desc(l3_phys);
 	return 0;
 }
+
 
 static int arm64_mmu_clone_l2_table(arm64_mmu_desc_t *l1_slot)
 {
@@ -463,6 +548,43 @@ arch_aspace_t arm64_mmu_kernel_aspace(void)
 		arm64_mmu_init();
 
 	return (arch_aspace_t)(uintptr_t)g_kernel_l1;
+}
+
+/*
+ * arm64_mmu_kernel_remap_range — force the kernel linear mapping for
+ * [phys_base, phys_base + size) to match the platform classifier's
+ * current attribute decision. Splits L1/L2 blocks as needed so PAGE_SIZE
+ * granular reattribution lands exactly on the requested range.
+ *
+ * Used at M2.5a init to drop the Normal-WB Inner-Shareable kernel alias
+ * over the ramfb span (which would otherwise stage dirty cache lines that
+ * the host-side reader cannot see) and replace it with Normal-NC PTEs.
+ */
+int arm64_mmu_kernel_remap_range(uint64_t phys_base, uint64_t size)
+{
+	arch_aspace_t kernel = (arch_aspace_t)(uintptr_t)g_kernel_l1;
+	uint64_t end = phys_base + size;
+	uint64_t va;
+
+	if (size == 0)
+		return 0;
+	if ((phys_base & (PAGE_SIZE - 1u)) != 0 ||
+	    (size & (PAGE_SIZE - 1u)) != 0)
+		return -1;
+
+	for (va = phys_base; va < end; va += PAGE_SIZE) {
+		arm64_mmu_desc_t *pte = (arm64_mmu_desc_t *)0;
+
+		if (arm64_mmu_ensure_l3_slot(kernel, (uintptr_t)va, 0, &pte) !=
+		    0)
+			return -1;
+		if (!pte)
+			return -1;
+		*pte = arm64_mmu_kernel_leaf_desc(
+		    va, 3, arm64_mmu_block_attr(va));
+	}
+	arm64_mmu_tlb_flush_all();
+	return 0;
 }
 
 arch_aspace_t arm64_mmu_aspace_create(void)

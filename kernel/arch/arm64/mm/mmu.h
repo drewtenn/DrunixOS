@@ -31,4 +31,17 @@ void arm64_mmu_invalidate_page(arch_aspace_t aspace, uintptr_t virt);
 void *arm64_temp_map(uint64_t phys_addr);
 void arm64_temp_unmap(void *ptr);
 
+/*
+ * Re-walk the kernel linear map for [phys_base, phys_base+size) and
+ * install PTEs whose attribute matches the platform classifier's
+ * current decision. Used by M2.5a's ramfb path to drop the Normal-WB
+ * Inner-Shareable kernel alias over the framebuffer reservation and
+ * replace it with Normal-NC PTEs (avoids the ARM ARM B2.7 mismatched
+ * attributes hazard between the kernel-side and user-side mappings).
+ *
+ * phys_base and size must be PAGE_SIZE aligned. Returns 0 on success,
+ * -1 on alignment / page-table-allocation failure.
+ */
+int arm64_mmu_kernel_remap_range(uint64_t phys_base, uint64_t size);
+
 #endif
