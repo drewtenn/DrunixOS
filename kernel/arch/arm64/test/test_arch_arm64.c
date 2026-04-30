@@ -14,6 +14,7 @@
 #include "vma.h"
 #if DRUNIX_ARM64_PLATFORM_VIRT
 #include "dma.h"
+#include "platform/platform.h"
 #include "platform/virt/dma.h"
 #endif
 
@@ -393,7 +394,7 @@ static void test_arm64_dma_alloc_multipage_is_contiguous(ktest_case_t *tc)
 static void
 test_arm64_dma_phys_virt_round_trip_validates_bounds(ktest_case_t *tc)
 {
-	uint8_t outside_pool;
+	uint8_t outside_pool = 0;
 	void *converted;
 
 	KTEST_EXPECT_EQ(tc, virt_virt_to_phys(&outside_pool), 0u);
@@ -415,6 +416,53 @@ static void test_arm64_dma_barriers_compile_and_execute(ktest_case_t *tc)
 	arm64_dma_cache_clean(0, 0);
 	arm64_dma_cache_invalidate(0, 0);
 	KTEST_EXPECT_EQ(tc, 1u, 1u);
+}
+
+/* M2.4b platform_mm tests. Verify the FDT-driven RAM layout and the
+ * classifier produce the expected attributes for every architecturally
+ * relevant address: virtio-mmio (DEVICE), RAM (NORMAL), beyond-RAM
+ * (UNMAPPED). */
+static void test_arm64_virt_layout_uses_fdt_memory(ktest_case_t *tc)
+{
+	const platform_ram_layout_t *l = platform_ram_layout();
+
+	KTEST_ASSERT_NOT_NULL(tc, l);
+	KTEST_EXPECT_EQ(tc, (uint32_t)l->ram_base, 0x40000000u);
+	KTEST_EXPECT_EQ(tc, (uint32_t)l->ram_size, 0x40000000u);
+	KTEST_EXPECT_GE(tc, (uint32_t)l->heap_base, 0x40000000u);
+	KTEST_EXPECT_GE(tc, (uint32_t)l->heap_size, (uint32_t)0x100000u);
+}
+
+static void test_arm64_virt_classifier_categorises_ram(ktest_case_t *tc)
+{
+	KTEST_EXPECT_EQ(tc,
+	                (uint32_t)platform_mm_classify(0x40000000ull),
+	                (uint32_t)PLATFORM_MM_NORMAL);
+	KTEST_EXPECT_EQ(tc,
+	                (uint32_t)platform_mm_classify(0x09000000ull),
+	                (uint32_t)PLATFORM_MM_DEVICE);
+	KTEST_EXPECT_EQ(tc,
+	                (uint32_t)platform_mm_classify(0x80000000ull),
+	                (uint32_t)PLATFORM_MM_UNMAPPED);
+}
+
+static void test_arm64_virt_dma_cache_clean_at_pool_address(ktest_case_t *tc)
+{
+	uint8_t *p = virt_dma_alloc(1u);
+
+	KTEST_ASSERT_NOT_NULL(tc, p);
+	for (uint32_t i = 0; i < VIRT_DMA_PAGE_SIZE; i++)
+		p[i] = (uint8_t)(i & 0xFFu);
+
+	/* Real cache maintenance — exercises dc cvac / dc ivac at a
+	 * page that sits in Normal cacheable RAM. Failure mode would be
+	 * an alignment fault or a translation fault, both of which would
+	 * trap before the test returned. */
+	arm64_dma_cache_clean(p, VIRT_DMA_PAGE_SIZE);
+	arm64_dma_cache_invalidate(p, VIRT_DMA_PAGE_SIZE);
+	KTEST_EXPECT_EQ(tc, p[0], 0u);
+
+	virt_dma_free(p, 1u);
 }
 
 #endif /* DRUNIX_ARM64_PLATFORM_VIRT */
@@ -491,6 +539,9 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_dma_alloc_returns_aligned_in_pool),
     KTEST_CASE(test_arm64_dma_alloc_free_reuses_pages),
     KTEST_CASE(test_arm64_dma_alloc_multipage_is_contiguous),
+    KTEST_CASE(test_arm64_virt_layout_uses_fdt_memory),
+    KTEST_CASE(test_arm64_virt_classifier_categorises_ram),
+    KTEST_CASE(test_arm64_virt_dma_cache_clean_at_pool_address),
     KTEST_CASE(test_arm64_dma_phys_virt_round_trip_validates_bounds),
     KTEST_CASE(test_arm64_dma_barriers_compile_and_execute),
 #endif

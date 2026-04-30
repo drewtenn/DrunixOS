@@ -25,11 +25,20 @@ static uint32_t heap_align_size(uint32_t size)
 	return (size + HEAP_ALIGN - 1u) & ~(HEAP_ALIGN - 1u);
 }
 
+/* Per-arch accessors so each port can choose static vs dynamic
+ * heap placement (e.g. arm64-virt sources from FDT). x86 and
+ * arm64-raspi3b return the static ARCH_HEAP_START/END constants. */
+extern uint32_t kheap_arch_base(void);
+extern uint32_t kheap_arch_size(void);
+
 void kheap_init(void)
 {
-	heap_head = (heap_block_t *)HEAP_START;
+	uint32_t base = kheap_arch_base();
+	uint32_t size = kheap_arch_size();
+
+	heap_head = (heap_block_t *)(uintptr_t)base;
 	heap_head->magic = HEAP_MAGIC;
-	heap_head->size = HEAP_END - HEAP_START - sizeof(heap_block_t);
+	heap_head->size = size - (uint32_t)sizeof(heap_block_t);
 	heap_head->free = 1;
 	heap_head->next = 0;
 }

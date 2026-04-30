@@ -296,3 +296,13 @@ void arch_mm_present_end(uint32_t state)
 {
 	paging_present_end(state);
 }
+
+uint32_t kheap_arch_base(void)
+{
+	return ARCH_HEAP_START;
+}
+
+uint32_t kheap_arch_size(void)
+{
+	return ARCH_HEAP_END - ARCH_HEAP_START;
+}

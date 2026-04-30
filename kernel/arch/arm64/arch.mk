@@ -54,6 +54,7 @@ ARM_INC := -I kernel -I kernel/lib -I kernel/arch -I kernel/arch/arm64 \
 ifeq ($(PLATFORM),virt)
 ARM_PLATFORM_OBJS := kernel/arch/arm64/platform/virt/dma.o \
                      kernel/arch/arm64/platform/virt/irq.o \
+                     kernel/arch/arm64/platform/virt/platform_mm.o \
                      kernel/arch/arm64/platform/virt/stubs.o \
                      kernel/arch/arm64/platform/virt/uart.o \
                      kernel/arch/arm64/platform/virt/virtio_blk.o \
@@ -62,6 +63,7 @@ ARM_PLATFORM_OBJS := kernel/arch/arm64/platform/virt/dma.o \
 else
 ARM_PLATFORM_OBJS := kernel/arch/arm64/platform/raspi3b/uart.o \
                      kernel/arch/arm64/platform/raspi3b/irq.o \
+                     kernel/arch/arm64/platform/raspi3b/platform_mm.o \
                      kernel/arch/arm64/platform/raspi3b/video.o \
                      kernel/arch/arm64/platform/raspi3b/usb_hci.o \
                      kernel/arch/arm64/platform/raspi3b/emmc.o

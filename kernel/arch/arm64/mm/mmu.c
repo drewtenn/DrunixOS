@@ -231,20 +231,42 @@ static void arm64_mmu_enable_kernel_table(void)
 	                 : "memory");
 }
 
+static int arm64_mmu_block_is_present(uint64_t phys)
+{
+	return platform_mm_classify(phys) != PLATFORM_MM_UNMAPPED;
+}
+
+static int arm64_mmu_block_is_device(uint64_t phys)
+{
+	return platform_mm_classify(phys) == PLATFORM_MM_DEVICE;
+}
+
 static void arm64_mmu_build_kernel_tables(void)
 {
 	k_memset(g_kernel_l1, 0, sizeof(g_kernel_l1));
 	k_memset(g_kernel_l2_low, 0, sizeof(g_kernel_l2_low));
 
+	/* L1[0]: 0..1 GiB via the L2 table (2 MiB blocks). Skip blocks
+	 * the platform classifier marks unmapped (e.g. FDT-reserved holes
+	 * below virt RAM). */
 	for (uint32_t i = 0; i < ARM64_MMU_ENTRIES; i++) {
 		uint64_t phys = (uint64_t)i * ARM64_MMU_L2_BLOCK_SIZE;
-		int device = phys >= PLATFORM_PERIPHERAL_BASE;
 
-		g_kernel_l2_low[i] = arm64_mmu_kernel_leaf_desc(phys, 2, device);
+		if (!arm64_mmu_block_is_present(phys))
+			continue;
+		g_kernel_l2_low[i] = arm64_mmu_kernel_leaf_desc(
+		    phys, 2, arm64_mmu_block_is_device(phys));
 	}
-
 	g_kernel_l1[0] = arm64_mmu_table_desc((uintptr_t)g_kernel_l2_low);
-	g_kernel_l1[1] = arm64_mmu_kernel_leaf_desc(0x40000000ull, 1, 1);
+
+	/* L1[1]: 1..2 GiB as a single 1 GiB block, classified by platform.
+	 * raspi3b sees this as Device (legacy peripheral region above RAM);
+	 * virt sees it as Normal Inner-Shareable Cacheable (RAM at
+	 * [0x40000000, 0x80000000)). */
+	if (arm64_mmu_block_is_present(0x40000000ull)) {
+		g_kernel_l1[1] = arm64_mmu_kernel_leaf_desc(
+		    0x40000000ull, 1, arm64_mmu_block_is_device(0x40000000ull));
+	}
 }
 
 static int arm64_mmu_split_l1_block(arm64_mmu_desc_t *slot)

@@ -110,12 +110,28 @@ uint16_t virtq_alloc_chain(virtq_t *q, uint16_t count)
 void virtq_submit(virtq_t *q, uint16_t head)
 {
 	uint16_t slot;
+	uint16_t i;
+	uint16_t hops;
 
 	if (!q || head >= VIRTQ_SIZE)
 		return;
 
+	/* Walk the chain from `head` and clean each descriptor entry to
+	 * PoC. Bounded by VIRTQ_SIZE so a corrupt chain pointing to itself
+	 * cannot loop forever. The narrow per-chain clean (vs cleaning the
+	 * whole desc table) keeps Phase 2/3 hot paths from paying for
+	 * inactive descriptors. (M2.4b refinement.) */
+	i = head;
+	for (hops = 0u; hops < VIRTQ_SIZE; hops++) {
+		arm64_dma_cache_clean(&q->desc[i], sizeof(q->desc[i]));
+		if ((q->desc[i].flags & VIRTQ_DESC_F_NEXT) == 0u)
+			break;
+		i = q->desc[i].next;
+	}
+
 	slot = (uint16_t)(q->next_avail & (VIRTQ_SIZE - 1u));
 	q->avail->ring[slot] = head;
+	arm64_dma_cache_clean(&q->avail->ring[slot], sizeof(q->avail->ring[0]));
 
 	/* Producer-side ordering: descriptor writes must retire before
 	 * avail->idx becomes visible to the device. */
@@ -123,6 +139,7 @@ void virtq_submit(virtq_t *q, uint16_t head)
 
 	q->avail->idx = (uint16_t)(q->avail->idx + 1u);
 	q->next_avail = (uint16_t)(q->next_avail + 1u);
+	arm64_dma_cache_clean(&q->avail->idx, sizeof(q->avail->idx));
 
 	/* Order the avail->idx write before the caller's QueueNotify
 	 * MMIO write that delivers the kick. */
@@ -138,6 +155,12 @@ uint16_t virtq_drain_one(virtq_t *q, uint32_t *out_len)
 	if (!q)
 		return 0xFFFFu;
 
+	/* Invalidate the used-ring header so a stale q->used->idx doesn't
+	 * return early from this function and miss a freshly-published
+	 * completion. The load below sees only post-invalidate device
+	 * stores. */
+	arm64_dma_cache_invalidate(&q->used->idx, sizeof(q->used->idx));
+
 	used_idx = q->used->idx;
 	if (used_idx == q->last_used)
 		return 0xFFFFu;
@@ -149,6 +172,8 @@ uint16_t virtq_drain_one(virtq_t *q, uint32_t *out_len)
 	 * Mirrors Linux's virt_rmb() placement in virtqueue_get_buf. */
 	arm64_dma_rmb();
 	slot = (uint16_t)(q->last_used & (VIRTQ_SIZE - 1u));
+	arm64_dma_cache_invalidate(&q->used->ring[slot],
+	                           sizeof(q->used->ring[slot]));
 	elem = q->used->ring[slot];
 
 	q->last_used = (uint16_t)(q->last_used + 1u);

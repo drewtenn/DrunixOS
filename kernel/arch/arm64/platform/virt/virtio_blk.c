@@ -205,6 +205,23 @@ static int virtio_blk_perform_io(uint32_t lba,
 
 	*g_status = 0xFFu; /* sentinel; device writes 0/1/2 */
 
+	/* M2.4b: clean the request header and (write path) data buffer to
+	 * PoC so the device sees the bytes we just wrote, not the older
+	 * cached contents. The sentinel-write of *g_status above is also
+	 * cleaned so the device's status update has a deterministic
+	 * baseline to overwrite.
+	 *
+	 * For the read path, also invalidate the data buffer pre-submit
+	 * so any dirty cache lines (from a prior CPU write to the same
+	 * buffer) cannot evict and clobber the device's DMA write. Mirrors
+	 * Linux's dma_map_single(DMA_FROM_DEVICE) discipline. */
+	arm64_dma_cache_clean(g_req_hdr, sizeof(*g_req_hdr));
+	if (type == VIRTIO_BLK_T_OUT)
+		arm64_dma_cache_clean(g_data_buf, VIRTIO_BLK_SECTOR_BYTES);
+	else
+		arm64_dma_cache_invalidate(g_data_buf, VIRTIO_BLK_SECTOR_BYTES);
+	arm64_dma_cache_clean(g_status, 1u);
+
 	head = virtq_alloc_chain(&g_queue, 3u);
 	if (head == 0xFFFFu) {
 		platform_uart_puts("virtio-blk: virtq alloc_chain failed\n");
@@ -258,6 +275,12 @@ static int virtio_blk_perform_io(uint32_t lba,
 		platform_uart_puts("virtio-blk: completion id mismatch\n");
 		goto out;
 	}
+
+	/* M2.4b: invalidate the status byte and (read path) data buffer
+	 * before reading them. The device wrote these via DMA, bypassing
+	 * the CPU cache; without invalidate the CPU could return the
+	 * sentinel/old data we wrote pre-submit. */
+	arm64_dma_cache_invalidate(g_status, 1u);
 	if (*g_status != VIRTIO_BLK_S_OK) {
 		k_snprintf(line,
 		           sizeof(line),
@@ -269,6 +292,7 @@ static int virtio_blk_perform_io(uint32_t lba,
 
 	if (type == VIRTIO_BLK_T_IN && read_dst) {
 		arm64_dma_rmb();
+		arm64_dma_cache_invalidate(g_data_buf, VIRTIO_BLK_SECTOR_BYTES);
 		for (uint32_t i = 0; i < VIRTIO_BLK_SECTOR_BYTES; i++)
 			read_dst[i] = g_data_buf[i];
 	}

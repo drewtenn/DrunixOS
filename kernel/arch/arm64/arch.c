@@ -92,12 +92,14 @@ void arch_interrupts_enable(void)
 
 void arch_mm_init(void)
 {
+	const platform_ram_layout_t *l;
 	uintptr_t kernel_start;
 	uintptr_t kernel_end;
 
 	if (g_arm64_mm_ready)
 		return;
 
+	l = platform_ram_layout();
 	pmm_init();
 	kernel_start = (uintptr_t)_kernel_start & ~(uintptr_t)(PAGE_SIZE - 1u);
 	kernel_end = ((uintptr_t)_kernel_end + PAGE_SIZE - 1u) &
@@ -106,6 +108,11 @@ void arch_mm_init(void)
 		pmm_mark_used((uint32_t)kernel_start,
 		              (uint32_t)(kernel_end - kernel_start));
 	}
+	/* Heap is owned by kheap_init; mark its range used so PMM does
+	 * not hand the same pages back. Replaces the pmm_mark_used call
+	 * that previously sat in start_kernel.c on the raspi3b path. */
+	pmm_mark_used((uint32_t)l->heap_base, (uint32_t)l->heap_size);
+
 	pmm_mark_used((uint32_t)ARM64_INIT_IMAGE_BASE,
 	              (uint32_t)(ARM64_INIT_IMAGE_LIMIT - ARM64_INIT_IMAGE_BASE));
 	pmm_mark_used((uint32_t)ARM64_INIT_STACK_BASE,
@@ -115,6 +122,16 @@ void arch_mm_init(void)
 	if (arm64_mmu_enabled())
 		platform_uart_puts("ARM64 MMU enabled\n");
 	g_arm64_mm_ready = 1;
+}
+
+uint32_t kheap_arch_base(void)
+{
+	return (uint32_t)platform_ram_layout()->heap_base;
+}
+
+uint32_t kheap_arch_size(void)
+{
+	return (uint32_t)platform_ram_layout()->heap_size;
 }
 
 arch_aspace_t arch_aspace_kernel(void)

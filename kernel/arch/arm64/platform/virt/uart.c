@@ -15,13 +15,13 @@
 #include "uart.h"
 #include <stdint.h>
 
-#define PL011_DR_OFFSET   0x00u
-#define PL011_FR_OFFSET   0x18u
+#define PL011_DR_OFFSET 0x00u
+#define PL011_FR_OFFSET 0x18u
 
-#define PL011_FR_RXFE     (1u << 4)
-#define PL011_FR_TXFF     (1u << 5)
+#define PL011_FR_RXFE (1u << 4)
+#define PL011_FR_TXFF (1u << 5)
 
-#define PL011_REG(off) \
+#define PL011_REG(off)                                                         \
 	(*(volatile uint32_t *)(PLATFORM_VIRT_PL011_BASE + (off)))
 
 void uart_init(void)
@@ -64,7 +64,16 @@ int uart_try_getc(char *out)
 
 void platform_init(void)
 {
+	/* Order is fixed:
+	 * 1. uart_init — UART must be up first; virt_ram_layout_init may
+	 *    print FDT diagnostics and fallback warnings.
+	 * 2. virt_ram_layout_init — FDT walk, populate the per-platform
+	 *    RAM layout. Falls back to QEMU defaults if the FDT pointer
+	 *    is zero or the blob fails validation.
+	 * 3. arch_mm_init runs next from arm64_start_kernel and consumes
+	 *    platform_ram_layout(). */
 	uart_init();
+	virt_ram_layout_init();
 }
 
 void platform_uart_putc(char c)

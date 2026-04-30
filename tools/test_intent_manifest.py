@@ -1039,6 +1039,9 @@ INTENTS: tuple[TestIntent, ...] = (
                         "test_arm64_dma_alloc_multipage_is_contiguous",
                         "test_arm64_dma_phys_virt_round_trip_validates_bounds",
                         "test_arm64_dma_barriers_compile_and_execute",
+                        "test_arm64_virt_layout_uses_fdt_memory",
+                        "test_arm64_virt_classifier_categorises_ram",
+                        "test_arm64_virt_dma_cache_clean_at_pool_address",
                     ),
                 ),
                 SourceMarkers(

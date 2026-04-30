@@ -261,6 +261,15 @@ void arm64_start_kernel(void)
 
 	(void)virtio_mmio_enumerate();
 
+	/* M2.4b: bring up the MMU + caches before any DMA. arch_mm_init
+	 * runs pmm_init (using the FDT-derived RAM range), reserves the
+	 * kernel image + heap range, and enables the kernel page tables.
+	 * Trace lines bracket each system-register write so a triple
+	 * fault localizes to one line in the boot log. */
+	platform_uart_puts("ARM64: before MMU enable\n");
+	arch_mm_init();
+	platform_uart_puts("ARM64: MMU enable returned\n");
+
 	/* Bring up the GICv3 distributor + redistributor + CPU interface,
 	 * then unmask DAIF.I, before running virtio-blk so the device's
 	 * SPI is delivered through to the registered handler. The timer
@@ -277,19 +286,25 @@ void arm64_start_kernel(void)
 		platform_uart_puts(
 		    "virtio-blk: blkdev registration failed; continuing\n");
 
+#if DRUNIX_M2_4B_CACHE_SMOKE
+	if (virtio_blk_cache_smoke() != 0)
+		platform_uart_puts("virtio-blk: cache torture failed; continuing\n");
+#endif
+
 	arch_timer_set_periodic_handler(arm64_virt_heartbeat_handler);
 	arch_timer_start(2u);
 
 	platform_uart_puts(
-	    "Drunix virt M2.3: GICv3 + virtio-mmio + virtio-blk + blkdev "
-	    "registry. Heartbeat at 2 Hz.\n");
+	    "Drunix virt M2.4b: MMU + GICv3 + virtio-mmio + virtio-blk. "
+	    "Mount path gated to M2.4c. Heartbeat at 2 Hz.\n");
 
 	for (;;)
 		__asm__ volatile("wfi");
 #else
 	arch_mm_init();
 	kheap_init();
-	pmm_mark_used(HEAP_START, HEAP_END - HEAP_START);
+	/* arch_mm_init now reserves the heap range from
+	 * platform_ram_layout(); the explicit mark used to live here. */
 #if DRUNIX_ARM64_VGA
 	framebuffer_info_t *fb = 0;
 

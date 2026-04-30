@@ -12,12 +12,11 @@
  * full rule set lives in docs/contributing/aarch64-dma.md.
  *
  * Memory-model regimes:
- *   - M2.x (today): MMU off; RAM is treated as Device-nGnRnE, so writes
- *     are ordered and uncached. The barrier helpers below are sufficient;
- *     the cache-maintenance helpers compile to nothing on purpose.
- *   - M2.4+ (planned): kernel RAM moves to Normal Inner-Shareable
- *     Cacheable. The cache-maintenance helpers flip on at that point;
- *     callers do not change.
+ *   - Pre-M2.4b: MMU off; RAM was Device-nGnRnE; the cache-maintenance
+ *     helpers were no-ops.
+ *   - M2.4b+ (current): MMU on; kernel RAM is Normal Inner-Shareable
+ *     Cacheable. The cache-maintenance helpers issue real `dc cvac` /
+ *     `dc ivac` with `dsb ish`. Driver call sites are unchanged.
  *
  * The split between `arm64_dma_wmb()` and `arm64_dma_rmb()` mirrors the
  * Linux kernel's `dma_wmb()` / `dma_rmb()` (which use the same `ishst` /
@@ -56,29 +55,62 @@ static inline void arm64_dma_mb(void)
 }
 
 /*
- * Cache-maintenance helpers.
+ * Cache-maintenance helpers (Phase 1 M2.4b: real implementations).
  *
- * In M2.x these are no-ops on purpose: with the MMU off, RAM is
- * Device-nGnRnE and the data caches are bypassed for these accesses.
- * Adding `dc cvac` / `dc ivac` would either fault or do nothing
- * useful, depending on EL configuration.
+ * Pre-M2.4b: kernel RAM ran Device-nGnRnE with the MMU off, so these
+ * helpers were no-ops by design.
  *
- * M2.4 enables Normal cacheable memory for kernel RAM. At that point
- * the bodies become `dc cvac` (clean to PoC, before a device read) and
- * `dc ivac` (invalidate, before a CPU read of device-written data).
- * Drivers must already be calling these helpers at the right points,
- * so the M2.4 flip is a one-file change.
+ * M2.4b: kernel RAM moves to Normal Inner-Shareable Cacheable. These
+ * helpers now issue `dc cvac` (clean to PoC, before a device read) and
+ * `dc ivac` (invalidate to PoC, before a CPU read of device-written
+ * data). Each iteration strides by the smallest data-cache line size on
+ * any level (`CTR_EL0.DminLine`); a `dsb ish` after the loop ensures
+ * the maintenance ops complete in the inner-shareable domain before
+ * the next memory access.
+ *
+ * Both helpers tolerate misaligned addr/len: the start is rounded down
+ * to a line boundary and the end is exclusive.
  */
+static inline uint32_t arm64_dma_cache_line_size(void)
+{
+	uint64_t ctr;
+	uint32_t dminline_log2;
+
+	__asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
+	dminline_log2 = (uint32_t)((ctr >> 16) & 0xFu);
+	return 4u << dminline_log2;
+}
+
 static inline void arm64_dma_cache_clean(const void *addr, uint32_t len)
 {
-	(void)addr;
-	(void)len;
+	uint64_t start = (uint64_t)(uintptr_t)addr;
+	uint64_t end = start + (uint64_t)len;
+	uint64_t line_size = (uint64_t)arm64_dma_cache_line_size();
+	uint64_t line;
+
+	if (line_size == 0u)
+		return;
+
+	start &= ~(line_size - 1u);
+	for (line = start; line < end; line += line_size)
+		__asm__ volatile("dc cvac, %0" : : "r"(line) : "memory");
+	__asm__ volatile("dsb ish" ::: "memory");
 }
 
 static inline void arm64_dma_cache_invalidate(void *addr, uint32_t len)
 {
-	(void)addr;
-	(void)len;
+	uint64_t start = (uint64_t)(uintptr_t)addr;
+	uint64_t end = start + (uint64_t)len;
+	uint64_t line_size = (uint64_t)arm64_dma_cache_line_size();
+	uint64_t line;
+
+	if (line_size == 0u)
+		return;
+
+	start &= ~(line_size - 1u);
+	for (line = start; line < end; line += line_size)
+		__asm__ volatile("dc ivac, %0" : : "r"(line) : "memory");
+	__asm__ volatile("dsb ish" ::: "memory");
 }
 
 #endif /* KERNEL_ARCH_ARM64_DMA_H */

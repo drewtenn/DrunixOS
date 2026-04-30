@@ -32,4 +32,28 @@ int platform_block_register(void);
 int platform_usb_hci_register(void);
 void platform_usb_hci_poll(void);
 
+/*
+ * Phase 1 M2.4b: per-platform memory classifier and RAM-layout
+ * interface. mmu.c uses the classifier to decide block attributes
+ * (Normal vs Device vs unmapped); arch.c / pmm.c / kheap.c use the
+ * layout to drive PMM range setup and heap base/size.
+ */
+typedef enum {
+	PLATFORM_MM_UNMAPPED = 0,
+	PLATFORM_MM_NORMAL = 1,
+	PLATFORM_MM_DEVICE = 2,
+} platform_mm_attr_t;
+
+platform_mm_attr_t platform_mm_classify(uint64_t phys);
+
+typedef struct platform_ram_layout {
+	uint64_t ram_base;
+	uint64_t ram_size;
+	uint64_t heap_base;
+	uint64_t heap_size;
+	uint64_t kernel_image_end;
+} platform_ram_layout_t;
+
+const platform_ram_layout_t *platform_ram_layout(void);
+
 #endif
