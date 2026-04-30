@@ -180,6 +180,33 @@ union virtio_gpu_resp_page {
 	uint8_t bytes[VIRT_DMA_PAGE_SIZE];
 };
 
+/*
+ * Wire-layout sanity checks. The Virtio 1.2 spec pins these sizes for
+ * legacy little-endian transports; if a future edit introduces padding
+ * or reorders fields, the build breaks loudly here rather than silently
+ * shipping a wrong-sized command on the controlq. RESOURCE_ATTACH_BACKING
+ * uses an inline single-entry layout in the request page; this assert
+ * confirms the entry sits immediately after the 24-byte header.
+ */
+_Static_assert(sizeof(struct virtio_gpu_ctrl_hdr) == 24,
+               "virtio-gpu ctrl_hdr must be 24 bytes (Virtio 1.2 §5.7.6.7)");
+_Static_assert(sizeof(struct virtio_gpu_rect) == 16,
+               "virtio-gpu rect must be 16 bytes (4 × u32)");
+_Static_assert(sizeof(struct virtio_gpu_mem_entry) == 16,
+               "virtio-gpu mem_entry must be 16 bytes (u64 + u32 + pad)");
+_Static_assert(sizeof(struct virtio_gpu_resource_create_2d) == 40,
+               "virtio-gpu resource_create_2d must be 40 bytes "
+               "(hdr 24 + 4×u32)");
+_Static_assert(sizeof(struct virtio_gpu_set_scanout) == 48,
+               "virtio-gpu set_scanout must be 48 bytes "
+               "(hdr 24 + rect 16 + 2×u32)");
+_Static_assert(sizeof(struct virtio_gpu_transfer_to_host_2d) == 56,
+               "virtio-gpu transfer_to_host_2d must be 56 bytes "
+               "(hdr 24 + rect 16 + u64 + u32 + pad)");
+_Static_assert(sizeof(struct virtio_gpu_resource_flush) == 48,
+               "virtio-gpu resource_flush must be 48 bytes "
+               "(hdr 24 + rect 16 + u32 + pad)");
+
 /* Driver state. Single-CPU + single-driver-thread per virtio-blk. */
 static int g_initialized;
 static int g_ready;
@@ -668,35 +695,29 @@ int arm64_virt_virtio_gpu_init(void)
 
 	mmio_write32(base + VIRTIO_MMIO_GUEST_PAGE_SIZE, VIRT_DMA_PAGE_SIZE);
 
-	if (virtio_gpu_configure_queue(0u, &g_controlq) != 0) {
-		status_or(base, VIRTIO_STATUS_FAILED);
-		virtio_gpu_free_buffers();
-		return -1;
-	}
-	if (virtio_gpu_configure_queue(1u, &g_cursorq) != 0) {
-		status_or(base, VIRTIO_STATUS_FAILED);
-		virtio_gpu_free_buffers();
-		return -1;
-	}
+	if (virtio_gpu_configure_queue(0u, &g_controlq) != 0)
+		goto out_cleanup;
+	if (virtio_gpu_configure_queue(1u, &g_cursorq) != 0)
+		goto out_cleanup;
 
 	status_or(base, VIRTIO_STATUS_DRIVER_OK);
 
-	g_initialized = 1;
-
 	/*
-	 * Six-command 2D bring-up sequence. Any failure tears the device
-	 * down and the driver stays not-ready. M3.1's /dev/fb0 swap will
-	 * key off arm64_virt_virtio_gpu_ready().
+	 * Six-command 2D bring-up sequence. Any failure unwinds via the
+	 * same cleanup label as the queue-setup failures: reset the
+	 * device, free buffers, leave g_initialized clear so a later
+	 * caller can retry. M3.1's /dev/fb0 swap will key off
+	 * arm64_virt_virtio_gpu_ready().
 	 */
 	if (virtio_gpu_get_display_info() != 0)
-		return -1;
+		goto out_cleanup;
 	if (virtio_gpu_resource_create_2d() != 0)
-		return -1;
+		goto out_cleanup;
 	if (virtio_gpu_attach_backing() != 0)
-		return -1;
+		goto out_cleanup;
 	if (virtio_gpu_set_scanout(VIRTIO_GPU_M3_0_WIDTH,
 	                            VIRTIO_GPU_M3_0_HEIGHT) != 0)
-		return -1;
+		goto out_cleanup;
 
 	virtio_gpu_draw_test_pattern();
 
@@ -704,17 +725,33 @@ int arm64_virt_virtio_gpu_init(void)
 	                                 0,
 	                                 VIRTIO_GPU_M3_0_WIDTH,
 	                                 VIRTIO_GPU_M3_0_HEIGHT) != 0)
-		return -1;
+		goto out_cleanup;
 	if (virtio_gpu_resource_flush(0,
 	                               0,
 	                               VIRTIO_GPU_M3_0_WIDTH,
 	                               VIRTIO_GPU_M3_0_HEIGHT) != 0)
-		return -1;
+		goto out_cleanup;
 
+	/* All six commands succeeded — only now mark the driver init'd
+	 * and ready. Setting g_initialized earlier would let a future
+	 * init call short-circuit with success after a partial failure. */
+	g_initialized = 1;
 	g_ready = 1;
 	platform_uart_puts(
 	    "virtio-gpu: M3.0 sequence complete (32x32 BGRA test pattern flushed)\n");
 	return 0;
+
+out_cleanup:
+	/* Reset the device to detach it from the buffers we are about to
+	 * free, clear DRIVER_OK if it was set, and surface the failure to
+	 * the host via VIRTIO_STATUS_FAILED. Per the spec, writing zero to
+	 * STATUS triggers a device reset; the FAILED bit is then a no-op
+	 * but we set it for symmetry with the feature-negotiation path. */
+	mmio_write32(base + VIRTIO_MMIO_STATUS, 0u);
+	status_or(base, VIRTIO_STATUS_FAILED);
+	virtio_gpu_free_buffers();
+	g_dev_base = 0;
+	return -1;
 }
 
 int arm64_virt_virtio_gpu_ready(void)
