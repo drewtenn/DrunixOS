@@ -840,6 +840,59 @@ static void test_arm64_virtio_gpu_publish_pump_advances_counter(
 	KTEST_EXPECT_GE(tc, after, before + 1u);
 }
 
+static void test_arm64_virtio_gpu_cursor_uploaded(ktest_case_t *tc)
+{
+	if (!arm64_virt_virtio_gpu_ready())
+		return;
+
+	/* M3.3: hardware cursor must reach ready=1 on the gpu-enabled
+	 * path. The init log line "virtio-gpu: hardware cursor uploaded"
+	 * is the human-readable confirmation; this test pins the
+	 * machine-readable predicate. */
+	KTEST_EXPECT_TRUE(tc, arm64_virt_virtio_gpu_cursor_ready());
+}
+
+static void test_arm64_virtio_gpu_move_cursor_advances_counter(
+    ktest_case_t *tc)
+{
+	uint32_t before;
+	uint32_t after;
+
+	if (!arm64_virt_virtio_gpu_ready() ||
+	    !arm64_virt_virtio_gpu_cursor_ready())
+		return;
+
+	/* A single MOVE_CURSOR call to a known-good in-bounds position
+	 * must advance the cursorq submit counter. Same "at least 1"
+	 * framing as the M3.2 pump test: timer-tick activity is
+	 * orthogonal but we don't expect any other path to bump the
+	 * cursor counter, so before+1 is the strict lower bound. */
+	before = arm64_virt_virtio_gpu_cursor_move_runs();
+	arm64_virt_virtio_gpu_move_cursor(100, 100);
+	after = arm64_virt_virtio_gpu_cursor_move_runs();
+	KTEST_EXPECT_GE(tc, after, before + 1u);
+}
+
+static void test_arm64_virtio_gpu_move_cursor_off_screen_rejected(
+    ktest_case_t *tc)
+{
+	uint32_t before;
+	uint32_t after;
+
+	if (!arm64_virt_virtio_gpu_ready() ||
+	    !arm64_virt_virtio_gpu_cursor_ready())
+		return;
+
+	/* Negative or off-screen coordinates must NOT submit. The
+	 * counter must stay constant across the calls below. */
+	before = arm64_virt_virtio_gpu_cursor_move_runs();
+	arm64_virt_virtio_gpu_move_cursor(-1, 0);
+	arm64_virt_virtio_gpu_move_cursor(0, -1);
+	arm64_virt_virtio_gpu_move_cursor(100000, 100000);
+	after = arm64_virt_virtio_gpu_cursor_move_runs();
+	KTEST_EXPECT_EQ(tc, after, before);
+}
+
 static void test_arm64_virtio_gpu_publish_invalid_rect_ignored(
     ktest_case_t *tc)
 {
@@ -1014,6 +1067,9 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_virtio_gpu_owns_fb0_post_init),
     KTEST_CASE(test_arm64_virtio_gpu_publish_pump_advances_counter),
     KTEST_CASE(test_arm64_virtio_gpu_publish_invalid_rect_ignored),
+    KTEST_CASE(test_arm64_virtio_gpu_cursor_uploaded),
+    KTEST_CASE(test_arm64_virtio_gpu_move_cursor_advances_counter),
+    KTEST_CASE(test_arm64_virtio_gpu_move_cursor_off_screen_rejected),
 #endif
 };
 

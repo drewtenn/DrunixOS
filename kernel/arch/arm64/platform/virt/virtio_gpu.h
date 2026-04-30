@@ -122,6 +122,14 @@ void arm64_virt_virtio_gpu_move_cursor(int32_t x, int32_t y);
 int arm64_virt_virtio_gpu_cursor_ready(void);
 
 /*
+ * Test-only: cumulative count of successful MOVE_CURSOR submissions
+ * processed by the cursorq submit path. Increments only when
+ * cursorq actually accepted the descriptor; off-screen / not-ready
+ * calls leave the counter unchanged.
+ */
+uint32_t arm64_virt_virtio_gpu_cursor_move_runs(void);
+
+/*
  * M3.2 dirty-rect publish hook. IRQ-safe: unions `rect` into the
  * driver's pending dirty state (a single coalesced rect) and sets
  * the flush flag so the next pump_flush picks it up. Called from

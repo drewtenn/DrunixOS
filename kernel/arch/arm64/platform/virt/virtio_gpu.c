@@ -349,6 +349,7 @@ static uint8_t *g_cursor_backing;
 static uint64_t g_cursor_backing_phys;
 static struct virtio_gpu_update_cursor *g_cursor_req;
 static int g_cursor_ready;
+static uint32_t g_cursor_move_runs;
 
 /* Forward declarations so the main init function can call cursor
  * helpers defined further down (after pump_runs and the cursor
@@ -1478,11 +1479,17 @@ void arm64_virt_virtio_gpu_move_cursor(int32_t x, int32_t y)
 	if ((uint32_t)x >= g_display_width || (uint32_t)y >= g_display_height)
 		return;
 
-	(void)virtio_gpu_cursorq_submit(VIRTIO_GPU_CMD_MOVE_CURSOR,
-	                                 (uint32_t)x, (uint32_t)y, 0, 0, 0);
+	if (virtio_gpu_cursorq_submit(VIRTIO_GPU_CMD_MOVE_CURSOR, (uint32_t)x,
+	                               (uint32_t)y, 0, 0, 0) == 0)
+		g_cursor_move_runs++;
 }
 
 int arm64_virt_virtio_gpu_cursor_ready(void)
 {
 	return g_cursor_ready;
+}
+
+uint32_t arm64_virt_virtio_gpu_cursor_move_runs(void)
+{
+	return g_cursor_move_runs;
 }
