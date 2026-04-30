@@ -29,6 +29,13 @@ typedef struct {
 	int h;
 } drunix_rect_t;
 
+/* Point in screen coordinates. M3.3 hardware-cursor ioctl uses this
+ * (drunix_rect_t with ignored w/h would have unclear semantics). */
+typedef struct {
+	int x;
+	int y;
+} drunix_point_t;
+
 static inline drunix_rect_t drunix_rect_make(int x, int y, int w, int h)
 {
 	drunix_rect_t rect;

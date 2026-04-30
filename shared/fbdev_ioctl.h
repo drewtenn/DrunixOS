@@ -42,4 +42,28 @@
  */
 #define DRUNIX_FBIO_FLUSH_RECT 0xD801u
 
+/*
+ * DRUNIX_FBIO_MOVE_CURSOR
+ *
+ *   M3.3 hardware-cursor position update. Tells the kernel to move
+ *   the virtio-gpu cursor plane to (x, y) screen coordinates.
+ *
+ *   For the virtio-gpu provider this enqueues a VIRTIO_GPU_CMD_MOVE_CURSOR
+ *   on cursorq (queue 1). The cursor sprite was uploaded once at
+ *   driver init from `shared/cursor_sprite.h`; M3.3 does not support
+ *   userspace sprite upload.
+ *
+ *   For the ramfb fallback provider (or if virtio-gpu cursor init
+ *   failed) this ioctl returns -1, signalling the compositor to
+ *   keep its software cursor.
+ *
+ *   Argument: pointer to a `drunix_point_t` in the calling process's
+ *   address space. Coordinates are clipped against the framebuffer
+ *   dimensions; off-screen coords return -1 with no state change.
+ *
+ *   Returns: 0 on success, -1 on hardware-cursor unavailable or
+ *   invalid coords.
+ */
+#define DRUNIX_FBIO_MOVE_CURSOR 0xD802u
+
 #endif /* SHARED_FBDEV_IOCTL_H */
