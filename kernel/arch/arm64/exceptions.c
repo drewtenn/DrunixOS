@@ -5,6 +5,9 @@
 
 #include "../arch.h"
 #include "platform/platform.h"
+#if DRUNIX_ARM64_PLATFORM_VIRT
+#include "platform/virt/virtio_gpu.h"
+#endif
 #include "fault.h"
 #include "../../proc/sched.h"
 #include "../../proc/syscall.h"
@@ -79,6 +82,14 @@ void arm64_sync_handler(arch_trap_frame_t *frame)
 			else
 				(void)arm64_userspace_syscall_dispatch(frame);
 			(void)sched_signal_check((uintptr_t)frame);
+			/* M3.1 Commit 4: drain any pending virtio-gpu scanout
+			 * flush from process context. The pump is a no-op
+			 * unless the timer tick has set g_flush_needed and
+			 * the driver is ready; safe to call even on raspi3b
+			 * builds (weak link / static no-op). */
+#if DRUNIX_ARM64_PLATFORM_VIRT
+			arm64_virt_virtio_gpu_pump_flush();
+#endif
 			return;
 		}
 

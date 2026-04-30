@@ -252,6 +252,17 @@ static framebuffer_info_t g_fbdev_info;
 
 static uint32_t g_dma_pages_held;
 
+/* M3.1 Commit 4 — deferred flush state. arm64_timer_tick is IRQ
+ * context; it sets g_flush_needed = 1 and returns. arm64_sync_handler
+ * (process context, after every syscall) calls the pump, which clears
+ * the flag and runs the actual controlq commands. */
+static volatile uint32_t g_flush_needed;
+static uint32_t g_flush_failures;
+static uint32_t g_flush_runs;
+static int g_flush_disabled;
+
+#define VIRTIO_GPU_FLUSH_FAIL_THRESHOLD 60u
+
 static uint32_t mmio_read32(uintptr_t addr)
 {
 	return *(volatile uint32_t *)addr;
@@ -928,4 +939,57 @@ uint32_t arm64_virt_virtio_gpu_checksum_pattern(void)
 uint32_t arm64_virt_virtio_gpu_dma_pages_held(void)
 {
 	return g_dma_pages_held;
+}
+
+/*
+ * IRQ-safe: just set the flag. No submission, no polling. The
+ * timer tick calls this; the actual TRANSFER+FLUSH runs from
+ * arm64_virt_virtio_gpu_pump_flush() in process context.
+ */
+void arm64_virt_virtio_gpu_request_flush(void)
+{
+	if (!g_ready || g_flush_disabled)
+		return;
+	g_flush_needed = 1u;
+}
+
+/*
+ * Process-context pump. If a flush is pending, run a full-frame
+ * TRANSFER_TO_HOST_2D + RESOURCE_FLUSH. On repeated failure beyond
+ * VIRTIO_GPU_FLUSH_FAIL_THRESHOLD, mark the display permanently
+ * disabled and stop attempting flushes (avoids log spam under a
+ * dead device). The request side respects the disabled flag too,
+ * so subsequent ticks no-op.
+ *
+ * Must NOT run from IRQ context: virtio_gpu_submit_cmd polls the
+ * controlq used ring with a bounded busy wait, which is appropriate
+ * in process context but ugly in an interrupt handler.
+ */
+void arm64_virt_virtio_gpu_pump_flush(void)
+{
+	if (!g_ready || g_flush_disabled || !g_flush_needed)
+		return;
+
+	g_flush_needed = 0u;
+
+	if (virtio_gpu_transfer_to_host(0, 0, VIRTIO_GPU_WIDTH,
+	                                VIRTIO_GPU_HEIGHT) != 0 ||
+	    virtio_gpu_resource_flush(0, 0, VIRTIO_GPU_WIDTH,
+	                              VIRTIO_GPU_HEIGHT) != 0) {
+		g_flush_failures++;
+		if (g_flush_failures >= VIRTIO_GPU_FLUSH_FAIL_THRESHOLD) {
+			g_flush_disabled = 1;
+			platform_uart_puts(
+			    "virtio-gpu: display permanently disabled after "
+			    "repeated flush failures\n");
+		}
+		return;
+	}
+	g_flush_failures = 0u;
+	g_flush_runs++;
+}
+
+uint32_t arm64_virt_virtio_gpu_pump_runs(void)
+{
+	return g_flush_runs;
 }

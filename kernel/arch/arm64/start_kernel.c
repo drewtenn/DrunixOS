@@ -85,6 +85,21 @@ static void arm64_timer_tick(void)
 		arch_poll_input();
 	arm64_heartbeat_tick();
 	sched_tick();
+
+	/* M3.1 Commit 4: request a virtio-gpu scanout flush every other
+	 * tick (50 Hz at SCHED_HZ=100). The actual TRANSFER+FLUSH runs
+	 * from arm64_sync_handler() in process context — keeping the
+	 * controlq's polled busy wait out of IRQ context. virtio-gpu's
+	 * request entry-point is a no-op when the driver isn't ready,
+	 * so raspi3b boots and the no-virtio-gpu fallback path are
+	 * unaffected. */
+#if DRUNIX_ARM64_PLATFORM_VIRT
+	{
+		static uint32_t flush_accum;
+		if ((++flush_accum & 1u) == 0u)
+			arm64_virt_virtio_gpu_request_flush();
+	}
+#endif
 }
 
 static void arm64_terminal_write(const char *buf, uint32_t len, void *ctx)

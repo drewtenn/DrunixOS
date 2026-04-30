@@ -796,6 +796,34 @@ static void test_arm64_virtio_gpu_owns_fb0_post_init(ktest_case_t *tc)
 	KTEST_EXPECT_GE(tc, (uint32_t)l->framebuffer_size, 0x300000u);
 }
 
+static void test_arm64_virtio_gpu_request_pump_advances_counter(
+    ktest_case_t *tc)
+{
+	uint32_t before;
+	uint32_t after;
+
+	if (!arm64_virt_virtio_gpu_ready())
+		return;
+
+	/*
+	 * Request a flush, pump it, and verify the cumulative pump-runs
+	 * counter advances by AT LEAST 1.
+	 *
+	 * Why "at least 1" rather than exactly 1: arm64_timer_tick
+	 * (SCHED_HZ=100, accumulator-divided to ~50 Hz) sets the request
+	 * flag asynchronously from this test's process context. A timer
+	 * tick can fire between any two C statements here, so a strict
+	 * equality test would race. The contract pinned by this test is
+	 * the directional one — request + pump produces SOME progress —
+	 * which is what the deferred-flush mechanism is for.
+	 */
+	before = arm64_virt_virtio_gpu_pump_runs();
+	arm64_virt_virtio_gpu_request_flush();
+	arm64_virt_virtio_gpu_pump_flush();
+	after = arm64_virt_virtio_gpu_pump_runs();
+	KTEST_EXPECT_GE(tc, after, before + 1u);
+}
+
 static void test_arm64_virtio_gpu_init_is_idempotent(ktest_case_t *tc)
 {
 	uint32_t before_pages;
@@ -933,6 +961,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_virtio_gpu_init_is_idempotent),
     KTEST_CASE(test_arm64_virtio_gpu_display_can_host_scanout),
     KTEST_CASE(test_arm64_virtio_gpu_owns_fb0_post_init),
+    KTEST_CASE(test_arm64_virtio_gpu_request_pump_advances_counter),
 #endif
 };
 
