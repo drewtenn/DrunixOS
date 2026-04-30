@@ -225,6 +225,7 @@ _Static_assert(sizeof(struct virtio_gpu_resource_flush) == 48,
 /* Driver state. Single-CPU + single-driver-thread per virtio-blk. */
 static int g_initialized;
 static int g_ready;
+static int g_device_found;
 static uintptr_t g_dev_base;
 
 static virtq_t g_controlq;
@@ -699,6 +700,7 @@ int arm64_virt_virtio_gpu_init(void)
 		    "virtio-gpu: no device found on bus (skipping)\n");
 		return -1;
 	}
+	g_device_found = 1;
 
 	if (version != 1u) {
 		k_snprintf(
@@ -876,6 +878,11 @@ out_cleanup:
 int arm64_virt_virtio_gpu_ready(void)
 {
 	return g_ready;
+}
+
+int arm64_virt_virtio_gpu_device_found(void)
+{
+	return g_device_found;
 }
 
 int arm64_virt_virtio_gpu_query_display(uint32_t *out_width,

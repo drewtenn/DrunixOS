@@ -62,9 +62,42 @@ def refresh_boot_image() -> None:
         path.unlink(missing_ok=True)
 
 
-def qemu_command(serial_log: Path, platform: str = "raspi3b") -> list[str]:
-    """The canonical headless QEMU command-line for ARM64 boots."""
+_VIRT_DEFAULT_DEVICES: list[str] = [
+    "virtio-blk-device,drive=hd0",
+    # M2.5a: advertise the QEMU ramfb device so the in-kernel KTESTs
+    # exercise the fw_cfg + RAMFBCfg + classifier path. -display none
+    # keeps the test headless; the ramfb device is detected through
+    # fw_cfg regardless of display front-end.
+    "ramfb",
+    # M2.5b: advertise virtio-input devices so the KTEST run exercises
+    # virtio-input enumeration + ringbuffer setup.
+    "virtio-keyboard-device",
+    "virtio-mouse-device",
+    # M3.0: advertise virtio-gpu-device so the in-kernel KTEST exercises
+    # the virtio-gpu controlq + cursorq queue setup and the six-command
+    # 2D bring-up sequence (the host-visible scanout works in
+    # -display none too: QEMU's virtio-gpu backend processes
+    # TRANSFER_TO_HOST_2D and RESOURCE_FLUSH whether or not a display
+    # is attached).
+    "virtio-gpu-device",
+]
+
+
+def qemu_command(serial_log: Path,
+                 platform: str = "raspi3b",
+                 devices: Sequence[str] | None = None) -> list[str]:
+    """The canonical headless QEMU command-line for ARM64 boots.
+
+    `devices` parameterises the -device list for the `virt` platform
+    so a sibling harness can drop or add devices (e.g.
+    test_arm64_ktest_ramfb_fallback.py runs without
+    `virtio-gpu-device` to verify the ramfb fallback path). When None,
+    the default _VIRT_DEFAULT_DEVICES list is used. Ignored on raspi3b.
+    """
     if platform == "virt":
+        device_args: list[str] = []
+        for d in devices if devices is not None else _VIRT_DEFAULT_DEVICES:
+            device_args.extend(["-device", d])
         return [
             qemu_binary(),
             "-display", "none",
@@ -74,23 +107,7 @@ def qemu_command(serial_log: Path, platform: str = "raspi3b") -> list[str]:
             "-m", "1G",
             "-kernel", "kernel-arm64.elf",
             "-drive", "file=img/disk.img,if=none,format=raw,id=hd0",
-            "-device", "virtio-blk-device,drive=hd0",
-            # M2.5a: advertise the QEMU ramfb device so the in-kernel
-            # KTESTs exercise the fw_cfg + RAMFBCfg + classifier path.
-            # -display none keeps the test headless; the ramfb device
-            # is detected through fw_cfg regardless of display front-end.
-            "-device", "ramfb",
-            # M2.5b: advertise virtio-input devices so the KTEST run
-            # exercises virtio-input enumeration + ringbuffer setup.
-            "-device", "virtio-keyboard-device",
-            "-device", "virtio-mouse-device",
-            # M3.0: advertise virtio-gpu-device so the in-kernel KTEST
-            # exercises the virtio-gpu controlq + cursorq queue setup
-            # and the M3.0 six-command 2D bring-up sequence (the host-
-            # visible scanout works in -display none too: QEMU's
-            # virtio-gpu backend processes TRANSFER_TO_HOST_2D and
-            # RESOURCE_FLUSH whether or not a display is attached).
-            "-device", "virtio-gpu-device",
+            *device_args,
             "-serial", f"file:{serial_log}",
             "-monitor", "none",
             "-no-reboot",
@@ -120,13 +137,17 @@ def boot_and_wait(serial_log: Path,
                   stderr_log: Path,
                   done: Callable[[str], bool],
                   timeout: float = 20.0,
-                  platform: str = "raspi3b") -> BootResult:
+                  platform: str = "raspi3b",
+                  devices: Sequence[str] | None = None) -> BootResult:
     """Boot the kernel under QEMU; poll the serial log until `done(text)`.
 
     `done` is invoked with the current contents of the serial log on
     each tick; return True to stop the wait.  When `done` is not
     satisfied within `timeout` seconds (or QEMU exits first), the
     function still returns — callers decide what counts as failure.
+
+    `devices` overrides the default -device list for the virt
+    platform; ignored on raspi3b.
     """
     serial_log.parent.mkdir(exist_ok=True)
     serial_log.unlink(missing_ok=True)
@@ -137,7 +158,7 @@ def boot_and_wait(serial_log: Path,
     with stderr_log.open("w") as stderr:
         try:
             proc = subprocess.Popen(
-                qemu_command(serial_log, platform),
+                qemu_command(serial_log, platform, devices=devices),
                 cwd=ROOT,
                 stdout=subprocess.DEVNULL,
                 stderr=stderr,

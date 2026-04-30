@@ -46,6 +46,15 @@ int arm64_virt_virtio_gpu_init(void);
 int arm64_virt_virtio_gpu_ready(void);
 
 /*
+ * Predicate returning 1 when init found a virtio-gpu device on the
+ * bus (whether or not subsequent setup succeeded). Distinguishes
+ * "device not advertised — ramfb-fallback path is expected" from
+ * "device present, but init failed — real bug". KTEST uses this to
+ * skip-pass tests on the no-virtio-gpu boot configuration.
+ */
+int arm64_virt_virtio_gpu_device_found(void);
+
+/*
  * Test-only helpers. Exposed here so the KTEST suite can validate the
  * protocol without re-running init. Each helper returns 0 on success
  * and -1 on any failure; failure logs go to platform_uart.

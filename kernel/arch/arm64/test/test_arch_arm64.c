@@ -700,6 +700,13 @@ static void test_arm64_virtio_mouse_event_to_mousedev(ktest_case_t *tc)
 
 static void test_arm64_virtio_gpu_reached_ready(ktest_case_t *tc)
 {
+	/* If virtio-gpu wasn't advertised on the bus (the ramfb-fallback
+	 * harness), there's nothing to be ready about — skip-pass. The
+	 * fallback harness asserts ramfb owns /dev/fb0 separately. */
+	if (!arm64_virt_virtio_gpu_device_found()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
 	KTEST_EXPECT_TRUE(tc, arm64_virt_virtio_gpu_ready());
 }
 
