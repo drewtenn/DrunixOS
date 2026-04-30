@@ -63,6 +63,15 @@ typedef struct {
 #define EVT_MOUSE 'M'
 #define DESKTOP_CLIENT_WINDOWS 8
 #define DESKTOP_LAUNCHED_PIDS 16
+#define INPUT_EV_SYN 0x00u
+#define INPUT_EV_KEY 0x01u
+#define INPUT_EV_REL 0x02u
+#define INPUT_REL_X 0x00u
+#define INPUT_REL_Y 0x01u
+#define INPUT_SYN_REPORT 0x00u
+#define INPUT_BTN_LEFT 0x110u
+#define INPUT_BTN_RIGHT 0x111u
+#define INPUT_BTN_MIDDLE 0x112u
 
 typedef struct {
 	int used;
@@ -714,13 +723,6 @@ static void publish_dirty_rect(drunix_rect_t rect)
 
 static void publish_cursor_position(void)
 {
-	/* M3.3: when the kernel has a hardware cursor (virtio-gpu cursor
-	 * plane uploaded successfully at boot), tell it where to put the
-	 * cursor. Userspace stops drawing the cursor sprite into the
-	 * framebuffer; the host overlays it. If the ioctl fails (kernel
-	 * pre-M3.3, or virtio-gpu cursor init failed, or off-screen
-	 * coords), the caller's own fallback path keeps software cursor
-	 * working. */
 	drunix_point_t pt;
 
 	if (g_fb_fd < 0 || !g_hw_cursor_active)
@@ -728,6 +730,24 @@ static void publish_cursor_position(void)
 	pt.x = g_pointer_x;
 	pt.y = g_pointer_y;
 	(void)sys_ioctl(g_fb_fd, DRUNIX_FBIO_MOVE_CURSOR, &pt);
+}
+
+static void probe_hardware_cursor(void)
+{
+	drunix_point_t pt;
+
+	if (g_fb_fd < 0)
+		return;
+
+	pt.x = g_pointer_x;
+	pt.y = g_pointer_y;
+	if (sys_ioctl(g_fb_fd, DRUNIX_FBIO_MOVE_CURSOR, &pt) == 0) {
+		g_hw_cursor_active = 1;
+		sys_write("desktop: hardware cursor active\n");
+	} else {
+		g_hw_cursor_active = 0;
+		sys_write("desktop: hardware cursor unavailable\n");
+	}
 }
 
 static void present_dirty_rect(drunix_rect_t rect)
@@ -952,25 +972,26 @@ static void run_mouse_helper(int pipe_w)
 		for (int i = 0; i < records; i++) {
 			struct evt *e = &batch[i];
 
-			if (e->type == 0x02) {
-				if (e->code == 0x00)
+			if (e->type == INPUT_EV_REL) {
+				if (e->code == INPUT_REL_X)
 					pending_dx += e->value;
-				else if (e->code == 0x01)
+				else if (e->code == INPUT_REL_Y)
 					pending_dy += e->value;
-			} else if (e->type == 0x01) {
+			} else if (e->type == INPUT_EV_KEY) {
 				uint8_t mask = 0;
 
-				if (e->code == 0x110)
+				if (e->code == INPUT_BTN_LEFT)
 					mask = 0x01u;
-				else if (e->code == 0x111)
+				else if (e->code == INPUT_BTN_RIGHT)
 					mask = 0x02u;
-				else if (e->code == 0x112)
+				else if (e->code == INPUT_BTN_MIDDLE)
 					mask = 0x04u;
 				if (e->value)
 					pending_buttons |= mask;
 				else
 					pending_buttons &= (uint8_t)~mask;
-			} else if (e->type == 0x00) {
+			} else if (e->type == INPUT_EV_SYN &&
+			           e->code == INPUT_SYN_REPORT) {
 				int8_t cdx;
 				int8_t cdy;
 
@@ -1471,18 +1492,6 @@ int main(int argc, char **argv)
 	 * slot. */
 	g_fb_fd = fbfd;
 
-	/* M3.3 follow-up: the compositor stays on the M2.5b software
-	 * cursor for visibility on the macOS Cocoa display backend
-	 * (which hides the virtio-gpu cursor plane under the host's
-	 * pointer; even mouse-grab leaves it invisible). The kernel-side
-	 * hw cursor infrastructure is still uploaded at boot — KTESTs
-	 * exercise the cursorq submit path — but the compositor doesn't
-	 * adopt it yet. Future work: detect a display backend where the
-	 * hw cursor is actually visible and switch automatically, or
-	 * gate adoption on a build/runtime flag. See
-	 * docs/design/m3.3-hardware-cursor.md "Known limitation". */
-	g_hw_cursor_active = 0;
-
 	g_scene = (uint32_t *)malloc(g_fb_bytes);
 	if (!g_scene) {
 		sys_write("desktop: scene allocation failed\n");
@@ -1501,6 +1510,11 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	g_pointer_x = (int)g_info.width / 2;
+	g_pointer_y = (int)g_info.height / 2;
+	g_pointer_old_x = g_pointer_x;
+	g_pointer_old_y = g_pointer_y;
+
 	if (sys_pipe(evt_fds) != 0) {
 		sys_write("desktop: pipe failed\n");
 		return 1;
@@ -1512,11 +1526,7 @@ int main(int argc, char **argv)
 	(void)spawn_helper_child(wrap_mouse, evt_w, 0);
 	sys_close(evt_w);
 
-	g_pointer_x = (int)g_info.width / 2;
-	g_pointer_y = (int)g_info.height / 2;
-	g_pointer_old_x = g_pointer_x;
-	g_pointer_old_y = g_pointer_y;
-
+	probe_hardware_cursor();
 	present_scene();
 	(void)launch_taskbar_app(DRUNIX_TASKBAR_APP_TERMINAL);
 

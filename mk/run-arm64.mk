@@ -89,5 +89,8 @@ test-halt:
 test-threadtest:
 	$(PYTHON) tools/test_arm64_threadtest.py
 
+test-hw-cursor:
+	$(PYTHON) tools/test_arm64_hw_cursor_active.py
+
 test-desktop-screenshot:
 	@echo "desktop screenshot test is x86-only until the ARM64 desktop exists"

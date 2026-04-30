@@ -143,6 +143,10 @@ endif
 	echo "$(ARM64_SMOKE_FALLBACK)" | cmp -s - $@ || echo "$(ARM64_SMOKE_FALLBACK)" > $@
 .arm64-halt-test-flag: FORCE
 	echo "$(ARM64_HALT_TEST)" | cmp -s - $@ || echo "$(ARM64_HALT_TEST)" > $@
+.arm64-hw-cursor-flag: FORCE
+	echo "$(DRUNIX_ARM64_VIRT_HW_CURSOR)" | cmp -s - $@ || echo "$(DRUNIX_ARM64_VIRT_HW_CURSOR)" > $@
+.arm64-build-time-flag: FORCE
+	echo "$(DRUNIX_BUILD_UNIX_TIME)" | cmp -s - $@ || echo "$(DRUNIX_BUILD_UNIX_TIME)" > $@
 .x86-serial-console-flag: FORCE
 	echo "$(X86_SERIAL_CONSOLE)" | cmp -s - $@ || echo "$(X86_SERIAL_CONSOLE)" > $@
 .include-busybox-flag: FORCE
@@ -176,6 +180,8 @@ kernel/arch/x86/platform/pc/mouse.o: .mouse-speed-flag
 kernel/arch/x86/platform/pc/ata.o: .disk-sectors-flag
 kernel/arch/x86/arch.o: .x86-serial-console-flag
 kernel/arch/x86/test/test_desktop.o: .mouse-speed-flag
+kernel/arch/arm64/arch.o: .arm64-build-time-flag
+kernel/arch/arm64/platform/virt/virtio_gpu.o: .arm64-hw-cursor-flag
 
 #GRUB2 mkrescue(provided by : brew install i686 - elf - grub xorriso)
 GRUB_MKRESCUE := i686-elf-grub-mkrescue
@@ -226,6 +232,7 @@ SENTINELS     := .ktest-flag .double-fault-test-flag .klog-debugcon-flag \
                  .mouse-speed-flag .init-program-flag .no-desktop-flag \
                  .vga-text-flag .disk-sectors-flag .arm64-smoke-fallback-flag \
                  .arm64-halt-test-flag .x86-serial-console-flag \
+                 .arm64-hw-cursor-flag .arm64-build-time-flag \
                  .include-busybox-flag .disk-layout-flag .build-mode-flag
 
 QEMU_DISKS    = -drive format=raw,file=$(1),if=ide,index=0 \

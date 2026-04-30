@@ -38,13 +38,18 @@ else
 ARM_LINKER_LD := kernel/arch/arm64/linker.ld
 endif
 
-# M3.3 hardware cursor. Disabled by default — see comment in
-# kernel/arch/arm64/platform/virt/virtio_gpu.c around the
-# DRUNIX_ARM64_VIRT_HW_CURSOR guard for the macOS Cocoa rationale.
-# Override with `make ... DRUNIX_ARM64_VIRT_HW_CURSOR=1` on hosts
-# where the cursor plane visibly renders (typical Linux + GTK/SDL).
+# M3.3 hardware cursor. Disabled by default so QEMU virt and bare-metal
+# framebuffer providers use the compositor's software cursor unless a
+# build explicitly opts into the virtio-gpu cursor plane.
 DRUNIX_ARM64_VIRT_HW_CURSOR ?= 0
 ARM_CFLAGS += -DDRUNIX_ARM64_VIRT_HW_CURSOR=$(DRUNIX_ARM64_VIRT_HW_CURSOR)
+
+# ARM64 has no RTC driver yet. Seed CLOCK_REALTIME from the host build
+# timestamp and advance it from the architectural timer tick count.
+ifeq ($(origin DRUNIX_BUILD_UNIX_TIME),undefined)
+DRUNIX_BUILD_UNIX_TIME := $(shell date +%s)
+endif
+ARM_CFLAGS += -DDRUNIX_BUILD_UNIX_TIME=$(DRUNIX_BUILD_UNIX_TIME)u
 
 ARM_LDFLAGS ?= -nostdlib -T $(ARM_LINKER_LD)
 

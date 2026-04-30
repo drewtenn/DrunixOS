@@ -659,7 +659,13 @@ void process_release_kstack(process_t *proc)
 	uint32_t guard = (raw + 0xFFFu) & ~0xFFFu;
 	uintptr_t cur_sp;
 
+#if defined(__aarch64__)
 	__asm__ volatile("mov %0, sp" : "=r"(cur_sp));
+#elif defined(__i386__)
+	__asm__ volatile("mov %%esp, %0" : "=r"(cur_sp));
+#else
+#error "process_release_kstack needs a stack-pointer read for this arch"
+#endif
 	if ((uint32_t)cur_sp >= raw &&
 	    (uint32_t)cur_sp < proc->kstack_top) {
 		klog_hex("PROC", "kstack release: SP IN this kstack",

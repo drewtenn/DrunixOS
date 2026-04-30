@@ -970,25 +970,12 @@ int arm64_virt_virtio_gpu_init(void)
 	 * the host scans guest pages directly there. */
 	fbdev_set_publish_dirty_rect(arm64_virt_virtio_gpu_publish_dirty_rect);
 
-	/* M3.3: hardware cursor. Disabled by default because the only
-	 * graphical display backend Homebrew QEMU on macOS supports
-	 * (Cocoa) does not visibly render the virtio-gpu cursor plane:
-	 * even after click-into-window or mouse-grab, the guest cursor
-	 * never appears. Activating the hw cursor anyway makes Cocoa
-	 * hide the host pointer (because "guest has a cursor") and
-	 * leaves a frozen guest sprite at the initial position, which
-	 * is worse UX than the M2.5b software cursor.
-	 *
-	 * The kernel infrastructure stays compiled in (KTEST exercises
-	 * the cursorq submit path under DRUNIX_ARM64_VIRT_HW_CURSOR);
-	 * activate by passing DRUNIX_ARM64_VIRT_HW_CURSOR=1 to make on
-	 * a host where the cursor plane actually renders.
-	 *
-	 * Best-effort — failure leaves g_cursor_ready = 0; the fbdev
-	 * cursor ioctl returns -1 in that case and userspace falls
-	 * back to drawing the cursor in software. The fbdev move-cursor
-	 * hook is registered ONLY on success so userspace gets a
-	 * deterministic "hardware cursor available" signal. */
+	/* M3.3: hardware cursor. Best-effort — failure leaves
+	 * g_cursor_ready = 0; the fbdev cursor ioctl returns -1 in that
+	 * case and userspace falls back to drawing the cursor in software.
+	 * The fbdev move-cursor hook is registered ONLY on success so
+	 * userspace gets a deterministic "hardware cursor available"
+	 * signal. */
 #if DRUNIX_ARM64_VIRT_HW_CURSOR
 	if (virtio_gpu_cursor_init() == 0)
 		fbdev_set_move_cursor(virtio_gpu_move_cursor_hook);
@@ -1495,8 +1482,12 @@ void arm64_virt_virtio_gpu_move_cursor(int32_t x, int32_t y)
 		return;
 
 	if (virtio_gpu_cursorq_submit(VIRTIO_GPU_CMD_MOVE_CURSOR, (uint32_t)x,
-	                               (uint32_t)y, 0, 0, 0) == 0)
+	                               (uint32_t)y, 0, 0, 0) == 0) {
 		g_cursor_move_runs++;
+		if (g_cursor_move_runs == 1u)
+			platform_uart_puts(
+			    "virtio-gpu: first cursor move submitted\n");
+	}
 }
 
 int arm64_virt_virtio_gpu_cursor_ready(void)

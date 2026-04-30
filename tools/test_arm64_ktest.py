@@ -37,7 +37,6 @@ def main() -> int:
         "KTEST=1",
         "ROOT_FS=dufs",
         f"PLATFORM={args.platform}",
-        "DRUNIX_ARM64_VIRT_HW_CURSOR=1",
     ]
     harness.build(build_args)
 

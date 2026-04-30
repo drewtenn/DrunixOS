@@ -57,6 +57,14 @@ static void test_arm64_pmm_alloc_free_reuses_pages(ktest_case_t *tc)
 		pmm_free_page(reused);
 }
 
+static void test_arm64_wall_clock_seeded_from_build_time(ktest_case_t *tc)
+{
+	uint32_t now = arch_time_unix_seconds();
+
+	KTEST_EXPECT_NE(tc, now, 0u);
+	KTEST_EXPECT_GE(tc, now, 1700000000u);
+}
+
 static void test_arm64_pmm_multiple_allocations_are_distinct(ktest_case_t *tc)
 {
 	uint32_t pages[4] = {0, 0, 0, 0};
@@ -622,12 +630,12 @@ static void test_arm64_fbdev_geometry_matches_ramfb_config(ktest_case_t *tc)
 }
 
 /*
- * M2.5b virtio-input acceptance. The KTEST harness now passes both
- * `-device virtio-keyboard-device` and `-device virtio-mouse-device`,
- * and arm64_virt_input_register_all has run before ktest_run_all. We
- * assert that /dev/kbd and /dev/mouse are registered, then that the
- * synthetic evdev push helpers (used by the virtio-input IRQ path)
- * actually deliver records into the chardev rings the desktop reads.
+ * M2.5b virtio-input acceptance. The KTEST harness now passes keyboard
+ * and pointer devices, and arm64_virt_input_register_all has run before
+ * ktest_run_all. We assert that /dev/kbd and /dev/mouse are registered,
+ * then that the synthetic evdev push helpers (used by the virtio-input
+ * IRQ path) actually deliver records into the chardev rings the desktop
+ * reads.
  */
 static void test_arm64_virtio_input_devices_enumerated(ktest_case_t *tc)
 {
@@ -853,11 +861,14 @@ static void test_arm64_virtio_gpu_cursor_uploaded(ktest_case_t *tc)
 	if (!arm64_virt_virtio_gpu_ready())
 		return;
 
-	/* M3.3: hardware cursor must reach ready=1 on the gpu-enabled
-	 * path. The init log line "virtio-gpu: hardware cursor uploaded"
-	 * is the human-readable confirmation; this test pins the
-	 * machine-readable predicate. */
+#if DRUNIX_ARM64_VIRT_HW_CURSOR
+	/* Opt-in hardware cursor path: the gpu-enabled build must upload
+	 * the cursor sprite and publish the move-cursor hook. */
 	KTEST_EXPECT_TRUE(tc, arm64_virt_virtio_gpu_cursor_ready());
+#else
+	/* Default path: keep the compositor software cursor active. */
+	KTEST_EXPECT_FALSE(tc, arm64_virt_virtio_gpu_cursor_ready());
+#endif
 }
 
 static void test_arm64_virtio_gpu_move_cursor_advances_counter(
@@ -1031,6 +1042,7 @@ static void test_arm64_fdt_chosen_bootargs_optional(ktest_case_t *tc)
 
 static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_el1_uses_sp_el1),
+    KTEST_CASE(test_arm64_wall_clock_seeded_from_build_time),
     KTEST_CASE(test_arm64_pmm_alloc_free_reuses_pages),
     KTEST_CASE(test_arm64_pmm_multiple_allocations_are_distinct),
     KTEST_CASE(test_arm64_pmm_refcount_tracks_shared_page),

@@ -9,7 +9,12 @@
 #include "mm/mmu.h"
 #include "mm/pmm.h"
 #include "proc/init_layout.h"
+#include "sched.h"
 #include "timer.h"
+
+#ifndef DRUNIX_BUILD_UNIX_TIME
+#define DRUNIX_BUILD_UNIX_TIME 0u
+#endif
 
 extern char _kernel_start[];
 extern char _kernel_end[];
@@ -18,7 +23,8 @@ static int g_arm64_mm_ready;
 
 uint32_t arch_time_unix_seconds(void)
 {
-	return 0;
+	return (uint32_t)DRUNIX_BUILD_UNIX_TIME +
+	       (uint32_t)(arm64_timer_ticks() / SCHED_HZ);
 }
 
 uint32_t arch_time_uptime_ticks(void)
