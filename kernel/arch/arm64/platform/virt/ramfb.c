@@ -22,6 +22,7 @@
 #include "ramfb.h"
 #include "../../dma.h"
 #include "../../mm/mmu.h"
+#include "chardev.h"
 #include "fbdev.h"
 #include "kprintf.h"
 #include "kstring.h"
@@ -77,6 +78,15 @@ int arm64_virt_ramfb_init(void)
 	uint32_t entry_size = 0;
 	ramfb_cfg_t cfg;
 	char line[96];
+
+	/* M3.1 Commit 2: if a higher-priority provider (e.g. virtio-gpu in
+	 * Commit 3+) already published /dev/fb0, ramfb steps aside as the
+	 * fallback. */
+	if (chardev_get("fb0") != 0) {
+		platform_uart_puts(
+		    "ramfb: /dev/fb0 already published by another provider; skipping\n");
+		return 0;
+	}
 
 	if (fb_size == 0) {
 		platform_uart_puts(

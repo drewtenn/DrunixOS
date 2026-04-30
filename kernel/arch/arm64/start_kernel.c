@@ -308,9 +308,20 @@ void arm64_start_kernel(void)
 		platform_uart_puts("virtio-blk: cache torture failed; continuing\n");
 #endif
 
-	/* M2.5a: software framebuffer via QEMU ramfb. After kheap_init
+	/* M3.1 Commit 2: virtio-gpu init runs before ramfb so it has first
+	 * claim on /dev/fb0. Until M3.1 Commit 3 lands (which makes
+	 * virtio-gpu actually call fbdev_init), this only changes ordering;
+	 * ramfb still publishes /dev/fb0 because virtio-gpu_init currently
+	 * doesn't. After Commit 3, ramfb's chardev_get("fb0") skip check
+	 * fires and ramfb becomes a fallback for the no-virtio-gpu boot. */
+	if (arm64_virt_virtio_gpu_init() != 0)
+		platform_uart_puts(
+		    "virtio-gpu: init skipped or failed; continuing\n");
+
+	/* M2.5a + M3.1 fallback: software framebuffer via QEMU ramfb when
+	 * virtio-gpu is absent or its init failed. After kheap_init
 	 * (chardev metadata), before tty_init (so /dev/fb0 is registered
-	 * before init launches the desktop in M2.5b). Tolerates fw_cfg or
+	 * before init launches the desktop). Tolerates fw_cfg or
 	 * etc/ramfb being absent — KTEST and -display none builds simply
 	 * boot to TTY without /dev/fb0. */
 	if (fwcfg_init() == 0) {
@@ -332,14 +343,6 @@ void arm64_start_kernel(void)
 		platform_uart_puts("/dev/mouse registration failed\n");
 	if (arm64_virt_input_register_all() < 0)
 		platform_uart_puts("virtio-input: hard failure; continuing\n");
-
-	/* M3.0: virtio-gpu MMIO discovery + kernel-owned scanout rectangle.
-	 * Tolerates "no device on bus" so headless KTEST builds without
-	 * `-device virtio-gpu-device` and raspi3b builds continue cleanly.
-	 * The /dev/fb0 swap stays on ramfb in M3.0; M3.1 retires ramfb. */
-	if (arm64_virt_virtio_gpu_init() != 0)
-		platform_uart_puts(
-		    "virtio-gpu: M3.0 init skipped or failed; continuing\n");
 
 #if DRUNIX_ARM64_VIRT_NO_INIT
 	/* Emergency rollback: stop at the M2.4b boot envelope. */
