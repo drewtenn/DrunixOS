@@ -149,6 +149,11 @@ static struct {
 	uint32_t rx_drops_short;
 	uint32_t rx_drops_oversize;
 	uint32_t rx_drops_ring_full;
+
+	/* TX counters. */
+	uint32_t tx_packets;
+	uint32_t tx_drops_busy;
+	uint32_t tx_completions;
 } g_state;
 
 /*
@@ -261,6 +266,11 @@ static int virtio_net_setup_queue(uintptr_t base,
 	             (uint32_t)(queue->base_phys >> 12));
 	return 0;
 }
+
+/* Forward declaration: TX completion drain is defined below the IRQ
+ * handler (which calls it) so the file reads in roughly init-order
+ * top-to-bottom. */
+static void virtio_net_tx_drain_completions(void);
 
 /*
  * Refill descriptor `head` with a writable RX buffer (1:1 mapping
@@ -384,14 +394,16 @@ static void virtio_net_irq_handler(void)
 	if ((isr & VIRTIO_MMIO_ISR_USED_RING) == 0u)
 		return;
 
-	/* Outer loop closes the ack-then-drain race: after the inner
-	 * drain returns "empty" we re-poll once. If the device published
-	 * a completion between the inner exit and here, the next
-	 * virtq_drain_one returns it and we loop back. Bounded by
-	 * VIRTQ_SIZE iterations as a paranoia stop. */
+	/* Outer loop closes the ack-then-drain race for both queues:
+	 * after the inner drains return "empty" we re-poll once. If the
+	 * device published a completion (RX or TX) between the inner
+	 * exit and here, the next pass picks it up. Bounded by
+	 * VIRTQ_SIZE+1 iterations as a paranoia stop. */
 	for (uint32_t guard = 0; guard <= VIRTQ_SIZE; guard++) {
 		int drained_any = 0;
+		uint32_t tx_completions_before = g_state.tx_completions;
 
+		/* Drain RX. */
 		for (;;) {
 			uint32_t used_len = 0;
 			uint16_t head = virtq_drain_one(&g_state.rx_queue,
@@ -410,11 +422,37 @@ static void virtio_net_irq_handler(void)
 			virtio_net_rx_refill_one(head);
 		}
 
+		/* Drain TX completions. */
+		virtio_net_tx_drain_completions();
+		if (g_state.tx_completions != tx_completions_before)
+			drained_any = 1;
+
 		if (!drained_any)
 			break;
 	}
 
 	mmio_write32(base + VIRTIO_MMIO_QUEUE_NOTIFY, VIRTIO_NET_QUEUE_RX);
+}
+
+/*
+ * Drain any pending TX completions. Each completed descriptor is
+ * returned to the transmitq's free list, which implicitly frees the
+ * 1:1-mapped TX buffer (descriptor i <-> tx_buffers[i]). Used both
+ * by send_frame's prologue (to recover from transient exhaustion)
+ * and by the IRQ handler.
+ */
+static void virtio_net_tx_drain_completions(void)
+{
+	for (;;) {
+		uint32_t used_len = 0;
+		uint16_t head = virtq_drain_one(&g_state.tx_queue, &used_len);
+
+		if (head == 0xFFFFu)
+			break;
+		(void)used_len;
+		virtq_free_chain(&g_state.tx_queue, head);
+		g_state.tx_completions++;
+	}
 }
 
 /*
@@ -613,6 +651,9 @@ int arm64_virt_virtio_net_init(void)
 	g_state.rx_drops_short = 0;
 	g_state.rx_drops_oversize = 0;
 	g_state.rx_drops_ring_full = 0;
+	g_state.tx_packets = 0;
+	g_state.tx_drops_busy = 0;
+	g_state.tx_completions = 0;
 	k_memset(g_state.mac, 0, sizeof(g_state.mac));
 
 	for (uint32_t slot = 0; slot < VIRTIO_NET_MMIO_MAX_SLOTS; slot++) {
@@ -830,4 +871,86 @@ uint32_t arm64_virt_virtio_net_rx_drops_oversize(void)
 uint32_t arm64_virt_virtio_net_rx_drops_ring_full(void)
 {
 	return g_state.rx_drops_ring_full;
+}
+
+/*
+ * Submit a raw Ethernet frame for transmission. The driver prepends a
+ * zeroed 10-byte virtio_net_hdr internally; the caller passes only
+ * the Ethernet bytes (dst MAC + src MAC + EtherType + payload). Frame
+ * length must be in [14, 1514]; values outside that range fail with
+ * -1 immediately. Returns the byte count submitted on success, -1 on
+ * resource exhaustion (with tx_drops_busy incremented).
+ *
+ * Single-producer for M4: callers must serialize access externally.
+ * This is acceptable because the only producer in v1 is the
+ * /dev/net0 chardev's write() path, which is single-threaded.
+ *
+ * Descriptor and buffer use a 1:1 mapping by index. virtq_alloc_chain
+ * returns a descriptor head; the same index identifies the
+ * tx_buffers[head] slot. Completion drain's virtq_free_chain returns
+ * the descriptor to the free list, which is also the buffer's free
+ * signal — no separate buffer-free list needed.
+ */
+int32_t arm64_virt_virtio_net_send_frame(const uint8_t *frame, uint32_t len)
+{
+	uint16_t head;
+	uint8_t *buf;
+	uint32_t total;
+
+	if (!g_state.driver_ok || !frame)
+		return -1;
+	if (len < 14u || len > VIRTIO_NET_MAX_FRAME) {
+		g_state.tx_drops_busy++;
+		return -1;
+	}
+
+	/* Reclaim any TX buffers the device has already finished with so
+	 * a transient burst doesn't immediately block on descriptor
+	 * exhaustion. */
+	virtio_net_tx_drain_completions();
+
+	head = virtq_alloc_chain(&g_state.tx_queue, 1u);
+	if (head == 0xFFFFu) {
+		g_state.tx_drops_busy++;
+		return -1;
+	}
+
+	buf = g_state.tx_buffers[head];
+
+	/* Zero the 10-byte virtio_net_hdr (no offload features
+	 * negotiated, so all header fields are zero). */
+	k_memset(buf, 0, VIRTIO_NET_HDR_BYTES);
+	k_memcpy(buf + VIRTIO_NET_HDR_BYTES, frame, len);
+	total = VIRTIO_NET_HDR_BYTES + len;
+
+	/* Cache clean before handing the buffer to the device, so the
+	 * device sees the bytes the CPU just wrote. */
+	arm64_dma_cache_clean(buf, total);
+
+	g_state.tx_queue.desc[head].addr = g_state.tx_buffers_phys[head];
+	g_state.tx_queue.desc[head].len = total;
+	g_state.tx_queue.desc[head].flags = 0u;  /* device-readable */
+	g_state.tx_queue.desc[head].next = 0u;
+
+	virtq_submit(&g_state.tx_queue, head);
+	mmio_write32(g_state.base + VIRTIO_MMIO_QUEUE_NOTIFY,
+	             VIRTIO_NET_QUEUE_TX);
+
+	g_state.tx_packets++;
+	return (int32_t)len;
+}
+
+uint32_t arm64_virt_virtio_net_tx_packets(void)
+{
+	return g_state.tx_packets;
+}
+
+uint32_t arm64_virt_virtio_net_tx_drops_busy(void)
+{
+	return g_state.tx_drops_busy;
+}
+
+uint32_t arm64_virt_virtio_net_tx_completions(void)
+{
+	return g_state.tx_completions;
 }

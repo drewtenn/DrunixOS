@@ -93,4 +93,27 @@ uint32_t arm64_virt_virtio_net_rx_drops_short(void);
 uint32_t arm64_virt_virtio_net_rx_drops_oversize(void);
 uint32_t arm64_virt_virtio_net_rx_drops_ring_full(void);
 
+/*
+ * Commit 5 — TX submission. `_send_frame(frame, len)` accepts a raw
+ * Ethernet frame (no virtio_net_hdr — the driver prepends a zeroed
+ * 10-byte header internally), validates 14 <= len <= 1514, allocates
+ * a TX descriptor + buffer, copies the frame, performs the cache
+ * clean, submits to transmitq, and notifies the device. Returns the
+ * byte count submitted on success, -1 on length-out-of-range or
+ * resource exhaustion (TX pool / descriptor ring full). Drains any
+ * pending TX completions before allocating, so a transient
+ * descriptor-exhaustion at peak load can recover by completing
+ * in-flight buffers.
+ *
+ * Counters: `_tx_packets()` counts successful submissions;
+ * `_tx_drops_busy()` counts -1-returns due to TX resource exhaustion;
+ * `_tx_completions()` counts drained completions (lags _tx_packets
+ * by however many are in flight at the device).
+ */
+int32_t arm64_virt_virtio_net_send_frame(const uint8_t *frame, uint32_t len);
+
+uint32_t arm64_virt_virtio_net_tx_packets(void);
+uint32_t arm64_virt_virtio_net_tx_drops_busy(void);
+uint32_t arm64_virt_virtio_net_tx_completions(void);
+
 #endif

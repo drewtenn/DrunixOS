@@ -944,6 +944,85 @@ static void test_arm64_virtio_net_rx_dequeue_empty_returns_zero(ktest_case_t *tc
 }
 
 /*
+ * M4 commit 5 — TX submission. The harness's restrict=on netdev
+ * accepts and consumes outbound frames (the device returns
+ * descriptors after processing) but does not deliver responses to
+ * the guest. These tests exercise the API surface and verify the
+ * counters update as expected on submit and rejection.
+ */
+static void test_arm64_virtio_net_tx_send_returns_len(ktest_case_t *tc)
+{
+	/* A minimal valid Ethernet frame: dst MAC (6) + src MAC (6) +
+	 * EtherType (2) = 14 bytes. EtherType 0x88b5 is reserved for
+	 * local experimental use (per IEEE 802 conventions). */
+	uint8_t frame[14] = {
+	    0x52, 0x54, 0x00, 0x0d, 0x00, 0x02,  /* dst */
+	    0x52, 0x54, 0x00, 0x0d, 0x00, 0x01,  /* src */
+	    0x88, 0xb5,                          /* EtherType */
+	};
+	uint32_t before;
+	int32_t rc;
+
+	if (!arm64_virt_virtio_net_driver_ok()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	before = arm64_virt_virtio_net_tx_packets();
+	rc = arm64_virt_virtio_net_send_frame(frame, sizeof(frame));
+	KTEST_EXPECT_EQ(tc, (uint32_t)rc, (uint32_t)sizeof(frame));
+	KTEST_EXPECT_EQ(tc, arm64_virt_virtio_net_tx_packets(), before + 1u);
+}
+
+static void test_arm64_virtio_net_tx_rejects_short(ktest_case_t *tc)
+{
+	uint8_t frame[13];
+	uint32_t before_packets;
+	uint32_t before_drops;
+	int32_t rc;
+
+	if (!arm64_virt_virtio_net_driver_ok()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	k_memset(frame, 0xff, sizeof(frame));
+	before_packets = arm64_virt_virtio_net_tx_packets();
+	before_drops = arm64_virt_virtio_net_tx_drops_busy();
+	rc = arm64_virt_virtio_net_send_frame(frame, sizeof(frame));
+	KTEST_EXPECT_EQ(tc, (uint32_t)(int32_t)rc, (uint32_t)-1);
+	/* tx_packets must NOT have advanced; drops_busy MUST. */
+	KTEST_EXPECT_EQ(tc, arm64_virt_virtio_net_tx_packets(), before_packets);
+	KTEST_EXPECT_EQ(tc,
+	                arm64_virt_virtio_net_tx_drops_busy(),
+	                before_drops + 1u);
+}
+
+static void test_arm64_virtio_net_tx_rejects_oversize(ktest_case_t *tc)
+{
+	uint32_t before_packets;
+	uint32_t before_drops;
+	int32_t rc;
+
+	if (!arm64_virt_virtio_net_driver_ok()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	before_packets = arm64_virt_virtio_net_tx_packets();
+	before_drops = arm64_virt_virtio_net_tx_drops_busy();
+	/* Pass NULL to dodge needing a 1515-byte stack buffer; an
+	 * oversize length should fail BEFORE the frame pointer is
+	 * dereferenced. (Driver code path: length check is first.) */
+	rc = arm64_virt_virtio_net_send_frame((const uint8_t *)0x100, 1515u);
+	KTEST_EXPECT_EQ(tc, (uint32_t)(int32_t)rc, (uint32_t)-1);
+	KTEST_EXPECT_EQ(tc, arm64_virt_virtio_net_tx_packets(), before_packets);
+	KTEST_EXPECT_EQ(tc,
+	                arm64_virt_virtio_net_tx_drops_busy(),
+	                before_drops + 1u);
+}
+
+/*
  * Phase 2 M3.0 — virtio-gpu front-end. The driver's init runs from
  * arm64_start_kernel before KTEST execution, so by the time these
  * tests run the device has either reached arm64_virt_virtio_gpu_ready()
@@ -1328,6 +1407,9 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_virtio_net_driver_ok_after_init),
     KTEST_CASE(test_arm64_virtio_net_rx_counters_initialized),
     KTEST_CASE(test_arm64_virtio_net_rx_dequeue_empty_returns_zero),
+    KTEST_CASE(test_arm64_virtio_net_tx_send_returns_len),
+    KTEST_CASE(test_arm64_virtio_net_tx_rejects_short),
+    KTEST_CASE(test_arm64_virtio_net_tx_rejects_oversize),
     KTEST_CASE(test_arm64_virtio_gpu_reached_ready),
     KTEST_CASE(test_arm64_virtio_gpu_query_display_returns_nonzero),
     KTEST_CASE(test_arm64_virtio_gpu_pattern_checksum_is_deterministic),
