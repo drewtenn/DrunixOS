@@ -3,6 +3,7 @@
 #ifndef DRIVERS_FBDEV_H
 #define DRIVERS_FBDEV_H
 
+#include "desktop_window.h"
 #include "framebuffer.h"
 #include <stdint.h>
 
@@ -21,6 +22,19 @@
  * malformed.
  */
 int fbdev_init(const framebuffer_info_t *fb);
+
+/*
+ * Register the active framebuffer provider's "publish dirty rect"
+ * hook (M3.2). The provider sets this after fbdev_init() succeeds —
+ * for virtio-gpu, the hook unions the rect into the driver's pending
+ * dirty state so the next pump_flush issues a per-rect TRANSFER.
+ *
+ * NULL hook (or no setter call) means the provider has no concept of
+ * dirty-rect propagation — DRUNIX_FBIO_FLUSH_RECT then succeeds as
+ * a no-op (this matches the ramfb fallback, where the host scans
+ * guest pages directly).
+ */
+void fbdev_set_publish_dirty_rect(void (*hook)(drunix_rect_t));
 
 /*
  * Binary layout of /dev/fb0info.  The compositor reads sizeof(fbdev_info_t)

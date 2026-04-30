@@ -11,6 +11,10 @@
 #include "fbdev.h"
 #include "chardev.h"
 #include "kstring.h"
+#include "proc/sched.h"
+#include "proc/uaccess.h"
+#include "desktop_window.h"
+#include "fbdev_ioctl.h"
 #include "syscall/syscall_linux.h"
 #include <stdint.h>
 
@@ -61,6 +65,61 @@ static chardev_cache_policy_t fbdev_cache_policy(uint32_t offset, uint32_t lengt
 	return CHARDEV_CACHE_NC;
 }
 
+/*
+ * Active framebuffer provider's "publish dirty rect" hook. Set by
+ * the provider after it calls fbdev_init successfully. NULL on the
+ * ramfb path (the host scans guest pages directly; nothing to
+ * publish). When non-NULL, fbdev_ioctl forwards a validated
+ * drunix_rect_t here.
+ */
+static void (*g_publish_dirty_rect)(drunix_rect_t rect);
+
+void fbdev_set_publish_dirty_rect(void (*hook)(drunix_rect_t))
+{
+	g_publish_dirty_rect = hook;
+}
+
+static int fbdev_ioctl(uint32_t request, uintptr_t user_arg)
+{
+	process_t *cur;
+	drunix_rect_t rect;
+
+	if (!fbdev_target)
+		return -1;
+
+	switch (request) {
+	case DRUNIX_FBIO_FLUSH_RECT: {
+		if (user_arg == 0)
+			return -1;
+		cur = sched_current();
+		if (!cur)
+			return -1;
+		if (uaccess_copy_from_user(
+		        cur, &rect, (uint32_t)user_arg, sizeof(rect)) != 0)
+			return -1;
+
+		/* Validate: non-empty, non-negative, within fb bounds. */
+		if (rect.w <= 0 || rect.h <= 0 || rect.x < 0 || rect.y < 0)
+			return -1;
+		if ((uint32_t)rect.x >= fbdev_target->width ||
+		    (uint32_t)rect.y >= fbdev_target->height)
+			return -1;
+		if ((uint32_t)rect.w > fbdev_target->width - (uint32_t)rect.x ||
+		    (uint32_t)rect.h > fbdev_target->height - (uint32_t)rect.y)
+			return -1;
+
+		if (g_publish_dirty_rect)
+			g_publish_dirty_rect(rect);
+		/* If no provider hook registered (e.g. ramfb fallback path),
+		 * the ioctl still succeeds — userspace doesn't need to know
+		 * the request was a no-op for the active provider. */
+		return 0;
+	}
+	default:
+		return -1;
+	}
+}
+
 static int fbdev_info_read(uint32_t offset, uint8_t *buf, uint32_t count)
 {
 	uint32_t total = (uint32_t)sizeof(fbdev_info_t);
@@ -83,6 +142,7 @@ static const chardev_ops_t fbdev_ops = {
     .read = 0,
     .mmap_phys = fbdev_mmap_phys,
     .mmap_cache_policy = fbdev_cache_policy,
+    .ioctl = fbdev_ioctl,
 };
 
 static const chardev_ops_t fbdev_info_ops = {
