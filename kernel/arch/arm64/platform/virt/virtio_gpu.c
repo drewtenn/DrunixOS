@@ -350,10 +350,11 @@ static uint64_t g_cursor_backing_phys;
 static struct virtio_gpu_update_cursor *g_cursor_req;
 static int g_cursor_ready;
 
-/* Forward declaration so the main init function can call it after
- * fbdev_init succeeds. The implementation lives near the other
- * cursor helpers below. */
+/* Forward declarations so the main init function can call cursor
+ * helpers defined further down (after pump_runs and the cursor
+ * sprite/queue plumbing). */
 static int virtio_gpu_cursor_init(void);
+static void virtio_gpu_move_cursor_hook(drunix_point_t pt);
 
 static uint32_t mmio_read32(uintptr_t addr)
 {
@@ -971,8 +972,11 @@ int arm64_virt_virtio_gpu_init(void)
 	/* M3.3: hardware cursor. Best-effort — failure leaves
 	 * g_cursor_ready = 0; the fbdev cursor ioctl returns -1 in that
 	 * case and userspace falls back to drawing the cursor in
-	 * software. */
-	(void)virtio_gpu_cursor_init();
+	 * software. The fbdev move-cursor hook is registered ONLY on
+	 * success so userspace gets a deterministic "hardware cursor
+	 * available" signal. */
+	if (virtio_gpu_cursor_init() == 0)
+		fbdev_set_move_cursor(virtio_gpu_move_cursor_hook);
 
 	/* All steps succeeded — only now mark the driver init'd and
 	 * ready. Setting g_initialized earlier would let a future init
@@ -1458,6 +1462,11 @@ static int virtio_gpu_cursor_init(void)
 	    "virtio-gpu: hardware cursor uploaded (64x64 BGRA, sprite from "
 	    "shared/cursor_sprite.h)\n");
 	return 0;
+}
+
+static void virtio_gpu_move_cursor_hook(drunix_point_t pt)
+{
+	arm64_virt_virtio_gpu_move_cursor(pt.x, pt.y);
 }
 
 void arm64_virt_virtio_gpu_move_cursor(int32_t x, int32_t y)

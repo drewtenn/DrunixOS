@@ -79,6 +79,20 @@ void fbdev_set_publish_dirty_rect(void (*hook)(drunix_rect_t))
 	g_publish_dirty_rect = hook;
 }
 
+/*
+ * M3.3 hardware-cursor hook. Set by the provider only after the
+ * cursor sprite has been uploaded AND the initial UPDATE_CURSOR
+ * succeeded. NULL means no hardware cursor — fbdev_ioctl returns
+ * -1 for DRUNIX_FBIO_MOVE_CURSOR, signalling userspace to keep its
+ * software cursor.
+ */
+static void (*g_move_cursor)(drunix_point_t pt);
+
+void fbdev_set_move_cursor(void (*hook)(drunix_point_t))
+{
+	g_move_cursor = hook;
+}
+
 static int fbdev_ioctl(uint32_t request, uintptr_t user_arg)
 {
 	process_t *cur;
@@ -113,6 +127,32 @@ static int fbdev_ioctl(uint32_t request, uintptr_t user_arg)
 		/* If no provider hook registered (e.g. ramfb fallback path),
 		 * the ioctl still succeeds — userspace doesn't need to know
 		 * the request was a no-op for the active provider. */
+		return 0;
+	}
+	case DRUNIX_FBIO_MOVE_CURSOR: {
+		drunix_point_t pt;
+
+		if (user_arg == 0)
+			return -1;
+		/* No hardware cursor on this provider → -1 tells the
+		 * compositor to keep its software cursor (M3.3 design). */
+		if (!g_move_cursor)
+			return -1;
+		cur = sched_current();
+		if (!cur)
+			return -1;
+		if (uaccess_copy_from_user(
+		        cur, &pt, (uint32_t)user_arg, sizeof(pt)) != 0)
+			return -1;
+
+		/* Validate: non-negative, within fb bounds. */
+		if (pt.x < 0 || pt.y < 0)
+			return -1;
+		if ((uint32_t)pt.x >= fbdev_target->width ||
+		    (uint32_t)pt.y >= fbdev_target->height)
+			return -1;
+
+		g_move_cursor(pt);
 		return 0;
 	}
 	default:

@@ -37,6 +37,16 @@ int fbdev_init(const framebuffer_info_t *fb);
 void fbdev_set_publish_dirty_rect(void (*hook)(drunix_rect_t));
 
 /*
+ * Register the active framebuffer provider's "move hardware cursor"
+ * hook (M3.3). The provider sets this after fbdev_init() AND its
+ * hardware cursor sprite is uploaded successfully — for virtio-gpu,
+ * the hook submits MOVE_CURSOR on cursorq. NULL hook means no
+ * hardware cursor; DRUNIX_FBIO_MOVE_CURSOR then returns -1 so the
+ * compositor keeps drawing the cursor in software.
+ */
+void fbdev_set_move_cursor(void (*hook)(drunix_point_t));
+
+/*
  * Binary layout of /dev/fb0info.  The compositor reads sizeof(fbdev_info_t)
  * bytes and uses the values directly.
  */
