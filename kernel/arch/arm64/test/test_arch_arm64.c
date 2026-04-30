@@ -27,6 +27,14 @@
 extern const uint8_t virt_snapshot_dtb[];
 extern const uint32_t virt_snapshot_dtb_size;
 
+static void test_arm64_el1_uses_sp_el1(ktest_case_t *tc)
+{
+	uint64_t spsel;
+
+	__asm__ volatile("mrs %0, spsel" : "=r"(spsel));
+	KTEST_EXPECT_EQ(tc, spsel & 1u, 1u);
+}
+
 static void test_arm64_pmm_alloc_free_reuses_pages(ktest_case_t *tc)
 {
 	uint32_t before = pmm_free_page_count();
@@ -1022,6 +1030,7 @@ static void test_arm64_fdt_chosen_bootargs_optional(ktest_case_t *tc)
 }
 
 static ktest_case_t cases[] = {
+    KTEST_CASE(test_arm64_el1_uses_sp_el1),
     KTEST_CASE(test_arm64_pmm_alloc_free_reuses_pages),
     KTEST_CASE(test_arm64_pmm_multiple_allocations_are_distinct),
     KTEST_CASE(test_arm64_pmm_refcount_tracks_shared_page),

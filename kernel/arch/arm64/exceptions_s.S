@@ -76,6 +76,7 @@
 
 .macro HANDLE label, cfunc
 \label:
+    msr spsel, #1
     SAVE_GPRS
     SET_CURRENT_FRAME
     mov x0, sp

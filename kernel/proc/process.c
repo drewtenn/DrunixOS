@@ -330,6 +330,8 @@ int process_create_file(process_t *proc,
 	proc->stack_low_limit = (uint32_t)PROCESS_USER_STACK_LOW;
 	proc->kstack_bottom = process_kernel_ptr32(kstack_raw);
 	proc->kstack_top = process_kernel_ptr32(kguard + 0x1000u + KSTACK_SIZE);
+	klog_hex("PROC", "kstack_bottom", proc->kstack_bottom);
+	klog_hex("PROC", "kstack_top", proc->kstack_top);
 	proc->arch_state.context =
 	    0;                     /* scheduler builds the initial switch frame */
 	proc->pid = 0;             /* assigned by sched_add() */
@@ -567,6 +569,8 @@ int process_fork(process_t *child_out, process_t *parent)
 	child_out->kstack_bottom = process_kernel_ptr32(kstack_raw);
 	child_out->kstack_top =
 	    process_kernel_ptr32(kguard + 0x1000u + KSTACK_SIZE);
+	klog_hex("FORK", "kstack_bottom", child_out->kstack_bottom);
+	klog_hex("FORK", "kstack_top", child_out->kstack_top);
 
 	return arch_process_clone_frame(child_out, parent, 0);
 }
@@ -653,6 +657,15 @@ void process_release_kstack(process_t *proc)
 
 	uint32_t raw = proc->kstack_bottom;
 	uint32_t guard = (raw + 0xFFFu) & ~0xFFFu;
+	uintptr_t cur_sp;
+
+	__asm__ volatile("mov %0, sp" : "=r"(cur_sp));
+	if ((uint32_t)cur_sp >= raw &&
+	    (uint32_t)cur_sp < proc->kstack_top) {
+		klog_hex("PROC", "kstack release: SP IN this kstack",
+		         (uint32_t)cur_sp);
+		klog_uint("PROC", "kstack release: pid", proc->pid);
+	}
 
 	arch_kstack_unguard(guard);
 	kfree(process_kernel_addr32(raw));

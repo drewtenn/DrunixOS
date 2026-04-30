@@ -75,6 +75,19 @@ static int arm64_try_handle_user_fault(arch_trap_frame_t *frame)
 
 void arm64_sync_handler(arch_trap_frame_t *frame)
 {
+	{
+		process_t *cur = sched_current();
+		uintptr_t fp = (uintptr_t)frame;
+		if (cur && cur->kstack_bottom && cur->kstack_top &&
+		    (fp < cur->kstack_bottom || fp >= cur->kstack_top)) {
+			char line[96];
+			k_snprintf(line, sizeof(line),
+			           "sync_handler: SP %p outside kstack [0x%X..0x%X] pid %u\n",
+			           (void *)fp, (unsigned)cur->kstack_bottom,
+			           (unsigned)cur->kstack_top, (unsigned)cur->pid);
+			platform_uart_puts(line);
+		}
+	}
 	if (frame && arch_irq_frame_is_user((uintptr_t)frame)) {
 		if (arch_trap_frame_is_syscall(frame)) {
 			if (syscall_dispatch_from_frame)
