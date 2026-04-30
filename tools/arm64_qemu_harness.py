@@ -80,6 +80,13 @@ _VIRT_DEFAULT_DEVICES: list[str] = [
     # TRANSFER_TO_HOST_2D and RESOURCE_FLUSH whether or not a display
     # is attached).
     "virtio-gpu-device",
+    # M4 commit 1: advertise virtio-net-device so the in-kernel KTEST
+    # exercises virtio-net mmio enumeration. The device is paired with
+    # a `null` netdev (see qemu_command) so the harness needs no host
+    # networking and no privileges. Later M4 commits add a socket
+    # netdev for the run-net target where the harness drives raw
+    # frames between guest and host.
+    "virtio-net-device,netdev=n0",
 ]
 
 
@@ -107,6 +114,7 @@ def qemu_command(serial_log: Path,
             "-m", "1G",
             "-kernel", "kernel-arm64.elf",
             "-drive", "file=img/disk.img,if=none,format=raw,id=hd0",
+            "-netdev", "user,id=n0,restrict=on",
             *device_args,
             "-serial", f"file:{serial_log}",
             "-monitor", "none",

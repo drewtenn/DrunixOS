@@ -19,6 +19,7 @@
 #include "platform/virt/ramfb.h"
 #include "platform/virt/virtio_gpu.h"
 #include "platform/virt/virtio_input.h"
+#include "platform/virt/virtio_net.h"
 #include "platform/virt/virtio_mmio.h"
 #include "platform/virt/virtio_blk.h"
 #include "../../drivers/chardev.h"
@@ -358,6 +359,13 @@ void arm64_start_kernel(void)
 		platform_uart_puts("/dev/mouse registration failed\n");
 	if (arm64_virt_input_register_all() < 0)
 		platform_uart_puts("virtio-input: hard failure; continuing\n");
+
+	/* M4 commit 1: virtio-net device enumeration only. Records MMIO
+	 * base, slot, and transport version. The device is left un-driven
+	 * here; later M4 commits add feature negotiation, DMA rings,
+	 * IRQ-driven RX/TX, and the /dev/net0 raw-frame chardev. */
+	if (arm64_virt_virtio_net_init() < 0)
+		platform_uart_puts("virtio-net: hard failure; continuing\n");
 
 #if DRUNIX_ARM64_VIRT_NO_INIT
 	/* Emergency rollback: stop at the M2.4b boot envelope. */

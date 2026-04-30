@@ -76,6 +76,7 @@ ARM_PLATFORM_OBJS := kernel/arch/arm64/platform/virt/dma.o \
                      kernel/arch/arm64/platform/virt/virtio_gpu.o \
                      kernel/arch/arm64/platform/virt/virtio_input.o \
                      kernel/arch/arm64/platform/virt/virtio_mmio.o \
+                     kernel/arch/arm64/platform/virt/virtio_net.o \
                      kernel/arch/arm64/platform/virt/virtio_queue.o
 else
 ARM_PLATFORM_OBJS := kernel/arch/arm64/platform/raspi3b/uart.o \

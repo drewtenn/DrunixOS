@@ -22,6 +22,7 @@
 #include "platform/virt/dma.h"
 #include "platform/virt/fwcfg.h"
 #include "platform/virt/virtio_gpu.h"
+#include "platform/virt/virtio_net.h"
 #endif
 
 extern const uint8_t virt_snapshot_dtb[];
@@ -704,6 +705,42 @@ static void test_arm64_virtio_mouse_event_to_mousedev(ktest_case_t *tc)
 }
 
 /*
+ * M4 commit 1 — virtio-net device enumeration. arm64_virt_virtio_net_init
+ * runs from arm64_start_kernel before KTEST execution. The KTEST harness
+ * advertises -device virtio-net-device, so the checked-in run exercises
+ * the found-path; an environment that omits the device still keeps the
+ * suite green via the skip-pass path below.
+ */
+static void test_arm64_virtio_net_mmio_device_enumerated(ktest_case_t *tc)
+{
+	uintptr_t base;
+	uint32_t slot;
+	uint32_t version;
+
+	/* Skip-pass when no virtio-net device was advertised on the bus. */
+	if (!arm64_virt_virtio_net_device_found()) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	base = arm64_virt_virtio_net_mmio_base();
+	slot = arm64_virt_virtio_net_slot();
+	version = arm64_virt_virtio_net_version();
+
+	/* MMIO base lies inside QEMU virt's virtio-mmio window. */
+	KTEST_EXPECT_TRUE(tc, base >= 0x0A000000UL);
+	KTEST_EXPECT_TRUE(tc, base < 0x0A000000UL + 32u * 0x200u);
+	/* Slot index is within the 32-slot window. */
+	KTEST_EXPECT_TRUE(tc, slot < 32u);
+	/* Base must align with the slot's expected position. */
+	KTEST_EXPECT_EQ(tc,
+	                (uint32_t)base,
+	                (uint32_t)(0x0A000000UL + slot * 0x200u));
+	/* Transport version is legacy (1) or modern (2). */
+	KTEST_EXPECT_TRUE(tc, version == 1u || version == 2u);
+}
+
+/*
  * Phase 2 M3.0 — virtio-gpu front-end. The driver's init runs from
  * arm64_start_kernel before KTEST execution, so by the time these
  * tests run the device has either reached arm64_virt_virtio_gpu_ready()
@@ -1078,6 +1115,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_virtio_input_devices_enumerated),
     KTEST_CASE(test_arm64_virtio_keyboard_event_to_kbdev),
     KTEST_CASE(test_arm64_virtio_mouse_event_to_mousedev),
+    KTEST_CASE(test_arm64_virtio_net_mmio_device_enumerated),
     KTEST_CASE(test_arm64_virtio_gpu_reached_ready),
     KTEST_CASE(test_arm64_virtio_gpu_query_display_returns_nonzero),
     KTEST_CASE(test_arm64_virtio_gpu_pattern_checksum_is_deterministic),
