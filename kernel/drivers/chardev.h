@@ -99,6 +99,23 @@ typedef struct {
 	 */
 	chardev_cache_policy_t (*mmap_cache_policy)(uint32_t offset,
 	                                            uint32_t length);
+
+	/*
+	 * Optional: per-driver ioctl handler. The syscall_ioctl path
+	 * (kernel/proc/syscall/tty.c) routes any unknown request from
+	 * an FD_TYPE_CHARDEV fd to this op when non-NULL. Drivers that
+	 * omit it (mmap-only or read-only chardevs) get the default
+	 * "ioctl unsupported, return -1" behavior.
+	 *
+	 * `request` is the raw 32-bit ioctl number from userspace.
+	 * `user_arg` is the opaque third syscall argument (typically a
+	 * user-space pointer cast to uintptr_t). Drivers that consume a
+	 * struct must use uaccess_copy_from_user to validate the pointer
+	 * before dereferencing.
+	 *
+	 * Returns 0 on success, -1 on any failure or unsupported request.
+	 */
+	int (*ioctl)(uint32_t request, uintptr_t user_arg);
 } chardev_ops_t;
 
 /*

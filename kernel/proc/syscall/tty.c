@@ -8,6 +8,7 @@
 
 #include "syscall_internal.h"
 #include "syscall_linux.h"
+#include "chardev.h"
 #include "console/runtime.h"
 #include "kstring.h"
 #include "pipe.h"
@@ -235,6 +236,16 @@ static uint32_t syscall_ioctl(uint32_t fd, uint32_t request, uint32_t argp)
 		return 0;
 	}
 	default:
+		/* M3.2: per-chardev ioctl fallback. The TTY ioctls above are
+		 * dispatched from raw request numbers without a chardev hook;
+		 * any fd that's a chardev with a non-NULL ioctl op gets a
+		 * second chance here. /dev/fb0's DRUNIX_FBIO_FLUSH_RECT lives
+		 * in the chardev op, not in this switch. */
+		if (fh->type == FD_TYPE_CHARDEV) {
+			const chardev_ops_t *ops = chardev_get(fh->u.chardev.name);
+			if (ops && ops->ioctl)
+				return (uint32_t)ops->ioctl(request, (uintptr_t)argp);
+		}
 		return (uint32_t)-1;
 	}
 }
