@@ -31,6 +31,8 @@ run: build-virt | $(LOG_DIR)
 	    -drive file=$(ROOT_DISK_IMG),if=none,format=raw,id=hd0 \
 	    -device virtio-blk-device,drive=hd0 \
 	    -device ramfb \
+	    -device virtio-keyboard-device \
+	    -device virtio-mouse-device \
 	    -display $(QEMU_ARM_VIRT_DISPLAY) \
 	    -serial mon:stdio -no-reboot
 

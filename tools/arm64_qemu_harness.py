@@ -80,6 +80,10 @@ def qemu_command(serial_log: Path, platform: str = "raspi3b") -> list[str]:
             # -display none keeps the test headless; the ramfb device
             # is detected through fw_cfg regardless of display front-end.
             "-device", "ramfb",
+            # M2.5b: advertise virtio-input devices so the KTEST run
+            # exercises virtio-input enumeration + ringbuffer setup.
+            "-device", "virtio-keyboard-device",
+            "-device", "virtio-mouse-device",
             "-serial", f"file:{serial_log}",
             "-monitor", "none",
             "-no-reboot",

@@ -25,7 +25,19 @@
 #define VIRT_DEV_BASE 0x08000000ull
 #define VIRT_DEV_END VIRT_RAM_BASE_DEFAULT
 
-#define VIRT_HEAP_OFFSET_FROM_KERNEL_END (16u * 0x100000u)
+/*
+ * The gap between kernel_image_end and heap_base is what backs PMM's
+ * page-table + per-process allocations (the heap range is marked used
+ * in PMM and owned by kheap; everything outside the kernel image, the
+ * heap range, and the FB carve-out is PMM-free). M2.5b discovered the
+ * 16 MiB gap is too tight for desktop's helper fork-out: 4096 free
+ * pages run out around the 4th fork because each user process consumes
+ * ~1300 PMM pages (binary code + stack + page tables). Bumping to 64
+ * MiB gives PMM ~16384 free pages — comfortable headroom for desktop +
+ * shell + wm + ~10 helpers without compromising the heap (which still
+ * gets ~960 MiB on a 1 GiB virt build).
+ */
+#define VIRT_HEAP_OFFSET_FROM_KERNEL_END (64u * 0x100000u)
 #define VIRT_HEAP_TAIL_RESERVE (16u * 0x100000u)
 
 /*

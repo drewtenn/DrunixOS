@@ -17,6 +17,7 @@
 #include "chardev.h"
 #include "dma.h"
 #include "fbdev.h"
+#include "inputdev.h"
 #include "platform/platform.h"
 #include "platform/virt/dma.h"
 #include "platform/virt/fwcfg.h"
@@ -613,6 +614,80 @@ static void test_arm64_fbdev_geometry_matches_ramfb_config(ktest_case_t *tc)
 	KTEST_EXPECT_EQ(tc, geom.blue_pos, (uint8_t)0);
 }
 
+/*
+ * M2.5b virtio-input acceptance. The KTEST harness now passes both
+ * `-device virtio-keyboard-device` and `-device virtio-mouse-device`,
+ * and arm64_virt_input_register_all has run before ktest_run_all. We
+ * assert that /dev/kbd and /dev/mouse are registered, then that the
+ * synthetic evdev push helpers (used by the virtio-input IRQ path)
+ * actually deliver records into the chardev rings the desktop reads.
+ */
+static void test_arm64_virtio_input_devices_enumerated(ktest_case_t *tc)
+{
+	const chardev_ops_t *kbd = chardev_get("kbd");
+	const chardev_ops_t *mouse = chardev_get("mouse");
+
+	KTEST_EXPECT_NOT_NULL(tc, kbd);
+	KTEST_EXPECT_NOT_NULL(tc, mouse);
+	if (kbd)
+		KTEST_EXPECT_NOT_NULL(tc, kbd->read);
+	if (mouse)
+		KTEST_EXPECT_NOT_NULL(tc, mouse->read);
+}
+
+static void test_arm64_virtio_keyboard_event_to_kbdev(ktest_case_t *tc)
+{
+	const chardev_ops_t *kbd = chardev_get("kbd");
+	input_event_t evt;
+	int rc;
+
+	if (!kbd || !kbd->read) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u); /* skip when absent */
+		return;
+	}
+
+	/* Inject a synthetic press of KEY_A (Linux keycode 30, also PS/2
+	 * set-1 'a' = 0x1E = 30). The evdev push helpers do not synthesise
+	 * SYN_REPORT; emit one explicitly so kbdev's wait queue wakes. */
+	kbdev_push_event(EV_KEY, 30u, 1);
+	kbdev_push_event(EV_SYN, SYN_REPORT, 0);
+
+	k_memset(&evt, 0xff, sizeof(evt));
+	rc = kbd->read(0u, (uint8_t *)&evt, (uint32_t)sizeof(evt));
+	KTEST_ASSERT_EQ(tc, (uint32_t)rc, (uint32_t)sizeof(evt));
+	KTEST_EXPECT_EQ(tc, (uint32_t)evt.type, (uint32_t)EV_KEY);
+	KTEST_EXPECT_EQ(tc, (uint32_t)evt.code, 30u);
+	KTEST_EXPECT_EQ(tc, (uint32_t)evt.value, 1u);
+
+	/* Drain the SYN we emitted so it does not leak into the next test. */
+	(void)kbd->read(0u, (uint8_t *)&evt, (uint32_t)sizeof(evt));
+}
+
+static void test_arm64_virtio_mouse_event_to_mousedev(ktest_case_t *tc)
+{
+	const chardev_ops_t *mouse = chardev_get("mouse");
+	input_event_t evt;
+	int rc;
+
+	if (!mouse || !mouse->read) {
+		KTEST_EXPECT_EQ(tc, 0u, 0u);
+		return;
+	}
+
+	/* Inject a synthetic relative-X motion event. */
+	mousedev_push_event(EV_REL, REL_X, 5);
+	mousedev_push_event(EV_SYN, SYN_REPORT, 0);
+
+	k_memset(&evt, 0xff, sizeof(evt));
+	rc = mouse->read(0u, (uint8_t *)&evt, (uint32_t)sizeof(evt));
+	KTEST_ASSERT_EQ(tc, (uint32_t)rc, (uint32_t)sizeof(evt));
+	KTEST_EXPECT_EQ(tc, (uint32_t)evt.type, (uint32_t)EV_REL);
+	KTEST_EXPECT_EQ(tc, (uint32_t)evt.code, (uint32_t)REL_X);
+	KTEST_EXPECT_EQ(tc, (uint32_t)evt.value, 5u);
+
+	(void)mouse->read(0u, (uint8_t *)&evt, (uint32_t)sizeof(evt));
+}
+
 #endif /* DRUNIX_ARM64_PLATFORM_VIRT */
 
 /* FDT-parser tests. Phase 1 M2.4a / FR-002. The snapshot blob is a
@@ -701,6 +776,9 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_ramfb_kernel_alias_is_normal_nc),
     KTEST_CASE(test_arm64_fbdev_chardev_published),
     KTEST_CASE(test_arm64_fbdev_geometry_matches_ramfb_config),
+    KTEST_CASE(test_arm64_virtio_input_devices_enumerated),
+    KTEST_CASE(test_arm64_virtio_keyboard_event_to_kbdev),
+    KTEST_CASE(test_arm64_virtio_mouse_event_to_mousedev),
 #endif
 };
 

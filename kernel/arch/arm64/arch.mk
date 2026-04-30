@@ -60,6 +60,7 @@ ARM_PLATFORM_OBJS := kernel/arch/arm64/platform/virt/dma.o \
                      kernel/arch/arm64/platform/virt/stubs.o \
                      kernel/arch/arm64/platform/virt/uart.o \
                      kernel/arch/arm64/platform/virt/virtio_blk.o \
+                     kernel/arch/arm64/platform/virt/virtio_input.o \
                      kernel/arch/arm64/platform/virt/virtio_mmio.o \
                      kernel/arch/arm64/platform/virt/virtio_queue.o
 else
@@ -113,6 +114,7 @@ ARM_SHARED_KOBJS := kernel/lib/klog.arm64.o \
                     kernel/blk/bcache.arm64.o \
                     kernel/drivers/chardev.arm64.o \
                     kernel/drivers/fbdev.arm64.o \
+                    kernel/drivers/inputdev.arm64.o \
                     kernel/drivers/tty.arm64.o \
                     kernel/drivers/wmdev.arm64.o \
                     kernel/proc/elf.arm64.o \

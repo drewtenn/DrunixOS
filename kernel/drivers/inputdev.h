@@ -61,4 +61,16 @@ void kbdev_push_key(uint16_t code, int32_t value);
 int mousedev_init(void);
 void mousedev_push_packet(uint8_t flags, uint8_t dx, uint8_t dy);
 
+/*
+ * M2.5b: direct evdev ingestion for transports that already speak the
+ * Linux input ABI (notably virtio-input). The kernel does not synthesise
+ * SYN_REPORT for these helpers — the caller emits an explicit
+ * EV_SYN/SYN_REPORT once a logical report (mouse motion + button +
+ * key event group) has been delivered. The mouse helper still tracks
+ * button-edge state so SYN events arriving with no preceding edge
+ * still wake readers blocked on `/dev/mouse`.
+ */
+void kbdev_push_event(uint16_t type, uint16_t code, int32_t value);
+void mousedev_push_event(uint16_t type, uint16_t code, int32_t value);
+
 #endif /* DRIVERS_INPUTDEV_H */

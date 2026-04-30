@@ -285,3 +285,41 @@ int mousedev_init(void)
 	mouse_ring.prev_buttons = 0;
 	return chardev_register("mouse", &mousedev_ops);
 }
+
+void kbdev_push_event(uint16_t type, uint16_t code, int32_t value)
+{
+	uint32_t sec = arch_time_unix_seconds();
+	uint32_t usec = arch_time_uptime_ticks();
+
+	evt_ring_emit(kbd_ring.buf,
+	              KBD_RING_RECORDS,
+	              &kbd_ring.head,
+	              &kbd_ring.tail,
+	              &kbd_ring.count,
+	              type,
+	              code,
+	              value,
+	              sec,
+	              usec);
+	if (type == EV_SYN && code == SYN_REPORT)
+		sched_wake_all(&kbd_ring.waiters);
+}
+
+void mousedev_push_event(uint16_t type, uint16_t code, int32_t value)
+{
+	uint32_t sec = arch_time_unix_seconds();
+	uint32_t usec = arch_time_uptime_ticks();
+
+	evt_ring_emit(mouse_ring.buf,
+	              MOUSE_RING_RECORDS,
+	              &mouse_ring.head,
+	              &mouse_ring.tail,
+	              &mouse_ring.count,
+	              type,
+	              code,
+	              value,
+	              sec,
+	              usec);
+	if (type == EV_SYN && code == SYN_REPORT)
+		sched_wake_all(&mouse_ring.waiters);
+}

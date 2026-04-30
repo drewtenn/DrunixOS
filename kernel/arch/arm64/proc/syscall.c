@@ -597,6 +597,9 @@ uint64_t syscall_dispatch_from_frame(arch_trap_frame_t *frame)
 		    (uint32_t)arch_syscall_arg1(frame),
 		    (uint32_t)arch_syscall_arg2(frame)));
 		break;
+	case SYS_DRUNIX_DISPLAY_CLAIM:
+		ret = arm64_syscall_ret32(syscall_case_drunix_display_claim());
+		break;
 	case ARM64_LINUX_SYS_PRLIMIT64:
 		ret = arm64_syscall_ret32(syscall_case_prlimit64(
 		    (uint32_t)arch_syscall_arg0(frame),
