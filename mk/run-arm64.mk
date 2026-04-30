@@ -12,14 +12,19 @@ test-all: test-headless test-halt test-threadtest
 run-grub-menu run-stdio: run
 
 ifeq ($(PLATFORM),virt)
-# QEMU `-M virt,gic-version=3` is the v1.2 GPU/media MVP test machine. M0
-# only needs PL011 stdio; no disk image, no USB keyboard. `-nographic`
-# routes PL011 to the controlling terminal and lets Ctrl-A x exit cleanly.
-build-virt: kernel-arm64.elf
+# QEMU `-M virt,gic-version=3` is the v1.2 GPU/media MVP test machine.
+# M2.4c attaches img/disk.img via virtio-blk-device so the run target
+# boots to a TTY shell on /dev/sda1. virtio-blk-device exposes the raw
+# bytes of the same MBR-wrapped ext3 image used by raspi3b — no separate
+# arm64-virt disk artefact. `-nographic` routes PL011 to the controlling
+# terminal and lets Ctrl-A x exit cleanly.
+build-virt: kernel-arm64.elf $(ROOT_DISK_IMG)
 
 run: build-virt | $(LOG_DIR)
 	$(QEMU_ARM) -M virt,gic-version=3 -cpu cortex-a53 -smp 1 -m 1G \
 	    -kernel kernel-arm64.elf \
+	    -drive file=$(ROOT_DISK_IMG),if=none,format=raw,id=hd0 \
+	    -device virtio-blk-device,drive=hd0 \
 	    -nographic -no-reboot
 
 run-fresh: run

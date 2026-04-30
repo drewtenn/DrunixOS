@@ -451,7 +451,10 @@ INTENTS: tuple[TestIntent, ...] = (
                 "KTEST=1 kernel disk",
                 r"KTEST.*SUMMARY pass=[0-9][0-9]* fail=0",
             ),
-            "arm64": ("python3 tools/test_arm64_ktest.py",),
+            "arm64": (
+                "python3 tools/test_arm64_ktest.py --platform raspi3b",
+                "python3 tools/test_arm64_ktest.py --platform virt",
+            ),
         },
     ),
     TestIntent(
@@ -1042,6 +1045,7 @@ INTENTS: tuple[TestIntent, ...] = (
                         "test_arm64_virt_layout_uses_fdt_memory",
                         "test_arm64_virt_classifier_categorises_ram",
                         "test_arm64_virt_dma_cache_clean_at_pool_address",
+                        "test_arm64_virt_root_mounted_as_ext3",
                     ),
                 ),
                 SourceMarkers(

@@ -38,7 +38,8 @@ check-filesystem-init:
 	python3 tools/test_arm64_filesystem_init.py
 
 check-kernel-unit:
-	python3 tools/test_arm64_ktest.py
+	python3 tools/test_arm64_ktest.py --platform raspi3b
+	python3 tools/test_arm64_ktest.py --platform virt
 
 check-syscall-parity:
 	python3 tools/test_arm64_syscall_parity.py

@@ -1,6 +1,8 @@
-# Hard-disk images. disk.img is the primary root disk: ATA master on x86 and
-# SD media for the Pi EMMC controller on arm64. ROOT_FS=dufs builds sda as DUFS;
-# the default builds a deterministic Linux-compatible ext3 root partition.
+# Hard-disk images. disk.img is the primary root disk: ATA master on x86,
+# SD media for the Pi EMMC controller on arm64 raspi3b, and a virtio-blk
+# device on arm64 virt (M2.4c reuses the same MBR-wrapped image; the raw
+# partition layout is identical). ROOT_FS=dufs builds sda as DUFS; the
+# default builds a deterministic Linux-compatible ext3 root partition.
 ifeq ($(ARCH),arm64)
 ifeq ($(ROOT_FS),dufs)
 disk.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf $(ARM_BUSYBOX_ROOTFS_DEPS) tools/hello.txt tools/readme.txt tools/wallpaper.jpg tools/mkfs.py .disk-sectors-flag .include-busybox-flag .disk-layout-flag

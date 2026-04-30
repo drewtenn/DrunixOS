@@ -6,6 +6,13 @@
 #include "ktest.h"
 #include "kheap.h"
 
+/* Per-arch heap accessors. Static-layout ports (x86, raspi3b) match the
+ * HEAP_START/HEAP_END constants exactly; dynamic-layout ports (arm64
+ * virt) report the FDT-derived range here. Use these instead of the
+ * static constants so tests work on every port. */
+extern uint32_t kheap_arch_base(void);
+extern uint32_t kheap_arch_size(void);
+
 /*
  * Kernel heap unit tests.
  *
@@ -31,10 +38,12 @@ static void test_kmalloc_4byte_aligned(ktest_case_t *tc)
 
 static void test_kmalloc_within_heap_bounds(ktest_case_t *tc)
 {
+	uint32_t heap_base = kheap_arch_base();
+	uint32_t heap_end = heap_base + kheap_arch_size();
 	void *p = kmalloc(64);
 	KTEST_ASSERT_NOT_NULL(tc, p);
-	KTEST_EXPECT_GE(tc, (uint32_t)(uintptr_t)p, HEAP_START);
-	KTEST_EXPECT_LE(tc, (uint32_t)(uintptr_t)p, HEAP_END - 64u);
+	KTEST_EXPECT_GE(tc, (uint32_t)(uintptr_t)p, heap_base);
+	KTEST_EXPECT_LE(tc, (uint32_t)(uintptr_t)p, heap_end - 64u);
 	kfree(p);
 }
 

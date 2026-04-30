@@ -29,7 +29,11 @@ def qemu_binary() -> str:
     return os.environ.get("QEMU_ARM", "qemu-system-aarch64")
 
 
-def qemu_machine() -> str:
+def qemu_machine(platform: str = "raspi3b") -> str:
+    if platform == "virt":
+        return "virt,gic-version=3"
+    if platform != "raspi3b":
+        raise SystemExit(f"unknown arm64 platform {platform!r}")
     return os.environ.get("QEMU_ARM_MACHINE", "raspi3b")
 
 
@@ -58,12 +62,27 @@ def refresh_boot_image() -> None:
         path.unlink(missing_ok=True)
 
 
-def qemu_command(serial_log: Path) -> list[str]:
+def qemu_command(serial_log: Path, platform: str = "raspi3b") -> list[str]:
     """The canonical headless QEMU command-line for ARM64 boots."""
+    if platform == "virt":
+        return [
+            qemu_binary(),
+            "-display", "none",
+            "-M", qemu_machine(platform),
+            "-cpu", "cortex-a53",
+            "-smp", "1",
+            "-m", "1G",
+            "-kernel", "kernel-arm64.elf",
+            "-drive", "file=img/disk.img,if=none,format=raw,id=hd0",
+            "-device", "virtio-blk-device,drive=hd0",
+            "-serial", f"file:{serial_log}",
+            "-monitor", "none",
+            "-no-reboot",
+        ]
     return [
         qemu_binary(),
         "-display", "none",
-        "-M", qemu_machine(),
+        "-M", qemu_machine(platform),
         "-kernel", "kernel-arm64.elf",
         "-drive", "if=sd,format=raw,file=img/disk.img",
         "-serial", "null",
@@ -84,7 +103,8 @@ class BootResult:
 def boot_and_wait(serial_log: Path,
                   stderr_log: Path,
                   done: Callable[[str], bool],
-                  timeout: float = 20.0) -> BootResult:
+                  timeout: float = 20.0,
+                  platform: str = "raspi3b") -> BootResult:
     """Boot the kernel under QEMU; poll the serial log until `done(text)`.
 
     `done` is invoked with the current contents of the serial log on
@@ -101,7 +121,7 @@ def boot_and_wait(serial_log: Path,
     with stderr_log.open("w") as stderr:
         try:
             proc = subprocess.Popen(
-                qemu_command(serial_log),
+                qemu_command(serial_log, platform),
                 cwd=ROOT,
                 stdout=subprocess.DEVNULL,
                 stderr=stderr,

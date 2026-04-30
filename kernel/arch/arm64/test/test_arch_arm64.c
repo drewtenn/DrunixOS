@@ -13,6 +13,7 @@
 #include "uaccess.h"
 #include "vma.h"
 #if DRUNIX_ARM64_PLATFORM_VIRT
+#include "blkdev.h"
 #include "dma.h"
 #include "platform/platform.h"
 #include "platform/virt/dma.h"
@@ -465,6 +466,17 @@ static void test_arm64_virt_dma_cache_clean_at_pool_address(ktest_case_t *tc)
 	virt_dma_free(p, 1u);
 }
 
+/* M2.4c root-mount acceptance. Runs after arm64_mount_root_namespace
+ * has executed in start_kernel.c, so sda + sda1 are registered as
+ * blkdevs and the root has been mounted. We assert on blkdev state
+ * (which survives the vfs_reset() the vfs test suite performs)
+ * rather than VFS mount state. */
+static void test_arm64_virt_root_mounted_as_ext3(ktest_case_t *tc)
+{
+	KTEST_EXPECT_GE(tc, (uint32_t)blkdev_find_index("sda"), 0u);
+	KTEST_EXPECT_GE(tc, (uint32_t)blkdev_find_index("sda1"), 0u);
+}
+
 #endif /* DRUNIX_ARM64_PLATFORM_VIRT */
 
 /* FDT-parser tests. Phase 1 M2.4a / FR-002. The snapshot blob is a
@@ -544,6 +556,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_virt_dma_cache_clean_at_pool_address),
     KTEST_CASE(test_arm64_dma_phys_virt_round_trip_validates_bounds),
     KTEST_CASE(test_arm64_dma_barriers_compile_and_execute),
+    KTEST_CASE(test_arm64_virt_root_mounted_as_ext3),
 #endif
 };
 

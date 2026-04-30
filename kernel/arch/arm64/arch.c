@@ -108,6 +108,19 @@ void arch_mm_init(void)
 		pmm_mark_used((uint32_t)kernel_start,
 		              (uint32_t)(kernel_end - kernel_start));
 	}
+	/* Reserve everything between RAM base and the kernel image: this
+	 * is where boot.S sets the EL1 stack (sp = _start, growing down).
+	 * Without this, pmm_alloc_page can hand out pages that overlap
+	 * the boot stack, and arm64_temp_map (identity-mapped) lets a
+	 * subsequent k_memset zero our own kernel stack frame — including
+	 * any caller-saved spills like argv.  raspi3b's pmm_init already
+	 * reserves the low 512 KiB; this catches the equivalent gap on
+	 * virt and any future port whose RAM starts below the image. */
+	if (kernel_start > (uintptr_t)l->ram_base) {
+		pmm_mark_used(
+		    (uint32_t)l->ram_base,
+		    (uint32_t)(kernel_start - (uintptr_t)l->ram_base));
+	}
 	/* Heap is owned by kheap_init; mark its range used so PMM does
 	 * not hand the same pages back. Replaces the pmm_mark_used call
 	 * that previously sat in start_kernel.c on the raspi3b path. */
