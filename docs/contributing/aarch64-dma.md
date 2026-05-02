@@ -171,6 +171,80 @@ will fail this check, and the fix is at the driver site — that is the
 whole point of the "drivers call these helpers in M2.x even though
 they do nothing" discipline.
 
+## Worked example — virtio-net RX (M4)
+
+The virtio-net driver (`kernel/arch/arm64/platform/virt/virtio_net.c`)
+uses long-lived buffers that round-trip in both directions: the device
+writes received frames into them, and the driver reads the bytes out
+to a driver-local ring before recycling. This is the first driver in
+the tree where an RX buffer's lifetime is the device's lifetime, not
+a single request, so the cache discipline matters more than for
+virtio-blk's per-request buffers.
+
+Three rules that emerged from the M4 audit:
+
+1. **Pre-invalidate before initial hand-off.** When the receiveq is
+   primed for the first time (before `DRIVER_OK`), each RX buffer is
+   invalidated before the descriptor is published. Without this, a
+   stale dirty cache line could later evict over the device's DMA
+   write and clobber a real packet.
+
+   ```c
+   for (uint32_t i = 0; i < VIRTIO_NET_RING_BUFFERS; i++) {
+       uint16_t head = virtq_alloc_chain(&dev->rx_queue, 1u);
+       arm64_dma_cache_invalidate(rx_buffers[head], BUFFER_BYTES);
+       virtio_net_rx_refill_one(head);     /* writes desc + cleans + wmb */
+   }
+   ```
+
+2. **Invalidate before any header byte read on the IRQ path.**
+   Mirroring the standard non-coherent-DMA RX rule, but enforced
+   structurally rather than by comment. The driver defines a
+   file-scope opaque token type that the publish path requires; the
+   only function that constructs the token also performs the
+   invalidate. A bypass would have to fabricate the token, which is
+   visible in code review.
+
+   ```c
+   typedef struct {                    /* file-scope; no public ctor */
+       const uint8_t *frame;
+       uint32_t len;
+   } virtio_net_rx_token_t;
+
+   static int virtio_net_rx_invalidate_and_take(uint16_t buf_index,
+                                                uint32_t used_len,
+                                                virtio_net_rx_token_t *out)
+   {
+       uint8_t *raw = rx_buffers[buf_index];
+       arm64_dma_cache_invalidate(raw, used_len);   /* first */
+       /* ... validate length, populate out, return 1 ... */
+   }
+
+   static void virtio_net_publish_frame(const virtio_net_rx_token_t *t);
+   ```
+
+3. **DMA-pool-only buffers, asserted non-zero at slice time.**
+   `virt_virt_to_phys()` silently returns 0 for any pointer outside
+   `virt_dma_alloc`. The slicer iterates every per-buffer pointer and
+   asserts the phys translation is non-zero, so a regression to
+   stack/static/`kheap` memory shows up as a hard failure instead of
+   as silent device writes to physical 0.
+
+   ```c
+   for (uint32_t i = 0; i < RING_BUFFERS; i++) {
+       uint8_t *buf = (uint8_t *)pool + i * BUFFER_BYTES;
+       uint64_t phys = virt_virt_to_phys(buf);
+       if (phys == 0u)
+           return -1;     /* sentinel: pool wasn't from virt_dma_alloc */
+       out_bufs[i] = buf;
+       out_phys[i] = phys;
+   }
+   ```
+
+The TX path also follows the standard rule: clean the buffer (header +
+frame bytes) to PoC before submitting, then never read from it again
+until the device returns the descriptor on the used ring.
+
 ## References
 
 - ARM Architecture Reference Manual (Armv8-A) §B2.3 (memory ordering),
@@ -179,4 +253,8 @@ they do nothing" discipline.
 - `kernel/arch/arm64/dma.h` — barrier and cache-maintenance helpers.
 - `kernel/arch/arm64/platform/virt/dma.h` — DMA-safe page allocator.
 - `kernel/arch/arm64/platform/virt/virtio_queue.c` — worked example.
-- `kernel/arch/arm64/platform/virt/virtio_blk.c` — worked example.
+- `kernel/arch/arm64/platform/virt/virtio_blk.c` — worked example
+  (single-request lifetime).
+- `kernel/arch/arm64/platform/virt/virtio_net.c` — worked example
+  (long-lived RX buffers, structural cache discipline).
+- `docs/design/m4-virtio-net-raw-frames.md` — M4 design doc.
