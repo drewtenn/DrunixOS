@@ -1,0 +1,15 @@
+# Drunix Pi 5 boot config.
+#
+# Drop this file on the FAT32 boot partition of a Raspberry Pi 5 SD card,
+# alongside Drunix's `kernel8.img` (produced by
+# `make ARCH=arm64 PLATFORM=raspi5 kernel8.img`) and the vendor firmware
+# blobs from raspberrypi/firmware on GitHub (see boot-pi5/README.md for
+# which files and where to fetch them).
+#
+# Boot a USB-to-UART adapter on the 40-pin GPIO header pins 8 (TXD),
+# 10 (RXD), and any ground pin to see the kernel banner over RP1 UART0.
+
+arm_64bit=1
+kernel=kernel8.img
+enable_uart=1
+uart_2ndstage=1
