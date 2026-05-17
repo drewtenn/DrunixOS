@@ -70,7 +70,11 @@ static void gicd_disable_all_spis(void)
 {
 	uint32_t i;
 
-	for (i = 32u; i < 256u; i += 32u) {
+	/* GIC-400 supports up to 480 SPIs. Pi 5 firmware may leave some
+	 * non-secure SPIs enabled on handoff; mask the full range so the
+	 * kernel takes a clean slate even before we start wiring SPI
+	 * handlers in a follow-on milestone. */
+	for (i = 32u; i < 480u; i += 32u) {
 		GICD_REG(GICD_ICENABLER_OFFSET + (i / 8u)) = 0xFFFFFFFFu;
 		GICD_REG(GICD_ICPENDR_OFFSET + (i / 8u)) = 0xFFFFFFFFu;
 	}
@@ -89,7 +93,18 @@ static void gicd_init(void)
 	GICD_REG(GICD_ISENABLER_OFFSET) = 1u << PLATFORM_RASPI5_TIMER_INTID;
 
 	dsb_sy();
-	GICD_REG(GICD_CTLR_OFFSET) = 1u; /* EnableGrp0 */
+	/* GIC-400 with Security Extensions exposes different GICD_CTLR
+	 * layouts to secure and non-secure accesses. In the non-secure
+	 * view (which is what Pi 5 firmware hands us after TF-A drops to
+	 * EL1 NS), bit 0 is EnableGrp1NS; bit 1 is RES0. In the secure
+	 * view bit 0 is EnableGrp0 and bit 1 is EnableGrp1NS. Writing
+	 * 0x3 sets both bits — harmlessly RES0 in NS view, correctly
+	 * enabling both groups in secure view, so the driver works no
+	 * matter which state firmware leaves us in. The non-secure
+	 * physical timer fires as Group 1 NS, so EnableGrp1NS is the bit
+	 * that actually matters here. (Reviewer caught the original
+	 * 0x1-as-EnableGrp0-only encoding before flashing real hardware.) */
+	GICD_REG(GICD_CTLR_OFFSET) = 0x3u;
 	dsb_sy();
 }
 
@@ -97,7 +112,10 @@ static void gicc_init(void)
 {
 	GICC_REG(GICC_PMR_OFFSET) = 0xFFu;
 	GICC_REG(GICC_BPR_OFFSET) = 0u;
-	GICC_REG(GICC_CTLR_OFFSET) = 1u;
+	/* GICC_CTLR.EnableGrp1 (bit 0 in NS view, bit 1 in secure view)
+	 * must be set for Group 1 NS interrupts to reach the CPU. Write
+	 * 0x3 for the same dual-view safety as GICD_CTLR above. */
+	GICC_REG(GICC_CTLR_OFFSET) = 0x3u;
 	isb();
 }
 

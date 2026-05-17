@@ -381,6 +381,17 @@ static void arm64_mmu_build_kernel_tables(void)
 	 * the BCM2712 SoC peripheral window (L1[65]) and PCIe outbound window
 	 * (L1[124]). virt and raspi3b return 0 blocks, so the loop is a no-op
 	 * for them.
+	 *
+	 * No DSB is needed after these writes: arm64_mmu_init enables the
+	 * MMU later via arm64_mmu_enable_kernel_table, which loads TTBR0
+	 * and issues an ISB. The page-table walker hasn't observed
+	 * g_kernel_l1 yet, so descriptor visibility is established at
+	 * TTBR0 load time without an explicit barrier here.
+	 *
+	 * L1[0] and L1[1] are reserved for the identity-mapped low-RAM
+	 * region the builder just wrote above; skip them so a platform
+	 * returning a bad virt cannot silently clobber the kernel image
+	 * mapping.
 	 */
 	{
 		const platform_kernel_block_t *blocks = 0;
@@ -391,6 +402,8 @@ static void arm64_mmu_build_kernel_tables(void)
 			               (ARM64_MMU_ENTRIES - 1u);
 			arm64_mmu_leaf_attr_t attr = ARM64_MMU_LEAF_DEVICE;
 
+			if (l1i < 2u)
+				continue;
 			if (blocks[i].attr == PLATFORM_MM_NORMAL)
 				attr = ARM64_MMU_LEAF_NORMAL;
 			else if (blocks[i].attr == PLATFORM_MM_FRAMEBUFFER)
