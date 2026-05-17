@@ -40,3 +40,10 @@ const platform_ram_layout_t *platform_ram_layout(void)
 {
 	return &g_layout;
 }
+
+uint32_t platform_extra_kernel_blocks(const platform_kernel_block_t **out)
+{
+	if (out)
+		*out = 0;
+	return 0;
+}

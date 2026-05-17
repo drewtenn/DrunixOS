@@ -72,4 +72,27 @@ typedef struct platform_ram_layout {
 
 const platform_ram_layout_t *platform_ram_layout(void);
 
+/*
+ * Raspi 5 bring-up: extra kernel page-table blocks the platform wants
+ * installed in the L1 of the kernel address space at boot. Each entry
+ * is a 1 GiB block descriptor for an MMIO window that lives outside
+ * the 0..2 GiB region covered by L1[0]/L1[1] (which the MMU builder
+ * already lays down identity-mapped from `platform_mm_classify`).
+ *
+ * `virt` is `phys` for identity mapping. Pi 5 needs the BCM2712 SoC
+ * window at PA 0x10_4000_0000 (`uart10`, GIC-400) and optionally the
+ * PCIe outbound window at PA 0x1f_0000_0000 (RP1 UART0). raspi3b and
+ * virt return 0 blocks and behave exactly as before.
+ *
+ * Both `virt` and `phys` must be 1 GiB-aligned. `attr` selects the
+ * leaf MAIR slot — PLATFORM_MM_DEVICE for MMIO.
+ */
+typedef struct platform_kernel_block {
+	uint64_t virt;
+	uint64_t phys;
+	platform_mm_attr_t attr;
+} platform_kernel_block_t;
+
+uint32_t platform_extra_kernel_blocks(const platform_kernel_block_t **out);
+
 #endif

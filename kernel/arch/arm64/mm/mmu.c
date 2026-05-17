@@ -10,8 +10,32 @@
 #include <stdint.h>
 
 #define ARM64_MMU_ENTRIES 512u
-#define ARM64_MMU_VA_BITS 32u
+/*
+ * VA bits = 39 so TTBR0 can reach the BCM2712 SoC peripheral window at
+ * PA 0x10_4000_0000+ and the Pi 5 PCIe outbound window at 0x1f_0000_0000+.
+ * With 4 KiB granule, T0SZ in [25,33] keeps the initial lookup level at
+ * L1 (ARM ARM D5.2.3); existing virt/raspi3b mappings live in L1[0..1]
+ * exactly as before, with L1[2..511] now reachable for platform-supplied
+ * MMIO blocks via platform_extra_kernel_blocks().
+ */
+#define ARM64_MMU_VA_BITS 39u
 #define ARM64_MMU_T0SZ (64u - ARM64_MMU_VA_BITS)
+/*
+ * TCR_EL1.IPS controls the output physical-address size for stage-1
+ * translation. Platforms with peripherals above the 4 GiB boundary
+ * (raspi5: BCM2712 SoC window at 0x10_4000_0000; PCIe outbound at
+ * 0x1f_0000_0000) need IPS=2 (40-bit PA). Programming IPS above the
+ * CPU's ID_AA64MMFR0_EL1.PARange is CONSTRAINED UNPREDICTABLE, and
+ * QEMU's emulated cortex-a53 reports PARange=1 (36-bit), which made
+ * virt/raspi3b regress when IPS was raised unconditionally — keep the
+ * default at 0 (32-bit) and only raise it where the hardware actually
+ * requires it.
+ */
+#if defined(DRUNIX_ARM64_PLATFORM_RASPI5)
+#define ARM64_MMU_TCR_IPS (2ull << 32)
+#else
+#define ARM64_MMU_TCR_IPS (0ull << 32)
+#endif
 
 #define ARM64_MMU_L1_SHIFT 30u
 #define ARM64_MMU_L2_SHIFT 21u
@@ -55,7 +79,7 @@
 #define ARM64_MMU_MAIR_EL1 0x00000000004404FFull
 #define ARM64_MMU_TCR_EL1                                                      \
 	((uint64_t)ARM64_MMU_T0SZ | (1ull << 8) | (1ull << 10) | (3ull << 12) |    \
-	 (1ull << 23))
+	 (1ull << 23) | ARM64_MMU_TCR_IPS)
 
 typedef uint64_t arm64_mmu_desc_t;
 
@@ -350,6 +374,31 @@ static void arm64_mmu_build_kernel_tables(void)
 	if (arm64_mmu_block_is_present(0x40000000ull)) {
 		g_kernel_l1[1] = arm64_mmu_kernel_leaf_desc(
 		    0x40000000ull, 1, arm64_mmu_block_attr(0x40000000ull));
+	}
+
+	/*
+	 * Extra L1 blocks from the platform — used by raspi5 to identity-map
+	 * the BCM2712 SoC peripheral window (L1[65]) and PCIe outbound window
+	 * (L1[124]). virt and raspi3b return 0 blocks, so the loop is a no-op
+	 * for them.
+	 */
+	{
+		const platform_kernel_block_t *blocks = 0;
+		uint32_t n = platform_extra_kernel_blocks(&blocks);
+
+		for (uint32_t i = 0; i < n; i++) {
+			uint32_t l1i = (uint32_t)(blocks[i].virt >> ARM64_MMU_L1_SHIFT) &
+			               (ARM64_MMU_ENTRIES - 1u);
+			arm64_mmu_leaf_attr_t attr = ARM64_MMU_LEAF_DEVICE;
+
+			if (blocks[i].attr == PLATFORM_MM_NORMAL)
+				attr = ARM64_MMU_LEAF_NORMAL;
+			else if (blocks[i].attr == PLATFORM_MM_FRAMEBUFFER)
+				attr = ARM64_MMU_LEAF_NC;
+
+			g_kernel_l1[l1i] =
+			    arm64_mmu_kernel_leaf_desc(blocks[i].phys, 1, attr);
+		}
 	}
 }
 
