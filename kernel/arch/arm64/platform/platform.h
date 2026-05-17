@@ -8,6 +8,8 @@
 
 #if defined(DRUNIX_ARM64_PLATFORM_VIRT)
 #include "virt/platform.h"
+#elif defined(DRUNIX_ARM64_PLATFORM_RASPI5)
+#include "raspi5/platform.h"
 #else
 #include "raspi3b/platform.h"
 #endif

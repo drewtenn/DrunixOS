@@ -81,6 +81,7 @@ static void arm64_heartbeat_tick(void)
 	g_heartbeat_ticks++;
 }
 
+#if !DRUNIX_ARM64_PLATFORM_RASPI5
 static void arm64_timer_tick(void)
 {
 	if (sched_current())
@@ -103,6 +104,7 @@ static void arm64_timer_tick(void)
 	}
 #endif
 }
+#endif /* !DRUNIX_ARM64_PLATFORM_RASPI5 */
 
 static void arm64_terminal_write(const char *buf, uint32_t len, void *ctx)
 {
@@ -139,6 +141,7 @@ void arm64_console_loop(void)
 	}
 }
 
+#if !DRUNIX_ARM64_PLATFORM_RASPI5
 static void arm64_mount_root_namespace(void)
 {
 	int sda_idx;
@@ -234,6 +237,19 @@ static void arm64_launch_init_or_fallback(void)
 	}
 	arch_process_launch(init_proc);
 }
+#endif /* !DRUNIX_ARM64_PLATFORM_RASPI5 */
+
+#if DRUNIX_ARM64_PLATFORM_RASPI5
+/* Heartbeat-only timer tick for raspi5 MVP. The scheduler isn't
+ * initialized in this milestone, so arm64_timer_tick's sched_tick call
+ * would crash. raspi5 just counts ticks and lets the console loop run
+ * polled. M5.3+ will swap this for the full timer handler once init
+ * launch is wired in. */
+static void arm64_raspi5_timer_tick(void)
+{
+	arm64_heartbeat_tick();
+}
+#endif
 
 #if DRUNIX_ARM64_PLATFORM_VIRT && DRUNIX_ARM64_VIRT_NO_INIT
 /* Heartbeat handler retained for the emergency-rollback path. The
@@ -405,6 +421,27 @@ void arm64_start_kernel(void)
 #endif
 	arm64_launch_init_or_fallback();
 #endif /* DRUNIX_ARM64_VIRT_NO_INIT */
+#elif DRUNIX_ARM64_PLATFORM_RASPI5
+	/* M5 MVP: serial-only boot. No virtio, no SD root, no framebuffer.
+	 * Bring up MMU, heap, GIC-400, generic timer, and the console
+	 * terminal that polls the PL011 — then idle. Real init launch and
+	 * SD root mount land in a follow-up milestone. */
+	arch_mm_init();
+	kheap_init();
+
+	arch_irq_init();
+	arch_timer_set_periodic_handler(arm64_raspi5_timer_tick);
+	arch_timer_start(SCHED_HZ);
+	arch_interrupts_enable();
+	tty_init();
+
+	console_terminal_init(&g_console_terminal, &host);
+	console_terminal_start(&g_console_terminal);
+
+	platform_uart_puts(
+	    "Drunix raspi5 MVP: MMU + GIC-400 + generic timer up. "
+	    "Polling UART for input.\n");
+	arm64_console_loop();
 #else  /* !DRUNIX_ARM64_PLATFORM_VIRT (raspi3b) */
 	arch_mm_init();
 	kheap_init();

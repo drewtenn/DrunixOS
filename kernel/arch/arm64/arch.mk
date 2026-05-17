@@ -8,14 +8,21 @@ ROOT_FS ?= ext3
 BUILD_MODE ?= production
 
 # Platform selector. Default raspi3b preserves existing behavior; virt is the
-# QEMU `-M virt` machine added in 2026-04-29-gpu-h264-mvp.md Phase 1.
+# QEMU `-M virt` machine added in 2026-04-29-gpu-h264-mvp.md Phase 1; raspi5
+# is the BCM2712 Cortex-A76 board added in the M5 serial-shell bring-up.
 PLATFORM ?= raspi3b
 
 ifneq ($(PLATFORM),raspi3b)
 ifneq ($(PLATFORM),virt)
-$(error PLATFORM must be raspi3b or virt; got "$(PLATFORM)")
+ifneq ($(PLATFORM),raspi5)
+$(error PLATFORM must be raspi3b, virt, or raspi5; got "$(PLATFORM)")
 endif
 endif
+endif
+
+# raspi5 UART selector. Default is the 40-pin GPIO header path (RP1 UART0);
+# `RASPI5_UART=jstsh` flips to the Pi 5 debug JST-SH header (uart10).
+RASPI5_UART ?= rp1uart0
 
 ifeq ($(BUILD_MODE),debug)
 BUILD_OPT ?= -Og
@@ -34,6 +41,12 @@ ARM_CFLAGS ?= -ffreestanding -fno-stack-protector -fno-pic -fno-pie \
 ifeq ($(PLATFORM),virt)
 ARM_CFLAGS += -DDRUNIX_ARM64_PLATFORM_VIRT=1
 ARM_LINKER_LD := kernel/arch/arm64/linker.virt.ld
+else ifeq ($(PLATFORM),raspi5)
+ARM_CFLAGS += -DDRUNIX_ARM64_PLATFORM_RASPI5=1
+ifeq ($(RASPI5_UART),jstsh)
+ARM_CFLAGS += -DPLATFORM_RASPI5_UART_BASE=PLATFORM_RASPI5_UART10_BASE
+endif
+ARM_LINKER_LD := kernel/arch/arm64/linker.raspi5.ld
 else
 ARM_LINKER_LD := kernel/arch/arm64/linker.ld
 endif
@@ -78,6 +91,11 @@ ARM_PLATFORM_OBJS := kernel/arch/arm64/platform/virt/dma.o \
                      kernel/arch/arm64/platform/virt/virtio_mmio.o \
                      kernel/arch/arm64/platform/virt/virtio_net.o \
                      kernel/arch/arm64/platform/virt/virtio_queue.o
+else ifeq ($(PLATFORM),raspi5)
+ARM_PLATFORM_OBJS := kernel/arch/arm64/platform/raspi5/uart.o \
+                     kernel/arch/arm64/platform/raspi5/irq.o \
+                     kernel/arch/arm64/platform/raspi5/platform_mm.o \
+                     kernel/arch/arm64/platform/raspi5/stubs.o
 else
 ARM_PLATFORM_OBJS := kernel/arch/arm64/platform/raspi3b/uart.o \
                      kernel/arch/arm64/platform/raspi3b/irq.o \
