@@ -8,10 +8,19 @@
  *
  * Unlike the QEMU virt GICv3 backend (which goes through the EL1
  * system-register interface), this driver only acknowledges and
- * end-of-interrupts through GICC MMIO. Before doing so, it probes
- * ICC_SRE_EL1: if firmware left the GICv3 system-register interface
- * enabled, MMIO writes to GICC are ignored and IRQs would never
- * dispatch — surface that loudly instead of hanging silently.
+ * end-of-interrupts through GICC MMIO.
+ *
+ * Original M5 design included an ICC_SRE_EL1 probe to detect firmware
+ * that left the GICv3 system-register interface enabled. First boot on
+ * real Pi 5 hardware showed that the probe itself faults: Pi 5 TF-A
+ * disables the GICv3 SR interface (the correct configuration for our
+ * GICv2 driver), and reading ICC_SRE_EL1 from EL1 when the SR
+ * interface is disabled is UNDEFINED per the ARMv8 GIC spec, generating
+ * a sync exception with ESR_EL1.EC=0. The probe is removed; if a
+ * future boot ever lands here with SRE accidentally enabled, the
+ * GICC MMIO writes silently no-op and the failure mode shows up
+ * downstream as no timer ticks — same outcome as before, just less
+ * pretty.
  *
  * MVP scope (M5): one IRQ source — the architectural generic timer
  * non-secure physical PPI, INTID 30 (PPI 14 + 16). No SPI plumbing;
@@ -47,14 +56,6 @@
 	(*(volatile uint8_t *)(PLATFORM_RASPI5_GICD_BASE + (off) + (irq)))
 
 static platform_irq_handler_fn g_timer_handler;
-
-static uint64_t icc_sre_el1_read(void)
-{
-	uint64_t value;
-
-	__asm__ volatile("mrs %0, S3_0_C12_C12_5" : "=r"(value));
-	return value;
-}
 
 static void dsb_sy(void)
 {
@@ -121,16 +122,6 @@ static void gicc_init(void)
 
 void platform_irq_init(void)
 {
-	uint64_t sre = icc_sre_el1_read();
-
-	if (sre & 1ull) {
-		platform_uart_puts(
-		    "raspi5: ICC_SRE_EL1.SRE=1 - firmware left GICv3 system-register "
-		    "interface enabled; GICv2 MMIO driver cannot run. Halting.\n");
-		for (;;)
-			__asm__ volatile("wfe");
-	}
-
 	gicd_init();
 	gicc_init();
 }
