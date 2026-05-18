@@ -13,3 +13,19 @@ arm_64bit=1
 kernel=kernel8.img
 enable_uart=1
 uart_2ndstage=1
+
+# M7: HDMI framebuffer bring-up via the legacy VC4 property mailbox.
+# Forces the firmware to allocate exactly one 1024x768x32 framebuffer
+# even if no monitor is attached at boot, and ignores the alpha
+# channel so XRGB8888 reads back as a clean opaque image. Drunix's
+# arm64_video_init asks the firmware for the same geometry via
+# SET_PHYSICAL_SIZE / SET_DEPTH; these knobs are a belt-and-braces
+# layer that matches the firmware's pre-allocated framebuffer when
+# config.txt is read first, which makes HDMI come up the same way on
+# every cold boot regardless of monitor handshake timing.
+framebuffer_width=1024
+framebuffer_height=768
+framebuffer_depth=32
+framebuffer_ignore_alpha=1
+hdmi_force_hotplug=1
+max_framebuffers=1

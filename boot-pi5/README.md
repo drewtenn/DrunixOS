@@ -120,3 +120,29 @@ drunix$
 
 At the `drunix$` prompt you have a real `/bin/shell` (the rexy
 userspace shell) running on top of the ext3 root on the SD card.
+
+## What you should see (M7)
+
+With the M7 `config.txt` and an HDMI monitor attached, the bring-up
+sequence prints a few extra lines and the monitor lights up with
+the kernel text console:
+
+```
+raspi5 fb: bringup start
+raspi5 fb: mbox_base=0x000000107c013880
+raspi5 fb: bus_raw=0x........
+raspi5 fb: size=0x00300000
+raspi5 fb: pitch=0x00001000
+raspi5 fb: phys=0x00000000........
+raspi5 fb: ready (fb_text_console + /dev/fb0)
+Drunix raspi5: HDMI framebuffer + /dev/fb0 ready
+```
+
+If no monitor is attached, or if the firmware places the framebuffer
+above the 2 GiB linear-map ceiling Drunix currently enforces, the
+bring-up step prints `HDMI framebuffer unavailable (serial only)`
+and boot continues to the serial shell. No reboot needed; just
+attach the monitor and power-cycle.
+
+Input on the HDMI display still requires the serial console — Pi 5
+USB HID lands in M8.
