@@ -72,6 +72,39 @@
 #define RASPI5_PCIE_MISC_CTRL_OFFSET 0x4008u
 #define RASPI5_PCIE_MISC_CTRL_SETUP_BITS 0x00203480u
 
+/*
+ * BCM2712-specific AXI bridge handling. From the OpenWrt
+ * 950-0887-PCI-brcmstb patch for the rpi-6.12-derived tree:
+ * brcm_pcie_post_setup_bcm2712 programs four MISC-space
+ * registers that configure completion timeout, request/reply
+ * routing, and cfg-retry handling on the AXI <-> PCIe bridge.
+ * Without these, cfg READs to downstream devices on BCM2712
+ * silently return the controller's master-abort marker
+ * 0xdeaddead even when SCB_ACCESS_EN is set and the bridge
+ * bus-number register is programmed.
+ *
+ *   +0x40a4  PCIE_MISC_UBUS_CTRL     OR in bits 13 and 19
+ *                                    (timeout disables for the
+ *                                    PCIe-reply and cfg paths)
+ *   +0x4170  PCIE_MISC_UBUS_TIMEOUT  0xffffffff: max timeout for
+ *                                    the cfg/mem upstream path
+ *   +0x40a8  PCIE_MISC_UBUS_BAR1_CONFIG_REMAP
+ *                                    0x0B2D0000: AXI BAR1 remap
+ *                                    setup for downstream MEM
+ *                                    transactions
+ *   +0x405c  PCIE_MISC_AXI_READ_ERROR_DATA
+ *                                    0x0ABA0000: AXI read-error
+ *                                    completion data pattern
+ */
+#define RASPI5_PCIE_UBUS_CTRL_OFFSET 0x40a4u
+#define RASPI5_PCIE_UBUS_CTRL_OR_BITS 0x00082000u
+#define RASPI5_PCIE_UBUS_TIMEOUT_OFFSET 0x4170u
+#define RASPI5_PCIE_UBUS_TIMEOUT_VALUE 0xffffffffu
+#define RASPI5_PCIE_UBUS_BAR1_REMAP_OFFSET 0x40a8u
+#define RASPI5_PCIE_UBUS_BAR1_REMAP_VALUE 0x0b2d0000u
+#define RASPI5_PCIE_AXI_READ_ERR_OFFSET 0x405cu
+#define RASPI5_PCIE_AXI_READ_ERR_VALUE 0x0aba0000u
+
 #define RP1_PCI_BUS 1u
 #define RP1_PCI_DEV 0u
 #define RP1_PCI_FN 0u
@@ -239,6 +272,31 @@ int raspi5_pcie_probe_rp1(void)
 		raspi5_pcie_reg_write(RASPI5_PCIE_MISC_CTRL_OFFSET, misc);
 		misc = raspi5_pcie_reg_read(RASPI5_PCIE_MISC_CTRL_OFFSET);
 		raspi5_pcie_trace_u32("raspi5 pcie: misc_ctrl (post)", misc);
+	}
+
+	/* BCM2712 AXI <-> PCIe bridge handling. The four-register
+	 * sequence comes from brcm_pcie_post_setup_bcm2712 in the
+	 * Raspberry Pi 6.12 Linux fork. Without these, downstream cfg
+	 * reads return 0xdeaddead because the bridge times out the
+	 * cfg-cycle completion path. */
+	{
+		uint32_t ubus_ctrl =
+		    raspi5_pcie_reg_read(RASPI5_PCIE_UBUS_CTRL_OFFSET);
+		raspi5_pcie_trace_u32("raspi5 pcie: ubus_ctrl (pre)", ubus_ctrl);
+		ubus_ctrl |= RASPI5_PCIE_UBUS_CTRL_OR_BITS;
+		raspi5_pcie_reg_write(RASPI5_PCIE_UBUS_CTRL_OFFSET, ubus_ctrl);
+		raspi5_pcie_trace_u32("raspi5 pcie: ubus_ctrl (post)",
+		                      raspi5_pcie_reg_read(
+		                          RASPI5_PCIE_UBUS_CTRL_OFFSET));
+
+		raspi5_pcie_reg_write(RASPI5_PCIE_UBUS_TIMEOUT_OFFSET,
+		                      RASPI5_PCIE_UBUS_TIMEOUT_VALUE);
+		raspi5_pcie_reg_write(RASPI5_PCIE_UBUS_BAR1_REMAP_OFFSET,
+		                      RASPI5_PCIE_UBUS_BAR1_REMAP_VALUE);
+		raspi5_pcie_reg_write(RASPI5_PCIE_AXI_READ_ERR_OFFSET,
+		                      RASPI5_PCIE_AXI_READ_ERR_VALUE);
+		platform_uart_puts(
+		    "raspi5 pcie: BCM2712 AXI bridge handlers programmed\n");
 	}
 
 	/* Root port (bus 0 dev 0) lives directly at controller_base + reg.
