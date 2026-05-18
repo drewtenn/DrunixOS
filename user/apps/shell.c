@@ -1339,10 +1339,19 @@ static int readline(char *buf, int max)
 		}
 		if (c == '\b' || c == 127) {
 			if (n > 0) {
-				int old_n = n;
 				n--;
 				buf[n] = '\0';
-				redraw_prompt_line(buf, n, old_n);
+				/* Cursor is always at the end of the buffer in
+				 * this readline (no left/right arrow editing),
+				 * so the minimal three-byte sequence is enough:
+				 * move cursor left, overwrite with space, move
+				 * cursor left again. Avoids the full-line redraw
+				 * the user would otherwise see on a slow serial
+				 * link or HDMI scanout. redraw_prompt_line stays
+				 * available for callers that genuinely need it
+				 * (history navigation, where the entire buffer
+				 * content changes). */
+				fputs("\b \b", stdout);
 			}
 			continue;
 		}
