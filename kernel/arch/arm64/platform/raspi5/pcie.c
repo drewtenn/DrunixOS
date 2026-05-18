@@ -78,21 +78,70 @@ static void raspi5_pcie_reg_write(uint32_t offset, uint32_t value)
 }
 
 /*
- * Linux's brcm_pcie_map_bus encodes the indirect-CAM address as
- * (bus << 20) | (dev << 15) | (fn << 12) | (reg & 0xfff). For root-
- * bus access this driver writes to INDEX and reads from DATA; the
- * actual config dword lives at DATA + (reg & 0xfff).
+ * Linux's brcm_pcie_map_bus splits config access into two paths:
+ *
+ * - Root bus (bus 0): direct, at controller_base + reg. Only dev 0
+ *   is valid; other devs on the root bus return -1 / 0xffffffff.
+ *   The root port itself appears here as bus 0 dev 0 fn 0.
+ *
+ * - Downstream buses (1+): indirect via INDEX/DATA. The INDEX
+ *   register is written with PCIE_ECAM_OFFSET(bus, devfn, 0) =
+ *   (bus << 20) | (devfn << 12). DATA + (reg & 0xfff) reads the
+ *   target dword. The first attempt at this on Drunix returned the
+ *   controller's master-abort marker 0xdeaddead, which means the
+ *   config cycle reached the bridge but no device answered — so
+ *   we now scan a small window of buses + devices and log what we
+ *   find rather than trusting "RP1 must be at bus 1".
  */
+static void raspi5_pcie_trace_u32(const char *label, uint32_t v);
+static void raspi5_pcie_trace_u64(const char *label, uint64_t v);
+
+static uint32_t raspi5_pcie_cfg_read_root(uint32_t reg)
+{
+	return raspi5_pcie_reg_read(reg & 0xfffu);
+}
+
 static uint32_t raspi5_pcie_cfg_read(uint32_t bus, uint32_t dev, uint32_t fn,
                                      uint32_t reg)
 {
-	uint32_t index = (bus << 20) | (dev << 15) | (fn << 12);
+	uint32_t index;
 	uint32_t value;
 
+	if (bus == 0u)
+		return raspi5_pcie_cfg_read_root(reg);
+
+	index = (bus << 20) | (((dev & 0x1fu) << 3 | (fn & 0x7u)) << 12);
 	raspi5_pcie_reg_write(RASPI5_PCIE_EXT_CFG_INDEX_OFFSET, index);
 	value = raspi5_pcie_reg_read(RASPI5_PCIE_EXT_CFG_DATA_OFFSET +
 	                             (reg & 0xfffu));
 	return value;
+}
+
+/*
+ * Print a one-line description of a (bus, dev) location's first
+ * config dword. Skips slots that report 0xffffffff or the BCM
+ * 0xdeaddead master-abort marker.
+ */
+static void raspi5_pcie_log_slot(uint32_t bus, uint32_t dev)
+{
+	uint32_t vd = raspi5_pcie_cfg_read(bus, dev, 0u,
+	                                   PCI_CONFIG_VENDOR_DEVICE);
+	char label[40];
+	uint32_t i;
+	const char *prefix = "raspi5 pcie: scan b";
+	static const char hexd[] = "0123456789abcdef";
+
+	if (vd == 0xffffffffu || vd == 0xdeaddeadu)
+		return;
+
+	for (i = 0; prefix[i] != '\0'; i++)
+		label[i] = prefix[i];
+	label[i++] = hexd[bus & 0xfu];
+	label[i++] = 'd';
+	label[i++] = hexd[(dev >> 4) & 0xfu];
+	label[i++] = hexd[dev & 0xfu];
+	label[i] = '\0';
+	raspi5_pcie_trace_u32(label, vd);
 }
 
 static void raspi5_pcie_trace_u32(const char *label, uint32_t v)
@@ -148,6 +197,33 @@ int raspi5_pcie_probe_rp1(void)
 		platform_uart_puts(
 		    "raspi5 pcie: data-link inactive; aborting probe\n");
 		return -1;
+	}
+
+	/* Root port (bus 0 dev 0) lives directly at controller_base + reg.
+	 * Reading this proves the controller's config-space window is
+	 * live and tells us whether firmware has populated the bridge
+	 * config. */
+	{
+		uint32_t root_vd =
+		    raspi5_pcie_cfg_read_root(PCI_CONFIG_VENDOR_DEVICE);
+		uint32_t root_class =
+		    raspi5_pcie_cfg_read_root(PCI_CONFIG_CLASS_REV);
+		uint32_t root_pri_sec =
+		    raspi5_pcie_cfg_read_root(0x18u); /* primary / secondary / subordinate */
+		raspi5_pcie_trace_u32("raspi5 pcie: root_vd", root_vd);
+		raspi5_pcie_trace_u32("raspi5 pcie: root_class", root_class);
+		raspi5_pcie_trace_u32("raspi5 pcie: root_bus_nums", root_pri_sec);
+	}
+
+	/* Scan downstream buses 0..3, slot 0 only (PCIe is point-to-
+	 * point so multi-slot is meaningless behind a root port). The
+	 * BCM controller returns 0xdeaddead for unanswered cycles and
+	 * 0xffffffff for plain "nothing there"; raspi5_pcie_log_slot
+	 * skips both, so any line that does print is a real device. */
+	{
+		uint32_t b;
+		for (b = 0u; b < 4u; b++)
+			raspi5_pcie_log_slot(b, 0u);
 	}
 
 	vendor_device = raspi5_pcie_cfg_read(RP1_PCI_BUS, RP1_PCI_DEV,
