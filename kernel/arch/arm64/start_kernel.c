@@ -415,6 +415,24 @@ void arm64_start_kernel(void)
 	arch_mm_init();
 	kheap_init();
 
+	/* M7: attempt HDMI framebuffer bring-up via the BCM2712 VC4
+	 * mailbox. Non-fatal: if no monitor is connected, if firmware
+	 * places the fb above the 2 GiB linear-map ceiling, or if any
+	 * mailbox handshake step fails, the boot continues with the
+	 * serial-only console established in M5. The compositor's
+	 * desktop-launch gate also needs /dev/kbd and /dev/mouse, which
+	 * arrive in M8 with USB HID; until then HDMI is a kernel-text
+	 * console mirror only. */
+	{
+		framebuffer_info_t *fb = 0;
+		if (platform_framebuffer_acquire(&fb) == 0)
+			platform_uart_puts(
+			    "Drunix raspi5: HDMI framebuffer + /dev/fb0 ready\n");
+		else
+			platform_uart_puts(
+			    "Drunix raspi5: HDMI framebuffer unavailable (serial only)\n");
+	}
+
 	arch_irq_init();
 	arch_timer_set_periodic_handler(arm64_timer_tick);
 	arch_timer_start(SCHED_HZ);
