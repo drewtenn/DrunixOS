@@ -31,9 +31,21 @@
 #include <stdint.h>
 
 #define RASPI5_PCIE_STATUS_OFFSET 0x4068u
-#define RASPI5_PCIE_STATUS_PHY_LINKUP (1u << 4)
-#define RASPI5_PCIE_STATUS_DL_ACTIVE (1u << 5)
-#define RASPI5_PCIE_STATUS_RC_MODE (1u << 7)
+/*
+ * BCM2712 production silicon moved the link / port status bits up
+ * from the classic bcm-stb positions (BIT 4/5/7). First-Pi-5-boot
+ * trace showed a known-good link returning status 0x0001e080 — none
+ * of the BIT 4/5 bits set. The current bit positions are BIT 13/14/16
+ * (Raspberry Pi Linux drivers/pci/controller/pcie-brcmstb.c uses the
+ * BCM7712 config table at lines 1953-1960 for BCM2712, with masks
+ * scattered in the file). BIT(15) was also observed set on the same
+ * boot but its meaning is not documented in any reference I found;
+ * treating it as informational and not checking it gates bring-up
+ * unnecessarily.
+ */
+#define RASPI5_PCIE_STATUS_PHY_LINKUP (1u << 13)
+#define RASPI5_PCIE_STATUS_DL_ACTIVE (1u << 14)
+#define RASPI5_PCIE_STATUS_RC_MODE (1u << 16)
 
 #define RASPI5_PCIE_EXT_CFG_INDEX_OFFSET 0x9000u
 #define RASPI5_PCIE_EXT_CFG_DATA_OFFSET 0x8000u
