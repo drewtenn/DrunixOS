@@ -31,11 +31,23 @@ static platform_ram_layout_t g_layout;
 static int g_layout_ready;
 
 static const platform_kernel_block_t g_extra_blocks[] = {
+    /* L1[64]: 0x10_0000_0000 .. 0x10_4000_0000 — lower half of the SoC
+     * peripheral range. The BCM2712 SDIO1 SDHCI host registers at
+     * 0x10_00ff_f000 sit here. Added in M6 for SD card root mount. */
+    {
+        .virt = PLATFORM_RASPI5_SOC_LOW_BASE,
+        .phys = PLATFORM_RASPI5_SOC_LOW_BASE,
+        .attr = PLATFORM_MM_DEVICE,
+    },
+    /* L1[65]: 0x10_4000_0000 .. 0x10_8000_0000 — upper half of the SoC
+     * peripheral range. uart10 and GIC-400 are here. */
     {
         .virt = PLATFORM_RASPI5_SOC_WINDOW_BASE,
         .phys = PLATFORM_RASPI5_SOC_WINDOW_BASE,
         .attr = PLATFORM_MM_DEVICE,
     },
+    /* L1[124]: 0x1f_0000_0000 .. 0x1f_4000_0000 — PCIe2 outbound window.
+     * RP1 UART0 lives here. */
     {
         .virt = PLATFORM_RASPI5_PCIE_WINDOW_BASE,
         .phys = PLATFORM_RASPI5_PCIE_WINDOW_BASE,
@@ -119,6 +131,9 @@ platform_mm_attr_t platform_mm_classify(uint64_t phys)
 	if (phys >= g_layout.ram_base &&
 	    phys < g_layout.ram_base + g_layout.ram_size)
 		return PLATFORM_MM_NORMAL;
+	if (phys >= PLATFORM_RASPI5_SOC_LOW_BASE &&
+	    phys < PLATFORM_RASPI5_SOC_LOW_BASE + PLATFORM_RASPI5_SOC_LOW_SIZE)
+		return PLATFORM_MM_DEVICE;
 	if (phys >= PLATFORM_RASPI5_SOC_WINDOW_BASE &&
 	    phys < PLATFORM_RASPI5_SOC_WINDOW_BASE + PLATFORM_RASPI5_SOC_WINDOW_SIZE)
 		return PLATFORM_MM_DEVICE;

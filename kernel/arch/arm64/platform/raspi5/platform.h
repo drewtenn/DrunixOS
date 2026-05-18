@@ -8,22 +8,39 @@
  * device tree at arch/arm64/boot/dts/broadcom/bcm2712.dtsi and the
  * companion rp1.dtsi in the Raspberry Pi Linux fork.
  *
- *   SoC peripheral window:  0x10_0000_0000 .. 0x10_8000_0000
- *     - uart10 (PL011 debug, JST-SH header):  0x10_7d00_1000
- *     - GIC-400 distributor (GICD):           0x10_7fff_9000
- *     - GIC-400 CPU interface (GICC):         0x10_7fff_a000
- *   PCIe2 outbound window:  0x1f_0000_0000 .. 0x1f_4000_0000
+ *   SoC peripheral range:  0x10_0000_0000 .. 0x10_8000_0000 (per the
+ *   soc@107c000000 node `ranges` mapping child 0x0 -> CPU 0x10_0000_0000
+ *   with size 0x8000_0000). Split into two 1 GiB identity-mapped Device
+ *   blocks because L1 blocks are 1 GiB each:
+ *     LOW  (L1[64]): 0x10_0000_0000 .. 0x10_4000_0000
+ *       - sdio1 SDHCI host registers:         0x10_00ff_f000 (M6)
+ *       - sdio1 SDHCI cfg registers:          0x10_00ff_f400 (M6)
+ *     HIGH (L1[65]): 0x10_4000_0000 .. 0x10_8000_0000
+ *       - uart10 (PL011 debug, JST-SH header):0x10_7d00_1000
+ *       - GIC-400 distributor (GICD):         0x10_7fff_9000
+ *       - GIC-400 CPU interface (GICC):       0x10_7fff_a000
+ *   PCIe2 outbound window (L1[124]): 0x1f_0000_0000 .. 0x1f_4000_0000
  *     - RP1 UART0 (40-pin header, GPIO14/15): 0x1f_0003_0000
- *
- * Both windows are identity-mapped via platform_extra_kernel_blocks()
- * as 1 GiB Device blocks at L1[65] and L1[124] respectively.
  */
+
+#define PLATFORM_RASPI5_SOC_LOW_BASE 0x1000000000ULL
+#define PLATFORM_RASPI5_SOC_LOW_SIZE 0x40000000ULL
 
 #define PLATFORM_RASPI5_SOC_WINDOW_BASE 0x1040000000ULL
 #define PLATFORM_RASPI5_SOC_WINDOW_SIZE 0x40000000ULL
 
 #define PLATFORM_RASPI5_PCIE_WINDOW_BASE 0x1f00000000ULL
 #define PLATFORM_RASPI5_PCIE_WINDOW_SIZE 0x40000000ULL
+
+/*
+ * BCM2712 SDIO1 SDHCI host controller. From the bcm2712-rpi-5-b.dtb:
+ *   mmc@fff000 { compatible = "brcm,bcm2712-sdhci", "brcm,sdhci-brcmstb";
+ *                reg = <0xfff000 0x260 0xfff400 0x200>; ... };
+ * Translated through the soc@107c000000 ranges, that's CPU physical
+ * 0x10_00ff_f000 (host) + 0x10_00ff_f400 (Broadcom cfg).
+ */
+#define PLATFORM_RASPI5_SDHCI_HOST_BASE 0x1000fff000ULL
+#define PLATFORM_RASPI5_SDHCI_CFG_BASE 0x1000fff400ULL
 
 /*
  * Primary debug UART. RP1 UART0 is the default because Pi 5 firmware
