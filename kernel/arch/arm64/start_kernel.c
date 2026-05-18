@@ -26,6 +26,9 @@
 #include "../../drivers/chardev.h"
 #include "../../drivers/inputdev.h"
 #endif
+#if DRUNIX_ARM64_PLATFORM_RASPI5
+#include "platform/raspi5/pcie.h"
+#endif
 #include "../../proc/init_launch.h"
 #include "../../proc/sched.h"
 #include "mm/pmm.h"
@@ -432,6 +435,13 @@ void arm64_start_kernel(void)
 			platform_uart_puts(
 			    "Drunix raspi5: HDMI framebuffer unavailable (serial only)\n");
 	}
+
+	/* M8.1: sanity-probe the BCM2712 PCIe2 link to RP1 and log the
+	 * USB host MMIO bases the M8.2 xHCI driver will use. Non-fatal:
+	 * a probe failure prints loud diagnostics and the kernel boots
+	 * to the shell as usual (USB keyboard is the new capability;
+	 * losing it does not regress the M7 + M6 boot). */
+	(void)raspi5_pcie_probe_rp1();
 
 	arch_irq_init();
 	arch_timer_set_periodic_handler(arm64_timer_tick);

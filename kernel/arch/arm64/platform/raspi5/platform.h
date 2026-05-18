@@ -45,6 +45,35 @@
 #define PLATFORM_RASPI5_SDHCI_CFG_BASE 0x1000fff400ULL
 
 /*
+ * BCM2712 PCIe2 root complex MMIO. From bcm2712.dtsi pcie@1000120000
+ * (the controller with status = "okay" and an rp1 child node):
+ *   reg = <0x10 0x00120000 0x00 0x9310>;
+ * Translated to CPU physical 0x10_0012_0000, size 0x9310. Sits inside
+ * the existing L1[64] SOC_LOW Device block (M6) so no new mapping is
+ * required to reach the controller registers.
+ *
+ * The downstream device aperture lives at the PLATFORM_RASPI5_PCIE_WINDOW_BASE
+ * (M5 L1[124] block). RP1's BAR1 lands at the start of that window so
+ * RP1 peripheral X at RP1-internal bus addr (0xc0_4000_0000 + X) is
+ * reachable at CPU phys (0x1f_0000_0000 + X - 0x4000_0000) — but in
+ * practice the simpler computation is "subtract RP1's BAR1 base from
+ * the peripheral's RP1 addr and add the PCIe window base."
+ */
+#define PLATFORM_RASPI5_PCIE_CTRL_BASE 0x1000120000ULL
+#define PLATFORM_RASPI5_PCIE_CTRL_SIZE 0x9310ULL
+
+/*
+ * RP1 USB host controllers (DesignWare DWC3) inside RP1's BAR1. The
+ * DWC3 exposes a standard xHCI register block for host mode; the
+ * vendor glue registers sit above the xHCI block in the same MMIO
+ * window. Derived from rp1.dtsi usb@200000 / usb@300000 and the
+ * Pi 5 board DT's RP1 child-of-pcie translation.
+ */
+#define PLATFORM_RASPI5_USB0_XHCI_BASE 0x1f00200000ULL
+#define PLATFORM_RASPI5_USB1_XHCI_BASE 0x1f00300000ULL
+#define PLATFORM_RASPI5_USB_XHCI_SIZE 0x100000ULL /* 1 MiB per controller */
+
+/*
  * Primary debug UART. RP1 UART0 is the default because Pi 5 firmware
  * with `enable_uart=1 uart_2ndstage=1` in config.txt routes the
  * firmware-stage serial output here, and a USB-UART adapter on the
