@@ -51,8 +51,6 @@
 
 #define RASPI5_VIDEO_FB_ALIGNMENT 16u
 #define RASPI5_VIDEO_PIXEL_ORDER_RGB 1u
-#define RASPI5_VIDEO_BUS_ALIAS_MASK 0xc0000000u
-#define RASPI5_VIDEO_BUS_ALIAS_OFFSET 0x3fffffffu
 #define RASPI5_VIDEO_BYTES_PER_PIXEL 4u
 #define RASPI5_VIDEO_RAM_CEILING 0x80000000ull
 #define RASPI5_VIDEO_CONSOLE_CELLS                                             \
@@ -107,10 +105,21 @@ static int g_fb_ready;
  * introduce a wider include surface than the file needs. */
 int fbdev_init(const framebuffer_info_t *fb);
 
+/*
+ * Translate a 32-bit VC4 bus address returned by the mailbox
+ * ALLOCATE_BUFFER tag to a CPU-physical address. BCM2712 declares
+ * identity dma-ranges for the AXI bus the CPU sees, so for the
+ * firmware paths that go through dma_alloc_coherent this is a
+ * pass-through. The Pi 3 legacy 0xc0000000 alias path is NOT
+ * applied here because on Pi 5 a returned 0xc0000000 could equally
+ * be a legitimate identity-mapped 3 GiB SDRAM address; masking it
+ * would translate to phys 0 and clobber the kernel image. Caller
+ * (arm64_video_init) clamps the resolved phys against the 2 GiB
+ * linear-map ceiling, which catches both the >= 2 GiB identity
+ * case and any high-bus surprise.
+ */
 uint64_t raspi5_fb_bus_to_phys(uint32_t bus)
 {
-	if ((bus & RASPI5_VIDEO_BUS_ALIAS_MASK) == RASPI5_VIDEO_BUS_ALIAS_MASK)
-		return (uint64_t)(bus & RASPI5_VIDEO_BUS_ALIAS_OFFSET);
 	return (uint64_t)bus;
 }
 
@@ -121,6 +130,52 @@ static volatile uint32_t *raspi5_mailbox_regs(void)
 
 static void raspi5_video_dsb(void)
 {
+	__asm__ volatile("dsb sy" ::: "memory");
+}
+
+/*
+ * Clean a [start, end) virtual range to the Point of Coherency. The
+ * VC4 mailbox transport reads CPU-side request buffers from physical
+ * RAM through a non-coherent path; a dsb alone only drains the CPU
+ * store buffer into L1 / L2. CVAC walks each cache line and forces
+ * dirty data out to system memory so the VPU and HVS see the bytes
+ * the kernel just wrote. Range is rounded outward to cache-line
+ * alignment; the BCM2712 Cortex-A76 D-cache line is 64 bytes.
+ */
+#define RASPI5_DCACHE_LINE 64u
+
+static void raspi5_dc_cvac_range(const void *start, uint32_t bytes)
+{
+	uintptr_t addr = (uintptr_t)start & ~(uintptr_t)(RASPI5_DCACHE_LINE - 1u);
+	uintptr_t end = (uintptr_t)start + bytes;
+	uintptr_t end_aligned =
+	    (end + (uintptr_t)RASPI5_DCACHE_LINE - 1u) &
+	    ~(uintptr_t)(RASPI5_DCACHE_LINE - 1u);
+
+	while (addr < end_aligned) {
+		__asm__ volatile("dc cvac, %0" ::"r"(addr) : "memory");
+		addr += RASPI5_DCACHE_LINE;
+	}
+	__asm__ volatile("dsb sy" ::: "memory");
+}
+
+/*
+ * Clean + invalidate a range to PoC. Used after the mailbox returns
+ * so the CPU sees the firmware-written response bytes instead of any
+ * cached pre-call shadow.
+ */
+static void raspi5_dc_civac_range(const void *start, uint32_t bytes)
+{
+	uintptr_t addr = (uintptr_t)start & ~(uintptr_t)(RASPI5_DCACHE_LINE - 1u);
+	uintptr_t end = (uintptr_t)start + bytes;
+	uintptr_t end_aligned =
+	    (end + (uintptr_t)RASPI5_DCACHE_LINE - 1u) &
+	    ~(uintptr_t)(RASPI5_DCACHE_LINE - 1u);
+
+	while (addr < end_aligned) {
+		__asm__ volatile("dc civac, %0" ::"r"(addr) : "memory");
+		addr += RASPI5_DCACHE_LINE;
+	}
 	__asm__ volatile("dsb sy" ::: "memory");
 }
 
@@ -171,6 +226,12 @@ static int raspi5_mailbox_call(volatile uint32_t *request)
 
 	message = (address & ~0xfu) | RASPI5_MBOX_CHANNEL_PROPERTY;
 
+	/* Flush the request buffer out of the CPU caches before signalling
+	 * the VPU; the property channel reads bytes from physical RAM
+	 * through a non-coherent path. */
+	raspi5_dc_cvac_range((const void *)request,
+	                     (uint32_t)(RASPI5_VIDEO_REQ_WORDS * sizeof(uint32_t)));
+
 	timeout = RASPI5_MBOX_TIMEOUT;
 	while ((mailbox[RASPI5_MBOX_STATUS] & RASPI5_MBOX_FULL) != 0u) {
 		if (timeout-- == 0u) {
@@ -199,6 +260,13 @@ static int raspi5_mailbox_call(volatile uint32_t *request)
 		if ((response & 0xfu) == RASPI5_MBOX_CHANNEL_PROPERTY &&
 		    (response & ~0xfu) == (address & ~0xfu)) {
 			raspi5_video_dsb();
+			/* Invalidate any stale cached copy of the request
+			 * buffer so the per-tag response codes the VPU just
+			 * wrote are the ones the caller reads. */
+			raspi5_dc_civac_range(
+			    (const void *)request,
+			    (uint32_t)(RASPI5_VIDEO_REQ_WORDS *
+			               sizeof(uint32_t)));
 			return 0;
 		}
 
@@ -406,22 +474,33 @@ framebuffer_info_t *arm64_video_framebuffer(void)
 }
 
 /*
- * Boot console write path. The framebuffer is mapped Normal-NC via
- * platform_mm_classify returning PLATFORM_MM_FRAMEBUFFER for the
- * registered fb range — that mapping only applies to pages reached
- * through fresh L1/L2 splits after raspi5_register_framebuffer was
- * called. The kernel-linear identity map walked at boot used the
- * generic PLATFORM_MM_NORMAL classification, so writes through this
- * path land in cacheable RAM. An explicit DSB after each batch is
- * enough for the slow boot-text use case; deferring a full remap to
- * M8 when the compositor starts driving frames.
+ * Boot console write path. The kernel-linear identity map for the
+ * framebuffer pages was built at boot, before the mailbox call
+ * returned the fb_phys range, so those pages are still mapped
+ * Normal-WB (cacheable) via the generic PLATFORM_MM_NORMAL
+ * classification — the PLATFORM_MM_FRAMEBUFFER attribute only
+ * applies to fresh L1 / L2 splits taken after the fb range was
+ * registered with the layout. BCM2712's HVS reads scanout pixels
+ * from physical RAM through a non-coherent path, so after each
+ * fb_text_console_write the dirty cache lines must be cleaned to
+ * the Point of Coherency or the display will show stale (or
+ * blank) pixels until natural eviction pushes them out.
+ *
+ * A full clean over the framebuffer span (3 MiB at 1024x768x32)
+ * costs ~50,000 dc cvac instructions per write — fine for the
+ * slow boot-text rate, but the compositor flow in M8 will want
+ * either a true Normal-NC remap (Option A from the M7 design
+ * synthesis) or a per-rect dirty hint to bound this cost.
  */
 void arm64_video_console_write(const char *buf, uint32_t len)
 {
+	uint32_t fb_bytes;
+
 	if (!g_fb_ready)
 		return;
 	fb_text_console_write(&g_fb_console, buf, len);
-	raspi5_video_dsb();
+	fb_bytes = g_fb_info.pitch * g_fb_info.height;
+	raspi5_dc_cvac_range((const void *)g_fb_info.address, fb_bytes);
 }
 
 int platform_framebuffer_acquire(framebuffer_info_t **out)
