@@ -38,5 +38,7 @@ DOCS_SRC := docs/partI-firmware-to-kernel.md \
             docs/partX-development-tools.md \
             docs/ch29-debugging.md \
             docs/ch30-cpp-userland.md \
+            docs/partXI-native-arm-hardware.md \
             docs/ch31-aarch64-bringup.md \
-            docs/ch32-raspi5-bringup.md
+            docs/ch32-raspi5-bringup.md \
+            docs/ch33-raspi5-standup.md

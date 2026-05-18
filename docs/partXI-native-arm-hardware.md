@@ -1,0 +1,15 @@
+# Part XI — Native ARM Hardware
+
+Everything before this part assumed a single architecture and, in most chapters, a single machine: the x86 PC. The bootloader is x86-real-mode; the descriptor tables are GDT/IDT/TSS; the page tables are 4 KB x86 paging; the timer is the PIT. The QEMU virt and Pi 3 work that crept in around Part IX was scaffolding — enough to prove the kernel's interfaces did not bake x86 into the abstract layers — but it was always running on QEMU, with the host machine emulating every register the kernel touched. By the end of Part X the kernel was tractable to develop and capable of hosting both C and C++ user programs, but it had still never executed an instruction on real ARM silicon.
+
+Part XI is where that changes. Three chapters take the kernel from "AArch64 builds, runs under QEMU virt, and faintly works on a Pi 3" all the way to a bare-metal Raspberry Pi 5 booting to an interactive shell over its own serial console. Each chapter operates one step closer to the metal.
+
+Chapter 31 covers the AArch64 port itself — the architectural decisions that were made to share as much code as possible with the x86 build, the per-platform abstraction layer that lets a single arm64 codebase target QEMU virt, the Pi 3, and the Pi 5, and the small set of arm64-specific subsystems (the GIC interrupt controller, the ARM Generic Timer, the EL2-to-EL1 demotion in boot.S) that have no x86 equivalent.
+
+Chapter 32 is the BCM2712 platform notes — what makes the Pi 5 specifically different from the Pi 3 and from QEMU virt. The address map climbs above the 4 GB boundary; the MMU widens from 32-bit to 39-bit virtual addresses to reach it. The interrupt controller is a GIC-400 reached through MMIO rather than the GICv3 system-register interface QEMU virt uses. The peripheral chain reaches I/O through a separate RP1 chip across a PCIe Gen 2 link, with the BCM2712 SoC keeping only a small set of legacy peripherals — the UART used for kernel debug, the SDHCI controller used to mount the root filesystem, and the VC4 mailbox used to bring up the HDMI framebuffer.
+
+Chapter 33 closes the loop on the operator's side of the machine: how the kernel artifacts produced on the development host become a flashed SD card, what the EEPROM bootloader does when the Pi 5 is powered on, which serial cable connects to which of the two physical UART paths on the board, and what the visible boot trace looks like when everything works.
+
+By the end of Part XI, Drunix is a real OS in the most concrete sense: it runs on a board the reader can hold, mounts a real filesystem from a real SD card, lights up a real HDMI monitor, and waits for input at a real serial console. The interfaces from the earlier chapters — VFS mounts, chardevs, the desktop compositor, the shell — keep working unchanged across the move to native silicon, which is the practical payoff for the platform-abstraction discipline imposed back in Part I and Part III.
+
+The work in Part XI applies to AArch64 specifically; the x86 build is unaffected and continues to follow the same flow described in Parts I through X.

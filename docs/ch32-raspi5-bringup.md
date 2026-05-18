@@ -66,7 +66,7 @@ The 2 GB kernel-linear-map ceiling is a current limitation of the M5 milestone, 
 
 ### Boot artifact and SD card layout
 
-Pi 5 firmware loads `kernel8.img` from the boot partition at physical `0x80000` when `config.txt` declares `arm_64bit=1 kernel=kernel8.img`. The MVP build produces both `kernel-arm64.elf` (for `gdb` and disassembly) and `kernel8.img` (the flat binary the firmware actually loads). The minimal `config.txt` for a Pi 5 SD card is four lines: `arm_64bit=1`, `kernel=kernel8.img`, `enable_uart=1`, and `uart_2ndstage=1`. The firmware blobs themselves — `bootcode.bin`, `start4.elf`, `fixup4.dat`, and the matching `bcm2712-rpi-5-b.dtb` — are fetched from the Raspberry Pi firmware project and copied onto the FAT32 boot partition alongside `kernel8.img`. The build does not bundle these binaries because they are vendor-controlled and shift with firmware updates.
+The Pi 5 EEPROM loads `kernel8.img` to physical `0x80000` per the standard Raspberry Pi 64-bit boot protocol, then jumps in EL2 with the FDT pointer in `x0`. Chapter 33 covers the build outputs, the FAT32 + ext3 partition layout, the firmware blobs the boot partition needs, and the operator workflow for building `pi5-sd.img` and flashing it. This chapter takes the resulting boot-time state as given and concentrates on what the Pi 5 kernel itself does once control reaches `0x80000`.
 
 ### Boot entry contract
 
