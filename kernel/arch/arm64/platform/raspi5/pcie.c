@@ -105,6 +105,49 @@
 #define RASPI5_PCIE_AXI_READ_ERR_OFFSET 0x405cu
 #define RASPI5_PCIE_AXI_READ_ERR_VALUE 0x0aba0000u
 
+/*
+ * MDIO interface for the PCIe PHY. Used by brcm_pcie_post_setup_bcm2712
+ * to write a fixed 7-register sequence that configures the PHY for the
+ * 54 MHz refclk source the BCM2712 boards use. Without these writes the
+ * PCIe link will appear electrically up (PHY/DL bits set) but transaction
+ * cycles to the downstream device silently fail.
+ *
+ * Register packet encoding for PCIE_RC_DL_MDIO_ADDR (0x1100):
+ *   bits 19:16  port (MDIO_PORT_MASK)
+ *   bits 15:0   regad (MDIO_REGAD_MASK)
+ *   bit  20     cmd (0 = write, 1 = read)
+ *   bit  31     done indicator
+ */
+#define RASPI5_PCIE_RC_DL_MDIO_ADDR 0x1100u
+#define RASPI5_PCIE_RC_DL_MDIO_WR_DATA 0x1104u
+#define RASPI5_PCIE_RC_DL_MDIO_RD_DATA 0x1108u
+#define RASPI5_PCIE_MDIO_DONE_MASK 0x80000000u
+#define RASPI5_PCIE_MDIO_PORT0 0x0u
+#define RASPI5_PCIE_MDIO_SET_ADDR_OFFSET 0x1fu
+#define RASPI5_PCIE_MDIO_CMD_WRITE 0u
+#define RASPI5_PCIE_MDIO_TIMEOUT 100000u
+
+/*
+ * L1SS timer config. PM clock period is 18.52 ns at 54 MHz (1/54e6 ns
+ * rounded down -> 0x12 in the low byte). Linux clears bits 7:0 and
+ * sets them to 0x12 to avoid lengthy L1 sub-state transitions.
+ */
+#define RASPI5_PCIE_RC_PL_PHY_CTL_15_OFFSET 0x184cu
+#define RASPI5_PCIE_RC_PL_PHY_CTL_15_PM_CLK_PERIOD_MASK 0xffu
+#define RASPI5_PCIE_RC_PL_PHY_CTL_15_PM_CLK_PERIOD_VAL 0x12u
+
+/*
+ * AXI_INTF_CTRL chicken bits for BCM2712 D0 silicon. Set the QoS
+ * propagation / timing fixes and disable the broken forwarding-search
+ * gate. Linux clears AXI_REQFIFO_EN_QOS_PROPAGATION and sets the
+ * three fix bits unconditionally on BCM2712.
+ */
+#define RASPI5_PCIE_AXI_INTF_CTRL_OFFSET 0x416cu
+#define RASPI5_PCIE_AXI_REQFIFO_EN_QOS_PROPAGATION (1u << 7)
+#define RASPI5_PCIE_AXI_DIS_QOS_GATING_IN_MASTER (1u << 11)
+#define RASPI5_PCIE_AXI_EN_QOS_UPDATE_TIMING_FIX (1u << 12)
+#define RASPI5_PCIE_AXI_EN_RCLK_QOS_ARRAY_FIX (1u << 13)
+
 #define RP1_PCI_BUS 1u
 #define RP1_PCI_DEV 0u
 #define RP1_PCI_FN 0u
@@ -150,6 +193,121 @@ static void raspi5_pcie_reg_write(uint32_t offset, uint32_t value)
  */
 static void raspi5_pcie_trace_u32(const char *label, uint32_t v);
 static void raspi5_pcie_trace_u64(const char *label, uint64_t v);
+
+/*
+ * Spin briefly. raspi5/sdhci.c uses the same nop-count pattern; cycle
+ * budget is approximate but fine for the 100us-ish delays the MDIO
+ * write helper and PHY init want.
+ */
+static void raspi5_pcie_delay_us(uint32_t us)
+{
+	uint32_t i;
+	for (i = 0; i < us * 50u; i++)
+		__asm__ volatile("nop");
+}
+
+/*
+ * Encode an MDIO request packet. port + regad + cmd; the controller
+ * latches it on a write to PCIE_RC_DL_MDIO_ADDR.
+ */
+static uint32_t raspi5_pcie_mdio_form_pkt(uint8_t port, uint8_t regad,
+                                          uint8_t cmd)
+{
+	uint32_t pkt = 0u;
+	pkt |= ((uint32_t)(port & 0xfu) << 16);
+	pkt |= ((uint32_t)regad);
+	pkt |= ((uint32_t)(cmd & 0x1u) << 20);
+	return pkt;
+}
+
+/*
+ * Write one PCIe PHY MDIO register. Returns 0 on success, -1 on
+ * timeout. After MDIO_DATA_DONE_MASK transitions back to 0, the
+ * controller has accepted the write.
+ */
+static int raspi5_pcie_mdio_write(uint8_t port, uint8_t regad, uint16_t wrdata)
+{
+	uint32_t i;
+	uint32_t data;
+
+	raspi5_pcie_reg_write(
+	    RASPI5_PCIE_RC_DL_MDIO_ADDR,
+	    raspi5_pcie_mdio_form_pkt(port, regad, RASPI5_PCIE_MDIO_CMD_WRITE));
+	(void)raspi5_pcie_reg_read(RASPI5_PCIE_RC_DL_MDIO_ADDR);
+	raspi5_pcie_reg_write(RASPI5_PCIE_RC_DL_MDIO_WR_DATA,
+	                      RASPI5_PCIE_MDIO_DONE_MASK | (uint32_t)wrdata);
+
+	for (i = 0; i < RASPI5_PCIE_MDIO_TIMEOUT; i++) {
+		data = raspi5_pcie_reg_read(RASPI5_PCIE_RC_DL_MDIO_WR_DATA);
+		if ((data & RASPI5_PCIE_MDIO_DONE_MASK) == 0u)
+			return 0;
+	}
+	return -1;
+}
+
+/*
+ * Replicate brcm_pcie_post_setup_bcm2712's PHY init. Configures the
+ * BCM2712 PCIe PHY for the 54 MHz refclk source. The reg / data tables
+ * are lifted verbatim from Linux drivers/pci/controller/pcie-brcmstb.c
+ * (brcm_pcie_post_setup_bcm2712, top of function). Without this the
+ * link reports up at the controller side but downstream transactions
+ * silently fail — exactly the symptom Drunix M8.1 hit after the AXI
+ * bridge handlers landed.
+ *
+ * Returns 0 on success, -1 if any MDIO write times out.
+ */
+static int raspi5_pcie_phy_post_setup(void)
+{
+	static const uint8_t regs[7] = {0x16, 0x17, 0x18, 0x19, 0x1b, 0x1c, 0x1e};
+	static const uint16_t data[7] = {0x50b9, 0xbda1, 0x0094, 0x97b4,
+	                                 0x5030, 0x5030, 0x0007};
+	uint32_t i;
+
+	if (raspi5_pcie_mdio_write(RASPI5_PCIE_MDIO_PORT0,
+	                           RASPI5_PCIE_MDIO_SET_ADDR_OFFSET, 0x1600) != 0) {
+		platform_uart_puts(
+		    "raspi5 pcie: MDIO SET_ADDR timeout; PHY init incomplete\n");
+		return -1;
+	}
+	for (i = 0; i < 7u; i++) {
+		if (raspi5_pcie_mdio_write(RASPI5_PCIE_MDIO_PORT0, regs[i],
+		                           data[i]) != 0) {
+			platform_uart_puts(
+			    "raspi5 pcie: MDIO data write timeout; PHY init incomplete\n");
+			return -1;
+		}
+	}
+	raspi5_pcie_delay_us(200u);
+
+	/* PCIE_RC_PL_PHY_CTL_15 — set PM clock period to 18.52 ns (0x12)
+	 * to avoid lengthy L1 sub-state transitions. */
+	{
+		uint32_t tmp = raspi5_pcie_reg_read(
+		    RASPI5_PCIE_RC_PL_PHY_CTL_15_OFFSET);
+		tmp &= ~RASPI5_PCIE_RC_PL_PHY_CTL_15_PM_CLK_PERIOD_MASK;
+		tmp |= RASPI5_PCIE_RC_PL_PHY_CTL_15_PM_CLK_PERIOD_VAL;
+		raspi5_pcie_reg_write(RASPI5_PCIE_RC_PL_PHY_CTL_15_OFFSET, tmp);
+	}
+
+	/* AXI_INTF_CTRL chicken bits — disable broken QoS propagation,
+	 * enable RCLK / timing fixes / disable QoS gating in master. */
+	{
+		uint32_t tmp =
+		    raspi5_pcie_reg_read(RASPI5_PCIE_AXI_INTF_CTRL_OFFSET);
+		raspi5_pcie_trace_u32("raspi5 pcie: axi_intf_ctrl (pre)", tmp);
+		tmp &= ~RASPI5_PCIE_AXI_REQFIFO_EN_QOS_PROPAGATION;
+		tmp |= RASPI5_PCIE_AXI_EN_RCLK_QOS_ARRAY_FIX;
+		tmp |= RASPI5_PCIE_AXI_EN_QOS_UPDATE_TIMING_FIX;
+		tmp |= RASPI5_PCIE_AXI_DIS_QOS_GATING_IN_MASTER;
+		raspi5_pcie_reg_write(RASPI5_PCIE_AXI_INTF_CTRL_OFFSET, tmp);
+		raspi5_pcie_trace_u32("raspi5 pcie: axi_intf_ctrl (post)",
+		                      raspi5_pcie_reg_read(
+		                          RASPI5_PCIE_AXI_INTF_CTRL_OFFSET));
+	}
+
+	platform_uart_puts("raspi5 pcie: PHY MDIO + AXI chicken bits programmed\n");
+	return 0;
+}
 
 static uint32_t raspi5_pcie_cfg_read_root(uint32_t reg)
 {
@@ -298,6 +456,13 @@ int raspi5_pcie_probe_rp1(void)
 		platform_uart_puts(
 		    "raspi5 pcie: BCM2712 AXI bridge handlers programmed\n");
 	}
+
+	/* PHY MDIO + AXI_INTF_CTRL chicken bits — the rest of
+	 * brcm_pcie_post_setup_bcm2712. The earlier M8.1 commits set up
+	 * the controller-side handlers but left the PHY in the firmware-
+	 * default state, with the link reporting up but downstream
+	 * transactions failing. This is the missing piece. */
+	(void)raspi5_pcie_phy_post_setup();
 
 	/* Root port (bus 0 dev 0) lives directly at controller_base + reg.
 	 * Reading this proves the controller's config-space window is
