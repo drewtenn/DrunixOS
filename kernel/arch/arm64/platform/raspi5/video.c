@@ -63,8 +63,16 @@
 #define RASPI5_VIDEO_PIXEL_ORDER_RGB 1u
 #define RASPI5_VIDEO_BYTES_PER_PIXEL 4u
 #define RASPI5_VIDEO_RAM_CEILING 0x80000000ull
-#define RASPI5_VIDEO_CONSOLE_CELLS                                             \
-	((RASPI5_VIDEO_WIDTH / GUI_FONT_W) * (RASPI5_VIDEO_HEIGHT / GUI_FONT_H))
+/*
+ * BSS reservation for the fb_text_console cell grid. Sized for the
+ * 1920 x 1080 upper bound (declared in video.h) so any monitor up to
+ * that geometry can be driven by a single static buffer; the actual
+ * cell count handed to fb_text_console_init at runtime is derived
+ * from the firmware-returned width and height after ALLOCATE_BUFFER.
+ */
+#define RASPI5_VIDEO_MAX_CONSOLE_CELLS                                         \
+	((RASPI5_VIDEO_MAX_WIDTH / GUI_FONT_W) *                                   \
+	 (RASPI5_VIDEO_MAX_HEIGHT / GUI_FONT_H))
 
 enum raspi5_video_request_index {
 	RASPI5_VIDEO_REQ_SIZE = 0,
@@ -107,7 +115,7 @@ static volatile uint32_t g_request[RASPI5_VIDEO_REQ_WORDS]
     __attribute__((aligned(16)));
 static framebuffer_info_t g_fb_info;
 static fb_text_console_t g_fb_console;
-static gui_cell_t g_fb_cells[RASPI5_VIDEO_CONSOLE_CELLS];
+static gui_cell_t g_fb_cells[RASPI5_VIDEO_MAX_CONSOLE_CELLS];
 static int g_fb_ready;
 
 /* Forward decl from kernel/drivers/fbdev.h. raspi3b/video.c keeps the
@@ -367,6 +375,18 @@ static void raspi5_video_trace_mode_response(void)
 	                       g_request[RASPI5_VIDEO_REQ_PIXEL_ORDER]);
 }
 
+/*
+ * The strict width/height equality check from the M7 c2 driver was
+ * removed in M7 polish: Pi 5 firmware reports the requested geometry
+ * in the SET_PHYSICAL_SIZE / SET_VIRTUAL_SIZE response fields verbatim
+ * (a polite echo), but ALLOCATE_BUFFER follows whatever the EDID
+ * handshake settled on — so the response fields are not a reliable
+ * source of truth. arm64_video_init now derives the actual width and
+ * height from the returned pitch and size, capped at
+ * RASPI5_VIDEO_MAX_WIDTH / _HEIGHT. The validator only enforces the
+ * structural invariants firmware can't fudge: per-tag response bits
+ * set, depth = 32, pixel order in {0, 1}.
+ */
 static int raspi5_video_validate_mode_response(void)
 {
 	if (!raspi5_video_tag_ok(g_request[RASPI5_VIDEO_REQ_PHYSICAL_CODE], 8u) ||
@@ -376,21 +396,8 @@ static int raspi5_video_validate_mode_response(void)
 		platform_uart_puts("raspi5 fb: per-tag response code invalid\n");
 		return -1;
 	}
-
-	if (g_request[RASPI5_VIDEO_REQ_PHYSICAL_WIDTH] != RASPI5_VIDEO_WIDTH ||
-	    g_request[RASPI5_VIDEO_REQ_PHYSICAL_HEIGHT] != RASPI5_VIDEO_HEIGHT) {
-		platform_uart_puts(
-		    "raspi5 fb: physical dimensions differ from requested\n");
-		return -1;
-	}
-	if (g_request[RASPI5_VIDEO_REQ_VIRTUAL_WIDTH] != RASPI5_VIDEO_WIDTH ||
-	    g_request[RASPI5_VIDEO_REQ_VIRTUAL_HEIGHT] != RASPI5_VIDEO_HEIGHT) {
-		platform_uart_puts(
-		    "raspi5 fb: virtual dimensions differ from requested\n");
-		return -1;
-	}
 	if (g_request[RASPI5_VIDEO_REQ_DEPTH_VALUE] != RASPI5_VIDEO_DEPTH) {
-		platform_uart_puts("raspi5 fb: depth differs from requested\n");
+		platform_uart_puts("raspi5 fb: depth not 32; rejecting\n");
 		return -1;
 	}
 	if (g_request[RASPI5_VIDEO_REQ_PIXEL_ORDER] != RASPI5_VIDEO_PIXEL_ORDER_RGB &&
@@ -402,17 +409,41 @@ static int raspi5_video_validate_mode_response(void)
 	return 0;
 }
 
-static int raspi5_video_framebuffer_size_ok(uint32_t pitch, uint32_t fb_size)
+/*
+ * Derive the actual scanout dimensions from the firmware-returned
+ * pitch and size, since the SET_*_SIZE response fields are unreliable
+ * on Pi 5 (see validate_mode_response comment). width comes from
+ * pitch / bytes-per-pixel; height comes from size / pitch.
+ *
+ * Returns 0 on success and writes *out_width / *out_height. Returns
+ * -1 if either dimension would be zero, would exceed the
+ * RASPI5_VIDEO_MAX_* caps that bound the static fb_text_console cell
+ * array, or if pitch is not a multiple of bytes-per-pixel.
+ */
+static int raspi5_video_derive_dimensions(uint32_t pitch,
+                                          uint32_t fb_size,
+                                          uint32_t *out_width,
+                                          uint32_t *out_height)
 {
-	uint64_t row_offset =
-	    (uint64_t)(RASPI5_VIDEO_HEIGHT - 1u) * (uint64_t)pitch;
-	uint64_t row_bytes =
-	    (uint64_t)RASPI5_VIDEO_WIDTH * (uint64_t)RASPI5_VIDEO_BYTES_PER_PIXEL;
-	uint64_t required = row_offset + row_bytes;
+	uint32_t width;
+	uint32_t height;
 
-	if (required < row_offset || required > (uint64_t)UINT32_MAX)
-		return 0;
-	return (uint64_t)fb_size >= required;
+	if (pitch == 0u || fb_size == 0u)
+		return -1;
+	if ((pitch % RASPI5_VIDEO_BYTES_PER_PIXEL) != 0u)
+		return -1;
+	width = pitch / RASPI5_VIDEO_BYTES_PER_PIXEL;
+	height = fb_size / pitch;
+	if (width == 0u || height == 0u)
+		return -1;
+	if (width > RASPI5_VIDEO_MAX_WIDTH || height > RASPI5_VIDEO_MAX_HEIGHT) {
+		platform_uart_puts(
+		    "raspi5 fb: scanout exceeds RASPI5_VIDEO_MAX_* (1920x1080 cap)\n");
+		return -1;
+	}
+	*out_width = width;
+	*out_height = height;
+	return 0;
 }
 
 int arm64_video_init(void)
@@ -459,36 +490,45 @@ int arm64_video_init(void)
 		    "raspi5 fb: firmware returned zero bus/size/pitch\n");
 		return -1;
 	}
-	if (!raspi5_video_framebuffer_size_ok(pitch, fb_size)) {
-		platform_uart_puts("raspi5 fb: pitch/size geometry invalid\n");
-		return -1;
-	}
 
-	fb_phys = raspi5_fb_bus_to_phys(fb_bus);
-	raspi5_video_trace_u64("raspi5 fb: phys", fb_phys);
-
-	if (fb_phys + (uint64_t)fb_size > RASPI5_VIDEO_RAM_CEILING) {
-		platform_uart_puts(
-		    "raspi5 fb: phys above 2 GiB linear-map ceiling; "
-		    "rejecting (serial fallback)\n");
-		return -1;
-	}
-
-	/*
-	 * Channel bit-positions on the Pi mailbox path are little-endian
-	 * relative to the 32-bit pixel word:
-	 *   pixel_order = 1 (RGB) → XRGB8888 → red bits 23:16, green 15:8,
-	 *                  blue 7:0  → byte order in memory [B, G, R, X]
-	 *   pixel_order = 0 (BGR) → XBGR8888 → red bits 7:0,  green 15:8,
-	 *                  blue 23:16 → byte order in memory [R, G, B, X]
-	 * Pi 5 firmware empirically returns BGR regardless of what we
-	 * request via SET_PIXEL_ORDER. Pi 3 returns RGB. Both paths land
-	 * here.
-	 */
 	{
+		uint32_t actual_width;
+		uint32_t actual_height;
+		uint32_t cell_cols;
+		uint32_t cell_rows;
+		uint32_t cell_count;
 		uint8_t red_pos;
 		uint8_t blue_pos;
 
+		if (raspi5_video_derive_dimensions(
+		        pitch, fb_size, &actual_width, &actual_height) != 0) {
+			platform_uart_puts(
+			    "raspi5 fb: cannot derive scanout dimensions from pitch/size\n");
+			return -1;
+		}
+		raspi5_video_trace_u32("raspi5 fb: actual_w", actual_width);
+		raspi5_video_trace_u32("raspi5 fb: actual_h", actual_height);
+
+		fb_phys = raspi5_fb_bus_to_phys(fb_bus);
+		raspi5_video_trace_u64("raspi5 fb: phys", fb_phys);
+
+		if (fb_phys + (uint64_t)fb_size > RASPI5_VIDEO_RAM_CEILING) {
+			platform_uart_puts(
+			    "raspi5 fb: phys above 2 GiB linear-map ceiling; "
+			    "rejecting (serial fallback)\n");
+			return -1;
+		}
+
+		/*
+		 * Channel bit-positions on the Pi mailbox path are little-
+		 * endian relative to the 32-bit pixel word:
+		 *   pixel_order = 1 (RGB) → XRGB8888, red bits 23:16,
+		 *                  blue 7:0  → memory order [B, G, R, X]
+		 *   pixel_order = 0 (BGR) → XBGR8888, red bits 7:0,
+		 *                  blue 23:16 → memory order [R, G, B, X]
+		 * Pi 5 firmware empirically returns BGR regardless of what we
+		 * request via SET_PIXEL_ORDER. Pi 3 returns RGB. Both land here.
+		 */
 		if (g_request[RASPI5_VIDEO_REQ_PIXEL_ORDER] ==
 		    RASPI5_VIDEO_PIXEL_ORDER_RGB) {
 			red_pos = 16u;
@@ -499,8 +539,8 @@ int arm64_video_init(void)
 		}
 		if (framebuffer_info_from_rgb((uintptr_t)fb_phys,
 		                              pitch,
-		                              RASPI5_VIDEO_WIDTH,
-		                              RASPI5_VIDEO_HEIGHT,
+		                              actual_width,
+		                              actual_height,
 		                              RASPI5_VIDEO_DEPTH,
 		                              red_pos,
 		                              8u,
@@ -513,17 +553,28 @@ int arm64_video_init(void)
 			    "raspi5 fb: framebuffer_info_from_rgb failed\n");
 			return -1;
 		}
-	}
 
-	pmm_mark_used((uint32_t)fb_phys, fb_size);
-	raspi5_register_framebuffer(fb_phys, (uint64_t)fb_size);
+		pmm_mark_used((uint32_t)fb_phys, fb_size);
+		raspi5_register_framebuffer(fb_phys, (uint64_t)fb_size);
 
-	if (fb_text_console_init(&g_fb_console,
-	                         &g_fb_info,
-	                         g_fb_cells,
-	                         RASPI5_VIDEO_CONSOLE_CELLS) != 0) {
-		platform_uart_puts("raspi5 fb: fb_text_console_init failed\n");
-		return -1;
+		/* Cell grid is sized to the firmware-actual scanout, bounded
+		 * by RASPI5_VIDEO_MAX_CONSOLE_CELLS (the static BSS reservation
+		 * cap). g_fb_cells is large enough for the maximum, so any
+		 * actual_width / actual_height that passes derive_dimensions
+		 * fits. */
+		cell_cols = actual_width / GUI_FONT_W;
+		cell_rows = actual_height / GUI_FONT_H;
+		cell_count = cell_cols * cell_rows;
+		if (cell_count > RASPI5_VIDEO_MAX_CONSOLE_CELLS)
+			cell_count = RASPI5_VIDEO_MAX_CONSOLE_CELLS;
+		if (fb_text_console_init(&g_fb_console,
+		                         &g_fb_info,
+		                         g_fb_cells,
+		                         cell_count) != 0) {
+			platform_uart_puts(
+			    "raspi5 fb: fb_text_console_init failed\n");
+			return -1;
+		}
 	}
 
 	if (fbdev_init(&g_fb_info) != 0) {

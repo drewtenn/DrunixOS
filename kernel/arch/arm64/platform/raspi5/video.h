@@ -24,9 +24,28 @@
 #include "framebuffer.h"
 #include <stdint.h>
 
+/*
+ * Geometry we *request* from the firmware via SET_PHYSICAL_SIZE /
+ * SET_VIRTUAL_SIZE / SET_DEPTH. Pi 5 firmware honors the depth but
+ * ignores the dimensions — ALLOCATE_BUFFER follows the EDID-detected
+ * scanout instead — so these are starting suggestions, not hard
+ * bounds. The actual width and height land in
+ * framebuffer_info_t->width / ->height after arm64_video_init
+ * derives them from the returned pitch and size.
+ */
 #define RASPI5_VIDEO_WIDTH 1024u
 #define RASPI5_VIDEO_HEIGHT 768u
 #define RASPI5_VIDEO_DEPTH 32u
+
+/*
+ * Upper bounds for the firmware-actual geometry the driver will
+ * accept. Caps the boot-time BSS reservation for the fb_text_console
+ * cell array. 1920 x 1080 covers every Pi-relevant common monitor;
+ * 4K support would lift this and roughly quadruple the cell-array
+ * memory (4 KiB cells -> 65 KiB) — left for a later milestone.
+ */
+#define RASPI5_VIDEO_MAX_WIDTH 1920u
+#define RASPI5_VIDEO_MAX_HEIGHT 1080u
 
 int arm64_video_init(void);
 int arm64_video_enabled(void);
