@@ -6,18 +6,17 @@
  * "brcm,sdhci-brcmstb" in the live device tree) implements SD Host
  * Controller Simplified Specification v3.00. Register layout is
  * standard SDHCI; the Broadcom-specific cfg block at
- * PLATFORM_RASPI5_SDHCI_CFG_BASE drives tuning and voltage-switch
- * sequences but is unused at Default Speed.
+ * PLATFORM_RASPI5_SDHCI_CFG_BASE drives card-detect override,
+ * SD/eMMC pin selection, and PHY clock-source setup.
  *
- * Pi 5 firmware may leave the card in UHS-I 1.8V signaling mode after
- * loading kernel8.img. The driver's reset sequence forces the host
- * pads back to 3.3V (Host Control 2.S18EN=0), power-cycles VDD1 via
- * SDHCI_POWER_CONTROL, masks SDHCI signal-enable to suppress stray
- * interrupts left over from the firmware, then issues CMD0 to drop
- * the card to identification state at 3.3V. Slow init clock (~400
- * kHz from a hardcoded divider) is used for the entire boot, like
- * raspi3b — sufficient to mount ext3 and load /bin/shell within
- * seconds.
+ * Pi 5 firmware may leave the controller in a partially initialized
+ * SDHCI state after loading kernel8.img. The driver keeps the firmware
+ * voltage mode, applies the BCM2712 cfg-block setup Linux uses for
+ * this host, resets CMD/DAT state, restores SDHCI bus power, masks
+ * signal-enable to suppress stray interrupts, then issues CMD0. Slow
+ * init clock (~400 kHz from a hardcoded divider) is used for the
+ * entire boot, like raspi3b — sufficient to mount ext3 and load
+ * /bin/shell within seconds.
  *
  * Single-block PIO (CMD17) only. The blkdev_ops_t layer is
  * sector-granular; ext3 issues 8 sequential read_sector calls per
@@ -54,6 +53,21 @@
 #define SDHCI_HOST_CONTROL_2 0x3Eu
 #define SDHCI_CAPABILITIES 0x40u
 
+/* Broadcom CFG block at PLATFORM_RASPI5_SDHCI_CFG_BASE. Offsets and bit
+ * positions copied from Linux drivers/mmc/host/sdhci-brcmstb.c. BCM2712
+ * routes card-detect override, SD/eMMC pinmux, and PHY clock-source
+ * selection through this block. */
+#define BCM2712_CFG_CTRL 0x000u
+#define BCM2712_CFG_CTRL_SDCD_N_TEST_EN (1u << 31)
+#define BCM2712_CFG_CTRL_SDCD_N_TEST_LEV (1u << 30)
+#define BCM2712_CFG_SD_PIN_SEL 0x044u
+#define BCM2712_CFG_SD_PIN_SEL_MASK 0x3u
+#define BCM2712_CFG_SD_PIN_SEL_SD (1u << 1)
+#define BCM2712_CFG_SD_PIN_SEL_MMC (1u << 0)
+#define BCM2712_CFG_MAX_50MHZ_MODE 0x1ACu
+#define BCM2712_CFG_MAX_50MHZ_MODE_STRAP_OVERRIDE (1u << 31)
+#define BCM2712_CFG_MAX_50MHZ_MODE_ENABLE (1u << 0)
+
 #define PSTATE_CMD_INHIBIT (1u << 0)
 #define PSTATE_DAT_INHIBIT (1u << 1)
 
@@ -62,10 +76,14 @@
 #define CLOCK_CTRL_SD_CLK_EN (1u << 2)
 #define CLOCK_CTRL_DATA_TOUNIT_SHIFT 16u
 #define CLOCK_CTRL_SRST_HC (1u << 24)
+#define CLOCK_CTRL_SRST_CMD (1u << 25)
+#define CLOCK_CTRL_SRST_DAT (1u << 26)
+#define CLOCK_CTRL_SRST_CMDDAT (CLOCK_CTRL_SRST_CMD | CLOCK_CTRL_SRST_DAT)
 
 #define HOST_CONTROL_2_S18EN (1u << 3) /* 1.8V Signaling Enable */
 
 #define POWER_CTRL_BUS_POWER (1u << 0)
+#define POWER_CTRL_VDD1_MASK (0x07u << 1)
 #define POWER_CTRL_VDD1_3_3V (0x07u << 1) /* SDR 3.3V */
 
 #define INT_CMD_DONE (1u << 0)
@@ -109,9 +127,23 @@ static uint32_t g_sdhci_block_addressing;
 static uint32_t g_sdhci_card_sectors;
 static int g_sdhci_ready;
 
+static void sdhci_diag_hex32(const char *label, uint32_t v);
+
 static volatile uint32_t *sdhci_regs(void)
 {
 	return (volatile uint32_t *)(uintptr_t)PLATFORM_RASPI5_SDHCI_HOST_BASE;
+}
+
+static uint32_t sdhci_cfg_read(uint32_t off)
+{
+	return *(volatile uint32_t *)(uintptr_t)(PLATFORM_RASPI5_SDHCI_CFG_BASE +
+	                                         off);
+}
+
+static void sdhci_cfg_write(uint32_t off, uint32_t value)
+{
+	*(volatile uint32_t *)(uintptr_t)(PLATFORM_RASPI5_SDHCI_CFG_BASE + off) =
+	    value;
 }
 
 static uint32_t sdhci_read(uint32_t reg)
@@ -130,10 +162,10 @@ static uint16_t sdhci_read_u16(uint32_t reg)
 	                                         reg);
 }
 
-static void sdhci_write_u16(uint32_t reg, uint16_t value)
+static uint8_t sdhci_read_u8(uint32_t reg)
 {
-	*(volatile uint16_t *)(uintptr_t)(PLATFORM_RASPI5_SDHCI_HOST_BASE + reg) =
-	    value;
+	return *(volatile uint8_t *)(uintptr_t)(PLATFORM_RASPI5_SDHCI_HOST_BASE +
+	                                        reg);
 }
 
 static void sdhci_write_u8(uint32_t reg, uint8_t value)
@@ -150,9 +182,6 @@ static void sdhci_delay(void)
 
 static void sdhci_delay_ms_approx(uint32_t ms)
 {
-	/* Counter-based delay; the cycle budget is generous. The point of
-	 * this routine is the power-cycle on the SD bus, where the spec
-	 * asks for at least 1 ms between voltage off and on. */
 	for (volatile uint32_t i = 0; i < ms * 50000u; i++)
 		__asm__ volatile("nop");
 }
@@ -204,15 +233,23 @@ static int sdhci_send_command(uint32_t cmd,
 
 	if (flags & CMD_ISDATA)
 		inhibit |= PSTATE_DAT_INHIBIT;
-	if (sdhci_wait_clear(SDHCI_PRESENT_STATE, inhibit) != 0)
+	if (sdhci_wait_clear(SDHCI_PRESENT_STATE, inhibit) != 0) {
+		sdhci_diag_hex32("raspi5: CMD inhibit stuck, PRESENT_STATE",
+		                 sdhci_read(SDHCI_PRESENT_STATE));
 		return -1;
+	}
 
 	sdhci_write(SDHCI_INT_STATUS, INT_ALL);
 	sdhci_write(SDHCI_ARGUMENT, arg);
 	sdhci_write(SDHCI_CMD_TRANSFER, sdhci_cmd_xfer(cmd, flags));
 
-	if (sdhci_wait_interrupt(INT_CMD_DONE) != 0)
+	if (sdhci_wait_interrupt(INT_CMD_DONE) != 0) {
+		sdhci_diag_hex32("raspi5: CMD_DONE timeout, INT_STATUS",
+		                 sdhci_read(SDHCI_INT_STATUS));
+		sdhci_diag_hex32("raspi5: CMD_DONE timeout, PRESENT_STATE",
+		                 sdhci_read(SDHCI_PRESENT_STATE));
 		return -1;
+	}
 	if (resp0)
 		*resp0 = sdhci_read(SDHCI_RESPONSE_0);
 	sdhci_write(SDHCI_INT_STATUS, INT_CMD_DONE);
@@ -272,38 +309,120 @@ static void sdhci_diag_hex32(const char *label, uint32_t v)
 	(void)line;
 }
 
+static void sdhci_restore_power(uint8_t pre_power)
+{
+	uint8_t power = pre_power | POWER_CTRL_BUS_POWER;
+
+	if ((power & POWER_CTRL_VDD1_MASK) == 0u)
+		power |= POWER_CTRL_VDD1_3_3V;
+	sdhci_write_u8(SDHCI_POWER_CONTROL, power);
+	sdhci_delay_ms_approx(1u);
+}
+
 static int sdhci_reset(void)
 {
-	/* 0. Diagnostic — confirm MMIO is alive before we touch state.
-	 * If the L1[64] mapping is wrong, this read faults (sync exception)
-	 * rather than returning bogus data. */
+	uint8_t pre_power;
+
+	/* 0. Diagnostics — confirm MMIO is alive before we touch state.
+	 * If the L1[64] mapping is wrong, these reads fault (sync
+	 * exception) rather than returning bogus data. Also capture
+	 * the firmware-left POWER_CONTROL; the failing serial trace
+	 * showed bit 0 set before reset and clear before CMD0. */
 	sdhci_diag_hex32("raspi5: SDHCI CAPS",
 	                 sdhci_read(SDHCI_CAPABILITIES));
+	pre_power = sdhci_read_u8(SDHCI_POWER_CONTROL);
+	sdhci_diag_hex32("raspi5: pre-reset POWER_CONTROL", pre_power);
+	sdhci_diag_hex32("raspi5: pre-reset CFG_CTRL",
+	                 sdhci_cfg_read(BCM2712_CFG_CTRL));
 
-	/* 1. Host controller software reset. */
-	sdhci_write(SDHCI_CLOCK_CONTROL, CLOCK_CTRL_SRST_HC);
-	if (sdhci_wait_clear(SDHCI_CLOCK_CONTROL, CLOCK_CTRL_SRST_HC) != 0) {
-		platform_uart_puts("raspi5: SDHCI SRST_HC timeout\n");
+	/* Broadcom CFG-block setup: BCM2712 routes card-detect through
+	 * the CFG block instead of the standard SDHCI present-state bit.
+	 * Without this, the controller treats the slot as empty and
+	 * suppresses bus-power / clock to the card, which manifests as
+	 * CMD0 timing out with INT_STATUS=0. Linux's sdhci-brcmstb
+	 * cfginit for "brcm,bcm2712-sdhci" sets SDCD_N_TEST_EN (use the
+	 * TEST_LEV bit instead of the physical pin) and clears
+	 * SDCD_N_TEST_LEV (active-low = card present). */
+	{
+		uint32_t ctrl = sdhci_cfg_read(BCM2712_CFG_CTRL);
+		ctrl &= ~BCM2712_CFG_CTRL_SDCD_N_TEST_LEV;
+		ctrl |= BCM2712_CFG_CTRL_SDCD_N_TEST_EN;
+		sdhci_cfg_write(BCM2712_CFG_CTRL, ctrl);
+		sdhci_diag_hex32("raspi5: post-cfg CFG_CTRL",
+		                 sdhci_cfg_read(BCM2712_CFG_CTRL));
+	}
+
+	/* The Pi 5 DT advertises UHS modes. Linux's BCM2712 cfginit
+	 * selects the delay-line PHY clock source for UHS-capable hosts
+	 * by forcing MAX_50MHZ_MODE out of strap-controlled mode. Keep
+	 * that setup even though Drunix stays at identification speed for
+	 * now; otherwise the cfg block can keep routing the host through
+	 * the firmware-selected high-speed clock path. */
+	{
+		uint32_t mode = sdhci_cfg_read(BCM2712_CFG_MAX_50MHZ_MODE);
+		mode &= ~BCM2712_CFG_MAX_50MHZ_MODE_ENABLE;
+		mode |= BCM2712_CFG_MAX_50MHZ_MODE_STRAP_OVERRIDE;
+		sdhci_cfg_write(BCM2712_CFG_MAX_50MHZ_MODE, mode);
+		sdhci_diag_hex32("raspi5: post-cfg MAX_50MHZ_MODE",
+		                 sdhci_cfg_read(BCM2712_CFG_MAX_50MHZ_MODE));
+	}
+
+	/* CFG_SD_PIN_SEL: select SD card pinmux rather than eMMC. Linux's
+	 * sdhci_bcm2712_set_clock writes SDIO_CFG_SD_PIN_SEL based on
+	 * mmc->ios.timing — SD_HS (and other SD modes) get
+	 * SDIO_CFG_SD_PIN_SEL_SD (bit 1). Our card-present override above
+	 * appears to reset pinmux to default on transition, so we
+	 * re-establish SD pinmux explicitly here. Without this, the
+	 * controller clocks commands out onto bus pins that aren't
+	 * connected to the microSD slot — CMD_INHIBIT stays asserted
+	 * forever because the bus never quiets. */
+	{
+		uint32_t sel = sdhci_cfg_read(BCM2712_CFG_SD_PIN_SEL);
+		sel &= ~(uint32_t)BCM2712_CFG_SD_PIN_SEL_MASK;
+		sel |= BCM2712_CFG_SD_PIN_SEL_SD;
+		sdhci_cfg_write(BCM2712_CFG_SD_PIN_SEL, sel);
+		sdhci_diag_hex32("raspi5: post-cfg SD_PIN_SEL",
+		                 sdhci_cfg_read(BCM2712_CFG_SD_PIN_SEL));
+	}
+
+	/* 1. Software reset of CMD and DAT lines only — not the full
+	 * SDHCI_CLOCK_CONTROL.SW_RST_ALL bit, because on BCM2712 that
+	 * also clears more host state than this bring-up path needs. The
+	 * CMD/DAT resets are enough to flush any leftover state from the
+	 * firmware's 50 MHz use of the card. We then re-program the
+	 * clock to slow init speed; CLOCK_CONTROL was set to ~50 MHz
+	 * by firmware and stays at whatever divider firmware chose
+	 * until sdhci_set_clock_divider overwrites it below. */
+	sdhci_write(SDHCI_CLOCK_CONTROL,
+	            sdhci_read(SDHCI_CLOCK_CONTROL) | CLOCK_CTRL_INT_CLK_EN |
+	                CLOCK_CTRL_SD_CLK_EN | CLOCK_CTRL_SRST_CMDDAT);
+	if (sdhci_wait_clear(SDHCI_CLOCK_CONTROL, CLOCK_CTRL_SRST_CMDDAT) != 0) {
+		platform_uart_puts("raspi5: SDHCI SRST_CMD/DAT timeout\n");
 		return -1;
 	}
 
-	/* 2. Force 3.3V signaling on the host pads. Pi 5 firmware may
-	 * have left the controller in 1.8V UHS-I mode after loading
-	 * kernel8.img; without this clear, CMD0 drops the card to 3.3V
-	 * identification state but the host pads stay at 1.8V, and
-	 * ACMD41 silently times out. */
-	sdhci_write_u16(SDHCI_HOST_CONTROL_2,
-	                sdhci_read_u16(SDHCI_HOST_CONTROL_2) &
-	                    ~(uint16_t)HOST_CONTROL_2_S18EN);
+	/* 2. Do NOT clear HOST_CONTROL_2.S18EN. Pi 5 firmware leaves
+	 * the controller in 1.8V UHS-I mode (POWER_CONTROL=0x06,
+	 * VDD1=1.8V). Clearing S18EN cascades into VDD1=3.3V on this
+	 * controller — but the card stays in 1.8V signaling mode since
+	 * it was negotiated there by firmware, and there's no clean way
+	 * for us to re-init the card at 3.3V without a real power-cycle
+	 * (BUS_POWER is read-only on BCM2712). So we live in firmware's
+	 * 1.8V world: the card and host are already matched, CMD0 over
+	 * 1.8V signaling will reset the card to identification state at
+	 * 1.8V (per SD spec, card stays at 1.8V across CMD0), and we
+	 * proceed from there. */
+	sdhci_diag_hex32("raspi5: pre-reset HOST_CONTROL_2",
+	                 sdhci_read_u16(SDHCI_HOST_CONTROL_2));
 
-	/* 3. Power-cycle VDD1. Off then on at 3.3V forces the card back
-	 * to identification mode regardless of what state firmware left
-	 * it in. SD physical spec asks for >=1 ms between off and on. */
-	sdhci_write_u8(SDHCI_POWER_CONTROL, 0);
-	sdhci_delay_ms_approx(1u);
-	sdhci_write_u8(SDHCI_POWER_CONTROL,
-	               (uint8_t)(POWER_CTRL_BUS_POWER | POWER_CTRL_VDD1_3_3V));
-	sdhci_delay_ms_approx(1u);
+	/* 3. Restore SDHCI power after CMD/DAT reset. The serial trace
+	 * shows firmware hands off POWER_CONTROL=0x0f, but the reset path
+	 * leaves it at 0x0e before CMD0. Preserve the firmware-selected
+	 * voltage bits and reassert bus power; if firmware left no voltage
+	 * selection, fall back to default-speed 3.3V. */
+	sdhci_restore_power(pre_power);
+	sdhci_diag_hex32("raspi5: post-power POWER_CONTROL",
+	                 sdhci_read_u8(SDHCI_POWER_CONTROL));
 
 	/* 4. Mask SDHCI interrupts at the controller. The GIC also masks
 	 * SPI 273 (gicd_disable_all_spis from M5), but belt-and-braces
@@ -315,8 +434,19 @@ static int sdhci_reset(void)
 
 	/* 5. Slow init clock — same divider raspi3b uses. From any
 	 * reasonable BCM2712 clk_emmc2 base (~100-200 MHz) this lands
-	 * well under the 400 kHz SD spec ceiling for card init. */
+	 * well under the 400 kHz SD spec ceiling for card init. On this
+	 * controller the clock path can clear POWER_CONTROL.BUS_POWER, so
+	 * restore power again after the clock is stable. */
 	sdhci_set_clock_divider(0x80u);
+	sdhci_restore_power(pre_power);
+	sdhci_diag_hex32("raspi5: post-clock-power POWER_CONTROL",
+	                 sdhci_read_u8(SDHCI_POWER_CONTROL));
+	sdhci_diag_hex32("raspi5: post-reset CLOCK_CONTROL",
+	                 sdhci_read(SDHCI_CLOCK_CONTROL));
+	sdhci_diag_hex32("raspi5: post-reset PRESENT_STATE",
+	                 sdhci_read(SDHCI_PRESENT_STATE));
+	sdhci_diag_hex32("raspi5: post-reset POWER_CONTROL",
+	                 sdhci_read_u8(SDHCI_POWER_CONTROL));
 	return 0;
 }
 

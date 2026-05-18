@@ -59,7 +59,8 @@ PI5_FW_FILES := $(wildcard $(PI5_FW_DIR)/*.dtb) \
                 $(wildcard $(PI5_FW_DIR)/*.dat) \
                 $(wildcard $(PI5_FW_DIR)/bootcode.bin)
 
-pi5-sd.img: kernel8.img disk.fs boot-pi5/config.txt \
+pi5-sd.img: FORCE kernel8.img boot-pi5/config.txt \
             tools/build-pi5-sd-image.sh tools/wrap_mbr_pi5.py \
             $(PI5_FW_FILES)
+	$(MAKE) -B disk.fs
 	tools/build-pi5-sd-image.sh
