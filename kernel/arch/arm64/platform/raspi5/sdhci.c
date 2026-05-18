@@ -248,12 +248,44 @@ static void sdhci_set_clock_divider(uint32_t divider)
 	sdhci_write(SDHCI_CLOCK_CONTROL, control | CLOCK_CTRL_SD_CLK_EN);
 }
 
+static void sdhci_diag_hex32(const char *label, uint32_t v)
+{
+	char line[48];
+	uint32_t hi = (v >> 16) & 0xFFFFu;
+	uint32_t lo = v & 0xFFFFu;
+
+	(void)hi;
+	(void)lo;
+	platform_uart_puts(label);
+	platform_uart_puts("=0x");
+	{
+		static const char hexd[] = "0123456789abcdef";
+		char b[10];
+		int i;
+		for (i = 0; i < 8; i++)
+			b[i] = hexd[(v >> ((7 - i) * 4)) & 0xFu];
+		b[8] = '\n';
+		b[9] = '\0';
+		platform_uart_puts(b);
+	}
+	(void)label;
+	(void)line;
+}
+
 static int sdhci_reset(void)
 {
+	/* 0. Diagnostic — confirm MMIO is alive before we touch state.
+	 * If the L1[64] mapping is wrong, this read faults (sync exception)
+	 * rather than returning bogus data. */
+	sdhci_diag_hex32("raspi5: SDHCI CAPS",
+	                 sdhci_read(SDHCI_CAPABILITIES));
+
 	/* 1. Host controller software reset. */
 	sdhci_write(SDHCI_CLOCK_CONTROL, CLOCK_CTRL_SRST_HC);
-	if (sdhci_wait_clear(SDHCI_CLOCK_CONTROL, CLOCK_CTRL_SRST_HC) != 0)
+	if (sdhci_wait_clear(SDHCI_CLOCK_CONTROL, CLOCK_CTRL_SRST_HC) != 0) {
+		platform_uart_puts("raspi5: SDHCI SRST_HC timeout\n");
 		return -1;
+	}
 
 	/* 2. Force 3.3V signaling on the host pads. Pi 5 firmware may
 	 * have left the controller in 1.8V UHS-I mode after loading
@@ -292,45 +324,65 @@ static int sdhci_init_card(void)
 {
 	uint32_t resp = 0;
 
-	if (sdhci_reset() != 0)
+	if (sdhci_reset() != 0) {
+		platform_uart_puts("raspi5: SDHCI reset failed\n");
 		return -1;
-	if (sdhci_send_command(SD_CMD_GO_IDLE, 0u, 0u, 0) != 0)
+	}
+	if (sdhci_send_command(SD_CMD_GO_IDLE, 0u, 0u, 0) != 0) {
+		platform_uart_puts("raspi5: CMD0 (GO_IDLE) failed\n");
 		return -1;
+	}
 	sdhci_delay();
 
 	if (sdhci_send_command(SD_CMD_SEND_IF_COND,
 	                       SD_IF_COND_ARG,
 	                       CMD_RSPNS_TYPE_48 | CMD_CRCCHK_EN | CMD_IXCHK_EN,
-	                       &resp) != 0)
+	                       &resp) != 0) {
+		platform_uart_puts("raspi5: CMD8 (SEND_IF_COND) failed\n");
 		return -1;
-	if ((resp & 0xFFFu) != SD_IF_COND_ARG)
+	}
+	if ((resp & 0xFFFu) != SD_IF_COND_ARG) {
+		sdhci_diag_hex32("raspi5: CMD8 echo bad resp", resp);
 		return -1;
+	}
 
 	for (uint32_t i = 0; i < SDHCI_INIT_RETRIES; i++) {
 		if (sdhci_app_command(SD_ACMD_SD_SEND_OP_COND, SD_ACMD41_ARG, &resp) !=
-		    0)
+		    0) {
+			platform_uart_puts("raspi5: ACMD41 command failed\n");
+			sdhci_diag_hex32("raspi5: ACMD41 last resp", resp);
 			return -1;
+		}
 		if (resp & SD_OCR_POWER_UP)
 			break;
 		sdhci_delay();
 	}
-	if ((resp & SD_OCR_POWER_UP) == 0u)
+	if ((resp & SD_OCR_POWER_UP) == 0u) {
+		platform_uart_puts("raspi5: ACMD41 timeout, no POWER_UP\n");
+		sdhci_diag_hex32("raspi5: ACMD41 final resp", resp);
 		return -1;
+	}
 	g_sdhci_block_addressing = (resp & SD_OCR_HIGH_CAPACITY) != 0u;
 
 	if (sdhci_send_command(SD_CMD_ALL_SEND_CID,
 	                       0u,
 	                       CMD_RSPNS_TYPE_136 | CMD_CRCCHK_EN,
-	                       0) != 0)
+	                       0) != 0) {
+		platform_uart_puts("raspi5: CMD2 (ALL_SEND_CID) failed\n");
 		return -1;
+	}
 	if (sdhci_send_command(SD_CMD_SEND_REL_ADDR,
 	                       0u,
 	                       CMD_RSPNS_TYPE_48 | CMD_CRCCHK_EN | CMD_IXCHK_EN,
-	                       &resp) != 0)
+	                       &resp) != 0) {
+		platform_uart_puts("raspi5: CMD3 (SEND_REL_ADDR) failed\n");
 		return -1;
+	}
 	g_sdhci_rca = resp >> 16;
-	if (g_sdhci_rca == 0u)
+	if (g_sdhci_rca == 0u) {
+		platform_uart_puts("raspi5: CMD3 returned RCA=0\n");
 		return -1;
+	}
 
 	/* Skip CSD parse (CMD9) for MVP. Hardcoded DRUNIX_DISK_SECTORS is
 	 * a generous upper bound; the MBR scan limits per-partition reads
@@ -342,15 +394,20 @@ static int sdhci_init_card(void)
 	if (sdhci_send_command(SD_CMD_SELECT_CARD,
 	                       g_sdhci_rca << 16,
 	                       CMD_RSPNS_TYPE_48B | CMD_CRCCHK_EN | CMD_IXCHK_EN,
-	                       0) != 0)
+	                       0) != 0) {
+		platform_uart_puts("raspi5: CMD7 (SELECT_CARD) failed\n");
 		return -1;
+	}
 	if (sdhci_send_command(SD_CMD_SET_BLOCKLEN,
 	                       BLKDEV_SECTOR_SIZE,
 	                       CMD_RSPNS_TYPE_48 | CMD_CRCCHK_EN | CMD_IXCHK_EN,
-	                       0) != 0)
+	                       0) != 0) {
+		platform_uart_puts("raspi5: CMD16 (SET_BLOCKLEN) failed\n");
 		return -1;
+	}
 
 	g_sdhci_ready = 1;
+	platform_uart_puts("raspi5: SDHCI init OK\n");
 	return 0;
 }
 
