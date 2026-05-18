@@ -24,6 +24,14 @@ endif
 # `RASPI5_UART=jstsh` flips to the Pi 5 debug JST-SH header (uart10).
 RASPI5_UART ?= rp1uart0
 
+# raspi5 SD card layout: partition 1 is FAT32 (the Pi firmware boot
+# partition holding kernel8.img and DTBs), partition 2 is ext3 (the
+# Drunix root). Override ROOT_DEVICE on raspi5 builds so the kernel
+# mounts /dev/sda2. virt and raspi3b keep the default /dev/sda1.
+ifeq ($(PLATFORM),raspi5)
+override ROOT_DEVICE := /dev/sda2
+endif
+
 ifeq ($(BUILD_MODE),debug)
 BUILD_OPT ?= -Og
 else ifeq ($(BUILD_MODE),production)

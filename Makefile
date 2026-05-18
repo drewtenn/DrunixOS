@@ -70,6 +70,12 @@ ROOT_FS ?= ext3
 else
 ROOT_FS ?= ext3
 endif
+# The block device the kernel mounts as the root filesystem. Default sda1
+# matches the existing virt/raspi3b/x86 layouts where the root is partition
+# 1. raspi5 boots via Pi firmware which requires a FAT32 boot partition at
+# /dev/sda1 (kernel8.img + DTBs + config.txt), so its root mount targets
+# /dev/sda2 — overridden in kernel/arch/arm64/arch.mk's raspi5 branch.
+ROOT_DEVICE ?= /dev/sda1
 CFLAGS += -DMOUSE_FRAMEBUFFER_PIXEL_SCALE=$(MOUSE_SPEED)
 CFLAGS += -DDRUNIX_INIT_PROGRAM=\"$(INIT_PROGRAM)\"
 CFLAGS += -DDRUNIX_INIT_ARG0=\"$(INIT_ARG0)\"
@@ -86,6 +92,7 @@ ARM_CFLAGS += -DDRUNIX_INIT_PROGRAM=\"$(INIT_PROGRAM)\"
 ARM_CFLAGS += -DDRUNIX_INIT_ARG0=\"$(INIT_ARG0)\"
 ARM_CFLAGS += -DDRUNIX_INIT_ENV0=\"$(INIT_ENV0)\"
 ARM_CFLAGS += -DDRUNIX_ROOT_FS=\"$(ROOT_FS)\"
+ARM_CFLAGS += -DDRUNIX_ROOT_DEVICE=\"$(ROOT_DEVICE)\"
 ARM_CFLAGS += -DDRUNIX_ARM64_SMOKE_FALLBACK=$(ARM64_SMOKE_FALLBACK)
 ARM_CFLAGS += -DDRUNIX_ARM64_HALT_TEST=$(ARM64_HALT_TEST)
 ARM_CFLAGS += -DDRUNIX_ARM64_VGA=1
