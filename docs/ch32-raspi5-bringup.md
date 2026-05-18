@@ -79,6 +79,14 @@ The Pi 5 boot entry contract differs from the Pi 3's in a few places worth knowi
 
 Boot.S handles the EL2 → EL1 demotion, core parking, and BSS zero exactly as it does for the Pi 3 and QEMU virt; the only Pi 5-specific behaviour is the new MMU geometry, which `arm64_mmu_init` picks up by reading `ARM64_MMU_VA_BITS` and the `platform_extra_kernel_blocks()` hook.
 
+### SD root and init launch (M6)
+
+The follow-on M6 milestone adds the BCM2712 SDHCI block driver (`kernel/arch/arm64/platform/raspi5/sdhci.c`), a new identity-mapped L1[64] block covering the lower SoC peripheral range where the SD host registers live (`0x10_00ff_f000`), and a small `DRUNIX_ROOT_DEVICE` plumbing change so the raspi5 build mounts `/dev/sda2` instead of `/dev/sda1`. The driver is a port of `raspi3b/emmc.c` — both controllers implement the SD Host Controller Simplified Spec v3.00; only the MMIO base differs.
+
+The Pi-5-specific safety step in the new driver, added because Pi 5 firmware may leave the controller in UHS-I 1.8V signaling mode after loading `kernel8.img`, is the reset sequence that forces the host pads back to 3.3V (`HOST_CONTROL_2.S18EN = 0`) and power-cycles the SD card via SDHCI Power Control before any commands. Without it, CMD0 drops the card to 3.3V identification state but the host pads stay at 1.8V, and the ACMD41 init loop silently times out.
+
+The Pi 5 SD card carries two MBR partitions: FAT32 at `sda1` for the firmware boot artifacts (Pi firmware can only load `kernel8.img` from FAT32), and ext3 at `sda2` for the Drunix root. The disk.fs ext3 image is the same one virt and raspi3b use, written to `sda2` directly with `dd`.
+
 ### Where the Machine Is
 
-By the time the M5 milestone completes its bring-up, the Pi 5 reaches the same in-kernel state the Pi 3 chapter ends in: the kernel image is loaded at `0x80000`, the MMU is enabled with identity-mapped peripheral windows, the GIC-400 is forwarding the generic-timer PPI to CPU 0, the PL011 is producing characters on the chosen debug UART, and the console terminal is polling input. No SD root, no display, no network — those land in follow-on milestones. The platform has stopped being a Pi 5 with firmware running on it and started being a Pi 5 with Drunix running on it, which is the qualifying property of every other board in the port.
+By the time the M5 milestone completes its bring-up, the Pi 5 reaches the same in-kernel state the Pi 3 chapter ends in: the kernel image is loaded at `0x80000`, the MMU is enabled with identity-mapped peripheral windows, the GIC-400 is forwarding the generic-timer PPI to CPU 0, the PL011 is producing characters on the chosen debug UART, and the console terminal is polling input. By the time M6 lands, the kernel additionally mounts the ext3 root from the SD card and execs `/bin/shell` — the platform reaches a real userspace shell prompt over serial, the same way virt and raspi3b do today.
