@@ -50,6 +50,28 @@
 #define RASPI5_PCIE_EXT_CFG_INDEX_OFFSET 0x9000u
 #define RASPI5_PCIE_EXT_CFG_DATA_OFFSET 0x8000u
 
+/*
+ * PCIE_MISC_MISC_CTRL. Linux's brcm_pcie_setup ORs in a fixed set of
+ * bits before enumeration to enable downstream cycle emission and
+ * configure read-completion boundary, max burst, and UR behavior.
+ * The aggregate OR value Linux uses for BCM2712 is 0x203480:
+ *
+ *   bit 21 (0x200000) SCB_ACCESS_EN     — enable System Control Block access
+ *   bit 13 (0x002000) RCB_64B_MODE      — read-completion boundary = 64 B
+ *   bit 12 (0x001000) RCB_MPS_MODE      — use MPS for read-completion boundary
+ *   bit 10 (0x000400) CFG_READ_UR_MODE  — synthesize 0xdeaddead on UR
+ *   bit  7 (0x000080) max burst = 2     — set SCB max burst size to 2
+ *
+ * SCB_ACCESS_EN is the load-bearing one for M8.1: without it, the
+ * controller declines to issue cfg cycles on the secondary bus and
+ * the host sees deaddead even when the bridge is otherwise alive.
+ * The first 4 c1-c4 attempts at M8.1 hit exactly this trap because
+ * Pi 5 EEPROM firmware never sets it (firmware accesses RP1 via the
+ * outbound MMIO window, which uses different controller paths).
+ */
+#define RASPI5_PCIE_MISC_CTRL_OFFSET 0x4008u
+#define RASPI5_PCIE_MISC_CTRL_SETUP_BITS 0x00203480u
+
 #define RP1_PCI_BUS 1u
 #define RP1_PCI_DEV 0u
 #define RP1_PCI_FN 0u
@@ -202,6 +224,21 @@ int raspi5_pcie_probe_rp1(void)
 		platform_uart_puts(
 		    "raspi5 pcie: data-link inactive; aborting probe\n");
 		return -1;
+	}
+
+	/* Enable downstream cfg-cycle emission via SCB_ACCESS_EN in
+	 * PCIE_MISC_MISC_CTRL. Without this Linux-required setup,
+	 * the controller declines to forward type-1 cfg cycles past
+	 * the bridge even when the bus-number register is programmed,
+	 * and the host always reads back 0xdeaddead. */
+	{
+		uint32_t misc =
+		    raspi5_pcie_reg_read(RASPI5_PCIE_MISC_CTRL_OFFSET);
+		raspi5_pcie_trace_u32("raspi5 pcie: misc_ctrl (pre)", misc);
+		misc |= RASPI5_PCIE_MISC_CTRL_SETUP_BITS;
+		raspi5_pcie_reg_write(RASPI5_PCIE_MISC_CTRL_OFFSET, misc);
+		misc = raspi5_pcie_reg_read(RASPI5_PCIE_MISC_CTRL_OFFSET);
+		raspi5_pcie_trace_u32("raspi5 pcie: misc_ctrl (post)", misc);
 	}
 
 	/* Root port (bus 0 dev 0) lives directly at controller_base + reg.
