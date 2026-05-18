@@ -101,6 +101,11 @@ static uint32_t raspi5_pcie_cfg_read_root(uint32_t reg)
 	return raspi5_pcie_reg_read(reg & 0xfffu);
 }
 
+static void raspi5_pcie_cfg_write_root(uint32_t reg, uint32_t value)
+{
+	raspi5_pcie_reg_write(reg & 0xfffu, value);
+}
+
 static uint32_t raspi5_pcie_cfg_read(uint32_t bus, uint32_t dev, uint32_t fn,
                                      uint32_t reg)
 {
@@ -213,6 +218,32 @@ int raspi5_pcie_probe_rp1(void)
 		raspi5_pcie_trace_u32("raspi5 pcie: root_vd", root_vd);
 		raspi5_pcie_trace_u32("raspi5 pcie: root_class", root_class);
 		raspi5_pcie_trace_u32("raspi5 pcie: root_bus_nums", root_pri_sec);
+
+		/* Pi 5 EEPROM firmware brings the PCIe link up and assigns
+		 * BARs but does NOT do OS-style bridge enumeration: the
+		 * root port's primary / secondary / subordinate bus number
+		 * register at config offset 0x18 stays zero, which means
+		 * the bridge won't forward config cycles to downstream
+		 * buses. Without this write, every cfg_read on bus 1
+		 * returns the controller's master-abort marker 0xdeaddead.
+		 *
+		 * Standard PCI bus-number register layout (dword at 0x18):
+		 *   bits 7:0    primary bus number (the bus this bridge sits on)
+		 *   bits 15:8   secondary bus number (the bus directly behind)
+		 *   bits 23:16  subordinate bus number (highest bus reachable)
+		 *   bits 31:24  secondary latency timer (ignored)
+		 *
+		 * For a single-endpoint topology (RP1 is the only thing
+		 * downstream), primary=0, secondary=1, subordinate=1 is
+		 * the right value: 0x00010100. */
+		if ((root_pri_sec & 0xffffffu) == 0u) {
+			platform_uart_puts(
+			    "raspi5 pcie: firmware left bus numbers zero; programming 0x00010100\n");
+			raspi5_pcie_cfg_write_root(0x18u, 0x00010100u);
+			root_pri_sec = raspi5_pcie_cfg_read_root(0x18u);
+			raspi5_pcie_trace_u32("raspi5 pcie: root_bus_nums (post-write)",
+			                      root_pri_sec);
+		}
 	}
 
 	/* Scan downstream buses 0..3, slot 0 only (PCIe is point-to-
