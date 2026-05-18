@@ -49,12 +49,17 @@ def main() -> int:
         failures.append("debug-user still depends on the embedded DUFS rootfs image")
 
     start_kernel = (ROOT / "kernel/arch/arm64/start_kernel.c").read_text()
+    disk_images = (ROOT / "mk" / "disk-images.mk").read_text()
     if "platform_block_register()" not in start_kernel:
         failures.append("arm64 boot does not call platform_block_register()")
-    if 'vfs_mount_with_source("/", DRUNIX_ROOT_FS, "/dev/sda1")' not in start_kernel:
-        failures.append("arm64 boot does not mount DRUNIX_ROOT_FS from /dev/sda1")
+    if 'vfs_mount_with_source("/", DRUNIX_ROOT_FS, DRUNIX_ROOT_DEVICE)' not in start_kernel:
+        failures.append("arm64 boot does not mount DRUNIX_ROOT_FS from DRUNIX_ROOT_DEVICE")
     if "ext3_register()" not in start_kernel:
         failures.append("arm64 boot does not register ext3")
+    if "pi5-sd.img: FORCE kernel8.img" not in disk_images:
+        failures.append("pi5-sd.img is not forced to repackage on every invocation")
+    if "$(MAKE) -B disk.fs" not in disk_images:
+        failures.append("pi5-sd.img does not force-refresh disk.fs before packaging")
 
     emmc = ROOT / "kernel/arch/arm64/platform/raspi3b/emmc.c"
     if not emmc.exists():

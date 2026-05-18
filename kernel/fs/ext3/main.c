@@ -128,16 +128,32 @@ int ext3_write_disk_block(uint32_t block, const uint8_t *buf)
 	return bcache_write(g_dev, block * g_sectors_per_block, buf);
 }
 
+static const char *ext3_blkdev_from_mount_source(void *ctx)
+{
+	const char *source = (const char *)ctx;
+
+	if (!source || source[0] == '\0')
+		return "sda1";
+	if (k_strncmp(source, "/dev/", 5) == 0)
+		return source + 5;
+	if (k_strchr(source, '/') != 0)
+		return 0;
+	return source;
+}
+
 static int ext3_init(void *ctx)
 {
+	const char *dev_name;
 	uint32_t allowed_incompat;
 	uint32_t allowed_ro;
 
-	(void)ctx;
 	g_writable = 0;
 	g_needs_recovery = 0;
 	g_overlay_count = 0;
-	g_dev = blkdev_get("sda1");
+	dev_name = ext3_blkdev_from_mount_source(ctx);
+	if (!dev_name)
+		return -1;
+	g_dev = blkdev_get(dev_name);
 	if (!g_dev)
 		return -1;
 	if (ext3_read_bytes(

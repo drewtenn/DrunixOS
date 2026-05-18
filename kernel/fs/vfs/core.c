@@ -571,7 +571,8 @@ int vfs_mount_with_source(const char *mount_path,
 	}
 
 	if (kind == VFS_MOUNT_KIND_FS) {
-		int rc = ops->init ? ops->init(ops->ctx) : 0;
+		void *init_ctx = ops->ctx ? ops->ctx : (void *)source;
+		int rc = ops->init ? ops->init(init_ctx) : 0;
 		if (rc != 0)
 			return rc;
 	}

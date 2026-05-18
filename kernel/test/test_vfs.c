@@ -29,6 +29,8 @@
 #define TEST_PROC_IMAGE_END (TEST_PROC_IMAGE_START + 0x00010000u)
 #define TEST_PROC_HEAP_BRK (TEST_PROC_IMAGE_START + 0x00018000u)
 
+static const char *g_mock_init_ctx;
+
 static int has_entry(const char *buf, int n, const char *want)
 {
 	int i = 0;
@@ -218,6 +220,12 @@ static int mock_sub_stat(void *ctx, const char *path, vfs_stat_t *st)
 	return 0;
 }
 
+static int mock_init_records_ctx(void *ctx)
+{
+	g_mock_init_ctx = (const char *)ctx;
+	return 0;
+}
+
 static const fs_ops_t mock_root_ops = {
     .init = 0,
     .open = mock_root_open,
@@ -242,6 +250,15 @@ static const fs_ops_t mock_sub_ops = {
     .rename = 0,
     .stat = mock_sub_stat,
     .read = mock_sub_read,
+};
+
+static const fs_ops_t mock_source_init_ops = {
+    .ctx = 0,
+    .init = mock_init_records_ctx,
+    .open = mock_root_open,
+    .getdents = mock_root_getdents,
+    .stat = mock_root_stat,
+    .read = mock_root_read,
 };
 
 static int setup_mount_tree(void)
@@ -775,6 +792,19 @@ static void test_proc_mounts_reports_boot_style_sources(ktest_case_t *tc)
 	vfs_reset();
 }
 
+static void test_mount_source_reaches_source_backed_init(ktest_case_t *tc)
+{
+	g_mock_init_ctx = 0;
+	vfs_reset();
+	KTEST_ASSERT_EQ(
+	    tc, (uint32_t)vfs_register("srcfs", &mock_source_init_ops), 0u);
+	KTEST_ASSERT_EQ(
+	    tc, (uint32_t)vfs_mount_with_source("/", "srcfs", "/dev/sda2"), 0u);
+	KTEST_ASSERT_NOT_NULL(tc, g_mock_init_ctx);
+	KTEST_EXPECT_TRUE(tc, k_strcmp(g_mock_init_ctx, "/dev/sda2") == 0);
+	vfs_reset();
+}
+
 static void test_proc_namespace_lists_thread_group_once(ktest_case_t *tc)
 {
 	static process_t leader;
@@ -1068,6 +1098,7 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_proc_namespace_lists_modules_and_pid_dirs),
     KTEST_CASE(test_proc_mounts_reports_dynamic_sources),
     KTEST_CASE(test_proc_mounts_reports_boot_style_sources),
+    KTEST_CASE(test_mount_source_reaches_source_backed_init),
     KTEST_CASE(test_proc_namespace_lists_thread_group_once),
     KTEST_CASE(test_proc_pid_directory_lists_status_maps_and_fd),
     KTEST_CASE(test_proc_pid_directory_lists_vmstat_and_fault),
