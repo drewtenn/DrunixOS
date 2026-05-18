@@ -24,6 +24,11 @@ static void fb_text_console_present_rect(fb_text_console_t *console,
                                          uint32_t cols,
                                          uint32_t rows)
 {
+	uint32_t px;
+	uint32_t py;
+	uint32_t pw;
+	uint32_t ph;
+
 	if (!console || !console->fb)
 		return;
 
@@ -33,11 +38,26 @@ static void fb_text_console_present_rect(fb_text_console_t *console,
 	                                        (int)row,
 	                                        (int)cols,
 	                                        (int)rows);
-	framebuffer_present_rect(console->fb,
-	                         (int)(col * GUI_FONT_W),
-	                         (int)(row * GUI_FONT_H),
-	                         (int)(cols * GUI_FONT_W),
-	                         (int)(rows * GUI_FONT_H));
+	px = col * GUI_FONT_W;
+	py = row * GUI_FONT_H;
+	pw = cols * GUI_FONT_W;
+	ph = rows * GUI_FONT_H;
+	framebuffer_present_rect(console->fb, (int)px, (int)py, (int)pw, (int)ph);
+
+	/* Platform dirty-rect hook (M7 polish): lets BCM2712-class
+	 * non-coherent display engines do targeted dc cvac on the modified
+	 * pixel range instead of paying for a full framebuffer sweep per
+	 * character. Clamp the rect to framebuffer bounds before the
+	 * call. */
+	if (console->dirty_pixels) {
+		if (px < console->fb->width && py < console->fb->height) {
+			if (px + pw > console->fb->width)
+				pw = console->fb->width - px;
+			if (py + ph > console->fb->height)
+				ph = console->fb->height - py;
+			console->dirty_pixels(px, py, pw, ph);
+		}
+	}
 }
 
 static void fb_text_console_present_all(fb_text_console_t *console)
@@ -208,6 +228,14 @@ int fb_text_console_init(fb_text_console_t *console,
 	                 console->attr);
 	fb_text_console_clear(console);
 	return 0;
+}
+
+void fb_text_console_set_dirty_pixels(fb_text_console_t *console,
+                                      fb_text_console_dirty_pixels_fn fn)
+{
+	if (!console)
+		return;
+	console->dirty_pixels = fn;
 }
 
 int fb_text_console_ready(const fb_text_console_t *console)

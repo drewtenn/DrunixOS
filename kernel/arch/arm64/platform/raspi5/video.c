@@ -123,6 +123,11 @@ static int g_fb_ready;
  * introduce a wider include surface than the file needs. */
 int fbdev_init(const framebuffer_info_t *fb);
 
+/* Forward decl for the targeted dc cvac hook; definition lives below
+ * arm64_video_init so the broader bring-up flow reads top-down. */
+static void raspi5_video_dirty_pixels(uint32_t x, uint32_t y, uint32_t w,
+                                      uint32_t h);
+
 /*
  * Translate a 32-bit VC4 bus address returned by the mailbox
  * ALLOCATE_BUFFER tag to a CPU-physical address. BCM2712 declares
@@ -575,6 +580,16 @@ int arm64_video_init(void)
 			    "raspi5 fb: fb_text_console_init failed\n");
 			return -1;
 		}
+		fb_text_console_set_dirty_pixels(&g_fb_console,
+		                                 raspi5_video_dirty_pixels);
+		/* fb_text_console_init -> fb_text_console_clear already painted
+		 * the initial blank screen, but it ran before the hook was
+		 * registered, so those writes are still in CPU cache. One full
+		 * pass here flushes them so the first bytes the HVS scans out
+		 * are the cleared background, not whatever firmware left
+		 * behind. After this, every cell update self-flushes via the
+		 * hook. */
+		raspi5_video_dirty_pixels(0, 0, actual_width, actual_height);
 	}
 
 	if (fbdev_init(&g_fb_info) != 0) {
@@ -601,33 +616,51 @@ framebuffer_info_t *arm64_video_framebuffer(void)
 }
 
 /*
+ * Targeted cache-flush hook registered with fb_text_console at
+ * arm64_video_init time. fb_text_console_present_rect calls this
+ * after each modified pixel rect; the rect coordinates are already
+ * clipped to fb bounds. We DC CVAC only the affected rows so a
+ * single backspace (one cell-rect = 8x16 px = 512 B = 8 cache lines)
+ * costs ~8 CVAC operations instead of the ~130,000 the broad sweep
+ * used to cost. The DSB inside raspi5_dc_cvac_range orders the
+ * clean with respect to subsequent display-engine reads.
+ */
+static void raspi5_video_dirty_pixels(uint32_t x, uint32_t y, uint32_t w,
+                                      uint32_t h)
+{
+	uint32_t row;
+	uintptr_t row_base;
+	uint32_t row_bytes;
+
+	if (!g_fb_ready || w == 0u || h == 0u)
+		return;
+
+	row_bytes = w * RASPI5_VIDEO_BYTES_PER_PIXEL;
+	for (row = 0; row < h; row++) {
+		row_base = (uintptr_t)g_fb_info.address +
+		           (uintptr_t)(y + row) * (uintptr_t)g_fb_info.pitch +
+		           (uintptr_t)x * RASPI5_VIDEO_BYTES_PER_PIXEL;
+		raspi5_dc_cvac_range((const void *)row_base, row_bytes);
+	}
+}
+
+/*
  * Boot console write path. The kernel-linear identity map for the
  * framebuffer pages was built at boot, before the mailbox call
- * returned the fb_phys range, so those pages are still mapped
- * Normal-WB (cacheable) via the generic PLATFORM_MM_NORMAL
- * classification — the PLATFORM_MM_FRAMEBUFFER attribute only
- * applies to fresh L1 / L2 splits taken after the fb range was
- * registered with the layout. BCM2712's HVS reads scanout pixels
- * from physical RAM through a non-coherent path, so after each
- * fb_text_console_write the dirty cache lines must be cleaned to
- * the Point of Coherency or the display will show stale (or
- * blank) pixels until natural eviction pushes them out.
- *
- * A full clean over the framebuffer span (3 MiB at 1024x768x32)
- * costs ~50,000 dc cvac instructions per write — fine for the
- * slow boot-text rate, but the compositor flow in M8 will want
- * either a true Normal-NC remap (Option A from the M7 design
- * synthesis) or a per-rect dirty hint to bound this cost.
+ * returned the fb_phys range, so those pages are mapped Normal-WB
+ * (cacheable) via the generic PLATFORM_MM_NORMAL classification.
+ * BCM2712's HVS reads scanout pixels through a non-coherent path,
+ * so dirty cache lines must be cleaned to RAM before the display
+ * engine can see them. The actual cleaning happens inside
+ * raspi5_video_dirty_pixels, which fb_text_console_present_rect
+ * calls with the precise pixel rect that was modified — vastly
+ * cheaper than the M7 c5 sweep over the full framebuffer.
  */
 void arm64_video_console_write(const char *buf, uint32_t len)
 {
-	uint32_t fb_bytes;
-
 	if (!g_fb_ready)
 		return;
 	fb_text_console_write(&g_fb_console, buf, len);
-	fb_bytes = g_fb_info.pitch * g_fb_info.height;
-	raspi5_dc_cvac_range((const void *)g_fb_info.address, fb_bytes);
 }
 
 int platform_framebuffer_acquire(framebuffer_info_t **out)
