@@ -121,6 +121,34 @@ void raspi5_ram_layout_init(void)
 	g_layout.framebuffer_base = 0;
 	g_layout.framebuffer_size = 0;
 	g_layout_ready = 1;
+
+	/* Trace the resolved layout. Kept in the boot path under the
+	 * project's "diagnostic logging stays" rule; the alternative
+	 * (silent layout) cost us a round-trip in M7 when the VC4
+	 * framebuffer landed inside a chunk of physically-present
+	 * SDRAM that the FDT's first range did not advertise. */
+	{
+		static const char hexd[] = "0123456789abcdef";
+		char buf[20];
+		uint64_t v;
+		int i;
+		const uint64_t labels[3] = {
+		    g_layout.ram_base, g_layout.ram_size, g_layout.heap_size};
+		const char *names[3] = {
+		    "raspi5: ram_base=0x",
+		    "raspi5: ram_size=0x",
+		    "raspi5: heap_size=0x"};
+		int j;
+		for (j = 0; j < 3; j++) {
+			v = labels[j];
+			platform_uart_puts(names[j]);
+			for (i = 0; i < 16; i++)
+				buf[i] = hexd[(v >> ((15 - i) * 4)) & 0xfu];
+			buf[16] = '\n';
+			buf[17] = '\0';
+			platform_uart_puts(buf);
+		}
+	}
 }
 
 void raspi5_register_framebuffer(uint64_t phys, uint64_t size)
@@ -145,8 +173,22 @@ platform_mm_attr_t platform_mm_classify(uint64_t phys)
 	    phys >= g_layout.framebuffer_base &&
 	    phys < g_layout.framebuffer_base + g_layout.framebuffer_size)
 		return PLATFORM_MM_FRAMEBUFFER;
-	if (phys >= g_layout.ram_base &&
-	    phys < g_layout.ram_base + g_layout.ram_size)
+	/*
+	 * BCM2712 hardware contract: every Pi 5 SKU has at least 2 GiB of
+	 * SDRAM at PA 0..0x80000000. The FDT's first /memory range can
+	 * carve chunks out (VC4 firmware reservation, CMA, locked-down
+	 * boot region) but those are advisory to OS-level allocators;
+	 * the CPU can still read/write the bytes. The MMU classification
+	 * therefore covers the full 2 GiB unconditionally so any
+	 * firmware-handed pointer in that range (e.g. the mailbox-
+	 * returned framebuffer address) lands inside a present L2 leaf.
+	 * The PMM still uses g_layout.ram_size for its free-list bounds,
+	 * so the carve-outs are respected at allocation time. M7 hit
+	 * the bug version of this: FDT ranges[0] ended before the VC4
+	 * framebuffer at 0x3f400000 and the L2 sweep skipped that block,
+	 * causing a level-2 translation fault on first pixel write.
+	 */
+	if (phys < 0x80000000ull)
 		return PLATFORM_MM_NORMAL;
 	if (phys >= PLATFORM_RASPI5_SOC_LOW_BASE &&
 	    phys < PLATFORM_RASPI5_SOC_LOW_BASE + PLATFORM_RASPI5_SOC_LOW_SIZE)
