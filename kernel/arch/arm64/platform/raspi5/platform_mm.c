@@ -123,11 +123,28 @@ void raspi5_ram_layout_init(void)
 	g_layout_ready = 1;
 }
 
+void raspi5_register_framebuffer(uint64_t phys, uint64_t size)
+{
+	if (!g_layout_ready)
+		raspi5_ram_layout_init();
+	if (size == 0u)
+		return;
+	g_layout.framebuffer_base = phys;
+	g_layout.framebuffer_size = size;
+}
+
 platform_mm_attr_t platform_mm_classify(uint64_t phys)
 {
 	if (!g_layout_ready)
 		raspi5_ram_layout_init();
 
+	/* The framebuffer span lives inside RAM but needs Normal-NC, not
+	 * the default Normal-WB. Checked before the generic RAM range
+	 * because PLATFORM_MM_FRAMEBUFFER is the narrower predicate. */
+	if (g_layout.framebuffer_size != 0u &&
+	    phys >= g_layout.framebuffer_base &&
+	    phys < g_layout.framebuffer_base + g_layout.framebuffer_size)
+		return PLATFORM_MM_FRAMEBUFFER;
 	if (phys >= g_layout.ram_base &&
 	    phys < g_layout.ram_base + g_layout.ram_size)
 		return PLATFORM_MM_NORMAL;

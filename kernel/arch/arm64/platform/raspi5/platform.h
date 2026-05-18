@@ -3,6 +3,8 @@
 #ifndef KERNEL_PLATFORM_RASPI5_PLATFORM_H
 #define KERNEL_PLATFORM_RASPI5_PLATFORM_H
 
+#include <stdint.h>
+
 /*
  * Raspberry Pi 5 (BCM2712) memory map. Addresses taken from the live
  * device tree at arch/arm64/boot/dts/broadcom/bcm2712.dtsi and the
@@ -75,5 +77,20 @@
  * FDT pointer is missing or the blob fails validation.
  */
 void raspi5_ram_layout_init(void);
+
+/*
+ * M7: register the firmware-allocated HDMI framebuffer with the
+ * platform layout so platform_mm_classify() can return
+ * PLATFORM_MM_FRAMEBUFFER for those pages. Called by
+ * arm64_video_init() after the BCM2712 mailbox responds with a valid
+ * fb_phys / fb_size pair. Idempotent; the second call overwrites the
+ * first. No-op if size == 0.
+ *
+ * The fb range MUST live entirely below the 2 GiB linear-map ceiling
+ * (currently enforced by raspi5_ram_layout_init's RAM truncation);
+ * arm64_video_init rejects anything above that bound before calling
+ * here.
+ */
+void raspi5_register_framebuffer(uint64_t phys, uint64_t size);
 
 #endif
