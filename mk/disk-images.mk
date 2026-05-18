@@ -44,3 +44,22 @@ $(DUFS_IMG): dufs.fs tools/wrap_mbr.py .disk-sectors-flag | $(IMG_DIR)
 
 disk.img: $(ROOT_DISK_IMG)
 dufs.img: $(DUFS_IMG)
+
+# Pi 5 single-file SD card image. Two MBR partitions:
+#   sda1 FAT32  Pi firmware blobs + config.txt + kernel8.img
+#   sda2 ext3   the same disk.fs the virt/raspi3b builds use
+# The user assembles the firmware blobs at tools/rpi5-firmware/ once (DTBs,
+# start4.elf, fixup4.dat, bootcode.bin, etc. from raspberrypi/firmware).
+# Then `make ARCH=arm64 PLATFORM=raspi5 [RASPI5_UART=jstsh] pi5-sd.img`
+# builds kernel8.img, disk.fs, and pi5-sd.img end-to-end. Flash with
+# `sudo dd if=pi5-sd.img of=/dev/rdiskN bs=1m` and the card is ready.
+PI5_FW_DIR := tools/rpi5-firmware
+PI5_FW_FILES := $(wildcard $(PI5_FW_DIR)/*.dtb) \
+                $(wildcard $(PI5_FW_DIR)/*.elf) \
+                $(wildcard $(PI5_FW_DIR)/*.dat) \
+                $(wildcard $(PI5_FW_DIR)/bootcode.bin)
+
+pi5-sd.img: kernel8.img disk.fs boot-pi5/config.txt \
+            tools/build-pi5-sd-image.sh tools/wrap_mbr_pi5.py \
+            $(PI5_FW_FILES)
+	tools/build-pi5-sd-image.sh
