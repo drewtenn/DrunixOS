@@ -50,6 +50,16 @@
 #define RASPI5_TAG_END 0x00000000u
 
 #define RASPI5_VIDEO_FB_ALIGNMENT 16u
+/*
+ * VC4 firmware pixel-order values: 0 = BGR (red in low byte), 1 = RGB
+ * (blue in low byte). Pi 5 firmware ignores our requested
+ * SET_PIXEL_ORDER and returns whichever order the HVS / EDID handshake
+ * settled on — empirically 0 (BGR) on the boards we have tested. The
+ * driver therefore drives framebuffer_info_from_rgb with channel
+ * positions chosen at runtime from the returned value, instead of
+ * rejecting the bring-up because firmware disagreed with the request.
+ */
+#define RASPI5_VIDEO_PIXEL_ORDER_BGR 0u
 #define RASPI5_VIDEO_PIXEL_ORDER_RGB 1u
 #define RASPI5_VIDEO_BYTES_PER_PIXEL 4u
 #define RASPI5_VIDEO_RAM_CEILING 0x80000000ull
@@ -383,9 +393,10 @@ static int raspi5_video_validate_mode_response(void)
 		platform_uart_puts("raspi5 fb: depth differs from requested\n");
 		return -1;
 	}
-	if (g_request[RASPI5_VIDEO_REQ_PIXEL_ORDER] != RASPI5_VIDEO_PIXEL_ORDER_RGB) {
+	if (g_request[RASPI5_VIDEO_REQ_PIXEL_ORDER] != RASPI5_VIDEO_PIXEL_ORDER_RGB &&
+	    g_request[RASPI5_VIDEO_REQ_PIXEL_ORDER] != RASPI5_VIDEO_PIXEL_ORDER_BGR) {
 		platform_uart_puts(
-		    "raspi5 fb: pixel order differs from requested\n");
+		    "raspi5 fb: pixel order outside {0,1}; rejecting\n");
 		return -1;
 	}
 	return 0;
@@ -464,23 +475,44 @@ int arm64_video_init(void)
 	}
 
 	/*
-	 * Pixel order RGB on the Pi mailbox path is XRGB8888 on little-
-	 * endian AArch64: red bits 23:16, green 15:8, blue 7:0.
+	 * Channel bit-positions on the Pi mailbox path are little-endian
+	 * relative to the 32-bit pixel word:
+	 *   pixel_order = 1 (RGB) → XRGB8888 → red bits 23:16, green 15:8,
+	 *                  blue 7:0  → byte order in memory [B, G, R, X]
+	 *   pixel_order = 0 (BGR) → XBGR8888 → red bits 7:0,  green 15:8,
+	 *                  blue 23:16 → byte order in memory [R, G, B, X]
+	 * Pi 5 firmware empirically returns BGR regardless of what we
+	 * request via SET_PIXEL_ORDER. Pi 3 returns RGB. Both paths land
+	 * here.
 	 */
-	if (framebuffer_info_from_rgb((uintptr_t)fb_phys,
-	                              pitch,
-	                              RASPI5_VIDEO_WIDTH,
-	                              RASPI5_VIDEO_HEIGHT,
-	                              RASPI5_VIDEO_DEPTH,
-	                              16u,
-	                              8u,
-	                              8u,
-	                              8u,
-	                              0u,
-	                              8u,
-	                              &g_fb_info) != 0) {
-		platform_uart_puts("raspi5 fb: framebuffer_info_from_rgb failed\n");
-		return -1;
+	{
+		uint8_t red_pos;
+		uint8_t blue_pos;
+
+		if (g_request[RASPI5_VIDEO_REQ_PIXEL_ORDER] ==
+		    RASPI5_VIDEO_PIXEL_ORDER_RGB) {
+			red_pos = 16u;
+			blue_pos = 0u;
+		} else {
+			red_pos = 0u;
+			blue_pos = 16u;
+		}
+		if (framebuffer_info_from_rgb((uintptr_t)fb_phys,
+		                              pitch,
+		                              RASPI5_VIDEO_WIDTH,
+		                              RASPI5_VIDEO_HEIGHT,
+		                              RASPI5_VIDEO_DEPTH,
+		                              red_pos,
+		                              8u,
+		                              8u,
+		                              8u,
+		                              blue_pos,
+		                              8u,
+		                              &g_fb_info) != 0) {
+			platform_uart_puts(
+			    "raspi5 fb: framebuffer_info_from_rgb failed\n");
+			return -1;
+		}
 	}
 
 	pmm_mark_used((uint32_t)fb_phys, fb_size);
