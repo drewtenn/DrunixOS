@@ -326,24 +326,68 @@ static int raspi5_video_tag_ok(uint32_t request_code, uint32_t value_size)
 	       (request_code & ~RASPI5_MBOX_TAG_RESPONSE) >= value_size;
 }
 
+/*
+ * Dump the per-tag response codes and values to serial. Called
+ * unconditionally so we can diagnose firmware that ignored the
+ * requested geometry (Pi 5 firmware is known to do this when an
+ * EDID-detected resolution conflicts with the SET_PHYSICAL_SIZE
+ * request).
+ */
+static void raspi5_video_trace_mode_response(void)
+{
+	raspi5_video_trace_u32("raspi5 fb: phys_code",
+	                       g_request[RASPI5_VIDEO_REQ_PHYSICAL_CODE]);
+	raspi5_video_trace_u32("raspi5 fb: phys_w",
+	                       g_request[RASPI5_VIDEO_REQ_PHYSICAL_WIDTH]);
+	raspi5_video_trace_u32("raspi5 fb: phys_h",
+	                       g_request[RASPI5_VIDEO_REQ_PHYSICAL_HEIGHT]);
+	raspi5_video_trace_u32("raspi5 fb: virt_code",
+	                       g_request[RASPI5_VIDEO_REQ_VIRTUAL_CODE]);
+	raspi5_video_trace_u32("raspi5 fb: virt_w",
+	                       g_request[RASPI5_VIDEO_REQ_VIRTUAL_WIDTH]);
+	raspi5_video_trace_u32("raspi5 fb: virt_h",
+	                       g_request[RASPI5_VIDEO_REQ_VIRTUAL_HEIGHT]);
+	raspi5_video_trace_u32("raspi5 fb: depth_code",
+	                       g_request[RASPI5_VIDEO_REQ_DEPTH_CODE]);
+	raspi5_video_trace_u32("raspi5 fb: depth",
+	                       g_request[RASPI5_VIDEO_REQ_DEPTH_VALUE]);
+	raspi5_video_trace_u32("raspi5 fb: pixel_code",
+	                       g_request[RASPI5_VIDEO_REQ_PIXEL_CODE]);
+	raspi5_video_trace_u32("raspi5 fb: pixel_order",
+	                       g_request[RASPI5_VIDEO_REQ_PIXEL_ORDER]);
+}
+
 static int raspi5_video_validate_mode_response(void)
 {
 	if (!raspi5_video_tag_ok(g_request[RASPI5_VIDEO_REQ_PHYSICAL_CODE], 8u) ||
 	    !raspi5_video_tag_ok(g_request[RASPI5_VIDEO_REQ_VIRTUAL_CODE], 8u) ||
 	    !raspi5_video_tag_ok(g_request[RASPI5_VIDEO_REQ_DEPTH_CODE], 4u) ||
-	    !raspi5_video_tag_ok(g_request[RASPI5_VIDEO_REQ_PIXEL_CODE], 4u))
+	    !raspi5_video_tag_ok(g_request[RASPI5_VIDEO_REQ_PIXEL_CODE], 4u)) {
+		platform_uart_puts("raspi5 fb: per-tag response code invalid\n");
 		return -1;
+	}
 
 	if (g_request[RASPI5_VIDEO_REQ_PHYSICAL_WIDTH] != RASPI5_VIDEO_WIDTH ||
-	    g_request[RASPI5_VIDEO_REQ_PHYSICAL_HEIGHT] != RASPI5_VIDEO_HEIGHT)
+	    g_request[RASPI5_VIDEO_REQ_PHYSICAL_HEIGHT] != RASPI5_VIDEO_HEIGHT) {
+		platform_uart_puts(
+		    "raspi5 fb: physical dimensions differ from requested\n");
 		return -1;
+	}
 	if (g_request[RASPI5_VIDEO_REQ_VIRTUAL_WIDTH] != RASPI5_VIDEO_WIDTH ||
-	    g_request[RASPI5_VIDEO_REQ_VIRTUAL_HEIGHT] != RASPI5_VIDEO_HEIGHT)
+	    g_request[RASPI5_VIDEO_REQ_VIRTUAL_HEIGHT] != RASPI5_VIDEO_HEIGHT) {
+		platform_uart_puts(
+		    "raspi5 fb: virtual dimensions differ from requested\n");
 		return -1;
-	if (g_request[RASPI5_VIDEO_REQ_DEPTH_VALUE] != RASPI5_VIDEO_DEPTH)
+	}
+	if (g_request[RASPI5_VIDEO_REQ_DEPTH_VALUE] != RASPI5_VIDEO_DEPTH) {
+		platform_uart_puts("raspi5 fb: depth differs from requested\n");
 		return -1;
-	if (g_request[RASPI5_VIDEO_REQ_PIXEL_ORDER] != RASPI5_VIDEO_PIXEL_ORDER_RGB)
+	}
+	if (g_request[RASPI5_VIDEO_REQ_PIXEL_ORDER] != RASPI5_VIDEO_PIXEL_ORDER_RGB) {
+		platform_uart_puts(
+		    "raspi5 fb: pixel order differs from requested\n");
 		return -1;
+	}
 	return 0;
 }
 
@@ -376,11 +420,11 @@ int arm64_video_init(void)
 	raspi5_video_build_request();
 	if (raspi5_mailbox_call(g_request) != 0)
 		return -1;
-	if (g_request[RASPI5_VIDEO_REQ_CODE] != RASPI5_MBOX_RESPONSE_SUCCESS) {
-		raspi5_video_trace_u32("raspi5 fb: resp_code",
-		                       g_request[RASPI5_VIDEO_REQ_CODE]);
+	raspi5_video_trace_u32("raspi5 fb: resp_code",
+	                       g_request[RASPI5_VIDEO_REQ_CODE]);
+	raspi5_video_trace_mode_response();
+	if (g_request[RASPI5_VIDEO_REQ_CODE] != RASPI5_MBOX_RESPONSE_SUCCESS)
 		return -1;
-	}
 	if (raspi5_video_validate_mode_response() != 0) {
 		platform_uart_puts("raspi5 fb: mode response mismatch\n");
 		return -1;
