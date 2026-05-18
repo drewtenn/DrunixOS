@@ -3,6 +3,12 @@
 # device on arm64 virt (M2.4c reuses the same MBR-wrapped image; the raw
 # partition layout is identical). ROOT_FS=dufs builds sda as DUFS; the
 # default builds a deterministic Linux-compatible ext3 root partition.
+#
+# raspi5 builds the same arm64 disk.fs (the raw ext3 image with the user
+# binaries) without the wrap_mbr step, because the user assembles the SD
+# card by hand: partition 1 is FAT32 (Pi firmware + kernel8.img +
+# config.txt + DTBs), partition 2 receives `dd if=disk.fs of=...p2`.
+# See boot-pi5/README.md.
 ifeq ($(ARCH),arm64)
 ifeq ($(ROOT_FS),dufs)
 disk.fs: $(ARM_USER_NATIVE_BINS) build/arm64init.elf $(ARM_BUSYBOX_ROOTFS_DEPS) tools/hello.txt tools/readme.txt tools/wallpaper.jpg tools/mkfs.py .disk-sectors-flag .include-busybox-flag .disk-layout-flag
