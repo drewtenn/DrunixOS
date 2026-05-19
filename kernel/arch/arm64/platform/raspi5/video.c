@@ -620,23 +620,30 @@ int arm64_video_init(void)
 		}
 
 		/*
-		 * Channel bit-positions on the Pi mailbox path are little-
-		 * endian relative to the 32-bit pixel word:
-		 *   pixel_order = 1 (RGB) → XRGB8888, red bits 23:16,
-		 *                  blue 7:0  → memory order [B, G, R, X]
-		 *   pixel_order = 0 (BGR) → XBGR8888, red bits 7:0,
-		 *                  blue 23:16 → memory order [R, G, B, X]
-		 * Pi 5 firmware empirically returns BGR regardless of what we
-		 * request via SET_PIXEL_ORDER. Pi 3 returns RGB. Both land here.
+		 * Pi 5 HVS6 byte order is BGRA on the wire regardless of what
+		 * SET_PIXEL_ORDER asked for — firmware acks the request but the
+		 * actual plane CTL0 (observed via M9.1's dlist dump at boot)
+		 * encodes the byte order from EDID negotiation, not from the
+		 * mailbox tag. The user-visible symptom of trusting the
+		 * mailbox response: fbfill paints red and blue inverted, while
+		 * fb_text_console's white-on-black text rendering disguises the
+		 * issue because achromatic pixels are byte-order invariant.
+		 *
+		 * Pi 3 (raspi3b/video.c) hardcodes red_pos=16 / blue_pos=0 for
+		 * the same reason: red in bits 23:16 of the 32-bit packed
+		 * pixel, blue in 7:0, which on little-endian AArch64 is memory
+		 * layout [B, G, R, X]. The HVS6 plane on Pi 5 uses the same
+		 * BGRA byte order.
+		 *
+		 * If a future Pi 5 firmware revision starts honouring
+		 * SET_PIXEL_ORDER and a hardware variant ships with RGBA byte
+		 * order, the right place to detect that is M9.1's HVS dlist
+		 * probe (CTL0's ORDERRGBA bit field), not the mailbox tag
+		 * response. Documented and parked.
 		 */
-		if (g_request[RASPI5_VIDEO_REQ_PIXEL_ORDER] ==
-		    RASPI5_VIDEO_PIXEL_ORDER_RGB) {
-			red_pos = 16u;
-			blue_pos = 0u;
-		} else {
-			red_pos = 0u;
-			blue_pos = 16u;
-		}
+		(void)g_request[RASPI5_VIDEO_REQ_PIXEL_ORDER];
+		red_pos = 16u;
+		blue_pos = 0u;
 		if (framebuffer_info_from_rgb((uintptr_t)fb_phys,
 		                              pitch,
 		                              actual_width,
