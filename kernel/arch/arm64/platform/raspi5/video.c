@@ -27,6 +27,7 @@
 #include "pmm.h"
 #include "fb_text_console.h"
 #include "kstring.h"
+#include "hvs.h"
 #include <stdint.h>
 
 #define RASPI5_MBOX_BASE 0x107c013880ull
@@ -650,6 +651,21 @@ int arm64_video_init(void)
 
 	g_fb_ready = 1;
 	platform_uart_puts("raspi5 fb: ready (fb_text_console + /dev/fb0)\n");
+
+	/*
+	 * M9.1 — passive HVS observability. Read HVS channel state plus a
+	 * window of dlist SRAM so the boot trace tells us where firmware
+	 * parked HDMI0's primary plane. Read-only; failure is non-fatal —
+	 * the mailbox framebuffer continues to drive the console
+	 * regardless. M9.2 will build on top of this to identify and
+	 * fingerprint the firmware's active plane entry; M9.3+ will start
+	 * issuing the gated PTR0/PTR1 RMW that fixes the scroll crawl.
+	 */
+	{
+		raspi5_hvs_probe_state_t hvs_state;
+		(void)raspi5_hvs_probe_passive(&hvs_state);
+	}
+
 	return 0;
 }
 
