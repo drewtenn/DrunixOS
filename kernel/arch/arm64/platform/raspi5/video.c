@@ -13,8 +13,8 @@
  * The protocol is the legacy BCM2835 channel-8 property interface
  * (compatible = "brcm,bcm2835-mbox" on Pi 5 too). Pi 5 firmware
  * implements it as a documented subset; the SET_PHYSICAL_SIZE,
- * SET_VIRTUAL_SIZE, SET_DEPTH, SET_PIXEL_ORDER, ALLOCATE_BUFFER, and
- * GET_PITCH tags are part of the subset and are all that M7 needs.
+ * SET_VIRTUAL_SIZE, SET_DEPTH, SET_PIXEL_ORDER, SET_VIRTUAL_OFFSET,
+ * ALLOCATE_BUFFER, and GET_PITCH tags are part of the subset used here.
  *
  * The driver publishes both the in-kernel fb_text_console (so HDMI
  * shows kernel boot messages) and /dev/fb0 via fbdev_init (so future
@@ -26,6 +26,7 @@
 #include "platform.h"
 #include "pmm.h"
 #include "fb_text_console.h"
+#include "kstring.h"
 #include <stdint.h>
 
 #define RASPI5_MBOX_BASE 0x107c013880ull
@@ -47,9 +48,34 @@
 #define RASPI5_TAG_SET_VIRTUAL_SIZE 0x00048004u
 #define RASPI5_TAG_SET_DEPTH 0x00048005u
 #define RASPI5_TAG_SET_PIXEL_ORDER 0x00048006u
+#define RASPI5_TAG_SET_VIRTUAL_OFFSET 0x00048009u
 #define RASPI5_TAG_END 0x00000000u
 
 #define RASPI5_VIDEO_FB_ALIGNMENT 16u
+/*
+ * Virtual-buffer multiplier: how many visible frames tall the
+ * SET_VIRTUAL_SIZE request asks for. The raspi5_video_scroll_pixels
+ * fast path pans through this buffer with SET_VIRTUAL_OFFSET, falling
+ * back to a full software present when the pan wraps off the end.
+ *
+ * Pi 5 firmware was observed in M7 to "politely echo" the requested
+ * SET_VIRTUAL_SIZE in the response while allocating only the visible
+ * frame (fb_size = pitch * visible_height). With PAN_PAGES = 4 the
+ * fast path's precondition gate (virtual_height >= visible + GUI_FONT_H)
+ * therefore failed on every boot, falling back to full present_all on
+ * every scroll — the visible "redraw crawls top-to-bottom" symptom.
+ *
+ * Dropped to 2 to probe whether the firmware caps virtual at visible
+ * unconditionally, or rejects only oversize requests. After the next
+ * boot, compare the trace lines:
+ *   raspi5 fb: virt_h         (firmware's response echo)
+ *   raspi5 fb: virt_actual_h  (fb_size / pitch — actual allocation)
+ * If virt_actual_h reports 2160, the firmware honored a 2x request and
+ * the pan fast path becomes live. If it stays at 1080, the firmware
+ * refuses any virtual > physical and HW pan is unreachable via the
+ * mailbox property interface.
+ */
+#define RASPI5_VIDEO_PAN_PAGES 2u
 /*
  * VC4 firmware pixel-order values: 0 = BGR (red in low byte), 1 = RGB
  * (blue in low byte). Pi 5 firmware ignores our requested
@@ -113,10 +139,14 @@ enum raspi5_video_request_index {
  * the 16-byte alignment requirement is satisfied at link time. */
 static volatile uint32_t g_request[RASPI5_VIDEO_REQ_WORDS]
     __attribute__((aligned(16)));
+static volatile uint32_t g_offset_request[RASPI5_VIDEO_REQ_WORDS]
+    __attribute__((aligned(16)));
 static framebuffer_info_t g_fb_info;
 static fb_text_console_t g_fb_console;
 static gui_cell_t g_fb_cells[RASPI5_VIDEO_MAX_CONSOLE_CELLS];
 static int g_fb_ready;
+static uint32_t g_fb_virtual_height;
+static uint32_t g_fb_pan_y;
 
 /* Forward decl from kernel/drivers/fbdev.h. raspi3b/video.c keeps the
  * include in a different transitive path; pulling it in here would
@@ -127,6 +157,7 @@ int fbdev_init(const framebuffer_info_t *fb);
  * arm64_video_init so the broader bring-up flow reads top-down. */
 static void raspi5_video_dirty_pixels(uint32_t x, uint32_t y, uint32_t w,
                                       uint32_t h);
+static int raspi5_video_scroll_pixels(fb_text_console_t *console);
 
 /*
  * Translate a 32-bit VC4 bus address returned by the mailbox
@@ -167,7 +198,7 @@ static void raspi5_video_dsb(void)
  */
 #define RASPI5_DCACHE_LINE 64u
 
-static void raspi5_dc_cvac_range(const void *start, uint32_t bytes)
+static void raspi5_dc_cvac_lines(const void *start, uint32_t bytes)
 {
 	uintptr_t addr = (uintptr_t)start & ~(uintptr_t)(RASPI5_DCACHE_LINE - 1u);
 	uintptr_t end = (uintptr_t)start + bytes;
@@ -179,6 +210,11 @@ static void raspi5_dc_cvac_range(const void *start, uint32_t bytes)
 		__asm__ volatile("dc cvac, %0" ::"r"(addr) : "memory");
 		addr += RASPI5_DCACHE_LINE;
 	}
+}
+
+static void raspi5_dc_cvac_range(const void *start, uint32_t bytes)
+{
+	raspi5_dc_cvac_lines(start, bytes);
 	__asm__ volatile("dsb sy" ::: "memory");
 }
 
@@ -310,14 +346,15 @@ static void raspi5_video_build_request(void)
 	g_request[RASPI5_VIDEO_REQ_PHYSICAL_TAG] = RASPI5_TAG_SET_PHYSICAL_SIZE;
 	g_request[RASPI5_VIDEO_REQ_PHYSICAL_SIZE] = 8u;
 	g_request[RASPI5_VIDEO_REQ_PHYSICAL_CODE] = 0u;
-	g_request[RASPI5_VIDEO_REQ_PHYSICAL_WIDTH] = RASPI5_VIDEO_WIDTH;
-	g_request[RASPI5_VIDEO_REQ_PHYSICAL_HEIGHT] = RASPI5_VIDEO_HEIGHT;
+	g_request[RASPI5_VIDEO_REQ_PHYSICAL_WIDTH] = RASPI5_VIDEO_MAX_WIDTH;
+	g_request[RASPI5_VIDEO_REQ_PHYSICAL_HEIGHT] = RASPI5_VIDEO_MAX_HEIGHT;
 
 	g_request[RASPI5_VIDEO_REQ_VIRTUAL_TAG] = RASPI5_TAG_SET_VIRTUAL_SIZE;
 	g_request[RASPI5_VIDEO_REQ_VIRTUAL_SIZE] = 8u;
 	g_request[RASPI5_VIDEO_REQ_VIRTUAL_CODE] = 0u;
-	g_request[RASPI5_VIDEO_REQ_VIRTUAL_WIDTH] = RASPI5_VIDEO_WIDTH;
-	g_request[RASPI5_VIDEO_REQ_VIRTUAL_HEIGHT] = RASPI5_VIDEO_HEIGHT;
+	g_request[RASPI5_VIDEO_REQ_VIRTUAL_WIDTH] = RASPI5_VIDEO_MAX_WIDTH;
+	g_request[RASPI5_VIDEO_REQ_VIRTUAL_HEIGHT] =
+	    RASPI5_VIDEO_MAX_HEIGHT * RASPI5_VIDEO_PAN_PAGES;
 
 	g_request[RASPI5_VIDEO_REQ_DEPTH_TAG] = RASPI5_TAG_SET_DEPTH;
 	g_request[RASPI5_VIDEO_REQ_DEPTH_SIZE] = 4u;
@@ -428,26 +465,32 @@ static int raspi5_video_validate_mode_response(void)
 static int raspi5_video_derive_dimensions(uint32_t pitch,
                                           uint32_t fb_size,
                                           uint32_t *out_width,
-                                          uint32_t *out_height)
+                                          uint32_t *out_height,
+                                          uint32_t *out_virtual_height)
 {
 	uint32_t width;
-	uint32_t height;
+	uint32_t visible_height;
+	uint32_t virtual_height;
 
-	if (pitch == 0u || fb_size == 0u)
+	if (pitch == 0u || fb_size == 0u || !out_virtual_height)
 		return -1;
 	if ((pitch % RASPI5_VIDEO_BYTES_PER_PIXEL) != 0u)
 		return -1;
 	width = pitch / RASPI5_VIDEO_BYTES_PER_PIXEL;
-	height = fb_size / pitch;
-	if (width == 0u || height == 0u)
+	virtual_height = fb_size / pitch;
+	visible_height = virtual_height;
+	if (virtual_height > RASPI5_VIDEO_MAX_HEIGHT)
+		visible_height = RASPI5_VIDEO_MAX_HEIGHT;
+	if (width == 0u || visible_height == 0u || virtual_height == 0u)
 		return -1;
-	if (width > RASPI5_VIDEO_MAX_WIDTH || height > RASPI5_VIDEO_MAX_HEIGHT) {
+	if (width > RASPI5_VIDEO_MAX_WIDTH) {
 		platform_uart_puts(
-		    "raspi5 fb: scanout exceeds RASPI5_VIDEO_MAX_* (1920x1080 cap)\n");
+		    "raspi5 fb: scanout width exceeds RASPI5_VIDEO_MAX_WIDTH\n");
 		return -1;
 	}
 	*out_width = width;
-	*out_height = height;
+	*out_height = visible_height;
+	*out_virtual_height = virtual_height;
 	return 0;
 }
 
@@ -499,6 +542,7 @@ int arm64_video_init(void)
 	{
 		uint32_t actual_width;
 		uint32_t actual_height;
+		uint32_t virtual_height;
 		uint32_t cell_cols;
 		uint32_t cell_rows;
 		uint32_t cell_count;
@@ -506,13 +550,15 @@ int arm64_video_init(void)
 		uint8_t blue_pos;
 
 		if (raspi5_video_derive_dimensions(
-		        pitch, fb_size, &actual_width, &actual_height) != 0) {
+		        pitch, fb_size, &actual_width, &actual_height, &virtual_height) !=
+		    0) {
 			platform_uart_puts(
 			    "raspi5 fb: cannot derive scanout dimensions from pitch/size\n");
 			return -1;
 		}
 		raspi5_video_trace_u32("raspi5 fb: actual_w", actual_width);
 		raspi5_video_trace_u32("raspi5 fb: actual_h", actual_height);
+		raspi5_video_trace_u32("raspi5 fb: virt_actual_h", virtual_height);
 
 		fb_phys = raspi5_fb_bus_to_phys(fb_bus);
 		raspi5_video_trace_u64("raspi5 fb: phys", fb_phys);
@@ -582,6 +628,10 @@ int arm64_video_init(void)
 		}
 		fb_text_console_set_dirty_pixels(&g_fb_console,
 		                                 raspi5_video_dirty_pixels);
+		g_fb_virtual_height = virtual_height;
+		g_fb_pan_y = 0u;
+		fb_text_console_set_scroll_pixels(&g_fb_console,
+		                                  raspi5_video_scroll_pixels);
 		/* fb_text_console_init -> fb_text_console_clear already painted
 		 * the initial blank screen, but it ran before the hook was
 		 * registered, so those writes are still in CPU cache. One full
@@ -615,15 +665,119 @@ framebuffer_info_t *arm64_video_framebuffer(void)
 	return &g_fb_info;
 }
 
+static int raspi5_video_set_virtual_offset(uint32_t y)
+{
+	k_memset((void *)g_offset_request, 0, sizeof(g_offset_request));
+	g_offset_request[0] = RASPI5_VIDEO_REQ_WORDS * sizeof(uint32_t);
+	g_offset_request[1] = RASPI5_MBOX_REQUEST;
+	g_offset_request[2] = RASPI5_TAG_SET_VIRTUAL_OFFSET;
+	g_offset_request[3] = 8u;
+	g_offset_request[4] = 0u;
+	g_offset_request[5] = 0u;
+	g_offset_request[6] = y;
+	g_offset_request[7] = RASPI5_TAG_END;
+
+	if (raspi5_mailbox_call(g_offset_request) != 0)
+		return -1;
+	if (g_offset_request[1] != RASPI5_MBOX_RESPONSE_SUCCESS ||
+	    !raspi5_video_tag_ok(g_offset_request[4], 8u))
+		return -1;
+	return 0;
+}
+
+static void raspi5_video_dirty_memory_pixels(uint32_t x,
+                                             uint32_t y,
+                                             uint32_t w,
+                                             uint32_t h)
+{
+	uint32_t row;
+	uintptr_t row_base;
+	uint32_t row_bytes;
+
+	if (!g_fb_ready || w == 0u || h == 0u)
+		return;
+	if (x >= g_fb_info.width || y >= g_fb_virtual_height)
+		return;
+	if (x + w > g_fb_info.width)
+		w = g_fb_info.width - x;
+	if (y + h > g_fb_virtual_height)
+		h = g_fb_virtual_height - y;
+
+	row_bytes = w * RASPI5_VIDEO_BYTES_PER_PIXEL;
+	if (x == 0u && row_bytes == g_fb_info.pitch) {
+		row_base = (uintptr_t)g_fb_info.address +
+		           (uintptr_t)y * (uintptr_t)g_fb_info.pitch;
+		raspi5_dc_cvac_lines((const void *)row_base, g_fb_info.pitch * h);
+		raspi5_video_dsb();
+		return;
+	}
+	for (row = 0; row < h; row++) {
+		row_base = (uintptr_t)g_fb_info.address +
+		           (uintptr_t)(y + row) * (uintptr_t)g_fb_info.pitch +
+		           (uintptr_t)x * RASPI5_VIDEO_BYTES_PER_PIXEL;
+		raspi5_dc_cvac_lines((const void *)row_base, row_bytes);
+	}
+	raspi5_video_dsb();
+}
+
+static int raspi5_video_redraw_at_pan(fb_text_console_t *console, uint32_t pan_y)
+{
+	framebuffer_info_t window;
+
+	if (!console || !console->fb)
+		return -1;
+	window = *console->fb;
+	window.address = console->fb->address + (uintptr_t)pan_y * console->fb->pitch;
+	gui_display_present_to_framebuffer(&console->display, &window);
+	raspi5_video_dirty_memory_pixels(0u, pan_y, window.width, window.height);
+	if (raspi5_video_set_virtual_offset(pan_y) != 0)
+		return -1;
+	g_fb_pan_y = pan_y;
+	return 0;
+}
+
+static int raspi5_video_scroll_pixels(fb_text_console_t *console)
+{
+	framebuffer_info_t window;
+	uint32_t next_pan_y;
+	uint32_t bottom_y;
+
+	if (!g_fb_ready || !console || !console->fb)
+		return -1;
+	if (g_fb_virtual_height < console->fb->height + GUI_FONT_H)
+		return -1;
+
+	next_pan_y = g_fb_pan_y + GUI_FONT_H;
+	if (next_pan_y + console->fb->height > g_fb_virtual_height)
+		return raspi5_video_redraw_at_pan(console, 0u);
+
+	window = *console->fb;
+	window.address =
+	    console->fb->address + (uintptr_t)next_pan_y * console->fb->pitch;
+	gui_display_present_rect_to_framebuffer(&console->display,
+	                                        &window,
+	                                        0,
+	                                        (int)(console->rows - 1u),
+	                                        (int)console->cols,
+	                                        1);
+	bottom_y = next_pan_y + (console->rows - 1u) * GUI_FONT_H;
+	raspi5_video_dirty_memory_pixels(0u,
+	                                 bottom_y,
+	                                 console->cols * GUI_FONT_W,
+	                                 GUI_FONT_H);
+	if (raspi5_video_set_virtual_offset(next_pan_y) != 0)
+		return -1;
+	g_fb_pan_y = next_pan_y;
+	return 0;
+}
+
 /*
  * Targeted cache-flush hook registered with fb_text_console at
  * arm64_video_init time. fb_text_console_present_rect calls this
  * after each modified pixel rect; the rect coordinates are already
- * clipped to fb bounds. We DC CVAC only the affected rows so a
- * single backspace (one cell-rect = 8x16 px = 512 B = 8 cache lines)
- * costs ~8 CVAC operations instead of the ~130,000 the broad sweep
- * used to cost. The DSB inside raspi5_dc_cvac_range orders the
- * clean with respect to subsequent display-engine reads.
+ * clipped to fb bounds. We DC CVAC only the affected rows and issue
+ * one final barrier after all rows are cleaned. A DSB per scanline
+ * makes full-screen scroll visibly crawl from top to bottom.
  */
 static void raspi5_video_dirty_pixels(uint32_t x, uint32_t y, uint32_t w,
                                       uint32_t h)
@@ -636,12 +790,20 @@ static void raspi5_video_dirty_pixels(uint32_t x, uint32_t y, uint32_t w,
 		return;
 
 	row_bytes = w * RASPI5_VIDEO_BYTES_PER_PIXEL;
+	if (x == 0u && row_bytes == g_fb_info.pitch) {
+		row_base = (uintptr_t)g_fb_info.address +
+		           (uintptr_t)y * (uintptr_t)g_fb_info.pitch;
+		raspi5_dc_cvac_lines((const void *)row_base, g_fb_info.pitch * h);
+		raspi5_video_dsb();
+		return;
+	}
 	for (row = 0; row < h; row++) {
 		row_base = (uintptr_t)g_fb_info.address +
 		           (uintptr_t)(y + row) * (uintptr_t)g_fb_info.pitch +
 		           (uintptr_t)x * RASPI5_VIDEO_BYTES_PER_PIXEL;
-		raspi5_dc_cvac_range((const void *)row_base, row_bytes);
+		raspi5_dc_cvac_lines((const void *)row_base, row_bytes);
 	}
+	raspi5_video_dsb();
 }
 
 /*

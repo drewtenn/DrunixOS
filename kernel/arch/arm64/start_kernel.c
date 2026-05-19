@@ -449,6 +449,9 @@ void arm64_start_kernel(void)
 	arch_interrupts_enable();
 	tty_init();
 
+	if (platform_usb_hci_register() != 0)
+		platform_uart_puts("Drunix raspi5: USB keyboard unavailable\n");
+
 	console_terminal_init(&g_console_terminal, &host);
 	console_terminal_start(&g_console_terminal);
 

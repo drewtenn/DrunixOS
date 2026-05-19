@@ -106,7 +106,7 @@ ARM_PLATFORM_OBJS := kernel/arch/arm64/platform/raspi5/uart.o \
                      kernel/arch/arm64/platform/raspi5/sdhci.o \
                      kernel/arch/arm64/platform/raspi5/video.o \
                      kernel/arch/arm64/platform/raspi5/pcie.o \
-                     kernel/arch/arm64/platform/raspi5/stubs.o
+                     kernel/arch/arm64/platform/raspi5/usb_xhci.o
 else
 ARM_PLATFORM_OBJS := kernel/arch/arm64/platform/raspi3b/uart.o \
                      kernel/arch/arm64/platform/raspi3b/irq.o \

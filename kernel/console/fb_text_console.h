@@ -5,6 +5,8 @@
 #include "framebuffer.h"
 #include <stdint.h>
 
+typedef struct fb_text_console fb_text_console_t;
+
 /*
  * Optional dirty-rect callback fired after each present_rect. Lets the
  * platform driver scope cache maintenance (e.g. dc cvac on BCM2712,
@@ -20,7 +22,9 @@ typedef void (*fb_text_console_dirty_pixels_fn)(uint32_t x,
                                                 uint32_t w,
                                                 uint32_t h);
 
-typedef struct fb_text_console {
+typedef int (*fb_text_console_scroll_pixels_fn)(fb_text_console_t *console);
+
+struct fb_text_console {
 	gui_display_t display;
 	gui_cell_t *cells;
 	framebuffer_info_t *fb;
@@ -33,7 +37,8 @@ typedef struct fb_text_console {
 	int ansi_state;
 	int ready;
 	fb_text_console_dirty_pixels_fn dirty_pixels;
-} fb_text_console_t;
+	fb_text_console_scroll_pixels_fn scroll_pixels;
+};
 
 /*
  * Register the platform's dirty-pixel hook. Replaces any previous
@@ -42,6 +47,8 @@ typedef struct fb_text_console {
  */
 void fb_text_console_set_dirty_pixels(fb_text_console_t *console,
                                       fb_text_console_dirty_pixels_fn fn);
+void fb_text_console_set_scroll_pixels(fb_text_console_t *console,
+                                       fb_text_console_scroll_pixels_fn fn);
 
 int fb_text_console_init(fb_text_console_t *console,
                          framebuffer_info_t *fb,

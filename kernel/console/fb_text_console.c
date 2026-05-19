@@ -108,6 +108,16 @@ static void fb_text_console_scroll(fb_text_console_t *console)
 	}
 	fb_text_console_clear_row(console, console->rows - 1u);
 	console->cursor_row = console->rows - 1u;
+
+	if (console->scroll_pixels && console->scroll_pixels(console) == 0)
+		return;
+
+	/*
+	 * Match modern Linux fbcon's unaccelerated path: redraw from the
+	 * software text buffer instead of doing soft copyarea from scanout.
+	 * fbcon intentionally avoids soft copyarea unless framebuffer reads
+	 * are known fast; Pi firmware scanout memory is not a good read source.
+	 */
 	fb_text_console_present_all(console);
 }
 
@@ -236,6 +246,14 @@ void fb_text_console_set_dirty_pixels(fb_text_console_t *console,
 	if (!console)
 		return;
 	console->dirty_pixels = fn;
+}
+
+void fb_text_console_set_scroll_pixels(fb_text_console_t *console,
+                                       fb_text_console_scroll_pixels_fn fn)
+{
+	if (!console)
+		return;
+	console->scroll_pixels = fn;
 }
 
 int fb_text_console_ready(const fb_text_console_t *console)

@@ -12,6 +12,7 @@
 #include "resources.h"
 #include "uaccess.h"
 #include "vma.h"
+#include "raspi5/pcie.h"
 #if DRUNIX_ARM64_PLATFORM_VIRT
 #include "blkdev.h"
 #include "chardev.h"
@@ -1551,6 +1552,31 @@ static void test_arm64_fdt_chosen_bootargs_optional(ktest_case_t *tc)
 		KTEST_EXPECT_NULL(tc, args);
 }
 
+static void test_arm64_raspi5_pcie_outbound_window_encoding(ktest_case_t *tc)
+{
+	raspi5_pcie_outbound_window_t win =
+	    raspi5_pcie_outbound_window_encode(0x1f00000000ull, 0u, 0x500000u);
+
+	KTEST_EXPECT_EQ(tc, win.pcie_lo, 0u);
+	KTEST_EXPECT_EQ(tc, win.pcie_hi, 0u);
+	KTEST_EXPECT_EQ(tc, win.base_limit, 0x00400000u);
+	KTEST_EXPECT_EQ(tc, win.base_hi, 0x1fu);
+	KTEST_EXPECT_EQ(tc, win.limit_hi, 0x1fu);
+}
+
+static void test_arm64_raspi5_pcie_bcm2712_post_setup_registers(ktest_case_t *tc)
+{
+	raspi5_pcie_bcm2712_post_setup_t setup =
+	    raspi5_pcie_bcm2712_post_setup_values();
+
+	KTEST_EXPECT_EQ(tc, setup.ubus_timeout_offset, 0x40a8u);
+	KTEST_EXPECT_EQ(tc, setup.ubus_timeout_value, 0x0b2d0000u);
+	KTEST_EXPECT_EQ(tc, setup.rc_config_retry_timeout_offset, 0x405cu);
+	KTEST_EXPECT_EQ(tc, setup.rc_config_retry_timeout_value, 0x0aba0000u);
+	KTEST_EXPECT_EQ(tc, setup.axi_read_error_data_offset, 0x4170u);
+	KTEST_EXPECT_EQ(tc, setup.axi_read_error_data_value, 0xffffffffu);
+}
+
 static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_el1_uses_sp_el1),
     KTEST_CASE(test_arm64_wall_clock_seeded_from_build_time),
@@ -1568,6 +1594,8 @@ static ktest_case_t cases[] = {
     KTEST_CASE(test_arm64_fdt_rejects_garbage_blob),
     KTEST_CASE(test_arm64_fdt_finds_memory_range),
     KTEST_CASE(test_arm64_fdt_chosen_bootargs_optional),
+    KTEST_CASE(test_arm64_raspi5_pcie_outbound_window_encoding),
+    KTEST_CASE(test_arm64_raspi5_pcie_bcm2712_post_setup_registers),
 #if DRUNIX_ARM64_PLATFORM_VIRT
     KTEST_CASE(test_arm64_dma_alloc_returns_aligned_in_pool),
     KTEST_CASE(test_arm64_dma_alloc_free_reuses_pages),
