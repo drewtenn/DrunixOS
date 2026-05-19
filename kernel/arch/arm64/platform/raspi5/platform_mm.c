@@ -53,7 +53,22 @@
  * scanout the HVS is repointed at after M9.3 install.
  */
 #define RASPI5_SCANOUT_CARVE_BASE 0x04000000ull
-#define RASPI5_SCANOUT_CARVE_MULTIPLIER 4u
+/*
+ * Multiplier was 4 in the M9.3 initial drop. Bumped to 16 here so the
+ * scanout buffer is 128 MiB (1920 * 1080 * 4 * 16); the HVS scroll-y
+ * wrap fires once every (16 - 1) * 67 = ~1005 scrolls instead of ~200.
+ * Carve-out end = 0x04000000 + 0x08000000 = 0x0c000000 (192 MiB) —
+ * still well below the firmware fb at 0x3f400000 and inside the
+ * kernel-linear identity-mapped 0..2 GiB. Pi 5 has 4-16 GiB total;
+ * 128 MiB of PA carved out for the console scrollback is negligible.
+ *
+ * The proper way to eliminate the wrap stutter entirely is M9.4
+ * vblank-paced pre-emptive rotation (copy the live visible content
+ * back to offset 0 incrementally as scroll-y approaches the wrap
+ * point). Until that lands, a 16x buffer just makes the wrap rare
+ * enough that interactive shell use never sees it.
+ */
+#define RASPI5_SCANOUT_CARVE_MULTIPLIER 16u
 #define RASPI5_SCANOUT_CARVE_SIZE                                              \
 	((uint64_t)RASPI5_VIDEO_MAX_WIDTH *                                    \
 	 (uint64_t)RASPI5_VIDEO_MAX_HEIGHT *                                   \

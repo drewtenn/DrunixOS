@@ -51,18 +51,34 @@ static int fbdev_mmap_phys(uint32_t offset,
 	return 0;
 }
 
+/*
+ * Cache policy for userspace mmap of /dev/fb0. Defaults to
+ * CHARDEV_CACHE_NC, which is the right choice for QEMU ramfb (host
+ * scans guest pages directly; reads need no explicit dcache cleans)
+ * and for x86's WC policy. Providers whose physical framebuffer is
+ * mapped Normal-WB by the kernel (e.g. the raspi5 HVS scanout
+ * carve-out from M9.3) must call fbdev_set_cache_policy() with
+ * CHARDEV_CACHE_WB_FLUSH so the userspace alias matches the kernel
+ * cache attribute. ARM's architecture forbids cacheable / non-
+ * cacheable aliases of the same PA — getting this wrong is
+ * unpredictable behaviour, not just a perf bug.
+ *
+ * The WB_FLUSH path relies on userspace calling
+ * DRUNIX_FBIO_PUBLISH_DIRTY_RECT after writes so the provider's
+ * publish_dirty_rect hook can DC CVAC the affected range.
+ */
+static chardev_cache_policy_t g_fbdev_cache_policy = CHARDEV_CACHE_NC;
+
+void fbdev_set_cache_policy(chardev_cache_policy_t policy)
+{
+	g_fbdev_cache_policy = policy;
+}
+
 static chardev_cache_policy_t fbdev_cache_policy(uint32_t offset, uint32_t length)
 {
 	(void)offset;
 	(void)length;
-	/*
-	 * M2.5a: framebuffer pages must be mapped Normal-NC on arm64
-	 * (so QEMU ramfb reads see fresh writes without explicit dcache
-	 * cleans) and PAT slot 4 / WC on x86 (so user mappings inherit
-	 * the WC policy the kernel already configures for its identity
-	 * map). CHARDEV_CACHE_NC selects both.
-	 */
-	return CHARDEV_CACHE_NC;
+	return g_fbdev_cache_policy;
 }
 
 /*

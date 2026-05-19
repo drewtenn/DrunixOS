@@ -28,6 +28,8 @@
 #include "fb_text_console.h"
 #include "kstring.h"
 #include "hvs.h"
+#include "chardev.h"
+#include "desktop_window.h"
 #include <stdint.h>
 
 #define RASPI5_MBOX_BASE 0x107c013880ull
@@ -192,16 +194,19 @@ static uint32_t g_hvs_scroll_y;
  * once at install-time from the actual mode pitch. */
 static uint32_t g_hvs_virtual_height_px;
 
-/* Forward decl from kernel/drivers/fbdev.h. raspi3b/video.c keeps the
+/* Forward decls from kernel/drivers/fbdev.h. raspi3b/video.c keeps the
  * include in a different transitive path; pulling it in here would
  * introduce a wider include surface than the file needs. */
 int fbdev_init(const framebuffer_info_t *fb);
+void fbdev_set_cache_policy(chardev_cache_policy_t policy);
+void fbdev_set_publish_dirty_rect(void (*hook)(drunix_rect_t));
 
 /* Forward decl for the targeted dc cvac hook; definition lives below
  * arm64_video_init so the broader bring-up flow reads top-down. */
 static void raspi5_video_dirty_pixels(uint32_t x, uint32_t y, uint32_t w,
                                       uint32_t h);
 static int raspi5_video_scroll_pixels(fb_text_console_t *console);
+static void raspi5_video_publish_dirty_rect(drunix_rect_t rect);
 
 /*
  * Translate a 32-bit VC4 bus address returned by the mailbox
@@ -780,6 +785,17 @@ int arm64_video_init(void)
 			raspi5_video_trace_u32(
 			    "raspi5 hvs: virtual_height_px",
 			    g_hvs_virtual_height_px);
+			/*
+			 * The scanout is now in cached normal memory. /dev/fb0
+			 * mmap must use the same Normal-WB attribute or
+			 * userspace would create a forbidden cacheable / non-
+			 * cacheable alias of the same PA. Userspace makes
+			 * writes visible via DRUNIX_FBIO_PUBLISH_DIRTY_RECT,
+			 * which fbdev forwards to our CVAC hook below.
+			 */
+			fbdev_set_cache_policy(CHARDEV_CACHE_WB_FLUSH);
+			fbdev_set_publish_dirty_rect(
+			    raspi5_video_publish_dirty_rect);
 			platform_uart_puts(
 			    "raspi5 hvs: scanout hijacked to Drunix buffer\n");
 		} else {
@@ -907,6 +923,41 @@ static uint32_t g_scroll_trace_budget = RASPI5_VIDEO_SCROLL_TRACE_BUDGET;
  *   5. Issue raspi5_hvs_flip_plane_address(new_base_phys). The HVS
  *        picks up the new pointer on next FIFO refill.
  */
+/*
+ * publish_dirty_rect hook for /dev/fb0 userspace mmap writes. Userspace
+ * compositors write into the cached carve-out, then call
+ * DRUNIX_FBIO_PUBLISH_DIRTY_RECT which fbdev forwards here. The hook
+ * DC CVACs the rect bytes against the *current* g_fb_info.address —
+ * which after M9.3 install is `carve_out_base + g_hvs_scroll_y * pitch`
+ * (the visible window's top inside the virtual scrollback buffer) — so
+ * the HVS DMA engine sees the userspace writes on next FIFO refill.
+ *
+ * Rect coordinates have already been validated by fbdev_ioctl against
+ * the framebuffer width / height; defensive bounds checks here are
+ * belt-and-braces.
+ */
+static void raspi5_video_publish_dirty_rect(drunix_rect_t rect)
+{
+	if (!g_fb_ready)
+		return;
+	if (rect.w <= 0 || rect.h <= 0)
+		return;
+	if ((uint32_t)rect.x >= g_fb_info.width ||
+	    (uint32_t)rect.y >= g_fb_info.height)
+		return;
+	{
+		uint32_t x = (uint32_t)rect.x;
+		uint32_t y = (uint32_t)rect.y;
+		uint32_t w = (uint32_t)rect.w;
+		uint32_t h = (uint32_t)rect.h;
+		if (x + w > g_fb_info.width)
+			w = g_fb_info.width - x;
+		if (y + h > g_fb_info.height)
+			h = g_fb_info.height - y;
+		raspi5_video_dirty_pixels(x, y, w, h);
+	}
+}
+
 static int raspi5_video_scroll_pixels(fb_text_console_t *console)
 {
 	uint8_t *buf_base;

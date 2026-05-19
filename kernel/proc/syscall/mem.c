@@ -355,8 +355,24 @@ static int syscall_mmap_chardev(process_t *cur,
 			map_flags |= ARCH_MM_MAP_NC;
 			break;
 		case CHARDEV_CACHE_WB_FLUSH:
+			/*
+			 * Normal-WB cacheable, same attribute as the kernel-side
+			 * mapping for low-RAM pages. Used by raspi5 fbdev for the
+			 * HVS scanout carve-out (M9.3) so the userspace alias does
+			 * not violate ARM's "no mixed cacheable / non-cacheable
+			 * aliases of the same PA" rule. The driver is expected to
+			 * register a publish_dirty_rect hook that DC CVACs the
+			 * dirty range after each userspace update so the HVS DMA
+			 * engine sees the writes; userspace makes writes visible
+			 * via the DRUNIX_FBIO_PUBLISH_DIRTY_RECT ioctl. No
+			 * additional map flag is needed — leaving map_flags as
+			 * PRESENT | READ (plus USER/WRITE added below) selects the
+			 * Normal-WB Inner-Shareable default in the arm64 MMU's
+			 * ARM64_MMU_DESC_ATTR_NORMAL branch.
+			 */
+			break;
 		default:
-			/* Unsupported in M2.5a; fall back to Device. */
+			/* Unknown policy enum value. Conservative fallback. */
 			map_flags |= ARCH_MM_MAP_IO;
 			break;
 		}

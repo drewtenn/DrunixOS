@@ -3,6 +3,7 @@
 #ifndef DRIVERS_FBDEV_H
 #define DRIVERS_FBDEV_H
 
+#include "chardev.h"
 #include "desktop_window.h"
 #include "framebuffer.h"
 #include <stdint.h>
@@ -45,6 +46,24 @@ void fbdev_set_publish_dirty_rect(void (*hook)(drunix_rect_t));
  * compositor keeps drawing the cursor in software.
  */
 void fbdev_set_move_cursor(void (*hook)(drunix_point_t));
+
+/*
+ * Override the cache attribute used for userspace mmap of /dev/fb0.
+ * Default is CHARDEV_CACHE_NC (correct for QEMU ramfb and the legacy
+ * Pi 3 / pre-M9 Pi 5 firmware-allocated framebuffers, all of which
+ * the kernel maps Normal-NC). Providers whose scanout buffer is in
+ * kernel-cacheable RAM — specifically raspi5 with the M9.3 HVS
+ * carve-out — must call this with CHARDEV_CACHE_WB_FLUSH after
+ * fbdev_init succeeds so the userspace alias matches the kernel
+ * Normal-WB mapping. ARM forbids cacheable / non-cacheable aliases
+ * of the same PA; this setter is how a provider declares its actual
+ * kernel-side attribute to userspace.
+ *
+ * Provider is also expected to register a publish_dirty_rect hook
+ * that DC CVACs the dirty range so userspace writes become visible
+ * to the scanout DMA engine on the next vblank.
+ */
+void fbdev_set_cache_policy(chardev_cache_policy_t policy);
 
 /*
  * Binary layout of /dev/fb0info.  The compositor reads sizeof(fbdev_info_t)
