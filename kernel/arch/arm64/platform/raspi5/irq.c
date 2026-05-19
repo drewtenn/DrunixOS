@@ -23,8 +23,15 @@
  * pretty.
  *
  * MVP scope (M5): one IRQ source — the architectural generic timer
- * non-secure physical PPI, INTID 30 (PPI 14 + 16). No SPI plumbing;
- * the UART is polled.
+ * non-secure physical PPI, INTID 30 (PPI 14 + 16).
+ *
+ * M9.4a (this file) adds SPI (Shared Peripheral Interrupt)
+ * registration on top of the M5 baseline. The first consumer is M9.4b
+ * (PV0 vblank for the HVS scanout flip queue); future consumers
+ * include RP1 cascade and PCIe MSI. The SPI table is sized for the
+ * full GIC-400 range (RASPI5_GIC_SPI_MAX SPIs) so the dispatch path
+ * has a fixed-cost O(1) lookup and no allocation; the BSS cost is
+ * ~4 KiB which is negligible.
  */
 
 #include "../platform.h"
@@ -56,6 +63,14 @@
 	(*(volatile uint8_t *)(PLATFORM_RASPI5_GICD_BASE + (off) + (irq)))
 
 static platform_irq_handler_fn g_timer_handler;
+
+/*
+ * SPI handler table indexed by spi_id (= INTID - RASPI5_GIC_SPI_INTID_BASE).
+ * NULL entry = no handler registered; the dispatch path then just
+ * acks + EOIs the IRQ. Static BSS keeps this allocation-free; ~4 KiB
+ * on a 64-bit kernel.
+ */
+static raspi5_spi_handler_fn g_spi_handlers[RASPI5_GIC_SPI_MAX];
 
 static void dsb_sy(void)
 {
@@ -132,6 +147,75 @@ void platform_irq_register(uint32_t irq, platform_irq_handler_fn fn)
 		g_timer_handler = fn;
 }
 
+int raspi5_irq_register_spi(uint32_t spi_id, raspi5_spi_handler_fn handler)
+{
+	if (spi_id >= RASPI5_GIC_SPI_MAX)
+		return -1;
+	g_spi_handlers[spi_id] = handler;
+	return 0;
+}
+
+void raspi5_irq_enable_spi(uint32_t spi_id, uint8_t priority, uint32_t trigger)
+{
+	uint32_t intid;
+	uint32_t reg_index;
+	uint32_t bit_index;
+
+	if (spi_id >= RASPI5_GIC_SPI_MAX)
+		return;
+	intid = spi_id + RASPI5_GIC_SPI_INTID_BASE;
+
+	GICD_BYTE(GICD_IPRIORITYR_OFFSET, intid) = priority;
+	/*
+	 * Target CPU 0 unconditionally. GIC-400 GICD_ITARGETSR is a
+	 * byte-per-INTID register; bit 0 of the byte selects CPU 0.
+	 * Drunix is uniprocessor on Pi 5 so a fixed target is correct.
+	 * For PPIs (INTIDs 0..31) the register is read-only and the
+	 * write is a no-op; SPIs (INTIDs 32+) accept writes here.
+	 */
+	GICD_BYTE(GICD_ITARGETSR_OFFSET, intid) = 0x01u;
+
+	/*
+	 * GICD_ICFGR has 2 bits per INTID: the upper bit selects the
+	 * trigger type (0 = level, 1 = edge). 16 INTIDs per 32-bit word.
+	 */
+	{
+		uint32_t cfg_offset =
+		    GICD_ICFGR_OFFSET + (intid / 16u) * 4u;
+		uint32_t cfg_shift = (intid % 16u) * 2u + 1u;
+		volatile uint32_t *cfg_reg =
+		    (volatile uint32_t *)(PLATFORM_RASPI5_GICD_BASE + cfg_offset);
+		uint32_t value = *cfg_reg;
+		if (trigger == RASPI5_GIC_TRIGGER_EDGE)
+			value |= (1u << cfg_shift);
+		else
+			value &= ~(1u << cfg_shift);
+		*cfg_reg = value;
+	}
+
+	dsb_sy();
+
+	reg_index = intid / 32u;
+	bit_index = intid % 32u;
+	GICD_REG(GICD_ISENABLER_OFFSET + reg_index * 4u) = 1u << bit_index;
+	dsb_sy();
+}
+
+void raspi5_irq_disable_spi(uint32_t spi_id)
+{
+	uint32_t intid;
+	uint32_t reg_index;
+	uint32_t bit_index;
+
+	if (spi_id >= RASPI5_GIC_SPI_MAX)
+		return;
+	intid = spi_id + RASPI5_GIC_SPI_INTID_BASE;
+	reg_index = intid / 32u;
+	bit_index = intid % 32u;
+	GICD_REG(GICD_ICENABLER_OFFSET + reg_index * 4u) = 1u << bit_index;
+	dsb_sy();
+}
+
 int platform_irq_dispatch(void)
 {
 	uint32_t iar = GICC_REG(GICC_IAR_OFFSET);
@@ -144,6 +228,12 @@ int platform_irq_dispatch(void)
 		arm64_timer_irq();
 		if (g_timer_handler)
 			g_timer_handler();
+	} else if (intid >= RASPI5_GIC_SPI_INTID_BASE &&
+	           intid < RASPI5_GIC_SPI_INTID_BASE + RASPI5_GIC_SPI_MAX) {
+		raspi5_spi_handler_fn handler =
+		    g_spi_handlers[intid - RASPI5_GIC_SPI_INTID_BASE];
+		if (handler)
+			handler();
 	}
 
 	dsb_sy();
