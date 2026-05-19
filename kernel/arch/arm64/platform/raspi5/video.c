@@ -28,6 +28,7 @@
 #include "fb_text_console.h"
 #include "kstring.h"
 #include "hvs.h"
+#include "pv.h"
 #include "chardev.h"
 #include "desktop_window.h"
 #include <stdint.h>
@@ -813,6 +814,20 @@ int arm64_video_init(void)
 	}
 hvs_install_done:
 	;
+
+	/*
+	 * M9.4b1 — passive PV0 probe. Read-only dump of the PixelValve
+	 * driving HDMI0 so the boot trace tells us the actual D0
+	 * register layout. M9.4b2 will use this to find INT_EN /
+	 * INT_STAT / VFP_START bit positions and register an SPI 101
+	 * vblank handler; M9.4b3 will pace HVS plane flips on vblank.
+	 * Non-fatal failure path: probe runs after HVS install so a
+	 * bad MMIO read here can't break console bring-up.
+	 */
+	{
+		raspi5_pv0_probe_state_t pv_state;
+		(void)raspi5_pv0_probe_passive(&pv_state);
+	}
 
 	return 0;
 }
