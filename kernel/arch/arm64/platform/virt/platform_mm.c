@@ -131,6 +131,8 @@ void virt_ram_layout_init(void)
 	 */
 	g_layout.framebuffer_base = 0;
 	g_layout.framebuffer_size = 0;
+	g_layout.scanout_carve_base = 0;
+	g_layout.scanout_carve_size = 0;
 	{
 		uint64_t ram_top = g_layout.ram_base + g_layout.ram_size;
 		uint64_t fb_base = ram_top - (uint64_t)VIRT_RAMFB_BYTES;

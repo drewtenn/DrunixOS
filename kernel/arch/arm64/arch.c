@@ -149,6 +149,23 @@ void arch_mm_init(void)
 		              (uint32_t)l->framebuffer_size);
 	}
 
+	/*
+	 * M9.3 scanout carve-out reservation. Platforms that publish a
+	 * scanout_carve_size != 0 are claiming a contiguous PA range for
+	 * a Drunix-owned HVS scanout buffer. Mark it used in the PMM so
+	 * kheap, user-image loaders, and PMM clients never hand the
+	 * pages back. The MMU's platform_mm_classify path returns
+	 * PLATFORM_MM_NORMAL for these PAs (they sit inside low RAM
+	 * outside the firmware-framebuffer range), so the L1[0] 2 MiB
+	 * blocks covering them are mapped Normal-WB Inner-Shareable
+	 * with no special-case logic required. Currently only raspi5
+	 * sets a non-zero carve-out; virt and raspi3b zero it.
+	 */
+	if (l->scanout_carve_size != 0) {
+		pmm_mark_used((uint32_t)l->scanout_carve_base,
+		              (uint32_t)l->scanout_carve_size);
+	}
+
 	arm64_mmu_init();
 	if (arm64_mmu_enabled())
 		platform_uart_puts("ARM64 MMU enabled\n");

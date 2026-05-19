@@ -16,6 +16,7 @@
 #include "../../fdt.h"
 #include "../../arch_layout.h"
 #include "platform.h"
+#include "video.h"
 #include <stdint.h>
 
 #define RASPI5_RAM_BASE_DEFAULT 0x00000000ull
@@ -24,6 +25,40 @@
 #define RASPI5_PAGE_SIZE 0x1000u
 #define RASPI5_HEAP_OFFSET_FROM_KERNEL_END (16u * 0x100000u)
 #define RASPI5_HEAP_TAIL_RESERVE (16u * 0x100000u)
+
+/*
+ * M9.3 scanout carve-out for the Drunix-owned HVS plane buffer.
+ *
+ * Location: PA 0x04000000 (64 MiB) — above ARM64_INIT_STACK_TOP
+ * (0x03100000), with a 15 MiB margin for the init image / stack
+ * regions to grow. Well below the firmware framebuffer at
+ * 0x3f400000 and below the VC4 reserve window the firmware
+ * carves out of the low 1 GiB.
+ *
+ * Size: visible-frame-worth × multiplier. 4x visible (=32 MiB at
+ * 1920x1080x4) means the HVS plane base advances ~200 row-scrolls
+ * before wrap. The carve-out is statically sized for the worst
+ * case (RASPI5_VIDEO_MAX_*). Pi 5 has 4-16 GiB total; 32 MiB is
+ * a rounding error in the ram_size.
+ *
+ * Mapped Normal-WB Inner-Shareable via the generic
+ * PLATFORM_MM_NORMAL path in arm64_mmu_block_attr — no MMU work
+ * here. arch_mm_init's pmm_mark_used keeps kheap and other PMM
+ * clients out of the range; the kernel-linear identity map covers
+ * it because it sits inside L1[0]/[0..1 GiB).
+ *
+ * NOT a software framebuffer in the platform_ram_layout sense
+ * (framebuffer_base/size still refers to the firmware-allocated
+ * Normal-NC plane at 0x3f400000). This is a Drunix-managed
+ * scanout the HVS is repointed at after M9.3 install.
+ */
+#define RASPI5_SCANOUT_CARVE_BASE 0x04000000ull
+#define RASPI5_SCANOUT_CARVE_MULTIPLIER 4u
+#define RASPI5_SCANOUT_CARVE_SIZE                                              \
+	((uint64_t)RASPI5_VIDEO_MAX_WIDTH *                                    \
+	 (uint64_t)RASPI5_VIDEO_MAX_HEIGHT *                                   \
+	 (uint64_t)RASPI5_VIDEO_BYTES_PER_PIXEL *                              \
+	 (uint64_t)RASPI5_SCANOUT_CARVE_MULTIPLIER)
 
 extern char _kernel_end[];
 
@@ -120,6 +155,8 @@ void raspi5_ram_layout_init(void)
 
 	g_layout.framebuffer_base = 0;
 	g_layout.framebuffer_size = 0;
+	g_layout.scanout_carve_base = RASPI5_SCANOUT_CARVE_BASE;
+	g_layout.scanout_carve_size = RASPI5_SCANOUT_CARVE_SIZE;
 	g_layout_ready = 1;
 
 	/* Trace the resolved layout. Kept in the boot path under the

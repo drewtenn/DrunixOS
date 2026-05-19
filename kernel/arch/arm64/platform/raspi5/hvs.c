@@ -55,6 +55,27 @@ static inline uint32_t raspi5_hvs_read(uint32_t offset)
 	return *raspi5_hvs_reg(offset);
 }
 
+static inline void raspi5_hvs_write(uint32_t offset, uint32_t value)
+{
+	*raspi5_hvs_reg(offset) = value;
+}
+
+static inline uint32_t raspi5_hvs_read_dlist_word(uint32_t word_offset)
+{
+	return raspi5_hvs_read(RASPI5_HVS_DLIST_OFFSET + word_offset * 4u);
+}
+
+static inline void raspi5_hvs_write_dlist_word(uint32_t word_offset,
+                                               uint32_t value)
+{
+	raspi5_hvs_write(RASPI5_HVS_DLIST_OFFSET + word_offset * 4u, value);
+}
+
+static inline void raspi5_hvs_dsb(void)
+{
+	__asm__ volatile("dsb sy" ::: "memory");
+}
+
 /*
  * Local trace helpers. raspi5/video.c has equivalent helpers but
  * keeps them file-static; rather than expose those, hvs.c carries its
@@ -396,5 +417,204 @@ wide_scan:
 	}
 
 	platform_uart_puts("raspi5 hvs: probe done\n");
+	return 0;
+}
+
+/*
+ * M9.2 — firmware plane locator + fingerprint validator.
+ *
+ * Reads the active channel's latched DL register, walks the 8-word
+ * plane head Linux installs at HVS_BOOTLOADER_DLIST_END (= word 32),
+ * and confirms every stable field matches the mailbox-reported
+ * framebuffer geometry. The empirical fingerprint from M9.1 v3:
+ *
+ *   word 0  CTL0          — pixel format low byte, control flags
+ *   word 1  POS0          — typically 0 (position 0,0)
+ *   word 2  CTL2/scratch  — firmware-private, not validated
+ *   word 3  dimensions    — ((H-1) << 16) | (W-1)
+ *   word 4  PTR0          — volatile, do not validate or write
+ *   word 5  addr[63:32]   — high 32 bits of scanout phys (0 sub-4GB)
+ *   word 6  addr[31:0]    — low 32 bits of scanout phys
+ *   word 7  pitch         — bytes per scanline
+ *   word 8  0xb0b0b0b0    — HVS end-of-plane marker
+ *
+ * Bail on any mismatch with a serial trace identifying the failed
+ * check. M9.3's flip helper consumes the returned plane_ref; never
+ * proceeds without one.
+ */
+int raspi5_hvs_locate_firmware_plane(uint32_t expected_width,
+                                     uint32_t expected_height,
+                                     uint32_t expected_pitch,
+                                     uintptr_t expected_fb_phys,
+                                     raspi5_hvs_plane_ref_t *out)
+{
+	raspi5_hvs_layout_t layout;
+	uint32_t version;
+	uint8_t ch;
+	uint8_t active_ch = 0xffu;
+	uint32_t dl_reg = 0u;
+	uint32_t dl_head;
+	uint32_t expected_dims;
+	uint32_t expected_addr_lo;
+	uint32_t ctl0;
+	uint32_t dims;
+	uint32_t addr_hi;
+	uint32_t addr_lo;
+	uint32_t pitch_word;
+	uint32_t end_marker;
+
+	if (!out)
+		return -1;
+	out->valid = 0u;
+
+	platform_uart_puts("raspi5 hvs: locate_firmware_plane start\n");
+
+	version = raspi5_hvs_read(RASPI5_HVS_VERSION_OFFSET);
+	raspi5_hvs_select_layout(version, &layout);
+	raspi5_hvs_trace_u32("raspi5 hvs: locate revision",
+	                     (uint32_t)layout.revision);
+	if (!layout.known) {
+		platform_uart_puts(
+		    "raspi5 hvs: locate — unknown silicon revision; refusing to "
+		    "guess channel layout\n");
+		return -1;
+	}
+
+	for (ch = 0u; ch < RASPI5_HVS_CHANNEL_COUNT; ch++) {
+		uint32_t chan_base = layout.channel_base[ch];
+		uint32_t ctrl0 =
+		    raspi5_hvs_read(chan_base + layout.disp_ctrl0_offset);
+		uint32_t ctrl1 =
+		    raspi5_hvs_read(chan_base + layout.disp_ctrl1_offset);
+		uint32_t lptrs =
+		    raspi5_hvs_read(chan_base + layout.disp_lptrs_offset);
+		if (((ctrl0 & RASPI5_HVS_DISP_CTRL0_ENABLE_BIT) ||
+		     (ctrl1 & RASPI5_HVS_DISP_CTRL0_ENABLE_BIT)) &&
+		    (lptrs & RASPI5_HVS_DISP_LPTRS_HEAD_MASK) >=
+		        RASPI5_HVS_BOOTLOADER_DLIST_END) {
+			active_ch = ch;
+			dl_reg = raspi5_hvs_read(chan_base + layout.disp_dl_offset);
+			break;
+		}
+	}
+
+	if (active_ch == 0xffu) {
+		platform_uart_puts(
+		    "raspi5 hvs: locate — no enabled channel with a dlist head "
+		    "past the bootloader-reserved region; refusing\n");
+		return -1;
+	}
+
+	dl_head = dl_reg & RASPI5_HVS_DISP_DL_HEAD_MASK;
+	raspi5_hvs_trace_u32("raspi5 hvs: locate channel", (uint32_t)active_ch);
+	raspi5_hvs_trace_u32("raspi5 hvs: locate dl_head", dl_head);
+
+	if (dl_head < RASPI5_HVS_BOOTLOADER_DLIST_END) {
+		platform_uart_puts(
+		    "raspi5 hvs: locate — DL head inside bootloader region; "
+		    "refusing\n");
+		return -1;
+	}
+	if (dl_head + 9u > RASPI5_HVS_DLIST_WORD_COUNT) {
+		platform_uart_puts(
+		    "raspi5 hvs: locate — DL head too close to dlist end; refusing\n");
+		return -1;
+	}
+
+	expected_dims = ((expected_height - 1u) << 16) | (expected_width - 1u);
+	expected_addr_lo = (uint32_t)(expected_fb_phys & 0xffffffffu);
+
+	ctl0 = raspi5_hvs_read_dlist_word(dl_head + 0u);
+	dims = raspi5_hvs_read_dlist_word(dl_head + 3u);
+	addr_hi = raspi5_hvs_read_dlist_word(dl_head + 5u);
+	addr_lo = raspi5_hvs_read_dlist_word(dl_head + 6u);
+	pitch_word = raspi5_hvs_read_dlist_word(dl_head + 7u);
+	end_marker = raspi5_hvs_read_dlist_word(dl_head + 8u);
+
+	raspi5_hvs_trace_u32("raspi5 hvs: locate ctl0", ctl0);
+	raspi5_hvs_trace_u32("raspi5 hvs: locate dims", dims);
+	raspi5_hvs_trace_u32("raspi5 hvs: locate dims_expected", expected_dims);
+	raspi5_hvs_trace_u32("raspi5 hvs: locate addr_hi", addr_hi);
+	raspi5_hvs_trace_u32("raspi5 hvs: locate addr_lo", addr_lo);
+	raspi5_hvs_trace_u32("raspi5 hvs: locate addr_expected", expected_addr_lo);
+	raspi5_hvs_trace_u32("raspi5 hvs: locate pitch", pitch_word);
+	raspi5_hvs_trace_u32("raspi5 hvs: locate pitch_expected", expected_pitch);
+	raspi5_hvs_trace_u32("raspi5 hvs: locate end_marker", end_marker);
+
+	if (dims != expected_dims) {
+		platform_uart_puts(
+		    "raspi5 hvs: locate — dimensions word mismatch; refusing\n");
+		return -1;
+	}
+	if (addr_hi != 0u) {
+		platform_uart_puts(
+		    "raspi5 hvs: locate — addr_hi non-zero (firmware fb above 4GB?); "
+		    "refusing\n");
+		return -1;
+	}
+	if (addr_lo != expected_addr_lo) {
+		platform_uart_puts(
+		    "raspi5 hvs: locate — addr_lo doesn't match mailbox fb phys; "
+		    "refusing\n");
+		return -1;
+	}
+	if (pitch_word != expected_pitch) {
+		platform_uart_puts(
+		    "raspi5 hvs: locate — pitch mismatch; refusing\n");
+		return -1;
+	}
+	if (end_marker != 0xb0b0b0b0u) {
+		platform_uart_puts(
+		    "raspi5 hvs: locate — end marker missing (plane longer than "
+		    "expected?); refusing\n");
+		return -1;
+	}
+
+	out->valid = 1u;
+	out->channel = active_ch;
+	out->plane_head_word_offset = dl_head;
+	out->ctl0_dlist_word_offset = dl_head + 0u;
+	out->ptr0_dlist_word_offset = dl_head + 4u;
+	out->addr_hi_word_offset = dl_head + 5u;
+	out->addr_lo_word_offset = dl_head + 6u;
+	out->pitch_dlist_word_offset = dl_head + 7u;
+	out->saved_ctl0 = ctl0;
+	out->saved_dims = dims;
+	out->saved_addr_hi = addr_hi;
+	out->saved_addr_lo = addr_lo;
+	out->saved_pitch = pitch_word;
+
+	platform_uart_puts(
+	    "raspi5 hvs: locate — fingerprint MATCH; firmware plane recorded\n");
+	return 0;
+}
+
+/*
+ * M9.3 — async-flip helper.
+ *
+ * Writes only the address words. PTR0 (word 4) is firmware-and-
+ * hardware-updated dynamically per frame — never touched. CTL0,
+ * dimensions, pitch are stable but also not written (they're not
+ * being changed; only the buffer base moves).
+ *
+ * Write order: high first, then low. Reasoning: a partial mid-write
+ * race against the HVS fetcher could in principle latch a torn
+ * address with the new high bits and the old low bits. For sub-4GB
+ * scanout the high is always 0, so writing it first is a no-op
+ * (high stays 0). For an above-4GB scanout the new high must be in
+ * place before the low bits make the address resolve to the new
+ * buffer.
+ */
+int raspi5_hvs_flip_plane_address(const raspi5_hvs_plane_ref_t *plane,
+                                  uintptr_t new_phys)
+{
+	if (!plane || !plane->valid)
+		return -1;
+
+	raspi5_hvs_write_dlist_word(plane->addr_hi_word_offset,
+	                            (uint32_t)((uint64_t)new_phys >> 32));
+	raspi5_hvs_write_dlist_word(plane->addr_lo_word_offset,
+	                            (uint32_t)(new_phys & 0xffffffffu));
+	raspi5_hvs_dsb();
 	return 0;
 }

@@ -46,6 +46,7 @@
  */
 #define RASPI5_VIDEO_MAX_WIDTH 1920u
 #define RASPI5_VIDEO_MAX_HEIGHT 1080u
+#define RASPI5_VIDEO_BYTES_PER_PIXEL 4u
 
 int arm64_video_init(void);
 int arm64_video_enabled(void);

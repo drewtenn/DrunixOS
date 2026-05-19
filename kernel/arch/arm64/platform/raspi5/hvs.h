@@ -160,4 +160,73 @@ typedef struct {
  */
 int raspi5_hvs_probe_passive(raspi5_hvs_probe_state_t *state);
 
+/*
+ * Reference to the firmware's primary plane after M9.2 validation.
+ * Populated by raspi5_hvs_locate_firmware_plane(); consumed by
+ * raspi5_hvs_flip_plane_address(). Fields are absolute word offsets
+ * within HVS dlist SRAM (0..0x6800 word range).
+ *
+ * The address words encode a 64-bit physical address split as:
+ *   address[63:32] in dlist word `addr_hi_word_offset`
+ *   address[31:0]  in dlist word `addr_lo_word_offset`
+ *
+ * The control word at `ctl0_dlist_word_offset` and the volatile
+ * status word at `ptr0_dlist_word_offset` are recorded only for
+ * documentation; the flip path must never write the ptr0 word
+ * because HVS6 updates it dynamically per scanout frame (verified
+ * across three boots in M9.1 v3 traces).
+ */
+typedef struct {
+	uint8_t valid;
+	uint8_t channel;
+	uint32_t plane_head_word_offset;
+	uint32_t ctl0_dlist_word_offset;
+	uint32_t ptr0_dlist_word_offset;
+	uint32_t addr_hi_word_offset;
+	uint32_t addr_lo_word_offset;
+	uint32_t pitch_dlist_word_offset;
+	uint32_t saved_ctl0;
+	uint32_t saved_dims;
+	uint32_t saved_addr_hi;
+	uint32_t saved_addr_lo;
+	uint32_t saved_pitch;
+} raspi5_hvs_plane_ref_t;
+
+/*
+ * Locate and structurally validate the firmware's primary plane on
+ * the HVS channel currently scanning HDMI0. Reads channel 0's DL
+ * register (latched active head), walks the named-word fingerprint
+ * at dlist[head .. head+8], and verifies:
+ *   - dimensions word == ((height-1) << 16) | (width-1)
+ *   - address-high word == 0 (sub-4GB scanout assumption)
+ *   - address-low word == expected_fb_phys
+ *   - pitch word == expected_pitch
+ *   - end-of-plane marker == 0xb0b0b0b0
+ *
+ * Returns 0 on a clean fingerprint match. -1 on any mismatch (caller
+ * stays on the mailbox framebuffer, never touches HVS). Trace
+ * messages identify which check failed.
+ */
+int raspi5_hvs_locate_firmware_plane(uint32_t expected_width,
+                                     uint32_t expected_height,
+                                     uint32_t expected_pitch,
+                                     uintptr_t expected_fb_phys,
+                                     raspi5_hvs_plane_ref_t *out);
+
+/*
+ * Atomically (within HVS6 async-flip semantics) rewrite the plane's
+ * address words to point scanout at new_phys. Writes only the
+ * address words — never CTL0, dimensions, pitch, or the volatile
+ * ptr0 word. plane->valid must be non-zero (locator returned 0).
+ * Returns 0 on success, -1 on invalid args.
+ *
+ * The HVS picks up the new address on next FIFO refill, which in
+ * practice happens within microseconds. M9.4 will add a PV0 vblank
+ * IRQ that defers the write to the vertical front porch for
+ * tear-free behavior; M9.3 accepts a single-frame tear window in
+ * exchange for not needing IRQ infrastructure yet.
+ */
+int raspi5_hvs_flip_plane_address(const raspi5_hvs_plane_ref_t *plane,
+                                  uintptr_t new_phys);
+
 #endif /* KERNEL_ARCH_ARM64_PLATFORM_RASPI5_HVS_H */

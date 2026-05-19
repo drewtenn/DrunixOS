@@ -70,6 +70,25 @@ typedef struct platform_ram_layout {
 	 */
 	uint64_t framebuffer_base;
 	uint64_t framebuffer_size;
+	/*
+	 * M9.3 scanout carve-out — a contiguous PA range reserved at boot
+	 * for a Drunix-owned HVS scanout buffer. Currently used only by
+	 * the raspi5 platform; virt and raspi3b leave it zero. Distinct
+	 * from framebuffer_base because:
+	 *   - framebuffer_base/size is the VC4-allocated firmware buffer
+	 *     (mapped Normal-NC, HVS scans from it in firmware default state)
+	 *   - scanout_carve_base/size is a Drunix-managed buffer mapped
+	 *     Normal-WB, used to hijack the HVS plane and panned over a
+	 *     virtual scrollback area
+	 *
+	 * arch_mm_init pmm_mark_used()s the range so kheap, init-image
+	 * loader, and other PMM clients never touch it. The MMU tables
+	 * built by arm64_mmu_build_kernel_tables map the range
+	 * Normal-WB Inner-Shareable via the existing platform_mm_classify
+	 * path (PA < 0x80000000 → PLATFORM_MM_NORMAL).
+	 */
+	uint64_t scanout_carve_base;
+	uint64_t scanout_carve_size;
 } platform_ram_layout_t;
 
 const platform_ram_layout_t *platform_ram_layout(void);

@@ -670,6 +670,123 @@ acceptance criteria from v1+v2 still stand, just with the LOC estimate
 reductions and the PTR0-clobber concern resolved by direct silicon
 observation.
 
+## v4 — landing M9.2 + M9.3 + HVS virtual scrollback (2026-05-19)
+
+The plan's original M9.3 phasing assumed a single full-frame scanout
+buffer flipped per scroll. Empirical measurement on Pi 5 hardware
+during iter 3 showed that path was bandwidth-bound at ~72 ms per
+scroll — fast enough to kill the visible crawl, slow enough that
+`ls` and bulk output still felt noticeably laggy. Iter 4–5 replaced
+the per-scroll memmove with HVS plane-base panning over an
+N-frame-tall virtual buffer, and moved the buffer out of BSS into a
+proper PA carve-out.
+
+**Measured scroll cost progression** (CNTVCT_EL0 ticks at 54 MHz; 1 µs
+= 54 ticks):
+
+| Build | memmove/copy | clear | CVAC+flip | total | per-scroll |
+|---|---|---|---|---|---|
+| Pre-M9 (firmware fb, Normal-NC) | — | — | — | — | visibly slow crawl |
+| Iter 3 (M9.3 single-frame, Normal-WB BSS) | 56 ms | 0.5 ms | 15 ms | 72 ms | uniformly slow |
+| Iter 5 (M9.3 virtual scrollback, PA carve-out) | 0.4 µs | 260 µs | 224 µs | **484 µs** | instant |
+
+The 150× speedup comes from two compounding wins:
+1. **Cache attribute correction.** Iter 2's HVS hijack moved scanout
+   from the firmware-allocated Normal-NC region (0x3f400000) into a
+   Drunix-owned Normal-WB buffer. CPU writes now hit cache instead
+   of going straight to DRAM at full latency.
+2. **Plane-base pan instead of memmove.** Iter 4's virtual scrollback
+   buffer lets the HVS pan its read pointer in 16-pixel increments
+   over a buffer 4× the visible height. The 8 MiB memmove only
+   happens once every ~200 scrolls, when the offset wraps.
+
+**Scanout buffer placement (the load-bearing iter-5 fix).** The
+buffer must not live in BSS. Iter 4 placed a 32 MiB buffer in BSS
+and crashed in the wrap path with a sync-exception ESR=0x9600004F
+(data abort, write permission fault, L3) at FAR=0x02000000:
+ARM64_INIT_IMAGE_BASE. The kernel remaps that page range with
+user-space permissions when /bin/shell loads. BSS-allocated buffers
+larger than ~31 MiB are guaranteed to overlap.
+
+Iter 5 introduces a proper PA carve-out reserved at boot:
+
+- Declared in `platform_ram_layout_t` (`platform.h`) as new fields
+  `scanout_carve_base` / `scanout_carve_size`. Zero on virt and
+  raspi3b; raspi5 publishes a 32 MiB block at PA 0x04000000.
+- Position: above ARM64_INIT_STACK_TOP (0x03100000), well below the
+  firmware framebuffer at 0x3f400000. Cannot collide with any
+  reserved low-PA region by construction.
+- Reservation: `arch_mm_init` calls `pmm_mark_used` on the published
+  range so kheap, ELF loaders, and other PMM clients never touch
+  those pages.
+- Mapping: identity-mapped Normal-WB Inner-Shareable via the
+  existing `platform_mm_classify` → `PLATFORM_MM_NORMAL` path. No
+  new MMU table-building logic.
+- Sizing: `RASPI5_SCANOUT_CARVE_SIZE = MAX_WIDTH * MAX_HEIGHT *
+  BYTES_PER_PIXEL * MULTIPLIER` (in raspi5/platform_mm.c). The
+  buffer driver reads `RASPI5_VIDEO_BYTES_PER_PIXEL` from
+  `video.h`, so the carve-out is sized from the same constants the
+  driver uses — they can't drift.
+- Kernel image: shrinks back to ~300 KB (BSS no longer holds the
+  buffer).
+
+**Scroll algorithm (the load-bearing iter-4 fix).** Each scroll:
+
+1. `next_y = g_hvs_scroll_y + GUI_FONT_H` — advance the HVS plane
+   base by one font row within the virtual buffer.
+2. If `next_y + height > virtual_height_px`, **wrap**: memcpy the
+   live visible content from `buf + cur_y * pitch` back to `buf + 0`
+   (~8 MiB), CVAC the moved region, set `next_y = 0`. Wrap happens
+   every (multiplier − 1) × (visible_height / GUI_FONT_H) scrolls;
+   for 4× / 1080 / 16-pixel rows = 201 scrolls.
+3. Clear the new bottom font row (`pitch * GUI_FONT_H` bytes ≈
+   120 KiB) at offset `(next_y + height - GUI_FONT_H) * pitch`.
+4. CVAC the cleared range + DSB to drain to DRAM.
+5. `g_fb_info.address = buf + next_y * pitch` — fb_text_console's
+   per-cell rendering follows automatically (every put_cell uses
+   `console->fb->address` as the destination base).
+6. `raspi5_hvs_flip_plane_address(buf + next_y * pitch)` writes
+   dl[5] (address high) and dl[6] (address low) in HVS SRAM. The
+   HVS picks up the new base on next FIFO refill (typically
+   microseconds; no vblank sync yet — that's M9.4).
+
+**Fingerprint validator (M9.2).** Implemented in `hvs.c`
+`raspi5_hvs_locate_firmware_plane()`. Validates the firmware's plane
+at dlist word 32 (=offset 0x4080) by checking dimensions, addr_hi=0,
+addr_lo == mailbox fb_phys, pitch, and the 0xb0b0b0b0 end marker.
+Records `raspi5_hvs_plane_ref_t` with the dlist word offsets the
+flip helper uses. Fails closed on any mismatch — the M9.3 install
+block then skips the HVS path and stays on the firmware fb.
+
+**One unfinished concern carried into M9.4+.** The wrap path's 70 ms
+memcpy is still synchronous, so every ~200 scrolls the console
+freezes for ~4 frames. Two mitigations are possible without M9.4
+vblank sync:
+- Increase MULTIPLIER from 4 to 8 or 16. Carve-out grows
+  proportionally; wraps become rarer. Pi 5 has plenty of RAM.
+- Spread the wrap memcpy across multiple scrolls — when scroll_y
+  reaches the midpoint, copy 1 row from `cur_y` to position
+  `(cur_y - half_virtual + 0)` per scroll, completing the
+  pre-emptive rotation before the wrap point.
+
+Both are M9.5b polish; the v4 implementation accepts the periodic
+hiccup.
+
+**Files touched in v4:**
+- `kernel/arch/arm64/platform/platform.h` — `scanout_carve_base/size`
+- `kernel/arch/arm64/arch.c` — `pmm_mark_used` for the carve-out
+- `kernel/arch/arm64/platform/raspi5/platform_mm.c` — carve-out
+  constants + layout publication
+- `kernel/arch/arm64/platform/raspi5/video.h` — exports
+  `RASPI5_VIDEO_BYTES_PER_PIXEL`
+- `kernel/arch/arm64/platform/raspi5/video.c` — install block uses
+  carve-out pointer; scroll_pixels rewritten as plane-base pan; old
+  hw-pan helpers removed
+- `kernel/arch/arm64/platform/raspi5/hvs.{c,h}` — locator + flip
+  APIs (M9.2 + M9.3 register surfaces)
+- `kernel/arch/arm64/platform/virt/platform_mm.c` — zero-default for
+  the new fields (no behavior change)
+
 ## What this plan does *not* commit to
 
 - **Hardware cursor plane** (which would need a second HVS plane composed
